@@ -67,6 +67,24 @@
   .large-targets .input-field {
     @apply min-h-16 text-xl px-6 py-4;
   }
+  
+  .touch-target-large {
+    @apply min-h-16 min-w-16;
+  }
+  
+  /* Simple mode enhancements */
+  .simple-mode .btn-primary,
+  .simple-mode .btn-secondary {
+    @apply text-xl px-8 py-6 min-h-20;
+  }
+  
+  .simple-mode .input-field {
+    @apply text-xl px-6 py-4 min-h-16;
+  }
+  
+  .simple-mode .card {
+    @apply p-8 rounded-2xl;
+  }
 }
 
 /* Dark mode support */

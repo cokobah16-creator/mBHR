@@ -33,6 +33,8 @@ import VitalsPrecision from '@/features/gamification/VitalsPrecision'
 import KnowledgeBlitz from '@/features/gamification/KnowledgeBlitz'
 import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard'
 import ApprovalInbox from '@/features/gamification/ApprovalInbox'
+import { SimpleRegister } from '@/pages/SimpleRegister'
+import FEFODispenser from '@/features/pharmacy/FEFODispenser'</parameter>
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -140,6 +142,16 @@ function App() {
                   <Route path="/admin/approvals" element={
                     <RequireRoles roles={['admin']}>
                       <ApprovalInbox />
+                    </RequireRoles>
+                  } />
+                  <Route path="/simple/register" element={<SimpleRegister />} />
+                  <Route path="/pharmacy/fefo/:visitId" element={
+                    <RequireRoles roles={['pharmacist', 'admin']}>
+                      <FEFODispenser 
+                        patientId="" 
+                        visitId="" 
+                        onSuccess={() => {}} 
+                      />
                     </RequireRoles>
                   } />
                 </Routes>

@@ -7,6 +7,7 @@ import Toasts from '@/components/Toasts'
 import useLowStockWatcher from '@/features/inventory/useLowStockWatcher'
 import { LanguageSelector } from '@/components/LanguageSelector'
 import { AccessibilityControls } from '@/components/AccessibilityControls'
+import { MessageOutbox } from '@/components/MessageOutbox'
 import { can } from '@/auth/roles'
 import type { ElementType, ReactNode } from 'react'
 import { 
@@ -203,6 +204,11 @@ export function Layout({ children }: LayoutProps) {
         {/* Main Content */}
         <main className="flex-1 p-6">
           {children}
+          
+          {/* Message Outbox (bottom right) */}
+          <div className="fixed bottom-6 right-6 max-w-sm">
+            <MessageOutbox />
+          </div>
         </main>
       </div>
       
