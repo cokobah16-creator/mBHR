@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react'
-import { useQueueStore } from '@/stores/queue'
+import { useQueue } from '@/stores/queue'
 import { usePatientsStore } from '@/stores/patients'
 import { QueueItem } from '@/db'
 import { 
@@ -38,7 +38,7 @@ interface QueueBoardProps {
 }
 
 export function QueueBoard({ stage, compact = false }: QueueBoardProps) {
-  const { queueItems, loadQueue, updateQueueStatus, moveToNextStage } = useQueueStore()
+  const { queueItems, loadQueue, updateQueueStatus, moveToNextStage } = useQueue()
   const { patients, loadPatients } = usePatientsStore()
 
   useEffect(() => {
