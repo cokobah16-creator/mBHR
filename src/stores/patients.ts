@@ -151,7 +151,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       console.error('Error starting visit:', error)
       throw error
     }
-  }
+  },
 
   checkForDuplicates: async (patientData) => {
     return createPatientDraft({
