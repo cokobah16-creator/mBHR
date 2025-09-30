@@ -12,6 +12,7 @@ import { Vitals } from '@/pages/Vitals'
 import { Consult } from '@/pages/Consult'
 import { Pharmacy } from '@/pages/Pharmacy'
 import { Inventory } from '@/pages/Inventory'
+import { Users } from '@/pages/Users'
 import { useAuthStore } from '@/stores/auth'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -41,6 +42,7 @@ function App() {
                   <Route path="/patients/:id" element={<PatientDetail />} />
                   <Route path="/queue" element={<Queue />} />
                   <Route path="/inventory" element={<Inventory />} />
+                  <Route path="/users" element={<Users />} />
                   <Route path="/vitals" element={<Vitals />} />
                   <Route path="/vitals/:visitId" element={<Vitals />} />
                   <Route path="/consult" element={<Consult />} />

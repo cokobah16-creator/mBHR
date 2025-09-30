@@ -3,13 +3,15 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { db } from '@/db'
+import { can } from '@/auth/roles'
 import { 
   UserPlusIcon, 
   UsersIcon,
   HeartIcon,
   DocumentTextIcon,
   BeakerIcon,
-  CubeIcon
+  CubeIcon,
+  Cog6ToothIcon
 } from '@heroicons/react/24/outline'
 
 export function Dashboard() {
@@ -79,6 +81,16 @@ export function Dashboard() {
     }
   ]
 
+  // Add admin-only actions
+  if (currentUser && can(currentUser.role, 'users')) {
+    quickActions.push({
+      name: 'User Management',
+      href: '/users',
+      icon: Cog6ToothIcon,
+      color: 'bg-purple-500 hover:bg-purple-600',
+      description: 'Manage users'
+    })
+  }
   return (
     <div className="space-y-6">
       {/* Welcome Header */}

@@ -3,11 +3,13 @@ import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
+import { can } from '@/auth/roles'
 import { 
   HomeIcon, 
   UserGroupIcon, 
   QueueListIcon, 
   CubeIcon,
+  UsersIcon,
   ArrowRightOnRectangleIcon
 } from '@heroicons/react/24/outline'
 
@@ -20,13 +22,20 @@ export function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const { currentUser, logout } = useAuthStore()
 
-  const navigation = [
+  const baseNavigation = [
     { name: t('nav.dashboard'), href: '/', icon: HomeIcon },
     { name: t('nav.patients'), href: '/patients', icon: UserGroupIcon },
     { name: t('nav.queue'), href: '/queue', icon: QueueListIcon },
     { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
   ]
 
+  // Add admin-only navigation items
+  const navigation = [
+    ...baseNavigation,
+    ...(currentUser && can(currentUser.role, 'users') ? [
+      { name: 'User Management', href: '/users', icon: UsersIcon }
+    ] : [])
+  ]
   const handleLogout = async () => {
     await logout()
   }
