@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { PatientSearch } from '@/components/PatientSearch'
 import { VitalsForm } from '@/components/VitalsForm'
-import { db, Visit, Patient } from '@/db'
+import { db, Visit, Patient, generateId } from '@/db'
 import { ArrowLeftIcon, HeartIcon } from '@heroicons/react/24/outline'
 
 export function Vitals() {
@@ -9,11 +10,14 @@ export function Vitals() {
   const navigate = useNavigate()
   const [visit, setVisit] = useState<Visit | null>(null)
   const [patient, setPatient] = useState<Patient | null>(null)
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (visitId) {
       loadVisitData(visitId)
+    } else {
+      setLoading(false)
     }
   }, [visitId])
 
@@ -32,10 +36,31 @@ export function Vitals() {
     }
   }
 
+  const handlePatientSelect = async (selectedPatient: Patient) => {
+    try {
+      // Create a new visit for this patient
+      const newVisit: Visit = {
+        id: generateId(),
+        patientId: selectedPatient.id,
+        startedAt: new Date(),
+        siteName: 'Mobile Clinic',
+        status: 'open'
+      }
+      
+      await db.visits.add(newVisit)
+      
+      setPatient(selectedPatient)
+      setVisit(newVisit)
+      setSelectedPatient(selectedPatient)
+    } catch (error) {
+      console.error('Error creating visit:', error)
+    }
+  }
+
   const handleSuccess = () => {
     // Navigate to consultation or back to queue
-    if (visitId) {
-      navigate(`/consult/${visitId}`)
+    if (visit) {
+      navigate(`/consult/${visit.id}`)
     } else {
       navigate('/queue')
     }
@@ -43,6 +68,37 @@ export function Vitals() {
 
   const handleCancel = () => {
     navigate('/queue')
+  }
+
+  // If no visitId provided, show patient search
+  if (!visitId && !selectedPatient) {
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={() => navigate('/queue')}
+            className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
+          >
+            <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Record Vital Signs</h1>
+            <p className="text-gray-600">Search for a patient to record vitals</p>
+          </div>
+        </div>
+
+        {/* Patient Search */}
+        <div className="card max-w-2xl mx-auto">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Patient</h2>
+          <PatientSearch
+            onPatientSelect={handlePatientSelect}
+            placeholder="Search patients by name or phone..."
+            className="w-full"
+          />
+        </div>
+      </div>
+    )
   }
 
   if (loading) {
@@ -117,7 +173,7 @@ export function Vitals() {
       {/* Vitals Form */}
       <VitalsForm
         patientId={patient.id}
-        visitId={visit.id}
+        visitId={visit!.id}
         onSuccess={handleSuccess}
         onCancel={handleCancel}
       />
