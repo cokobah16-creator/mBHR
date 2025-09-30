@@ -34,7 +34,7 @@ import KnowledgeBlitz from '@/features/gamification/KnowledgeBlitz'
 import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard'
 import ApprovalInbox from '@/features/gamification/ApprovalInbox'
 import { SimpleRegister } from '@/pages/SimpleRegister'
-import FEFODispenser from '@/features/pharmacy/FEFODispenser'</parameter>
+import FEFODispenser from '@/features/pharmacy/FEFODispenser';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
