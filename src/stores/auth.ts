@@ -50,7 +50,7 @@ export const useAuthStore = create<AuthState>()(
           const users = await db.users.filter(u => u.isActive).toArray()
           
           for (const user of users) {
-            if (user.pinSalt && user.pinHash) {
+            if (user.pinHash && user.pinSalt) {
               const isValid = await verifyPin(pin, user.pinHash, user.pinSalt)
               
               if (isValid) {
@@ -84,6 +84,7 @@ export const useAuthStore = create<AuthState>()(
           
         } catch (error) {
           console.error('Login error:', error)
+          state.incrementFailedAttempts()
           return false
         }
       },
