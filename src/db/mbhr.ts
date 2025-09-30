@@ -99,3 +99,7 @@ export const db = new MBHRDB()
 
 // small helper passthrough so other files can do `import { ulid } from '@/db/mbhr'`
 export const ulid = () => _ulid()
+
+// ✅ add alias export so `import { mbhrDb } ...` works
+export const mbhrDb = db
+export default db
