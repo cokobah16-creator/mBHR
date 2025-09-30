@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { db as mbhrDb, ulid } from '@/db/mbhr'
-import { BeakerIcon, ExclamationTriangleIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { BeakerIcon, ExclamationTriangleIcon, CheckCircleIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
 
 export default function Dispense() {
   const [rx, setRx] = useState<any[]>([])
