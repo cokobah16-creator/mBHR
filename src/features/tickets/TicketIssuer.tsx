@@ -4,3 +4,6 @@ import { TicketIcon, UserGroupIcon } from '@heroicons/react/24/outline'
 
 const categories = ['adult','child','antenatal'] as const
 const priorities = ['normal','urgent','low'] as const
+
+
+export default priorities
