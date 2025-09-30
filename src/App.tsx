@@ -38,7 +38,7 @@ import FEFODispenser from '@/features/pharmacy/FEFODispenser'
 
 // Lazy load game components
 const TriageSprint = lazy(() => import('@/features/triage/TriageSprint'))
-const VitalsPrecisionGame = lazy(() => import('@/features/gamification/VitalsPrecisionGame'))
+const VitalsPrecisionGame = lazy(() => import('@/features/vitals/VitalsPrecisionGame'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -138,7 +138,7 @@ function App() {
                     <Route path="/games" element={<GameHub />} />
                     <Route path="/games/vitals-precision" element={
                       <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
-                        <VitalsPrecision />
+                        <VitalsPrecisionGame />
                       </RequireRoles>
                     } />
                     <Route path="/games/knowledge-blitz" element={

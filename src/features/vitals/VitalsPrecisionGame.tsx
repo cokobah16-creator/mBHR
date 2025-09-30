@@ -387,7 +387,7 @@ export default function VitalsPrecisionGame() {
           </div>
           <div className="text-center flex items-center space-x-1">
             <ClockIcon className="h-5 w-5 text-red-500" />
-            <div className={`text-xl font-bold ${timeLeft <= 60 ? 'text-red-600 animate-pulse' : 'text-red-600'}`}>
+            <div className={`text-2xl font-bold ${timeLeft <= 60 ? 'text-red-600 animate-pulse' : 'text-red-600'}`}>
               {formatTime(timeLeft)}
             </div>
           </div>
