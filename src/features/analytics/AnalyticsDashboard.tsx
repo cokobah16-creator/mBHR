@@ -76,20 +76,22 @@ export default function AnalyticsDashboard() {
       const fromDate = new Date(dateRange.from + 'T00:00:00.000Z')
       const toDate = new Date(dateRange.to + 'T23:59:59.999Z')
       
-      // Defensive check: ensure fromDate is not after toDate
-      if (fromDate > toDate) {
-        console.warn('Invalid date range: from date is after to date, swapping values')
-        const temp = fromDate
-        fromDate.setTime(toDate.getTime())
-        toDate.setTime(temp.getTime())
+      // Validate that dates are valid and ensure fromDate is not after toDate
+      if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime()) || fromDate > toDate) {
+        console.error('Invalid or inverted date objects created from date range. fromDate:', fromDate, 'toDate:', toDate)
+        // If dates are invalid or inverted, adjust them to prevent errors
+        fromDate.setTime(new Date(dateRange.from + 'T00:00:00.000Z').getTime());
+        toDate.setTime(new Date(dateRange.to + 'T23:59:59.999Z').getTime());
+        if (fromDate > toDate) { // If still inverted after re-parsing, set to same day
+          fromDate.setTime(toDate.getTime());
+        }
+        if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+          console.error('Date objects remain invalid after adjustment. Skipping query.')
+          setLoading(false);
+          return;
+        }
       }
       
-      // Validate that dates are valid
-      if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
-        console.error('Invalid date objects created from date range')
-        return
-      }
-
       // Overview metrics
       const [
         totalPatients,
@@ -101,7 +103,7 @@ export default function AnalyticsDashboard() {
         wallets
       ] = await Promise.all([
         db.patients.count(),
-        db.patients.where('createdAt').between(fromDate, toDate).count(),
+        db.patients.where('createdAt').between(fromDate, toDate, true, true).count(),
         db.visits.where('status').equals('open').count(),
         db.visits.where('status').equals('closed').count(),
         db.gameSessions.count(),
@@ -110,7 +112,7 @@ export default function AnalyticsDashboard() {
       ])
 
       // Calculate average wait time (simplified)
-      const visits = await db.visits.where('startedAt').between(fromDate, toDate).toArray()
+      const visits = await db.visits.where('startedAt').between(fromDate, toDate, true, true).toArray()
       const avgWaitTime = visits.length > 0 ? 15 : 0 // Placeholder calculation
 
       // Throughput data (last 7 days)
@@ -124,16 +126,20 @@ export default function AnalyticsDashboard() {
         const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999)
         
         // Validate day range dates
-        if (isNaN(dayStart.getTime()) || isNaN(dayEnd.getTime()) || dayStart > dayEnd) {
-          console.warn(`Invalid day range for date ${date.toISOString()}, skipping`)
+        if (isNaN(dayStart.getTime()) || isNaN(dayEnd.getTime())) {
+          console.warn(`Invalid dayStart or dayEnd for date ${date.toISOString()}. Skipping throughput data for this day.`)
           continue
         }
+        // Ensure dayStart is not after dayEnd
+        const validDayStart = dayStart <= dayEnd ? dayStart : dayEnd;
+        const validDayEnd = dayStart <= dayEnd ? dayEnd : dayStart;
 
         const [registrations, vitalsCount, consultations, dispenses] = await Promise.all([
-          db.patients.where('createdAt').between(dayStart, dayEnd).count(),
-          db.vitals.where('takenAt').between(dayStart, dayEnd).count(),
-          db.consultations.where('createdAt').between(dayStart, dayEnd).count(),
-          db.dispenses.where('dispensedAt').between(dayStart, dayEnd).count()
+          // Use explicit inclusive bounds for clarity and robustness
+          db.patients.where('createdAt').between(validDayStart, validDayEnd, true, true).count(),
+          db.vitals.where('takenAt').between(validDayStart, validDayEnd, true, true).count(),
+          db.consultations.where('createdAt').between(validDayStart, validDayEnd, true, true).count(),
+          db.dispenses.where('dispensedAt').between(validDayStart, validDayEnd, true, true).count()
         ])
 
         throughputData.push({
