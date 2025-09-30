@@ -21,7 +21,9 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ClipboardDocumentListIcon,
-  PlusIcon
+  PlusIcon,
+  ChartBarIcon,
+  CheckCircleIcon
 } from '@heroicons/react/24/outline'
 
 // Fallback icon for nav items missing icons
@@ -55,18 +57,18 @@ export function Layout({ children }: LayoutProps) {
     { name: t('nav.patients'), href: '/patients', icon: UserGroupIcon },
     { name: t('nav.queue'), href: '/queue', icon: QueueListIcon },
     { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
-    { name: 'Restock Game', href: '/inv/game', icon: GiftIcon },
-    { name: 'Leaderboard', href: '/inv/leaderboard', icon: GiftIcon },
+    { name: 'Game Hub', href: '/games', icon: TrophyIcon },
+    { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
     { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
-    { name: 'Public Display', href: '/display', icon: TicketIcon },
-    { name: 'Quest Board', href: '/quests', icon: TrophyIcon },
+    { name: 'Restock Game', href: '/inv/game', icon: GiftIcon }
   ]
 
   // Add admin-only navigation items
   const navigation = [
     ...baseNavigation,
     ...(currentUser && can(currentUser.role, 'users') ? [
-      { name: 'User Management', href: '/users', icon: UsersIcon }
+      { name: 'User Management', href: '/users', icon: UsersIcon },
+      { name: 'Approve Games', href: '/admin/approvals', icon: CheckCircleIcon }
     ] : [])
   ]
 

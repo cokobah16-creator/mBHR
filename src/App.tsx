@@ -28,6 +28,11 @@ import { QuestBoard } from '@/components/QuestBoard'
 import QueueMaestro from '@/features/gamification/QueueMaestro'
 import { seedDemo } from '@/db/seedMbhr'
 import { useEffect } from 'react'
+import { GameHub } from '@/components/GameHub'
+import VitalsPrecision from '@/features/gamification/VitalsPrecision'
+import KnowledgeBlitz from '@/features/gamification/KnowledgeBlitz'
+import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard'
+import ApprovalInbox from '@/features/gamification/ApprovalInbox'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -114,6 +119,27 @@ function App() {
                   <Route path="/games/queue-maestro" element={
                     <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
                       <QueueMaestro />
+                    </RequireRoles>
+                  } />
+                  <Route path="/games" element={<GameHub />} />
+                  <Route path="/games/vitals-precision" element={
+                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                      <VitalsPrecision />
+                    </RequireRoles>
+                  } />
+                  <Route path="/games/knowledge-blitz" element={
+                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                      <KnowledgeBlitz />
+                    </RequireRoles>
+                  } />
+                  <Route path="/analytics" element={
+                    <RequireRoles roles={['admin']}>
+                      <AnalyticsDashboard />
+                    </RequireRoles>
+                  } />
+                  <Route path="/admin/approvals" element={
+                    <RequireRoles roles={['admin']}>
+                      <ApprovalInbox />
                     </RequireRoles>
                   } />
                 </Routes>

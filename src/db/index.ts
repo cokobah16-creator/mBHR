@@ -136,6 +136,79 @@ export interface AuditLog {
   at: Date
 }
 
+// Gamification types
+export interface GameSession {
+  id: string
+  type: 'vitals' | 'shelf' | 'quiz' | 'triage'
+  volunteerId: string
+  startedAt: Date
+  finishedAt?: Date
+  score: number
+  tokensEarned: number
+  payloadJson: string
+  committed: boolean
+  _dirty?: number
+  _syncedAt?: string
+}
+
+export interface GamificationWallet {
+  volunteerId: string
+  tokens: number
+  badges: string[]
+  level: number
+  streakDays: number
+  lifetimeTokens: number
+  lastActiveDate?: Date
+  updatedAt: Date
+  _dirty?: number
+  _syncedAt?: string
+}
+
+export interface VitalsRange {
+  id: string
+  ageMin: number
+  ageMax: number
+  sex: 'M' | 'F' | 'U'
+  metric: 'hr' | 'rr' | 'temp' | 'sbp' | 'dbp' | 'spo2'
+  min: number
+  max: number
+  source: string
+  updatedAt: Date
+}
+
+export interface QuizQuestion {
+  id: string
+  topic: string
+  difficulty: 'easy' | 'medium' | 'hard'
+  stem: string
+  choices: string[]
+  answerIndex: number
+  explanation: string
+  updatedAt: Date
+}
+
+export interface TriageSample {
+  id: string
+  createdAt: Date
+  caseHash: string
+  goldPriority: 'urgent' | 'normal' | 'low'
+  createdBy: string
+}
+
+export interface InventoryDiscrepancy {
+  id: string
+  itemId: string
+  foundQty: number
+  systemQty: number
+  photo?: string
+  note?: string
+  createdAt: Date
+  resolvedAt?: Date
+  resolvedBy?: string
+  _dirty?: number
+  _syncedAt?: string
+}
+
 // Database name - bumped to avoid incompatible older store
 export const DB_NAME = 'mbhr_v3'
 
@@ -152,6 +225,12 @@ export class MBHRDatabase extends Dexie {
   visits!: Table<Visit>
   queue!: Table<QueueItem>
   auditLogs!: Table<AuditLog>
+  gameSessions!: Table<GameSession>
+  gamificationWallets!: Table<GamificationWallet>
+  vitalsRanges!: Table<VitalsRange>
+  quizQuestions!: Table<QuizQuestion>
+  triageSamples!: Table<TriageSample>
+  inventoryDiscrepancies!: Table<InventoryDiscrepancy>
 
   constructor() {
     super(DB_NAME)
@@ -255,6 +334,27 @@ export class MBHRDatabase extends Dexie {
           (user as any).adminPermanent = (user as any).fullName === 'Kristopher Okobah'
         }
       })
+    })
+
+    // v6 — Add gamification tables
+    this.version(6).stores({
+      patients:      'id, familyName, phone, state, lga, createdAt, updatedAt, _dirty, _syncedAt',
+      vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
+      consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
+      dispenses:     'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt',
+      inventory:     'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+      visits:        'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+      queue:         'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
+      auditLogs:     'id, actorRole, entity, entityId, at',
+      users:         'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
+      sessions:      'id, userId, createdAt, lastSeenAt',
+      settings:      'key',
+      gameSessions:  'id, type, volunteerId, startedAt, finishedAt, committed, _dirty, _syncedAt',
+      gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
+      vitalsRanges:  'id, sex, metric, ageMin, ageMax, updatedAt',
+      quizQuestions: 'id, topic, difficulty, updatedAt',
+      triageSamples: 'id, createdAt, createdBy',
+      inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt'
     })
   }
 }

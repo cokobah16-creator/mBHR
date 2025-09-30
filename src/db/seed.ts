@@ -77,6 +77,29 @@ export async function seed() {
       console.log('✅ Inventory items created:', INVENTORY_ITEMS.length)
     }
     
+    // Seed gamification data if needed
+    const walletCount = await db.gamificationWallets.count()
+    if (walletCount === 0) {
+      console.log('🎮 Creating demo gamification wallets...')
+      
+      const users = await db.users.where('isActive').equals(1).toArray()
+      for (const user of users) {
+        await db.gamificationWallets.add({
+          volunteerId: user.id,
+          tokens: Math.floor(Math.random() * 200) + 50, // 50-250 tokens
+          badges: ['first_quest'],
+          level: 1,
+          streakDays: Math.floor(Math.random() * 7),
+          lifetimeTokens: Math.floor(Math.random() * 500) + 100,
+          lastActiveDate: new Date(),
+          updatedAt: new Date(),
+          _dirty: 1
+        })
+      }
+      
+      console.log('✅ Gamification wallets created for', users.length, 'users')
+    }
+    
     console.log('✅ Database seeded successfully')
   } catch (error) {
     console.error('❌ Seeding failed:', error)
