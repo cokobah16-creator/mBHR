@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { db } from '@/db'
 import { can } from '@/auth/roles'
+import { MessageOutbox } from '@/components/MessageOutbox'
 import { 
   UserPlusIcon, 
   UsersIcon,
@@ -156,23 +157,8 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Quick Actions */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {quickActions.map((action) => (
-            <Link
-              key={action.name}
-              to={action.href}
-              className={`${action.color} text-white rounded-lg p-4 text-center transition-colors touch-target group hover:scale-105 transform transition-transform`}
-            >
-              <action.icon className="h-8 w-8 mx-auto mb-2 group-hover:scale-110 transition-transform" />
-              <div className="text-sm font-medium">{action.name}</div>
-              <div className="text-xs opacity-90 mt-1">{action.description}</div>
-            </Link>
-          ))}
-        </div>
-      </div>
+      {/* Message Outbox */}
+      <MessageOutbox />
 
       {/* Getting Started */}
       <div className="bg-white rounded-lg shadow-sm p-6">
