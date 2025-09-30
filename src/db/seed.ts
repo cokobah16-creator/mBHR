@@ -32,12 +32,12 @@ export async function seed() {
       console.log('🌱 Creating demo users...')
       
       const users = [
-        { fullName: 'Admin User', role: 'admin' as const, pin: '123456' },
-        { fullName: 'Dr. Sarah Johnson', role: 'doctor' as const, pin: '234567' },
-        { fullName: 'Nurse Mary', role: 'nurse' as const, pin: '345678' },
-        { fullName: 'Pharmacist John', role: 'pharmacist' as const, pin: '456789' },
-        { fullName: 'Volunteer Mike', role: 'volunteer' as const, pin: '567890' },
-        { fullName: 'User 070398', role: 'admin' as const, pin: '070398' }
+        { fullName: 'Admin User', role: 'admin' as const, pin: '123456', adminAccess: true, adminPermanent: false },
+        { fullName: 'Dr. Sarah Johnson', role: 'doctor' as const, pin: '234567', adminAccess: false, adminPermanent: false },
+        { fullName: 'Nurse Mary', role: 'nurse' as const, pin: '345678', adminAccess: false, adminPermanent: false },
+        { fullName: 'Pharmacist John', role: 'pharmacist' as const, pin: '456789', adminAccess: false, adminPermanent: false },
+        { fullName: 'Volunteer Mike', role: 'volunteer' as const, pin: '567890', adminAccess: false, adminPermanent: false },
+        { fullName: 'User 070398', role: 'admin' as const, pin: '070398', adminAccess: true, adminPermanent: false }
       ]
       
       for (const userData of users) {
@@ -51,6 +51,8 @@ export async function seed() {
           email: `${userData.role}@local`,
           pinHash,
           pinSalt,
+          adminAccess: userData.adminAccess,
+          adminPermanent: userData.adminPermanent,
           isActive: 1,
           createdAt: new Date(),
           updatedAt: new Date()
