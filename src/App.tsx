@@ -24,6 +24,8 @@ import QueueBoard from '@/features/tickets/QueueBoard'
 import TicketIssuer from '@/features/tickets/TicketIssuer'
 import Leaderboard from '@/features/gamification/Leaderboard'
 import PublicDisplay from '@/features/tickets/PublicDisplay'
+import { QuestBoard } from '@/components/QuestBoard'
+import QueueMaestro from '@/features/gamification/QueueMaestro'
 import { seedDemo } from '@/db/seedMbhr'
 import { useEffect } from 'react'
 
@@ -103,6 +105,12 @@ function App() {
                     </RequireRoles>
                   } />
                   <Route path="/display" element={<PublicDisplay />} />
+                  <Route path="/quests" element={<QuestBoard />} />
+                  <Route path="/games/queue-maestro" element={
+                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                      <QueueMaestro />
+                    </RequireRoles>
+                  } />
                 </Routes>
               </Layout>
             </ProtectedRoute>

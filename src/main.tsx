@@ -8,6 +8,7 @@ import './i18n'
 
 import { seed } from './db/seed'
 import { seedDemo } from './db/seedMbhr'
+import { seedGamificationData } from './db/gamification'
 import { db } from './db/index'
 import { safeOpenDb } from './db/safeOpen'
 
@@ -49,6 +50,7 @@ function renderFatal(msg: string) {
     console.log('[seed] starting…')
     await seed()
     await seedDemo()
+    await seedGamificationData()
     console.log('[seed] done')
   } catch (e: any) {
     console.error('[seed] failed', e)

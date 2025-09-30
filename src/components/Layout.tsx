@@ -15,7 +15,8 @@ import {
   ArrowRightOnRectangleIcon,
   BeakerIcon,
   GiftIcon,
-  TicketIcon
+  TicketIcon,
+  TrophyIcon
 } from '@heroicons/react/24/outline'
 
 interface LayoutProps {
@@ -39,6 +40,7 @@ export function Layout({ children }: LayoutProps) {
     { name: 'Leaderboard', href: '/inv/leaderboard', icon: GiftIcon },
     { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
     { name: 'Public Display', href: '/display', icon: TicketIcon },
+    { name: 'Quest Board', href: '/quests', icon: TrophyIcon },
   ]
 
   // Add admin-only navigation items
