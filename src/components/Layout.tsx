@@ -16,7 +16,7 @@ import {
   BeakerIcon,
   GiftIcon,
   TicketIcon,
-  TrophyIcon
+  TrophyIcon,
   ChevronDownIcon,
   ChevronRightIcon
 } from '@heroicons/react/24/outline'
