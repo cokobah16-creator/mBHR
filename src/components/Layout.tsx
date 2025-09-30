@@ -38,10 +38,12 @@ export function Layout({ children }: LayoutProps) {
     { name: 'Restock Game', href: '/inv/game', icon: GiftIcon },
     { name: 'Leaderboard', href: '/inv/leaderboard', icon: GiftIcon },
     { name: 'Pharmacy Stock', href: '/rx/stock', icon: BeakerIcon },
+    { name: 'Pharmacy Stock (Skeleton)', href: '/rx/stock-skeleton', icon: BeakerIcon },
     { name: 'New Prescription', href: '/rx/new', icon: BeakerIcon },
     { name: 'Dispense', href: '/rx/dispense', icon: BeakerIcon },
     { name: 'Queue Board', href: '/tickets/queue', icon: TicketIcon },
     { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
+    { name: 'Public Display', href: '/display', icon: TicketIcon },
   ]
 
   // Add admin-only navigation items

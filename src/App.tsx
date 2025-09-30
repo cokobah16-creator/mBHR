@@ -23,6 +23,8 @@ import Dispense from '@/features/pharmacy/Dispense'
 import QueueBoard from '@/features/tickets/QueueBoard'
 import TicketIssuer from '@/features/tickets/TicketIssuer'
 import Leaderboard from '@/features/gamification/Leaderboard'
+import PublicDisplay from '@/features/tickets/PublicDisplay'
+import PharmacyStockSkeleton from '@/features/pharmacy/PharmacyStockSkeleton'
 import { seedDemo } from '@/db/seedMbhr'
 import { useEffect } from 'react'
 
@@ -104,6 +106,12 @@ function App() {
                   <Route path="/inv/leaderboard" element={
                     <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
                       <Leaderboard />
+                    </RequireRoles>
+                  } />
+                  <Route path="/display" element={<PublicDisplay />} />
+                  <Route path="/rx/stock-skeleton" element={
+                    <RequireRoles roles={['pharmacist', 'doctor', 'nurse', 'admin']}>
+                      <PharmacyStockSkeleton />
                     </RequireRoles>
                   } />
                 </Routes>
