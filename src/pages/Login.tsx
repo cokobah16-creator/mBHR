@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react'
-import { Navigate } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
+import { useState } from 'react'
+import { login as offlineLogin } from '@/stores/auth'
+import { isOnlineSyncEnabled } from '@/sync/adapter'
 import { useAuthStore } from '@/stores/auth'
 import { db, User, generateId } from '@/db'
-import { generateSalt, hashPin, saltToString } from '@/utils/crypto'
+import { derivePinHash, newSaltB64 } from '@/utils/pin'
 import { Tab } from '@headlessui/react'
 import { 
   LockClosedIcon, 
@@ -11,6 +11,10 @@ import {
   SignalSlashIcon,
   UserPlusIcon 
 } from '@heroicons/react/24/outline'
+import { useTranslation } from 'react-i18next'
+import { Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+
 
 export function Login() {
   const { t } = useTranslation()
@@ -70,15 +74,15 @@ export function Login() {
 
     try {
       // Create admin user
-      const salt = await generateSalt()
-      const pinHash = await hashPin(adminSetupPin, salt)
+      const salt = newSaltB64()
+      const pinHash = await derivePinHash(adminSetupPin, salt)
       
       const adminUser: User = {
         id: generateId(),
         fullName: adminName.trim(),
         role: 'admin',
         pinHash,
-        pinSalt: saltToString(salt),
+        pinSalt: salt,
         createdAt: new Date(),
         updatedAt: new Date(),
         isActive: true
@@ -252,7 +256,7 @@ export function Login() {
                 selected
                   ? 'bg-white text-primary shadow'
                   : 'text-gray-600 hover:bg-white/[0.12] hover:text-gray-800'
-              } ${!isOnline ? 'opacity-50' : ''}`
+              } ${!isOnlineSyncEnabled() ? 'opacity-50' : ''}`
             }>
               <div className="flex items-center justify-center space-x-2">
                 <WifiIcon className="h-4 w-4" />
