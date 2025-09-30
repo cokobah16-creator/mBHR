@@ -4,20 +4,27 @@ import { derivePinHash, newSaltB64 } from '@/utils/pin'
 export async function seed() {
   try {
     console.log('🌱 Starting database seeding...')
+    
+    // Check if already seeded
+    const existingUsers = await db.users.count()
+    console.log('Existing users count:', existingUsers)
+    
+    if (existingUsers > 0) {
+      console.log('✅ Database already seeded, skipping...')
+      return
+    }
+    
     await seedUsers()
     await seedInventory()
     await db.settings.put({ key: 'adminSetupDone', value: 'true' })
     console.log('✅ Database seeded successfully')
   } catch (error) {
     console.error('❌ Seeding failed:', error)
+    throw error
   }
 }
 
 async function seedUsers() {
-  const existing = await db.users.count()
-  console.log('Existing users count:', existing)
-  if (existing > 0) return
-
   console.log('🌱 Seeding users with roles...')
 
   const createUser = async (

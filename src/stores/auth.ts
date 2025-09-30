@@ -50,13 +50,20 @@ export const useAuthStore = create<AuthState>()(
         try {
           // Get all active users
           const users = await db.users.filter(u => u.isActive).toArray()
-          console.log('Found users:', users.length, users.map(u => ({ id: u.id, fullName: u.fullName, role: u.role })))
+          console.log('[auth] Found users:', users.length)
+          console.log('[auth] User details:', users.map(u => ({ 
+            id: u.id, 
+            fullName: u.fullName, 
+            role: u.role,
+            hasPin: !!u.pinHash,
+            hasSalt: !!u.pinSalt
+          })))
           
           for (const user of users) {
             if (user.pinHash && user.pinSalt) {
-              console.log('Checking PIN for user:', user.fullName, user.role)
+              console.log('[auth] Checking PIN for user:', user.fullName, user.role)
               const isValid = await verifyPin(pin, user.pinHash, user.pinSalt)
-              console.log('PIN valid for', user.fullName, ':', isValid)
+              console.log('[auth] PIN valid for', user.fullName, ':', isValid)
               
               if (isValid) {
                 // Create session
