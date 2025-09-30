@@ -1,14 +1,39 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { db as mbhrDb, ulid } from '@/db/mbhr'
 import { useGam } from '@/stores/gamification'
+import { useAuthStore } from '@/stores/auth'
+import { can } from '@/auth/roles'
+import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 type Delta = Record<string, number>
 
 export default function RestockGame() {
+  const { currentUser } = useAuthStore()
   const { addTokens, ensureWallet, wallet } = useGam()
   const [items, setItems] = useState<any[]>([])
   const [deltas, setDeltas] = useState<Delta>({})
   const [tokens, setTokens] = useState(0)
+
+  // Only admins can access the restock game
+  if (!currentUser || !can(currentUser.role, 'inventory')) {
+    return (
+      <div className="p-4 space-y-6">
+        <div className="flex items-center space-x-3">
+          <h2 className="text-2xl font-bold text-gray-900">Restock Game</h2>
+          <span className="text-sm text-gray-600">(Non-medical supplies)</span>
+        </div>
+        
+        <div className="text-center py-12">
+          <ExclamationTriangleIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Access Restricted</h3>
+          <p className="text-gray-600">Only administrators can access the restock game.</p>
+          <p className="text-sm text-gray-500 mt-2">
+            This feature allows direct inventory modifications and requires admin privileges.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   useEffect(() => {
     mbhrDb.inventory_nm.orderBy('itemName').toArray().then(setItems)
