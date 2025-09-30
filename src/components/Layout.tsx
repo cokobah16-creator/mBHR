@@ -231,7 +231,7 @@ export function Layout({ children }: LayoutProps) {
                         type="button"
                         onClick={() => setOverlay("pharmacy")}
                         className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target text-left ${
-                          overlay === "pharmacy"
+                          overlay === "pharmacy" && location.pathname.startsWith('/rx/')
                             ? 'bg-primary text-white'
                             : 'text-gray-700 hover:bg-gray-100'
                         }`}
