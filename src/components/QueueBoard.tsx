@@ -1,22 +1,29 @@
 import React, { useEffect } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '@/db/mbhr'
 import { useQueue } from '@/stores/queue'
 import { usePatientsStore } from '@/stores/patients'
-import { QueueItem } from '@/db'
 import { 
-  UserPlusIcon, 
-  HeartIcon, 
-  DocumentTextIcon, 
-  BeakerIcon,
+  QueueListIcon, 
+  PlayIcon, 
+  CheckIcon, 
   ClockIcon,
-  PlayIcon,
-  CheckIcon
+  UserIcon
 } from '@heroicons/react/24/outline'
 
+// tiny helpers
+const asArray = <T,>(v: T[] | undefined | null): T[] => (Array.isArray(v) ? v : [])
+const shortTicket = (n?: string) => {
+  if (!n) return '—'
+  const parts = String(n).split('-')
+  return parts.length > 1 ? parts[1] : n
+}
+
 const stageIcons = {
-  registration: UserPlusIcon,
-  vitals: HeartIcon,
-  consult: DocumentTextIcon,
-  pharmacy: BeakerIcon
+  registration: UserIcon,
+  vitals: ClockIcon,
+  consult: QueueListIcon,
+  pharmacy: CheckIcon
 }
 
 const stageColors = {
@@ -33,22 +40,45 @@ const statusColors = {
 }
 
 interface QueueBoardProps {
-  stage?: QueueItem['stage']
+  stage?: 'registration' | 'vitals' | 'consult' | 'pharmacy'
   compact?: boolean
 }
 
 export function QueueBoard({ stage, compact = false }: QueueBoardProps) {
-  const { queueItems, loadQueue, updateQueueStatus, moveToNextStage } = useQueue()
+  const { updateQueueStatus, moveToNextStage } = useQueue()
   const { patients, loadPatients } = usePatientsStore()
 
   useEffect(() => {
-    loadQueue()
     loadPatients()
   }, [])
 
+  // ✅ give useLiveQuery an initial value so it never returns undefined
+  const allTicketsQ = useLiveQuery(
+    () => db.tickets.toArray(),
+    [],
+    [] as any[]
+  )
+
+  const stageTicketsQ = useLiveQuery(
+    () => stage 
+      ? db.tickets.where('currentStage').equals(stage).toArray()
+      : db.tickets.toArray(),
+    [stage],
+    [] as any[]
+  )
+
+  // ✅ always coerce to an array
+  const allTickets = asArray(allTicketsQ)
+  const stageTickets = asArray(stageTicketsQ)
+
   const filteredItems = stage 
-    ? queueItems.filter(item => item.stage === stage && item.status !== 'done')
-    : queueItems
+    ? stageTickets.filter(item => item.status !== 'done')
+    : allTickets
+
+  // derived sets
+  const waiting = stageTickets.filter(t => t.state === 'waiting')
+  const inProgress = stageTickets.find(t => t.state === 'in_progress') ?? null
+  const doneToday = stageTickets.filter(t => t.state === 'done')
 
   const handleStartPatient = async (patientId: string) => {
     await updateQueueStatus(patientId, 'in_progress')
@@ -75,7 +105,7 @@ export function QueueBoard({ stage, compact = false }: QueueBoardProps) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {(['registration', 'vitals', 'consult', 'pharmacy'] as const).map((stageName) => {
-          const stageItems = queueItems.filter(item => item.stage === stageName && item.status !== 'done')
+          const stageItems = allTickets.filter(item => item.currentStage === stageName && item.state !== 'done')
           const Icon = stageIcons[stageName]
           
           return (
@@ -86,7 +116,7 @@ export function QueueBoard({ stage, compact = false }: QueueBoardProps) {
               </div>
               <p className="text-2xl font-bold">{stageItems.length}</p>
               <p className="text-sm opacity-75">
-                {stageItems.filter(item => item.status === 'in_progress').length} active
+                {stageItems.filter(item => item.state === 'in_progress').length} active
               </p>
             </div>
           )
@@ -97,100 +127,89 @@ export function QueueBoard({ stage, compact = false }: QueueBoardProps) {
 
   return (
     <div className="space-y-4">
-      {filteredItems.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <ClockIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p>No patients in queue</p>
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <Stat label="Waiting" value={waiting.length} />
+        <Stat label="In progress" value={inProgress ? 1 : 0} />
+        <Stat label="Done today" value={doneToday.length} />
+      </div>
+
+      {/* In-progress card – all fields guarded */}
+      {inProgress ? (
+        <div className="flex items-center space-x-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <div className="w-12 h-12 bg-yellow-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
+            {shortTicket(inProgress?.number)}
+          </div>
+          <div>
+            <div className="text-xl font-bold text-gray-900">{inProgress?.number ?? '—'}</div>
+            <div className="text-sm text-gray-600 capitalize">
+              {(inProgress?.category ?? '—')} • {(inProgress?.priority ?? '—')} priority
+            </div>
+          </div>
         </div>
       ) : (
-        filteredItems.map((item) => {
-          const patient = item.patient
-          if (!patient) return null
+        <div className="text-center py-8 text-gray-500">
+          <ClockIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          <p>No patient currently being served</p>
+        </div>
+      )}
 
-          const Icon = stageIcons[item.stage]
-          
-          return (
-            <div
-              key={item.id}
-              className={`card border-l-4 ${
-                item.status === 'in_progress' 
-                  ? 'border-l-yellow-500 bg-yellow-50' 
-                  : item.status === 'done'
-                  ? 'border-l-green-500 bg-green-50'
-                  : 'border-l-gray-300'
+      {/* Waiting list – uses safe array */}
+      <TicketList title="Waiting Queue" items={waiting} />
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="bg-white rounded-lg shadow-sm p-6">
+      <div className="text-sm font-medium text-gray-500">{label}</div>
+      <div className="text-2xl font-bold text-gray-900">{value}</div>
+    </div>
+  )
+}
+
+function TicketList({ title, items }: { title: string; items: any[] }) {
+  return (
+    <div className="card">
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">{title} ({items.length})</h3>
+      
+      {items.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          <p>No patients waiting</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {items.slice(0, 10).map((ticket, index) => (
+            <div 
+              key={ticket.id} 
+              className={`flex items-center justify-between p-3 border rounded-lg ${
+                index === 0 ? 'border-green-200 bg-green-50' : 'border-gray-200'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  {/* Patient Photo */}
-                  <div className="flex-shrink-0">
-                    {patient.photoUrl ? (
-                      <img
-                        src={patient.photoUrl}
-                        alt={`${patient.givenName} ${patient.familyName}`}
-                        className="w-12 h-12 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center">
-                        <span className="text-lg font-medium text-gray-600">
-                          {patient.givenName[0]}{patient.familyName[0]}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Patient Info */}
-                  <div className="flex-1">
-                    <h3 className="text-lg font-medium text-gray-900">
-                      {patient.givenName} {patient.familyName}
-                    </h3>
-                    <div className="flex items-center space-x-4 text-sm text-gray-600">
-                      <span>Age: {getPatientAge(patient.dob)}</span>
-                      <span>•</span>
-                      <span>{patient.sex}</span>
-                      <span>•</span>
-                      <span>{patient.phone}</span>
-                    </div>
-                  </div>
-
-                  {/* Stage Info */}
-                  <div className="flex items-center space-x-2">
-                    <Icon className="h-5 w-5 text-gray-600" />
-                    <div className="text-right">
-                      <p className="text-sm font-medium capitalize">{item.stage}</p>
-                      <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${statusColors[item.status]}`}>
-                        {item.status.replace('_', ' ')}
-                      </span>
-                    </div>
-                  </div>
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
+                  {index + 1}
                 </div>
-
-                {/* Action Buttons */}
-                <div className="flex space-x-2 ml-4">
-                  {item.status === 'waiting' && (
-                    <button
-                      onClick={() => handleStartPatient(patient.id)}
-                      className="flex items-center space-x-1 bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors touch-target"
-                    >
-                      <PlayIcon className="h-4 w-4" />
-                      <span>Start</span>
-                    </button>
-                  )}
-                  
-                  {item.status === 'in_progress' && (
-                    <button
-                      onClick={() => handleCompletePatient(patient.id)}
-                      className="flex items-center space-x-1 bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition-colors touch-target"
-                    >
-                      <CheckIcon className="h-4 w-4" />
-                      <span>Complete</span>
-                    </button>
-                  )}
+                <div>
+                  <div className="font-medium text-gray-900">{ticket.number ?? '—'}</div>
+                  <div className="text-sm text-gray-600 capitalize">
+                    {ticket.category ?? '—'} • {ticket.priority ?? '—'} priority
+                  </div>
                 </div>
               </div>
+              <div className="text-sm text-gray-500">
+                {index === 0 ? 'Next' : `Position ${index + 1}`}
+              </div>
             </div>
-          )
-        })
+          ))}
+          
+          {items.length > 10 && (
+            <div className="text-center text-sm text-gray-500 py-2">
+              ... and {items.length - 10} more patients
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
