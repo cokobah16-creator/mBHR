@@ -12,20 +12,23 @@ import {
 
 const STAGES: Array<'registration'|'vitals'|'consult'|'pharmacy'> = ['registration', 'vitals', 'consult', 'pharmacy']
 
+// Helper to ensure we always have an array
+const asArray = <T,>(v: T[] | undefined | null): T[] => (Array.isArray(v) ? v : [])
+
 export default function QueueBoard() {
   const { callNext, completeCurrent, estimateTailMinutes, issueTicket } = useQueue()
   const [metrics, setMetrics] = useState<any[]>([])
   const [selectedStage, setSelectedStage] = useState<'registration'|'vitals'|'consult'|'pharmacy'>('vitals')
   const [etaTail, setEtaTail] = useState(0)
 
-  // Use live queries with defensive defaults to prevent undefined.length errors
-  const allTickets = useLiveQuery(
+  // Use live queries with defensive defaults - always provide empty array as fallback
+  const allTicketsQ = useLiveQuery(
     () => mbhrDb.tickets.toArray(),
     [],
-    [] as any[] // default empty array
+    [] as any[]
   )
 
-  const stageTickets = useLiveQuery(
+  const stageTicketsQ = useLiveQuery(
     () => mbhrDb.tickets
       .where('currentStage')
       .equals(selectedStage)
@@ -33,6 +36,10 @@ export default function QueueBoard() {
     [selectedStage],
     [] as any[]
   )
+
+  // Convert to safe arrays before any operations
+  const allTickets = asArray(allTicketsQ)
+  const stageTickets = asArray(stageTicketsQ)
 
   useEffect(() => {
     loadMetrics()
@@ -57,12 +64,9 @@ export default function QueueBoard() {
     }
   }
 
-  // Safe array access with defaults
-  const tickets = Array.isArray(allTickets) ? allTickets : []
-  const currentStageTickets = Array.isArray(stageTickets) ? stageTickets : []
-  
-  const waiting = currentStageTickets.filter(t => t.state === 'waiting')
-  const inProgress = currentStageTickets.find(t => t.state === 'in_progress')
+  // Now safe to use .filter, .find, .length
+  const waiting = stageTickets.filter(t => t.state === 'waiting')
+  const inProgress = stageTickets.find(t => t.state === 'in_progress')
 
   const handleCallNext = async () => {
     const next = await callNext(selectedStage)
@@ -129,7 +133,7 @@ export default function QueueBoard() {
       {/* Stage Selector */}
       <div className="flex space-x-2 overflow-x-auto">
         {STAGES.map(stage => {
-          const stageCount = tickets.filter(t => t.currentStage === stage && t.state !== 'done').length
+          const stageCount = allTickets.filter(t => t.currentStage === stage && t.state !== 'done').length
           return (
             <button
               key={stage}
@@ -184,7 +188,7 @@ export default function QueueBoard() {
           <CheckIcon className="h-5 w-5" />
           <span>Complete Current</span>
         </button>
-        {tickets.length === 0 && (
+        {allTickets.length === 0 && (
           <button 
             className="btn-secondary flex items-center space-x-2" 
             onClick={generateDemoTickets}
