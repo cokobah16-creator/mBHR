@@ -33,7 +33,7 @@ export interface Patient {
   givenName: string
   familyName: string
   sex: 'male' | 'female' | 'other'
-  dob: Date
+  dob: string
   phone: string
   address: string
   state: string
@@ -120,6 +120,9 @@ export interface AuditLog {
   at: Date
 }
 
+// Database name - bumped to avoid incompatible older store
+export const DB_NAME = 'mbhr_v3'
+
 // Database class
 export class MBHRDatabase extends Dexie {
   users!: Table<User>
@@ -135,55 +138,21 @@ export class MBHRDatabase extends Dexie {
   auditLogs!: Table<AuditLog>
 
   constructor() {
-    super('MBHRDatabase')
+    super(DB_NAME)
     
+    // v1 — KEEP SAME PK 'id' everywhere; add only secondary indexes in future versions
     this.version(1).stores({
-      users: 'id, role, email, phone, isActive',
-      sessions: 'id, userId, deviceKey',
-      settings: 'key',
-      patients: 'id, givenName, familyName, phone, familyId',
-      vitals: 'id, patientId, visitId, takenAt',
-      consultations: 'id, patientId, visitId, createdAt',
-      dispenses: 'id, patientId, visitId, dispensedAt',
-      inventory: 'id, itemName',
-      visits: 'id, patientId, status',
-      queue: 'id, patientId, stage, status, position',
-      auditLogs: 'id, actorRole, entity, at'
-    })
-
-    // Version 2 migration scaffold
-    this.version(2).stores({
-      users: 'id, role, email, phone, isActive',
-      sessions: 'id, userId, deviceKey',
-      settings: 'key',
-      patients: 'id, givenName, familyName, phone, familyId',
-      vitals: 'id, patientId, visitId, takenAt',
-      consultations: 'id, patientId, visitId, createdAt',
-      dispenses: 'id, patientId, visitId, dispensedAt',
-      inventory: 'id, itemName',
-      visits: 'id, patientId, status',
-      queue: 'id, patientId, stage, status, position',
-      auditLogs: 'id, actorRole, entity, at'
-    }).upgrade(tx => {
-      // Future migration logic here
-      console.log('Upgrading to version 2')
-    })
-
-    // Version 3 - Fix schema conflicts
-    this.version(3).stores({
-      users: 'id, role, email, phone, isActive',
-      sessions: 'id, userId, deviceKey',
-      settings: 'key',
-      patients: 'id, givenName, familyName, phone, familyId',
-      vitals: 'id, patientId, visitId, takenAt',
-      consultations: 'id, patientId, visitId, createdAt',
-      dispenses: 'id, patientId, visitId, dispensedAt',
-      inventory: 'id, itemName',
-      visits: 'id, patientId, status',
-      queue: 'id, patientId, stage, status, position',
-      auditLogs: 'id, actorRole, entity, at'
-    }).upgrade(tx => {
-      console.log('Upgrading to version 3 - resolving schema conflicts')
+      patients:      'id, familyName, phone, state, lga, createdAt, updatedAt',
+      vitals:        'id, patientId, visitId, takenAt, systolic, diastolic',
+      consultations: 'id, patientId, visitId, createdAt, providerName',
+      dispenses:     'id, patientId, visitId, dispensedAt, itemName',
+      inventory:     'id, itemName, updatedAt, onHandQty',
+      visits:        'id, patientId, startedAt, status, siteName',
+      queue:         'id, patientId, stage, position, status, updatedAt',
+      auditLogs:     'id, actorRole, entity, entityId, at',
+      users:         'id, fullName, role, email, isActive, createdAt, updatedAt',
+      sessions:      'id, userId, createdAt, lastSeenAt',
+      settings:      'key'
     })
   }
 }
