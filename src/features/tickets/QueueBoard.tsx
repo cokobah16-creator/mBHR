@@ -69,8 +69,6 @@ export default function QueueBoard() {
     await completeCurrent(selectedStage, 240) // 4 minutes default
     await loadData()
   }
-    
-
 
   const getStageColor = (stage: string) => {
     switch (stage) {
