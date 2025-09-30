@@ -60,6 +60,7 @@ export function Layout({ children }: LayoutProps) {
     { name: t('nav.patients'), href: '/patients', icon: UserGroupIcon },
     { name: t('nav.queue'), href: '/queue', icon: QueueListIcon },
     { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
+    { name: 'Pharmacy', href: '/pharmacy', icon: BeakerIcon },
     { name: 'Game Hub', href: '/games', icon: TrophyIcon },
     { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
     { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
@@ -75,22 +76,6 @@ export function Layout({ children }: LayoutProps) {
     ] : [])
   ]
 
-  // Pharmacy navigation items
-  const pharmacyNavigation: NavItem[] = [
-    { name: 'Pharmacy Stock', href: '/rx/stock', icon: BeakerIcon },
-    { name: 'New Prescription', href: '/rx/new', icon: ClipboardDocumentListIcon },
-    { name: 'Dispense', href: '/rx/dispense', icon: PlusIcon }
-  ]
-
-  // Check if any pharmacy route is active
-  const isPharmacyRouteActive = pharmacyNavigation.some(item => location.pathname === item.href)
-  
-  // Auto-expand pharmacy menu if on a pharmacy page
-  React.useEffect(() => {
-    if (isPharmacyRouteActive) {
-      setPharmacyExpanded(true)
-    }
-  }, [isPharmacyRouteActive])
   const handleLogout = async () => {
     await logout()
   }
@@ -159,39 +144,6 @@ export function Layout({ children }: LayoutProps) {
                       }`}
                     >
                       <item.icon className="h-5 w-5" />
-                      <span className="font-medium">{item.name}</span>
-                    </Link>
-                  </li>
-                )
-              })}
-              
-              {/* Pharmacy Section */}
-              <li className="pt-4">
-                <div className="px-4 py-2">
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Pharmacy
-                  </h3>
-                </div>
-              </li>
-              {pharmacyNavigation.map((item) => {
-                const isActive = location.pathname === item.href
-                const Icon = (item.icon ?? FallbackIcon) as ElementType
-                
-                if (process.env.NODE_ENV !== 'production' && !item.icon) {
-                  console.warn(`[Layout] Missing icon for nav item "${item.name}"`)
-                }
-                
-                return (
-                  <li key={item.name}>
-                    <Link
-                      to={item.href}
-                      className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target ${
-                        isActive
-                          ? 'bg-primary text-white'
-                          : 'text-gray-700 hover:bg-gray-100'
-                      }`}
-                    >
-                      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                       <span className="font-medium">{item.name}</span>
                     </Link>
                   </li>

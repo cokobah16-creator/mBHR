@@ -35,6 +35,10 @@ import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard'
 import ApprovalInbox from '@/features/gamification/ApprovalInbox'
 import { SimpleRegister } from '@/pages/SimpleRegister'
 
+// Pharmacy menu components
+const PharmacyMenu = lazy(() => import('@/pages/PharmacyMenu'))
+const PharmacyReports = lazy(() => import('@/pages/PharmacyReports'))
+
 // Lazy load game components with default exports
 const TriageSprint = lazy(() => import('@/features/triage/TriageSprint'))
 const VitalsPrecisionGame = lazy(() => import('@/features/vitals/VitalsPrecisionGame'))
@@ -169,6 +173,12 @@ function App() {
                       </RequireRoles>
                     } />
                     <Route path="/simple/register" element={<SimpleRegister />} />
+                    <Route path="/pharmacy" element={<PharmacyMenu />} />
+                    <Route path="/pharmacy/reports" element={
+                      <RequireRoles roles={['pharmacist', 'admin']}>
+                        <PharmacyReports />
+                      </RequireRoles>
+                    } />
                     <Route path="/pharmacy/enhanced/:visitId" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
                         <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
