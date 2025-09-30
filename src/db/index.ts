@@ -5,11 +5,13 @@ import { ulid } from 'ulid'
 export interface User {
   id: string
   fullName: string
-  role: 'admin' | 'doctor' | 'nurse' | 'pharmacist' | 'volunteer'
+  role: 'admin' | 'doctor' | 'nurse' | 'pharmacist' | 'volunteer' | 'guest'
   email?: string
   phone?: string
   pinHash: string
   pinSalt: string
+  adminAccess?: boolean
+  adminPermanent?: boolean
   createdAt: Date
   updatedAt: Date
   isActive: 0 | 1
@@ -224,6 +226,33 @@ export class MBHRDatabase extends Dexie {
       await tx.table('users').toCollection().modify(user => {
         if (typeof (user as any).isActive === 'boolean') {
           (user as any).isActive = (user as any).isActive ? 1 : 0
+        }
+      })
+    })
+
+    // v5 — Add adminAccess and adminPermanent fields for Supabase integration
+    this.version(5).stores({
+      patients:      'id, familyName, phone, state, lga, createdAt, updatedAt, _dirty, _syncedAt',
+      vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
+      consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
+      dispenses:     'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt',
+      inventory:     'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+      visits:        'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+      queue:         'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
+      auditLogs:     'id, actorRole, entity, entityId, at',
+      users:         'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
+      sessions:      'id, userId, createdAt, lastSeenAt',
+      settings:      'key'
+    }).upgrade(async tx => {
+      // Set default values for new adminAccess and adminPermanent fields
+      await tx.table('users').toCollection().modify(user => {
+        if (typeof (user as any).adminAccess === 'undefined') {
+          // Set adminAccess based on role - admins get true, others get false
+          (user as any).adminAccess = (user as any).role === 'admin'
+        }
+        if (typeof (user as any).adminPermanent === 'undefined') {
+          // Default to false for all users (can be manually set later)
+          (user as any).adminPermanent = false
         }
       })
     })
