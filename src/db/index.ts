@@ -154,7 +154,7 @@ export class MBHRDatabase extends Dexie {
   constructor() {
     super(DB_NAME)
     
-    // v1 — KEEP SAME PK 'id' everywhere; add only secondary indexes in future versions
+    // v1 — Initial schema with stable PKs
     this.version(1).stores({
       patients:      'id, familyName, phone, state, lga, createdAt, updatedAt',
       vitals:        'id, patientId, visitId, takenAt, systolic, diastolic',
@@ -163,6 +163,21 @@ export class MBHRDatabase extends Dexie {
       inventory:     'id, itemName, updatedAt, onHandQty',
       visits:        'id, patientId, startedAt, status, siteName',
       queue:         'id, patientId, stage, position, status, updatedAt',
+      auditLogs:     'id, actorRole, entity, entityId, at',
+      users:         'id, fullName, role, email, isActive, createdAt, updatedAt',
+      sessions:      'id, userId, createdAt, lastSeenAt',
+      settings:      'key'
+    })
+
+    // v2 — Add sync indexes for _dirty and _syncedAt
+    this.version(2).stores({
+      patients:      'id, familyName, phone, state, lga, createdAt, updatedAt, _dirty, _syncedAt',
+      vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
+      consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
+      dispenses:     'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt',
+      inventory:     'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+      visits:        'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+      queue:         'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
       auditLogs:     'id, actorRole, entity, entityId, at',
       users:         'id, fullName, role, email, isActive, createdAt, updatedAt',
       sessions:      'id, userId, createdAt, lastSeenAt',
