@@ -1,5 +1,6 @@
 import { db, User, generateId } from './index'
 import { derivePinHash, newSaltB64 } from '@/utils/pin'
+import { epochDay, bumpDailyCount } from './index'
 
 // Sample inventory items for seeding
 const INVENTORY_ITEMS = [
@@ -150,6 +151,36 @@ export async function seed() {
       }
       
       console.log('✅ Vitals ranges created:', vitalsRanges.length)
+    }
+    
+    // Seed daily counts for the last 7 days
+    const dailyCountsCount = await db.dailyCounts.count()
+    if (dailyCountsCount === 0) {
+      console.log('📊 Creating demo daily counts...')
+      
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date()
+        date.setDate(date.getDate() - i)
+        const day = epochDay(date)
+        
+        // Generate realistic demo data
+        const registrations = Math.floor(Math.random() * 20) + 10 // 10-30 registrations
+        const vitals = Math.floor(registrations * 0.8) // 80% get vitals
+        const consultations = Math.floor(vitals * 0.9) // 90% of vitals get consults
+        const dispenses = Math.floor(consultations * 0.7) // 70% get medications
+        const visits = registrations // Same as registrations
+        
+        await db.dailyCounts.add({
+          day,
+          registrations,
+          vitals,
+          consultations,
+          dispenses,
+          visits
+        })
+      }
+      
+      console.log('✅ Daily counts seeded for last 7 days')
     }
     
     console.log('✅ Database seeded successfully')

@@ -4,6 +4,8 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useTranslation } from 'react-i18next'
 import { usePatientsStore } from '@/stores/patients'
+import { PatientDedupeModal } from '@/components/PatientDedupeModal'
+import { AudioButton } from '@/components/AudioButton'
 import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG, validatePhoneNG } from '@/utils/nigeria'
 import { CameraIcon, UserIcon } from '@heroicons/react/24/outline'
 
@@ -32,6 +34,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const [loading, setLoading] = useState(false)
   const [photo, setPhoto] = useState<string | null>(null)
   const [selectedState, setSelectedState] = useState('')
+  const [showDedupeModal, setShowDedupeModal] = useState(false)
+  const [dedupeData, setDedupeData] = useState<{ patient: any; candidates: any[] } | null>(null)
 
   const {
     register,
@@ -91,23 +95,59 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     try {
       const formattedPhone = formatPhoneNG(data.phone)
       console.log('PatientForm: Formatted phone:', formattedPhone)
-      const patientId = await addPatient({
+      
+      const patientData = {
         ...data,
         phone: formattedPhone,
         photoUrl: photo || undefined
-      })
+      }
+      
+      const patientId = await addPatient(patientData)
       
       console.log('PatientForm: Patient created with ID:', patientId)
       onSuccess?.(patientId)
     } catch (error) {
       console.error('Error adding patient:', error)
-      alert('Failed to register patient: ' + error.message)
+      
+      // Check if it's a duplicate error
+      if (error.message.startsWith('DUPLICATES_FOUND:')) {
+        const duplicateData = JSON.parse(error.message.replace('DUPLICATES_FOUND:', ''))
+        setDedupeData(duplicateData)
+        setShowDedupeModal(true)
+      } else {
+        alert('Failed to register patient: ' + error.message)
+      }
     } finally {
       setLoading(false)
     }
   }
 
+  const handleDedupeResolve = async (action: 'merge' | 'create_new', winnerId?: string) => {
+    setShowDedupeModal(false)
+    
+    if (action === 'create_new' && dedupeData) {
+      // Force create new patient (bypass duplicate check)
+      try {
+        const patientId = await addPatient({
+          ...dedupeData.patient,
+          photoUrl: photo || undefined,
+          // Add a suffix to make it unique
+          givenName: dedupeData.patient.givenName + ' (New)'
+        })
+        onSuccess?.(patientId)
+      } catch (error) {
+        console.error('Error creating new patient:', error)
+        alert('Failed to create new patient')
+      }
+    } else if (action === 'merge' && winnerId) {
+      // Use existing patient
+      onSuccess?.(winnerId)
+    }
+    
+    setDedupeData(null)
+  }
   return (
+    <>
     <div className="max-w-2xl mx-auto">
       <div className="card">
         <div className="flex items-center space-x-3 mb-6">
@@ -304,25 +344,44 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
           {/* Action Buttons */}
           <div className="flex space-x-4 pt-6">
-            <button
+            <AudioButton
+              audioKey="action.register"
+              fallbackText="Register Patient"
               type="submit"
               disabled={loading}
               className="btn-primary flex-1"
             >
               {loading ? 'Registering...' : 'Register Patient'}
-            </button>
+            </AudioButton>
             {onCancel && (
-              <button
+              <AudioButton
+                audioKey="action.cancel"
+                fallbackText="Cancel"
                 type="button"
                 onClick={onCancel}
                 className="btn-secondary flex-1"
               >
                 Cancel
-              </button>
+              </AudioButton>
             )}
           </div>
         </form>
       </div>
     </div>
+    
+    {/* Dedupe Modal */}
+    {showDedupeModal && dedupeData && (
+      <PatientDedupeModal
+        newPatient={dedupeData.patient}
+        candidates={dedupeData.candidates}
+        onResolve={handleDedupeResolve}
+        onCancel={() => {
+          setShowDedupeModal(false)
+          setDedupeData(null)
+          setLoading(false)
+        }}
+      />
+    )}
+    </>
   )
 }

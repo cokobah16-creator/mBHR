@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { db, Patient, Visit, QueueItem, generateId, createAuditLog } from '@/db'
+import { db, Patient, Visit, QueueItem, generateId, createAuditLog, createPatientDraft, epochDay, bumpDailyCount } from '@/db'
 
 interface PatientsState {
   patients: Patient[]
@@ -14,6 +14,7 @@ interface PatientsState {
   setCurrentPatient: (patient: Patient | null) => void
   setSearchQuery: (query: string) => void
   startVisit: (patientId: string, siteName: string) => Promise<string>
+  checkForDuplicates: (patientData: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>) => Promise<{ patient: Patient; candidates: Patient[] }>
 }
 
 export const usePatientsStore = create<PatientsState>((set, get) => ({
@@ -54,16 +55,33 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
 
   addPatient: async (patientData) => {
     try {
+      // Check for duplicates first
+      const { rec, candidates } = await createPatientDraft({
+        givenName: patientData.givenName,
+        familyName: patientData.familyName,
+        phone: patientData.phone,
+        dob: new Date(patientData.dob),
+        sex: patientData.sex,
+        address: patientData.address,
+        state: patientData.state,
+        lga: patientData.lga
+      })
+      
+      // If duplicates found, return for user resolution
+      if (candidates.length > 0) {
+        throw new Error(`DUPLICATES_FOUND:${JSON.stringify({ patient: rec, candidates })}`)
+      }
+      
       const patient: Patient = {
-        ...patientData,
-        id: generateId(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        _dirty: 1
+        ...rec,
+        photoUrl: patientData.photoUrl
       }
       
       await db.patients.add(patient)
       console.log('Patient added to database:', patient)
+      
+      // Bump daily count
+      await bumpDailyCount(epochDay(new Date()), 'registrations')
       
       // Add to queue for registration
       const queueItem: QueueItem = {
@@ -133,5 +151,18 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       console.error('Error starting visit:', error)
       throw error
     }
+  }
+
+  checkForDuplicates: async (patientData) => {
+    return createPatientDraft({
+      givenName: patientData.givenName,
+      familyName: patientData.familyName,
+      phone: patientData.phone,
+      dob: new Date(patientData.dob),
+      sex: patientData.sex,
+      address: patientData.address,
+      state: patientData.state,
+      lga: patientData.lga
+    })
   }
 }))

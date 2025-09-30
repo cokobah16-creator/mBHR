@@ -3,9 +3,11 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useTranslation } from 'react-i18next'
-import { db, generateId, createAuditLog } from '@/db'
+import { db, generateId, createAuditLog, bumpDailyCount, epochDay } from '@/db'
 import { calculateBMI, flagVitals, getFlagColor, getFlagLabel } from '@/utils/vitals'
 import { useAuthStore } from '@/stores/auth'
+import { EnhancedVitalsInput } from '@/components/EnhancedVitalsInput'
+import { AudioButton } from '@/components/AudioButton'
 import { HeartIcon } from '@heroicons/react/24/outline'
 
 const vitalsSchema = z.object({
@@ -33,17 +35,24 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
   const [loading, setLoading] = useState(false)
   const [bmi, setBmi] = useState<number | null>(null)
   const [flags, setFlags] = useState<string[]>([])
+  const [patient, setPatient] = useState<any>(null)
 
   const {
     register,
     handleSubmit,
     watch,
+    control,
     formState: { errors }
   } = useForm<VitalsFormData>({
     resolver: zodResolver(vitalsSchema)
   })
 
   const watchedValues = watch()
+
+  useEffect(() => {
+    // Load patient data for age/sex context
+    db.patients.get(patientId).then(setPatient)
+  }, [patientId])
 
   // Calculate BMI and flags when height/weight change
   useEffect(() => {
@@ -90,6 +99,9 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
         vital.id
       )
 
+      // Bump daily count
+      await bumpDailyCount(epochDay(new Date()), 'vitals')
+
       onSuccess?.()
     } catch (error) {
       console.error('Error saving vitals:', error)
@@ -98,6 +110,32 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
     }
   }
 
+  const getPatientAge = (dob: string) => {
+    const birthDate = new Date(dob)
+    const today = new Date()
+    let age = today.getFullYear() - birthDate.getFullYear()
+    const monthDiff = today.getMonth() - birthDate.getMonth()
+    
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--
+    }
+    
+    return age
+  }
+
+  if (!patient) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading patient...</p>
+        </div>
+      </div>
+    )
+  }
+
+  const patientAge = getPatientAge(patient.dob)
+  const patientSex = patient.sex === 'male' ? 'M' : patient.sex === 'female' ? 'F' : 'U'
   return (
     <div className="max-w-2xl mx-auto">
       <div className="card">
@@ -106,42 +144,34 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
           <h2 className="text-2xl font-bold text-gray-900">
             Record Vital Signs
           </h2>
+          <div className="text-sm text-gray-600">
+            Age: {patientAge} • {patient.sex}
+          </div>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* Height and Weight */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                {t('vitals.height')}
-              </label>
-              <input
-                {...register('heightCm', { valueAsNumber: true })}
-                type="number"
-                step="0.1"
-                className="input-field"
-                placeholder="170"
-              />
-              {errors.heightCm && (
-                <p className="text-red-600 text-sm mt-1">{errors.heightCm.message}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                {t('vitals.weight')}
-              </label>
-              <input
-                {...register('weightKg', { valueAsNumber: true })}
-                type="number"
-                step="0.1"
-                className="input-field"
-                placeholder="70"
-              />
-              {errors.weightKg && (
-                <p className="text-red-600 text-sm mt-1">{errors.weightKg.message}</p>
-              )}
-            </div>
+            <EnhancedVitalsInput
+              name="heightCm"
+              label={t('vitals.height')}
+              unit="cm"
+              metric="hr"
+              patientAge={patientAge}
+              patientSex={patientSex}
+              placeholder="170"
+              step={0.1}
+            />
+            <EnhancedVitalsInput
+              name="weightKg"
+              label={t('vitals.weight')}
+              unit="kg"
+              metric="hr"
+              patientAge={patientAge}
+              patientSex={patientSex}
+              placeholder="70"
+              step={0.1}
+            />
           </div>
 
           {/* BMI Display */}
@@ -155,36 +185,25 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
 
           {/* Temperature and Pulse */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                {t('vitals.temperature')}
-              </label>
-              <input
-                {...register('tempC', { valueAsNumber: true })}
-                type="number"
-                step="0.1"
-                className="input-field"
-                placeholder="36.5"
-              />
-              {errors.tempC && (
-                <p className="text-red-600 text-sm mt-1">{errors.tempC.message}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                {t('vitals.pulse')}
-              </label>
-              <input
-                {...register('pulseBpm', { valueAsNumber: true })}
-                type="number"
-                className="input-field"
-                placeholder="72"
-              />
-              {errors.pulseBpm && (
-                <p className="text-red-600 text-sm mt-1">{errors.pulseBpm.message}</p>
-              )}
-            </div>
+            <EnhancedVitalsInput
+              name="tempC"
+              label={t('vitals.temperature')}
+              unit="°C"
+              metric="temp"
+              patientAge={patientAge}
+              patientSex={patientSex}
+              placeholder="36.5"
+              step={0.1}
+            />
+            <EnhancedVitalsInput
+              name="pulseBpm"
+              label={t('vitals.pulse')}
+              unit="bpm"
+              metric="hr"
+              patientAge={patientAge}
+              patientSex={patientSex}
+              placeholder="72"
+            />
           </div>
 
           {/* Blood Pressure */}
@@ -193,48 +212,37 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
               {t('vitals.bloodPressure')}
             </label>
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <input
-                  {...register('systolic', { valueAsNumber: true })}
-                  type="number"
-                  className="input-field"
-                  placeholder="120 (systolic)"
-                />
-                {errors.systolic && (
-                  <p className="text-red-600 text-sm mt-1">{errors.systolic.message}</p>
-                )}
-              </div>
-              <div>
-                <input
-                  {...register('diastolic', { valueAsNumber: true })}
-                  type="number"
-                  className="input-field"
-                  placeholder="80 (diastolic)"
-                />
-                {errors.diastolic && (
-                  <p className="text-red-600 text-sm mt-1">{errors.diastolic.message}</p>
-                )}
-              </div>
+              <EnhancedVitalsInput
+                name="systolic"
+                label="Systolic"
+                unit="mmHg"
+                metric="sbp"
+                patientAge={patientAge}
+                patientSex={patientSex}
+                placeholder="120"
+              />
+              <EnhancedVitalsInput
+                name="diastolic"
+                label="Diastolic"
+                unit="mmHg"
+                metric="dbp"
+                patientAge={patientAge}
+                patientSex={patientSex}
+                placeholder="80"
+              />
             </div>
           </div>
 
           {/* SpO2 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              SpO2 (%)
-            </label>
-            <input
-              {...register('spo2', { valueAsNumber: true })}
-              type="number"
-              min="70"
-              max="100"
-              className="input-field"
-              placeholder="98"
-            />
-            {errors.spo2 && (
-              <p className="text-red-600 text-sm mt-1">{errors.spo2.message}</p>
-            )}
-          </div>
+          <EnhancedVitalsInput
+            name="spo2"
+            label="SpO2"
+            unit="%"
+            metric="spo2"
+            patientAge={patientAge}
+            patientSex={patientSex}
+            placeholder="98"
+          />
 
           {/* Flags Display */}
           {flags.length > 0 && (
@@ -257,21 +265,25 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
 
           {/* Action Buttons */}
           <div className="flex space-x-4 pt-6">
-            <button
+            <AudioButton
+              audioKey="action.save"
+              fallbackText="Save Vitals"
               type="submit"
               disabled={loading}
               className="btn-primary flex-1"
             >
               {loading ? 'Saving...' : 'Save Vitals'}
-            </button>
+            </AudioButton>
             {onCancel && (
-              <button
+              <AudioButton
+                audioKey="action.cancel"
+                fallbackText="Cancel"
                 type="button"
                 onClick={onCancel}
                 className="btn-secondary flex-1"
               >
                 Cancel
-              </button>
+              </AudioButton>
             )}
           </div>
         </form>

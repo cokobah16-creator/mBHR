@@ -1,5 +1,6 @@
 import Dexie, { Table } from 'dexie'
 import { ulid } from 'ulid'
+import metaphone from 'metaphone'
 
 // Types
 export interface User {
@@ -136,6 +137,35 @@ export interface AuditLog {
   at: Date
 }
 
+export interface PatientMerge {
+  id: string
+  winnerId: string
+  loserId: string
+  mergedBy: string
+  createdDay: number
+  reason: string
+}
+
+export interface DailyCount {
+  day: number
+  registrations: number
+  vitals: number
+  consultations: number
+  dispenses: number
+  visits: number
+}
+
+export interface ConflictResolution {
+  id: string
+  patientId: string
+  conflictType: 'duplicate' | 'sync_conflict'
+  status: 'pending' | 'resolved' | 'ignored'
+  candidateIds: string[]
+  resolvedBy?: string
+  resolvedAt?: Date
+  resolution?: any
+}
+
 // Gamification types
 export interface GameSession {
   id: string
@@ -264,8 +294,14 @@ export interface CareTask {
   _syncedAt?: string
 }
 
+// Helper functions for date handling
+export const epochDay = (d: Date) => Math.floor(d.getTime() / 86400000)
+export const normPhone = (s: string) => s.replace(/\D/g, '')
+export const nameKeyOf = (first: string, last: string) => 
+  `${metaphone(first || '')}-${metaphone(last || '')}`
+
 // Database name - bumped to avoid incompatible older store
-export const DB_NAME = 'mbhr_v4'
+export const DB_NAME = 'mbhr_v5'
 
 // Database class
 export class MBHRDatabase extends Dexie {
@@ -291,6 +327,9 @@ export class MBHRDatabase extends Dexie {
   stockBatches!: Table<StockBatch>
   careTasks!: Table<CareTask>
   triageRecords!: Table<TriageRecord>
+  patientMerges!: Table<PatientMerge>
+  dailyCounts!: Table<DailyCount>
+  conflictResolutions!: Table<ConflictResolution>
 
   constructor() {
     super(DB_NAME)
@@ -439,6 +478,54 @@ export class MBHRDatabase extends Dexie {
         }
       })
     })
+
+    // v9 — Add dedupe and analytics tables with epochDay indexes
+    this.version(9).stores({
+      patients:      'id, familyName, phone, state, lga, createdAt, updatedAt, _dirty, _syncedAt, phoneN, nameKey, dobDay, createdDay, updatedDay, mergeInto',
+      vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
+      consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
+      dispenses:     'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt',
+      inventory:     'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+      visits:        'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+      queue:         'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
+      auditLogs:     'id, actorRole, entity, entityId, at',
+      users:         'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
+      sessions:      'id, userId, createdAt, lastSeenAt',
+      settings:      'key',
+      gameSessions:  'id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt',
+      gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
+      vitalsRanges:  'id, sex, metric, ageMin, ageMax, updatedAt',
+      quizQuestions: 'id, topic, difficulty, updatedAt',
+      triageSamples: 'id, createdAt, createdBy',
+      inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt',
+      outboundMessages: 'id, patientId, status, channel, to, createdAt, scheduledFor, _dirty, _syncedAt',
+      messageTemplates: 'key, locale, channel',
+      stockBatches: 'id, drugId, expiryDate, updatedAt, _dirty, _syncedAt',
+      careTasks: 'id, patientId, status, dueDate, createdAt, _dirty, _syncedAt',
+      patientMerges: 'id, winnerId, loserId, createdDay',
+      dailyCounts: 'day, registrations, vitals, consultations, dispenses, visits',
+      conflictResolutions: 'id, patientId, conflictType, status, resolvedAt'
+    }).upgrade(async tx => {
+      // Migrate existing patients to new schema
+      await tx.table('patients').toCollection().modify((patient: any) => {
+        if (!patient.phoneN) {
+          patient.phoneN = normPhone(patient.phone || '')
+        }
+        if (!patient.nameKey) {
+          patient.nameKey = nameKeyOf(patient.givenName || '', patient.familyName || '')
+        }
+        if (!patient.dobDay && patient.dob) {
+          patient.dobDay = epochDay(new Date(patient.dob))
+        }
+        if (!patient.createdDay && patient.createdAt) {
+          patient.createdDay = epochDay(patient.createdAt)
+        }
+        if (!patient.updatedDay && patient.updatedAt) {
+          patient.updatedDay = epochDay(patient.updatedAt)
+        }
+        patient.mergeInto = null
+      })
+    })
   }
 }
 
@@ -446,6 +533,105 @@ export const db = new MBHRDatabase()
 
 // Helper functions
 export const generateId = () => ulid()
+
+// Patient dedupe and conflict resolution
+export const createPatientDraft = async (p: {
+  givenName: string
+  familyName: string
+  phone?: string
+  dob: Date
+  sex: 'male' | 'female' | 'other'
+  address: string
+  state: string
+  lga: string
+}) => {
+  const now = new Date()
+  const dobDay = epochDay(p.dob)
+  const phoneN = normPhone(p.phone || '')
+  const nameKey = nameKeyOf(p.givenName, p.familyName)
+  
+  const rec: Patient = {
+    id: generateId(),
+    givenName: p.givenName,
+    familyName: p.familyName,
+    sex: p.sex,
+    dob: p.dob.toISOString().split('T')[0],
+    phone: p.phone || '',
+    address: p.address,
+    state: p.state,
+    lga: p.lga,
+    createdAt: now,
+    updatedAt: now,
+    _dirty: 1
+  }
+  
+  // Find potential duplicates
+  const candidates = await db.patients
+    .where('dobDay').equals(dobDay)
+    .and(x => !x.mergeInto && (
+      (phoneN && x.phoneN === phoneN) ||
+      x.nameKey === nameKey
+    ))
+    .toArray()
+  
+  return { rec, candidates }
+}
+
+// Merge patients (winner absorbs loser's data)
+export const mergePatients = async (winnerId: string, loserId: string, mergedBy: string) => {
+  await db.transaction('rw', db.patients, db.patientMerges, async () => {
+    const now = new Date()
+    const day = epochDay(now)
+    
+    // Mark loser as merged
+    await db.patients.update(loserId, {
+      mergeInto: winnerId,
+      updatedAt: now,
+      _dirty: 1
+    })
+    
+    // Record merge
+    await db.patientMerges.add({
+      id: generateId(),
+      winnerId,
+      loserId,
+      mergedBy,
+      createdDay: day,
+      reason: 'duplicate_resolution'
+    })
+    
+    // Update winner's updatedAt
+    await db.patients.update(winnerId, {
+      updatedAt: now,
+      _dirty: 1
+    })
+  })
+}
+
+// Daily count helpers
+export const bumpDailyCount = async (day: number, metric: keyof Omit<DailyCount, 'day'>) => {
+  try {
+    const existing = await db.dailyCounts.where('day').equals(day).first()
+    if (existing) {
+      await db.dailyCounts.update(existing.day, {
+        [metric]: (existing[metric] || 0) + 1
+      })
+    } else {
+      const newCount: DailyCount = {
+        day,
+        registrations: 0,
+        vitals: 0,
+        consultations: 0,
+        dispenses: 0,
+        visits: 0
+      }
+      newCount[metric] = 1
+      await db.dailyCounts.add(newCount)
+    }
+  } catch (error) {
+    console.warn('Failed to bump daily count:', error)
+  }
+}
 
 export const createAuditLog = async (
   actorRole: string,

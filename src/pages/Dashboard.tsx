@@ -4,6 +4,10 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { db } from '@/db'
 import { can } from '@/auth/roles'
+import { OfflineAnalytics } from '@/components/OfflineAnalytics'
+import { EnhancedQueueBoard } from '@/components/EnhancedQueueBoard'
+import { ExportButtons } from '@/components/ExportButtons'
+import { AudioButton } from '@/components/AudioButton'
 import { MessageOutbox } from '@/components/MessageOutbox'
 import { 
   UserPlusIcon, 
@@ -160,6 +164,15 @@ export function Dashboard() {
       {/* Message Outbox */}
       <MessageOutbox />
 
+      {/* Enhanced Analytics */}
+      <OfflineAnalytics />
+
+      {/* Enhanced Queue Overview */}
+      <EnhancedQueueBoard />
+
+      {/* Data Export */}
+      <ExportButtons />
+
       {/* Getting Started */}
       <div className="bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Getting Started</h2>
@@ -190,6 +203,33 @@ export function Dashboard() {
               <p className="font-medium text-gray-900">Manage inventory</p>
               <p className="text-sm text-gray-600">Keep track of medications and supplies</p>
             </div>
+          </div>
+        </div>
+        
+        <div className="mt-6 pt-4 border-t border-gray-200">
+          <div className="flex space-x-4">
+            <AudioButton
+              audioKey="action.register"
+              fallbackText="Register Patient"
+              onClick={() => {}}
+              className="btn-primary"
+            >
+              <Link to="/register" className="flex items-center space-x-2">
+                <UserPlusIcon className="h-5 w-5" />
+                <span>Register Patient</span>
+              </Link>
+            </AudioButton>
+            <AudioButton
+              audioKey="nav.queue"
+              fallbackText="View Queue"
+              onClick={() => {}}
+              className="btn-secondary"
+            >
+              <Link to="/queue" className="flex items-center space-x-2">
+                <QueueListIcon className="h-5 w-5" />
+                <span>View Queue</span>
+              </Link>
+            </AudioButton>
           </div>
         </div>
       </div>
