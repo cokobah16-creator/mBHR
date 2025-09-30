@@ -82,7 +82,7 @@ window.addEventListener('unhandledrejection', ev => {
     console.log('[seed] done')
   } catch (e: any) {
     console.error('[seed] failed', e)
-    alert(`Seeding failed: ${e?.message || e}`)
+    alert(\`Seeding failed: ${e?.message || e}`)
   }
 
   // Auto-sync on app boot if online sync is enabled
@@ -111,3 +111,5 @@ window.addEventListener('unhandledrejection', ev => {
     </React.StrictMode>
   )
 })()
+  }
+}
