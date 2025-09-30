@@ -62,12 +62,24 @@ function fromDB(obj:any, map:Record<string,string>) {
 
 const tables: Tbl[] = ['patients','visits','vitals','consultations','dispenses','inventory','queue']
 
+// --- Cursor helpers (per-table) ---
+const DEFAULT_TS = '1970-01-01T00:00:00.000Z'
+const CURSOR_KEY = (t: Tbl) => `sync_cursor:${t}`
+
 type Cursor = { ts: string }
-async function getCursor(): Promise<Cursor> {
-  const row = await db.settings.get('sync_cursor')
-  return row?.value ?? { ts: '1970-01-01T00:00:00Z' }
+
+async function getCursor(table: Tbl): Promise<string> {
+  // settings store shape: { key: string, value: any }
+  const row = await db.settings.get(CURSOR_KEY(table)).catch(() => undefined as any)
+  const ts = row?.value?.ts ?? row?.ts ?? row?.value ?? undefined // be liberal in what we accept
+  if (typeof ts === 'string' && ts) return ts
+  return DEFAULT_TS
 }
-async function setCursor(c: Cursor) { await db.settings.put({ key: 'sync_cursor', value: c }) }
+
+async function setCursor(table: Tbl, ts: string) {
+  const iso = new Date(ts).toISOString()
+  await db.settings.put({ key: CURSOR_KEY(table), value: { ts: iso } })
+}
 
 export async function pushChanges() {
   if (!sb) return
@@ -84,18 +96,23 @@ export async function pushChanges() {
 
 export async function pullChanges() {
   if (!sb) return
-  const cur = await getCursor()
-  let maxTs = cur.ts
   for (const t of tables) {
-    const { data, error } = await sb.from(t).select('*').gt('updated_at', cur.ts).limit(1000)
+    const since = await getCursor(t) // ALWAYS a valid ISO string
+    // If it's the default, don't send a gt filter to avoid corner cases
+    let q = sb.from(t).select('*').limit(1000)
+    if (since !== DEFAULT_TS) q = q.gt('updated_at', since)
+
+    const { data, error } = await q
     if (error) { console.warn('pull error', t, error); continue }
+
+    let maxTs = since
     for (const row of data ?? []) {
       const mapped = fromDB(row, mapFromDB[t])
       await (db as any)[t].put({ ...mapped, _dirty: 0, _syncedAt: new Date().toISOString() })
       if (row.updated_at && row.updated_at > maxTs) maxTs = row.updated_at
     }
+    await setCursor(t, maxTs)
   }
-  await setCursor({ ts: maxTs })
 }
 
 export async function syncNow() {
