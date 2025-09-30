@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { db } from '@/db/mbhr'
-import { ulid } from '@/db/mbhr'
+import React, { useEffect, useMemo, useState } from 'react'
+import { db as mbhrDb, ulid } from '@/db/mbhr'
+import { BeakerIcon } from '@heroicons/react/24/outline'
 
 type Row = {
   id: string
@@ -20,24 +20,32 @@ export default function PharmacyStockSkeleton() {
   useEffect(() => {
     let dead = false
     ;(async () => {
-      const items = await db.pharmacy_items.orderBy('medName').toArray()
-      const batches = await db.pharmacy_batches.toArray()
-      const byItem = new Map<string, {count:number; earliest?:string}>()
-      for (const b of batches) {
-        const entry = byItem.get(b.itemId) ?? { count:0 as number, earliest: undefined as string|undefined }
-        entry.count += 1
-        if (!entry.earliest || b.expiryDate < entry.earliest) entry.earliest = b.expiryDate
-        byItem.set(b.itemId, entry)
+      try {
+        const items = await mbhrDb.pharmacy_items.orderBy('medName').toArray()
+        const batches = await mbhrDb.pharmacy_batches.toArray()
+        const byItem = new Map<string, {count:number; earliest?:string}>()
+        
+        for (const b of batches) {
+          const entry = byItem.get(b.itemId) ?? { count:0 as number, earliest: undefined as string|undefined }
+          entry.count += 1
+          if (!entry.earliest || b.expiryDate < entry.earliest) entry.earliest = b.expiryDate
+          byItem.set(b.itemId, entry)
+        }
+        
+        const rows: Row[] = items.map(i => ({
+          id: i.id,
+          medName: [i.medName, i.strength].filter(Boolean).join(' '),
+          unit: i.unit,
+          onHandQty: i.onHandQty,
+          batches: byItem.get(i.id)?.count ?? 0,
+          earliestExpiry: byItem.get(i.id)?.earliest
+        }))
+        
+        if (!dead) setRows(rows)
+      } catch (error) {
+        console.error('Error loading pharmacy data:', error)
+        if (!dead) setRows([])
       }
-      const rows: Row[] = items.map(i => ({
-        id: i.id,
-        medName: [i.medName, i.strength].filter(Boolean).join(' '),
-        unit: i.unit,
-        onHandQty: i.onHandQty,
-        batches: byItem.get(i.id)?.count ?? 0,
-        earliestExpiry: byItem.get(i.id)?.earliest
-      }))
-      if (!dead) setRows(rows)
     })()
     return () => { dead = true }
   }, [])
@@ -54,16 +62,34 @@ export default function PharmacyStockSkeleton() {
     const strength = String(fd.get('strength')||'').trim()
     const unit = String(fd.get('unit')||'tabs')
     if (!medName) return
-    const now = new Date().toISOString()
-    const obj = { id: ulid(), medName, strength, unit, form: 'tab', onHandQty: 0, reorderThreshold: 0, updatedAt: now }
-    await db.pharmacy_items.add(obj as any)
-    setShowAdd(false)
-    // refresh
-    const all = await db.pharmacy_items.orderBy('medName').toArray()
-    setRows(all.map(i => ({
-      id: i.id, medName: [i.medName,i.strength].filter(Boolean).join(' '),
-      unit: i.unit, onHandQty: i.onHandQty, batches: 0
-    })))
+    
+    try {
+      const now = new Date().toISOString()
+      const obj = { 
+        id: ulid(), 
+        medName, 
+        strength, 
+        unit, 
+        form: 'tab', 
+        onHandQty: 0, 
+        reorderThreshold: 0, 
+        updatedAt: now 
+      }
+      await mbhrDb.pharmacy_items.add(obj as any)
+      setShowAdd(false)
+      
+      // refresh
+      const all = await mbhrDb.pharmacy_items.orderBy('medName').toArray()
+      setRows(all.map(i => ({
+        id: i.id, 
+        medName: [i.medName,i.strength].filter(Boolean).join(' '),
+        unit: i.unit, 
+        onHandQty: i.onHandQty, 
+        batches: 0
+      })))
+    } catch (error) {
+      console.error('Error adding item:', error)
+    }
   }
 
   async function addBatch(itemId: string, e: React.FormEvent<HTMLFormElement>) {
@@ -73,103 +99,261 @@ export default function PharmacyStockSkeleton() {
     const qty = Number(fd.get('qty')||0)
     const expiry = String(fd.get('expiry')||'')
     if (!lotNumber || !qty || !expiry) return
-    await db.transaction('rw', db.pharmacy_batches, db.pharmacy_items, async () => {
-      await db.pharmacy_batches.add({
-        id: ulid(), itemId, lotNumber, qtyOnHand: qty,
-        expiryDate: expiry, receivedAt: new Date().toISOString()
-      } as any)
-      const item = await db.pharmacy_items.get(itemId)
-      if (item) await db.pharmacy_items.update(itemId, { onHandQty: (item.onHandQty||0)+qty, updatedAt: new Date().toISOString() })
-    })
-    setShowBatch(null)
-    // soft refresh
-    const items = await db.pharmacy_items.orderBy('medName').toArray()
-    setRows(prev => items.map(i => {
-      const old = prev.find(p => p.id === i.id)
-      return {
-        id: i.id,
-        medName: [i.medName,i.strength].filter(Boolean).join(' '),
-        unit: i.unit,
-        onHandQty: i.onHandQty,
-        batches: old?.batches ?? 0
-      }
-    }))
+    
+    try {
+      await mbhrDb.transaction('rw', mbhrDb.pharmacy_batches, mbhrDb.pharmacy_items, async () => {
+        await mbhrDb.pharmacy_batches.add({
+          id: ulid(), 
+          itemId, 
+          lotNumber, 
+          qtyOnHand: qty,
+          expiryDate: expiry, 
+          receivedAt: new Date().toISOString()
+        } as any)
+        
+        const item = await mbhrDb.pharmacy_items.get(itemId)
+        if (item) {
+          await mbhrDb.pharmacy_items.update(itemId, { 
+            onHandQty: (item.onHandQty||0)+qty, 
+            updatedAt: new Date().toISOString() 
+          })
+        }
+      })
+      
+      setShowBatch(null)
+      
+      // soft refresh
+      const items = await mbhrDb.pharmacy_items.orderBy('medName').toArray()
+      setRows(prev => items.map(i => {
+        const old = prev.find(p => p.id === i.id)
+        return {
+          id: i.id,
+          medName: [i.medName,i.strength].filter(Boolean).join(' '),
+          unit: i.unit,
+          onHandQty: i.onHandQty,
+          batches: old?.batches ?? 0
+        }
+      }))
+    } catch (error) {
+      console.error('Error adding batch:', error)
+    }
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Pharmacy Stock</h1>
-        <div className="flex gap-2">
-          <button className="btn btn-outline" onClick={()=>setShowAdd(true)}>Add Item</button>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center space-x-3">
+        <BeakerIcon className="h-8 w-8 text-primary" />
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Pharmacy Stock</h1>
+          <p className="text-gray-600">Manage pharmaceutical inventory and batches</p>
         </div>
       </div>
 
-      <div className="mt-4">
-        <input className="input input-bordered w-full" placeholder="Search (e.g. Paracetamol 500mg)" value={q} onChange={e=>setQ(e.target.value)} />
+      {/* Controls */}
+      <div className="flex items-center justify-between">
+        <div className="flex-1 max-w-md">
+          <input 
+            className="input-field w-full" 
+            placeholder="Search medications (e.g. Paracetamol 500mg)" 
+            value={q} 
+            onChange={e=>setQ(e.target.value)} 
+          />
+        </div>
+        <button 
+          className="btn-primary ml-4" 
+          onClick={()=>setShowAdd(true)}
+        >
+          Add Item
+        </button>
       </div>
 
-      <div className="mt-4 overflow-x-auto rounded-2xl border">
-        <table className="min-w-full text-sm">
-          <thead className="bg-zinc-50">
-            <tr>
-              <th className="p-3 text-left">Drug</th>
-              <th className="p-3">Unit</th>
-              <th className="p-3">On hand</th>
-              <th className="p-3">Batches</th>
-              <th className="p-3">Earliest Exp.</th>
-              <th className="p-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(r => (
-              <tr key={r.id} className="border-t">
-                <td className="p-3">{r.medName}</td>
-                <td className="p-3 text-center">{r.unit}</td>
-                <td className="p-3 text-center tabular-nums">{r.onHandQty}</td>
-                <td className="p-3 text-center">{r.batches}</td>
-                <td className="p-3 text-center">{r.earliestExpiry ?? '—'}</td>
-                <td className="p-3 text-right">
-                  <button className="btn btn-primary btn-sm" onClick={()=>setShowBatch(r.id)}>Add Batch</button>
-                </td>
+      {/* Stock Table */}
+      <div className="card">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Drug
+                </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Unit
+                </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  On Hand
+                </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Batches
+                </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Earliest Exp.
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
               </tr>
-            ))}
-            {!filtered.length && (
-              <tr><td className="p-6 text-center text-zinc-500" colSpan={6}>No items</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filtered.map(r => (
+                <tr key={r.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm font-medium text-gray-900">{r.medName}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-600">
+                    {r.unit}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium text-gray-900">
+                    {r.onHandQty}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-600">
+                    {r.batches}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-600">
+                    {r.earliestExpiry ? new Date(r.earliestExpiry).toLocaleDateString() : '—'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                    <button 
+                      className="btn-primary text-sm px-3 py-1" 
+                      onClick={()=>setShowBatch(r.id)}
+                    >
+                      Add Batch
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!filtered.length && (
+                <tr>
+                  <td className="px-6 py-8 text-center text-gray-500" colSpan={6}>
+                    <BeakerIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No pharmacy items found</p>
+                    {q && <p className="text-sm">Try adjusting your search terms</p>}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Add Item modal */}
+      {/* Add Item Modal */}
       {showAdd && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
-          <form className="bg-white rounded-2xl p-5 w-full max-w-md space-y-3" onSubmit={addItem}>
-            <h2 className="text-lg font-semibold mb-2">New Item</h2>
-            <input name="medName" className="input input-bordered w-full" placeholder="e.g. Paracetamol" />
-            <input name="strength" className="input input-bordered w-full" placeholder="e.g. 500mg" />
-            <input name="unit" className="input input-bordered w-full" defaultValue="tabs" />
-            <div className="flex gap-2 justify-end pt-2">
-              <button type="button" className="btn" onClick={()=>setShowAdd(false)}>Cancel</button>
-              <button className="btn btn-primary">Save</button>
-            </div>
-          </form>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <form onSubmit={addItem} className="space-y-4">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Add New Medication</h2>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Medication Name *
+                </label>
+                <input 
+                  name="medName" 
+                  className="input-field" 
+                  placeholder="e.g. Paracetamol" 
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Strength
+                </label>
+                <input 
+                  name="strength" 
+                  className="input-field" 
+                  placeholder="e.g. 500mg" 
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Unit *
+                </label>
+                <input 
+                  name="unit" 
+                  className="input-field" 
+                  defaultValue="tabs" 
+                  required
+                />
+              </div>
+              
+              <div className="flex space-x-4 pt-4">
+                <button type="submit" className="btn-primary flex-1">
+                  Add Medication
+                </button>
+                <button 
+                  type="button" 
+                  className="btn-secondary flex-1" 
+                  onClick={()=>setShowAdd(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
-      {/* Add Batch modal */}
+      {/* Add Batch Modal */}
       {showBatch && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
-          <form className="bg-white rounded-2xl p-5 w-full max-w-md space-y-3" onSubmit={(e)=>addBatch(showBatch, e)}>
-            <h2 className="text-lg font-semibold mb-2">Add Batch</h2>
-            <input name="lot" className="input input-bordered w-full" placeholder="Lot number" />
-            <input name="qty" type="number" min={1} className="input input-bordered w-full" placeholder="Quantity" />
-            <input name="expiry" type="date" className="input input-bordered w-full" />
-            <div className="flex gap-2 justify-end pt-2">
-              <button type="button" className="btn" onClick={()=>setShowBatch(null)}>Cancel</button>
-              <button className="btn btn-primary">Add</button>
-            </div>
-          </form>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <form onSubmit={(e)=>addBatch(showBatch, e)} className="space-y-4">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Add New Batch</h2>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Lot Number *
+                </label>
+                <input 
+                  name="lot" 
+                  className="input-field" 
+                  placeholder="Batch/Lot number" 
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Quantity *
+                </label>
+                <input 
+                  name="qty" 
+                  type="number" 
+                  min={1} 
+                  className="input-field" 
+                  placeholder="Quantity received" 
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Expiry Date *
+                </label>
+                <input 
+                  name="expiry" 
+                  type="date" 
+                  className="input-field" 
+                  required
+                />
+              </div>
+              
+              <div className="flex space-x-4 pt-4">
+                <button type="submit" className="btn-primary flex-1">
+                  Add Batch
+                </button>
+                <button 
+                  type="button" 
+                  className="btn-secondary flex-1" 
+                  onClick={()=>setShowBatch(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
