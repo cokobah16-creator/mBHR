@@ -30,7 +30,6 @@ import QueueMaestro from '@/features/gamification/QueueMaestro'
 import { seedDemo } from '@/db/seedMbhr'
 import { useEffect } from 'react'
 import { GameHub } from '@/components/GameHub'
-import VitalsPrecision from '@/features/gamification/VitalsPrecision'
 import KnowledgeBlitz from '@/features/gamification/KnowledgeBlitz'
 import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard'
 import ApprovalInbox from '@/features/gamification/ApprovalInbox'
@@ -39,6 +38,7 @@ import FEFODispenser from '@/features/pharmacy/FEFODispenser'
 
 // Lazy load game components
 const TriageSprint = lazy(() => import('@/features/triage/TriageSprint'))
+const VitalsPrecisionGame = lazy(() => import('@/features/gamification/VitalsPrecisionGame'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
