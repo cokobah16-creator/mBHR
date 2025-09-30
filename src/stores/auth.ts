@@ -37,10 +37,12 @@ export const useAuthStore = create<AuthState>()(
         
         // Check lockout
         if (state.checkLockout()) {
+          console.log('Account locked out')
           return false
         }
 
         if (!/^\d{6}$/.test(pin)) {
+          console.log('Invalid PIN format:', pin)
           state.incrementFailedAttempts()
           return false
         }
@@ -48,10 +50,13 @@ export const useAuthStore = create<AuthState>()(
         try {
           // Get all active users
           const users = await db.users.filter(u => u.isActive).toArray()
+          console.log('Found users:', users.length, users.map(u => ({ id: u.id, fullName: u.fullName, role: u.role })))
           
           for (const user of users) {
             if (user.pinHash && user.pinSalt) {
+              console.log('Checking PIN for user:', user.fullName, user.role)
               const isValid = await verifyPin(pin, user.pinHash, user.pinSalt)
+              console.log('PIN valid for', user.fullName, ':', isValid)
               
               if (isValid) {
                 // Create session
@@ -79,6 +84,7 @@ export const useAuthStore = create<AuthState>()(
           }
           
           // PIN not found - increment failed attempts
+          console.log('No matching PIN found for:', pin)
           state.incrementFailedAttempts()
           return false
           

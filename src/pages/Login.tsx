@@ -14,9 +14,14 @@ export default function Login() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErr(null)
+    console.log('Attempting login with PIN:', pin)
     try {
       if (mode === 'offline') {
         const success = await useAuthStore.getState().login(pin)
+        console.log('Login result:', success)
+        if (!success) {
+          throw new Error('INVALID_PIN')
+        }
         if (!success) {
           throw new Error('INVALID_PIN')
         }
@@ -24,6 +29,7 @@ export default function Login() {
         setErr('Online login not configured yet')
       }
     } catch (ex: any) {
+      console.error('Login failed:', ex)
       setAttempts(a => a + 1)
       setErr(ex?.message === 'INVALID_PIN' ? 'Invalid PIN' : ex?.message || 'Login failed')
     }
