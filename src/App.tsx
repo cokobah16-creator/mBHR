@@ -78,11 +78,6 @@ function App() {
                       <PrizeShop />
                     </RequireRoles>
                   } />
-                  <Route path="/rx/stock" element={
-                    <RequireRoles roles={['pharmacist', 'doctor', 'nurse', 'admin']}>
-                      <PharmacyStockSkeleton />
-                    </RequireRoles>
-                  } />
                   <Route path="/rx/new" element={
                     <RequireRoles roles={['doctor', 'nurse', 'admin']}>
                       <RxForm />
