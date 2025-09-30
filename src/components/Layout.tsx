@@ -17,6 +17,8 @@ import {
   GiftIcon,
   TicketIcon,
   TrophyIcon
+  ChevronDownIcon,
+  ChevronRightIcon
 } from '@heroicons/react/24/outline'
 
 interface LayoutProps {
@@ -27,6 +29,7 @@ export function Layout({ children }: LayoutProps) {
   const { t } = useTranslation()
   const location = useLocation()
   const { currentUser, logout } = useAuthStore()
+  const [pharmacyExpanded, setPharmacyExpanded] = React.useState(false)
   
   // Start low stock monitoring
   useLowStockWatcher()
@@ -53,11 +56,20 @@ export function Layout({ children }: LayoutProps) {
 
   // Pharmacy navigation items
   const pharmacyNavigation = [
-    { name: 'Pharmacy Stock', href: '/rx/stock', icon: BeakerIcon },
-    { name: 'New Prescription', href: '/rx/new', icon: BeakerIcon },
-    { name: 'Dispense', href: '/rx/dispense', icon: BeakerIcon }
+    { name: 'Pharmacy Stock', href: '/rx/stock' },
+    { name: 'New Prescription', href: '/rx/new' },
+    { name: 'Dispense', href: '/rx/dispense' }
   ]
 
+  // Check if any pharmacy route is active
+  const isPharmacyRouteActive = pharmacyNavigation.some(item => location.pathname === item.href)
+  
+  // Auto-expand pharmacy menu if on a pharmacy page
+  React.useEffect(() => {
+    if (isPharmacyRouteActive) {
+      setPharmacyExpanded(true)
+    }
+  }, [isPharmacyRouteActive])
   const handleLogout = async () => {
     await logout()
   }
