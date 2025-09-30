@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueueStore } from '@/stores/queue'
 import { useAuthStore } from '@/stores/auth'
+import { can } from '@/auth/roles'
 import { ExportButtons } from '@/components/ExportButtons'
+import { UserManagement } from '@/components/UserManagement'
 import { 
   UserPlusIcon, 
   HeartIcon, 
@@ -48,33 +50,33 @@ export function Dashboard() {
       href: '/register',
       icon: UserPlusIcon,
       color: 'bg-blue-500 hover:bg-blue-600',
-      roles: ['admin', 'nurse', 'volunteer']
+      permission: 'register' as const
     },
     {
       name: 'Record Vitals',
       href: '/vitals',
       icon: HeartIcon,
       color: 'bg-green-500 hover:bg-green-600',
-      roles: ['admin', 'nurse', 'volunteer']
+      permission: 'vitals' as const
     },
     {
       name: 'Consultation',
       href: '/consult',
       icon: DocumentTextIcon,
       color: 'bg-purple-500 hover:bg-purple-600',
-      roles: ['admin', 'doctor']
+      permission: 'consult' as const
     },
     {
       name: 'Pharmacy',
       href: '/pharmacy',
       icon: BeakerIcon,
       color: 'bg-orange-500 hover:bg-orange-600',
-      roles: ['admin', 'pharmacist']
+      permission: 'dispense' as const
     }
   ]
 
-  const userCanAccess = (roles: string[]) => {
-    return currentUser && roles.includes(currentUser.role)
+  const userCanAccess = (permission: 'register' | 'vitals' | 'consult' | 'dispense') => {
+    return currentUser && can(currentUser.role, permission)
   }
 
   return (
@@ -133,7 +135,7 @@ export function Dashboard() {
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {quickActions.map((action) => (
-            userCanAccess(action.roles) && (
+            userCanAccess(action.permission) && (
               <Link
                 key={action.name}
                 to={action.href}
@@ -171,8 +173,13 @@ export function Dashboard() {
       </div>
 
       {/* Data Export (Admin Only) */}
-      {currentUser?.role === 'admin' && (
+      {currentUser && can(currentUser.role, 'export') && (
         <ExportButtons />
+      )}
+
+      {/* User Management (Admin Only) */}
+      {currentUser && can(currentUser.role, 'users') && (
+        <UserManagement />
       )}
     </div>
   )

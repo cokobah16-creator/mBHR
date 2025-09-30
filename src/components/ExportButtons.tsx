@@ -2,13 +2,14 @@ import React from 'react'
 import { db } from '@/db'
 import { exportTable } from '@/utils/export'
 import { useAuthStore } from '@/stores/auth'
+import { can } from '@/auth/roles'
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
 
 export function ExportButtons() {
   const { currentUser } = useAuthStore()
   
   // Only admins can export data
-  if (currentUser?.role !== 'admin') return null
+  if (!currentUser || !can(currentUser.role, 'export')) return null
 
   const exports = [
     { table: db.patients, filename: 'patients.csv', label: 'Patients' },

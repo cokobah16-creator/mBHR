@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { db, User, Session, generateId } from '@/db'
-import { verifyPin, saltFromString } from '@/utils/crypto'
+import { verifyPin } from '@/utils/pin'
 
 interface AuthState {
   currentUser: User | null
@@ -46,13 +46,12 @@ export const useAuthStore = create<AuthState>()(
         }
 
         try {
-          // Get all active users and check PIN
-          const users = await db.users.toArray()
+          // Get all active users
+          const users = await db.users.filter(u => u.isActive).toArray()
           
-          for (const user of users.filter(u => u.isActive)) {
+          for (const user of users) {
             if (user.pinSalt && user.pinHash) {
-              const salt = saltFromString(user.pinSalt)
-              const isValid = await verifyPin(pin, user.pinHash, salt)
+              const isValid = await verifyPin(pin, user.pinHash, user.pinSalt)
               
               if (isValid) {
                 // Create session
