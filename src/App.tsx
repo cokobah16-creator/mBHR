@@ -1,4 +1,5 @@
 import React from 'react'
+import { Suspense, lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Layout } from '@/components/Layout'
@@ -34,7 +35,10 @@ import KnowledgeBlitz from '@/features/gamification/KnowledgeBlitz'
 import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard'
 import ApprovalInbox from '@/features/gamification/ApprovalInbox'
 import { SimpleRegister } from '@/pages/SimpleRegister'
-import FEFODispenser from '@/features/pharmacy/FEFODispenser';
+import FEFODispenser from '@/features/pharmacy/FEFODispenser'
+
+// Lazy load game components
+const TriageSprint = lazy(() => import('@/features/triage/TriageSprint'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -59,114 +63,123 @@ function App() {
           path="/*"
           element={
             <ProtectedRoute>
-              <Layout>
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/register" element={<Register />} />
-                  <Route path="/patients" element={<Patients />} />
-                  <Route path="/patients/:id" element={<PatientDetail />} />
-                  <Route path="/queue" element={<Queue />} />
-                  <Route path="/inventory" element={<Inventory />} />
-                  <Route path="/users" element={<Users />} />
-                  <Route path="/vitals" element={<Vitals />} />
-                  <Route path="/vitals/:visitId" element={<Vitals />} />
-                  <Route path="/consult" element={<Consult />} />
-                  <Route path="/consult/:visitId" element={<Consult />} />
-                  <Route path="/pharmacy" element={<Pharmacy />} />
-                  <Route path="/pharmacy/:visitId" element={<Pharmacy />} />
-                  
-                  {/* New MBHR Features */}
-                  <Route path="/inv/game" element={
-                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
-                      <RestockGame />
-                    </RequireRoles>
-                  } />
-                  <Route path="/inv/prizes" element={
-                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
-                      <PrizeShop />
-                    </RequireRoles>
-                  } />
-                  <Route path="/rx/stock" element={
-                    <RequireRoles roles={['pharmacist', 'admin']}>
-                      <PharmacyStock />
-                    </RequireRoles>
-                  } />
-                  <Route path="/rx/new" element={
-                    <RequireRoles roles={['doctor', 'nurse', 'admin']}>
-                      <RxForm />
-                    </RequireRoles>
-                  } />
-                  <Route path="/rx/dispense" element={
-                    <RequireRoles roles={['pharmacist', 'admin']}>
-                      <Dispense />
-                    </RequireRoles>
-                  } />
-                  <Route path="/tickets/queue" element={
-                    <RequireRoles roles={['nurse', 'doctor', 'admin']}>
-                      <QueueBoard />
-                    </RequireRoles>
-                  } />
-                  <Route path="/tickets/issue" element={
-                    <RequireRoles roles={['volunteer', 'nurse', 'doctor', 'admin']}>
-                      <TicketIssuer />
-                    </RequireRoles>
-                  } />
-                  <Route path="/inv/leaderboard" element={
-                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
-                      <Leaderboard />
-                    </RequireRoles>
-                  } />
-                  <Route path="/display" element={<PublicDisplay />} />
-                  <Route path="/quests" element={<QuestBoard />} />
-                  <Route path="/games/queue-maestro" element={
-                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
-                      <QueueMaestro />
-                    </RequireRoles>
-                  } />
-                  <Route path="/games" element={<GameHub />} />
-                  <Route path="/games/vitals-precision" element={
-                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
-                      <VitalsPrecision />
-                    </RequireRoles>
-                  } />
-                  <Route path="/games/knowledge-blitz" element={
-                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
-                      <KnowledgeBlitz />
-                    </RequireRoles>
-                  } />
-                  <Route path="/games/triage-sprint" element={
-                    <RequireRoles roles={['nurse', 'doctor', 'admin']}>
-                      <TriageSprint />
-                    </RequireRoles>
-                  } />
-                  <Route path="/games/vitals-precision-enhanced" element={
-                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
-                      <VitalsPrecisionGame />
-                    </RequireRoles>
-                  } />
-                  <Route path="/analytics" element={
-                    <RequireRoles roles={['admin']}>
-                      <AnalyticsDashboard />
-                    </RequireRoles>
-                  } />
-                  <Route path="/admin/approvals" element={
-                    <RequireRoles roles={['admin']}>
-                      <ApprovalInbox />
-                    </RequireRoles>
-                  } />
-                  <Route path="/simple/register" element={<SimpleRegister />} />
-                  <Route path="/pharmacy/enhanced/:visitId" element={
-                    <RequireRoles roles={['pharmacist', 'admin']}>
-                      <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
-                    </RequireRoles>
-                  } />
-                  <Route path="/triage/quick" element={
-                    <RequireRoles roles={['nurse', 'doctor', 'admin']}>
-                      <QuickTriage onComplete={() => {}} />
-                    </RequireRoles>
-                  } />
-                </Routes>
-              </Layout>
+              <Suspense fallback={
+                <div className="min-h-screen flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+                    <p className="mt-4 text-gray-600">Loading...</p>
+                  </div>
+                </div>
+              }>
+                <Layout>
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/register" element={<Register />} />
+                    <Route path="/patients" element={<Patients />} />
+                    <Route path="/patients/:id" element={<PatientDetail />} />
+                    <Route path="/queue" element={<Queue />} />
+                    <Route path="/inventory" element={<Inventory />} />
+                    <Route path="/users" element={<Users />} />
+                    <Route path="/vitals" element={<Vitals />} />
+                    <Route path="/vitals/:visitId" element={<Vitals />} />
+                    <Route path="/consult" element={<Consult />} />
+                    <Route path="/consult/:visitId" element={<Consult />} />
+                    <Route path="/pharmacy" element={<Pharmacy />} />
+                    <Route path="/pharmacy/:visitId" element={<Pharmacy />} />
+                    
+                    {/* New MBHR Features */}
+                    <Route path="/inv/game" element={
+                      <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                        <RestockGame />
+                      </RequireRoles>
+                    } />
+                    <Route path="/inv/prizes" element={
+                      <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                        <PrizeShop />
+                      </RequireRoles>
+                    } />
+                    <Route path="/rx/stock" element={
+                      <RequireRoles roles={['pharmacist', 'admin']}>
+                        <PharmacyStock />
+                      </RequireRoles>
+                    } />
+                    <Route path="/rx/new" element={
+                      <RequireRoles roles={['doctor', 'nurse', 'admin']}>
+                        <RxForm />
+                      </RequireRoles>
+                    } />
+                    <Route path="/rx/dispense" element={
+                      <RequireRoles roles={['pharmacist', 'admin']}>
+                        <Dispense />
+                      </RequireRoles>
+                    } />
+                    <Route path="/tickets/queue" element={
+                      <RequireRoles roles={['nurse', 'doctor', 'admin']}>
+                        <QueueBoard />
+                      </RequireRoles>
+                    } />
+                    <Route path="/tickets/issue" element={
+                      <RequireRoles roles={['volunteer', 'nurse', 'doctor', 'admin']}>
+                        <TicketIssuer />
+                      </RequireRoles>
+                    } />
+                    <Route path="/inv/leaderboard" element={
+                      <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                        <Leaderboard />
+                      </RequireRoles>
+                    } />
+                    <Route path="/display" element={<PublicDisplay />} />
+                    <Route path="/quests" element={<QuestBoard />} />
+                    <Route path="/games/queue-maestro" element={
+                      <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                        <QueueMaestro />
+                      </RequireRoles>
+                    } />
+                    <Route path="/games" element={<GameHub />} />
+                    <Route path="/games/vitals-precision" element={
+                      <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                        <VitalsPrecision />
+                      </RequireRoles>
+                    } />
+                    <Route path="/games/knowledge-blitz" element={
+                      <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                        <KnowledgeBlitz />
+                      </RequireRoles>
+                    } />
+                    <Route path="/games/triage-sprint" element={
+                      <RequireRoles roles={['nurse', 'doctor', 'admin']}>
+                        <TriageSprint />
+                      </RequireRoles>
+                    } />
+                    <Route path="/games/vitals-precision-enhanced" element={
+                      <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                        <VitalsPrecisionGame />
+                      </RequireRoles>
+                    } />
+                    <Route path="/analytics" element={
+                      <RequireRoles roles={['admin']}>
+                        <AnalyticsDashboard />
+                      </RequireRoles>
+                    } />
+                    <Route path="/admin/approvals" element={
+                      <RequireRoles roles={['admin']}>
+                        <ApprovalInbox />
+                      </RequireRoles>
+                    } />
+                    <Route path="/simple/register" element={<SimpleRegister />} />
+                    <Route path="/pharmacy/enhanced/:visitId" element={
+                      <RequireRoles roles={['pharmacist', 'admin']}>
+                        <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
+                      </RequireRoles>
+                    } />
+                    <Route path="/triage/quick" element={
+                      <RequireRoles roles={['nurse', 'doctor', 'admin']}>
+                        <QuickTriage onComplete={() => {}} />
+                      </RequireRoles>
+                    } />
+                  </Routes>
+                </Layout>
+              </Suspense>
             </ProtectedRoute>
           }
         />
