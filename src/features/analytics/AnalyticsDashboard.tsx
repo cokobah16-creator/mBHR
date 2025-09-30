@@ -72,9 +72,23 @@ export default function AnalyticsDashboard() {
   const loadAnalyticsData = async () => {
     setLoading(true)
     try {
-      const fromDate = new Date(dateRange.from)
-      const toDate = new Date(dateRange.to)
-      toDate.setHours(23, 59, 59, 999) // End of day
+      // Create UTC dates to avoid timezone issues
+      const fromDate = new Date(dateRange.from + 'T00:00:00.000Z')
+      const toDate = new Date(dateRange.to + 'T23:59:59.999Z')
+      
+      // Defensive check: ensure fromDate is not after toDate
+      if (fromDate > toDate) {
+        console.warn('Invalid date range: from date is after to date, swapping values')
+        const temp = fromDate
+        fromDate.setTime(toDate.getTime())
+        toDate.setTime(temp.getTime())
+      }
+      
+      // Validate that dates are valid
+      if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+        console.error('Invalid date objects created from date range')
+        return
+      }
 
       // Overview metrics
       const [
@@ -104,10 +118,16 @@ export default function AnalyticsDashboard() {
       for (let i = 6; i >= 0; i--) {
         const date = new Date()
         date.setDate(date.getDate() - i)
-        const dayStart = new Date(date)
-        dayStart.setHours(0, 0, 0, 0)
-        const dayEnd = new Date(date)
-        dayEnd.setHours(23, 59, 59, 999)
+        
+        // Create UTC dates for consistent querying
+        const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
+        const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999)
+        
+        // Validate day range dates
+        if (isNaN(dayStart.getTime()) || isNaN(dayEnd.getTime()) || dayStart > dayEnd) {
+          console.warn(`Invalid day range for date ${date.toISOString()}, skipping`)
+          continue
+        }
 
         const [registrations, vitalsCount, consultations, dispenses] = await Promise.all([
           db.patients.where('createdAt').between(dayStart, dayEnd).count(),
