@@ -35,10 +35,8 @@ export async function seed() {
     
     console.log('Existing counts - Users:', userCount, 'Inventory:', inventoryCount)
     
-    if (userCount > 0 && inventoryCount > 0) {
-      console.log('✅ Database already seeded, skipping...')
-      return
-    }
+    // Always seed users if none exist
+    // Always seed inventory if none exist (separate checks)
     
     // Seed users if needed
     if (userCount === 0) {
@@ -72,6 +70,8 @@ export async function seed() {
         const pins = ['123456', '070398', '234567', '111222', '333444', '555666']
         console.log(`  - ${user.fullName} (${user.role}) - PIN: ${pins[index]}`)
       })
+    } else {
+      console.log('✅ Users already exist, skipping user seeding')
     }
 
     // Seed inventory if needed
@@ -91,6 +91,8 @@ export async function seed() {
       INVENTORY_ITEMS.forEach(item => {
         console.log(`  - ${item.itemName}: ${item.onHandQty} ${item.unit}`)
       })
+    } else {
+      console.log('✅ Inventory already exists, skipping inventory seeding')
     }
     
     console.log('✅ Database seeded successfully')

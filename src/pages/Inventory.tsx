@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { db, InventoryItem, generateId } from '@/db'
 import { useAuthStore } from '@/stores/auth'
+import { can } from '@/auth/roles'
 import { 
   CubeIcon, 
   PlusIcon, 
@@ -14,6 +15,7 @@ export function Inventory() {
   const { currentUser } = useAuthStore()
   const [inventory, setInventory] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
   const [formData, setFormData] = useState({
@@ -24,15 +26,21 @@ export function Inventory() {
   })
 
   useEffect(() => {
+    console.log('[Inventory] Component mounted, loading inventory...')
     loadInventory()
   }, [])
 
   const loadInventory = async () => {
+    setLoading(true)
+    setError(null)
     try {
+      console.log('[Inventory] Loading inventory items...')
       const items = await db.inventory.orderBy('itemName').toArray()
+      console.log('[Inventory] Loaded items:', items.length, items)
       setInventory(items)
     } catch (error) {
       console.error('Error loading inventory:', error)
+      setError('Failed to load inventory. Please try refreshing the page.')
     } finally {
       setLoading(false)
     }
@@ -62,6 +70,7 @@ export function Inventory() {
       resetForm()
     } catch (error) {
       console.error('Error saving inventory item:', error)
+      alert('Failed to save inventory item. Please try again.')
     }
   }
 
@@ -89,6 +98,25 @@ export function Inventory() {
 
   const lowStockItems = inventory.filter(item => item.onHandQty <= item.reorderThreshold)
 
+  // Show error state
+  if (error) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="text-center">
+          <CubeIcon className="h-12 w-12 mx-auto text-red-400 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Error Loading Inventory</h3>
+          <p className="text-red-600 mb-6">{error}</p>
+          <button
+            onClick={loadInventory}
+            className="btn-primary"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -100,6 +128,8 @@ export function Inventory() {
     )
   }
 
+  console.log('[Inventory] Rendering with', inventory.length, 'items')
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -108,7 +138,7 @@ export function Inventory() {
           <CubeIcon className="h-8 w-8 text-primary" />
           <div>
             <h1 className="text-2xl font-bold text-gray-900">
-              {t('nav.inventory')}
+              Inventory
             </h1>
             <p className="text-gray-600">
               Manage medication and supply inventory
@@ -116,7 +146,7 @@ export function Inventory() {
           </div>
         </div>
         
-        {(currentUser?.role === 'admin' || currentUser?.role === 'pharmacist') && (
+        {currentUser && (can(currentUser.role, 'inventory') || can(currentUser.role, 'users')) && (
           <button
             onClick={() => setShowAddForm(true)}
             className="btn-primary inline-flex items-center space-x-2"
