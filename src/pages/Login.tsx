@@ -1,29 +1,35 @@
-// src/pages/Login.tsx
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/auth'
 import { isOnlineSyncEnabled } from '@/sync/adapter'
-// import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 
 export default function Login() {
   const [mode, setMode] = useState<'offline' | 'online'>('offline')
   const [pin, setPin] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [attempts, setAttempts] = useState(0)
+  const [loading, setLoading] = useState(false)
 
   const onlineAvailable = isOnlineSyncEnabled()
-  // const navigate = useNavigate()
+  const navigate = useNavigate()
+  const { login } = useAuthStore()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErr(null)
+    setLoading(true)
 
     try {
       if (mode === 'offline') {
         console.log('[login] attempting offline PIN', pin)
-        await useAuthStore.getState().login(pin) // throws on bad PIN
-        console.log('[login] success (offline)')
-        // navigate('/'); // uncomment if using React Router
-        return
+        const success = await login(pin)
+        if (success) {
+          console.log('[login] success (offline)')
+          navigate('/')
+        } else {
+          setErr('Invalid PIN')
+          setAttempts(a => a + 1)
+        }
       }
 
       // mode === 'online'
@@ -39,6 +45,8 @@ export default function Login() {
       console.error('[login] error', ex)
       setAttempts(a => a + 1)
       setErr(ex?.message === 'INVALID_PIN' ? 'Invalid PIN' : ex?.message || 'Login failed')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -96,7 +104,7 @@ export default function Login() {
           {err && <div className="text-sm text-red-600">{err}</div>}
 
           <button type="submit" className="w-full bg-emerald-700 text-white py-2 rounded hover:bg-emerald-800">
-            Login
+            {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
       </div>
