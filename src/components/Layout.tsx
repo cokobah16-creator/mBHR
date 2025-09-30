@@ -3,6 +3,8 @@ import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
+import Toasts from '@/components/Toasts'
+import useLowStockWatcher from '@/features/inventory/useLowStockWatcher'
 import { can } from '@/auth/roles'
 import { 
   HomeIcon, 
@@ -24,6 +26,9 @@ export function Layout({ children }: LayoutProps) {
   const { t } = useTranslation()
   const location = useLocation()
   const { currentUser, logout } = useAuthStore()
+  
+  // Start low stock monitoring
+  useLowStockWatcher()
 
   const baseNavigation = [
     { name: t('nav.dashboard'), href: '/', icon: HomeIcon },
@@ -31,10 +36,12 @@ export function Layout({ children }: LayoutProps) {
     { name: t('nav.queue'), href: '/queue', icon: QueueListIcon },
     { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
     { name: 'Restock Game', href: '/inv/game', icon: GiftIcon },
+    { name: 'Leaderboard', href: '/inv/leaderboard', icon: GiftIcon },
     { name: 'Pharmacy Stock', href: '/rx/stock', icon: BeakerIcon },
     { name: 'New Prescription', href: '/rx/new', icon: BeakerIcon },
     { name: 'Dispense', href: '/rx/dispense', icon: BeakerIcon },
     { name: 'Queue Board', href: '/tickets/queue', icon: TicketIcon },
+    { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
   ]
 
   // Add admin-only navigation items
@@ -120,6 +127,9 @@ export function Layout({ children }: LayoutProps) {
           {children}
         </main>
       </div>
+      
+      {/* Toast notifications */}
+      <Toasts />
     </div>
   )
 }

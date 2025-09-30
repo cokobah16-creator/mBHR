@@ -94,6 +94,16 @@ function App() {
                       <QueueBoard />
                     </RequireRoles>
                   } />
+                  <Route path="/tickets/issue" element={
+                    <RequireRoles roles={['volunteer', 'nurse', 'doctor', 'admin']}>
+                      <TicketIssuer />
+                    </RequireRoles>
+                  } />
+                  <Route path="/inv/leaderboard" element={
+                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                      <Leaderboard />
+                    </RequireRoles>
+                  } />
                 </Routes>
               </Layout>
             </ProtectedRoute>
