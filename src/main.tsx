@@ -9,7 +9,6 @@ import './i18n'
 import { seed } from './db/seed'
 import { db } from './db/index'
 import { safeOpenDb } from './db/safeOpen'
-import { syncNow, isOnlineSyncEnabled } from './sync/adapter'
 
 // Global error visibility
 window.addEventListener('error', ev => console.error('[global error]', ev.message, ev.error))
@@ -42,7 +41,6 @@ function renderFatal(msg: string) {
   } catch (e) {
     console.error('Failed to initialize database:', e)
     renderFatal('Could not open the local database.')
-    alert('Could not open the local database. See console for details.')
     return
   }
 
@@ -52,11 +50,8 @@ function renderFatal(msg: string) {
     console.log('[seed] done')
   } catch (e: any) {
     console.error('[seed] failed', e)
-    alert(`Seeding failed: ${e?.message || e}`)
-  }
-
-  if (isOnlineSyncEnabled()) {
-    syncNow().catch(err => console.log('[sync] initial sync failed', err))
+    // Don't fail the app if seeding fails, just log it
+    console.warn('Seeding failed but continuing with app startup')
   }
 
   console.log('Application fully initialized and rendered.')

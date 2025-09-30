@@ -15,14 +15,6 @@ const INVENTORY_ITEMS = [
   { itemName: 'Thermometer Strips', unit: 'strips', onHandQty: 200, reorderThreshold: 30 }
 ]
 
-const USERS: Array<Pick<User, 'fullName'|'role'|'isActive'|'pinHash'|'pinSalt'>> = []
-
-async function makeUser(fullName: string, role: User['role'], pin: string) {
-  const pinSalt = newSaltB64()
-  const pinHash = await derivePinHash(pin, pinSalt)
-  USERS.push({ fullName, role, isActive: 1, pinSalt, pinHash })
-}
-
 export async function seed() {
   try {
     console.log('🌱 Starting database seeding...')
@@ -35,64 +27,51 @@ export async function seed() {
     
     console.log('Existing counts - Users:', userCount, 'Inventory:', inventoryCount)
     
-    // Always seed users if none exist
-    // Always seed inventory if none exist (separate checks)
-    
     // Seed users if needed
     if (userCount === 0) {
-      // Clear the USERS array in case this is called multiple times
-      USERS.length = 0
+      console.log('🌱 Creating demo users...')
       
-      // Create known demo users with known PINs using the same hasher
-      console.log('🌱 Creating users with consistent PIN hashing...')
-      await makeUser('Admin User', 'admin', '123456')
-      await makeUser('Kristopher Okobah', 'admin', '070398')
-      await makeUser('Nurse Joy', 'nurse', '234567')
-      await makeUser('Doctor Ada', 'doctor', '111222')
-      await makeUser('Pharmacist Chidi', 'pharmacist', '333444')
-      await makeUser('Volunteer Musa', 'volunteer', '555666')
+      const users = [
+        { fullName: 'Admin User', role: 'admin' as const, pin: '123456' },
+        { fullName: 'Dr. Sarah Johnson', role: 'doctor' as const, pin: '234567' },
+        { fullName: 'Nurse Mary', role: 'nurse' as const, pin: '345678' },
+        { fullName: 'Pharmacist John', role: 'pharmacist' as const, pin: '456789' },
+        { fullName: 'Volunteer Mike', role: 'volunteer' as const, pin: '567890' }
+      ]
       
-      console.log('🌱 Adding users to database...')
-      await db.transaction('rw', db.users, async () => {
-        for (const u of USERS) {
-          await db.users.add({
-            id: generateId(),
-            ...u,
-            email: `${u.role}@local`,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          } as User)
-        }
-      })
+      for (const userData of users) {
+        const pinSalt = newSaltB64()
+        const pinHash = await derivePinHash(userData.pin, pinSalt)
+        
+        await db.users.add({
+          id: generateId(),
+          fullName: userData.fullName,
+          role: userData.role,
+          email: `${userData.role}@local`,
+          pinHash,
+          pinSalt,
+          isActive: 1,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        })
+      }
       
-      console.log('✅ Users created:')
-      USERS.forEach((user, index) => {
-        const pins = ['123456', '070398', '234567', '111222', '333444', '555666']
-        console.log(`  - ${user.fullName} (${user.role}) - PIN: ${pins[index]}`)
-      })
-    } else {
-      console.log('✅ Users already exist, skipping user seeding')
+      console.log('✅ Users created with PINs: 123456, 234567, 345678, 456789, 567890')
     }
 
     // Seed inventory if needed
     if (inventoryCount === 0) {
       console.log('🌱 Adding inventory items...')
-      await db.transaction('rw', db.inventory, async () => {
-        for (const item of INVENTORY_ITEMS) {
-          await db.inventory.add({
-            id: generateId(),
-            ...item,
-            updatedAt: new Date()
-          })
-        }
-      })
       
-      console.log('✅ Inventory items created:')
-      INVENTORY_ITEMS.forEach(item => {
-        console.log(`  - ${item.itemName}: ${item.onHandQty} ${item.unit}`)
-      })
-    } else {
-      console.log('✅ Inventory already exists, skipping inventory seeding')
+      for (const item of INVENTORY_ITEMS) {
+        await db.inventory.add({
+          id: generateId(),
+          ...item,
+          updatedAt: new Date()
+        })
+      }
+      
+      console.log('✅ Inventory items created:', INVENTORY_ITEMS.length)
     }
     
     console.log('✅ Database seeded successfully')

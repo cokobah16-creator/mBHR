@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { usePatientsStore } from '@/stores/patients'
-import { Patient } from '@/db'
+import { db, Patient } from '@/db'
 import { 
   MagnifyingGlassIcon, 
   UserPlusIcon, 
@@ -14,30 +13,41 @@ import {
 export function Patients() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { patients, loadPatients, searchPatients, searchQuery, setSearchQuery } = usePatientsStore()
+  const [patients, setPatients] = useState<Patient[]>([])
   const [filteredPatients, setFilteredPatients] = useState<Patient[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    console.log('Patients page: Loading patients...')
     loadPatients()
-      .then(() => {
-        console.log('Patients page: Patients loaded successfully')
-        setLoading(false)
-      })
-      .catch((error) => {
-        console.error('Patients page: Error loading patients:', error)
-        setLoading(false)
-      })
   }, [])
 
   useEffect(() => {
     if (searchQuery.trim()) {
-      searchPatients(searchQuery).then(setFilteredPatients)
+      const filtered = patients.filter(patient => 
+        patient.givenName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        patient.familyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        patient.phone.includes(searchQuery)
+      )
+      setFilteredPatients(filtered)
     } else {
       setFilteredPatients(patients)
     }
   }, [searchQuery, patients])
+
+  const loadPatients = async () => {
+    try {
+      console.log('Loading patients...')
+      const patientsData = await db.patients.orderBy('createdAt').reverse().toArray()
+      console.log('Loaded patients:', patientsData.length)
+      setPatients(patientsData)
+      setFilteredPatients(patientsData)
+    } catch (error) {
+      console.error('Error loading patients:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const getPatientAge = (dob: string) => {
     const birthDate = new Date(dob)
@@ -69,7 +79,7 @@ export function Patients() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
-            {t('nav.patients')}
+            Patients
           </h1>
           <p className="text-gray-600">
             Manage patient records and information
@@ -81,7 +91,7 @@ export function Patients() {
           className="btn-primary inline-flex items-center space-x-2"
         >
           <UserPlusIcon className="h-5 w-5" />
-          <span>{t('patient.register')}</span>
+          <span>Register Patient</span>
         </Link>
       </div>
 
@@ -95,7 +105,7 @@ export function Patients() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="input-field pl-10"
-          placeholder={`${t('common.search')} patients by name or phone...`}
+          placeholder="Search patients by name or phone..."
         />
       </div>
 
@@ -115,7 +125,7 @@ export function Patients() {
             </p>
             {!searchQuery && (
               <Link to="/register" className="btn-primary">
-                {t('patient.register')}
+                Register Patient
               </Link>
             )}
           </div>

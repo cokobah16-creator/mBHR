@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { db, InventoryItem, generateId } from '@/db'
 import { useAuthStore } from '@/stores/auth'
-import { can } from '@/auth/roles'
 import { 
   CubeIcon, 
   PlusIcon, 
@@ -11,11 +9,9 @@ import {
 } from '@heroicons/react/24/outline'
 
 export function Inventory() {
-  const { t } = useTranslation()
   const { currentUser } = useAuthStore()
   const [inventory, setInventory] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
   const [formData, setFormData] = useState({
@@ -26,21 +22,17 @@ export function Inventory() {
   })
 
   useEffect(() => {
-    console.log('[Inventory] Component mounted, loading inventory...')
     loadInventory()
   }, [])
 
   const loadInventory = async () => {
-    setLoading(true)
-    setError(null)
     try {
-      console.log('[Inventory] Loading inventory items...')
+      console.log('Loading inventory...')
       const items = await db.inventory.orderBy('itemName').toArray()
-      console.log('[Inventory] Loaded items:', items.length, items)
+      console.log('Loaded inventory items:', items.length)
       setInventory(items)
     } catch (error) {
       console.error('Error loading inventory:', error)
-      setError('Failed to load inventory. Please try refreshing the page.')
     } finally {
       setLoading(false)
     }
@@ -98,25 +90,6 @@ export function Inventory() {
 
   const lowStockItems = inventory.filter(item => item.onHandQty <= item.reorderThreshold)
 
-  // Show error state
-  if (error) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <CubeIcon className="h-12 w-12 mx-auto text-red-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Error Loading Inventory</h3>
-          <p className="text-red-600 mb-6">{error}</p>
-          <button
-            onClick={loadInventory}
-            className="btn-primary"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -127,8 +100,6 @@ export function Inventory() {
       </div>
     )
   }
-
-  console.log('[Inventory] Rendering with', inventory.length, 'items')
 
   return (
     <div className="space-y-6">
@@ -146,15 +117,13 @@ export function Inventory() {
           </div>
         </div>
         
-        {currentUser && (can(currentUser.role, 'inventory') || can(currentUser.role, 'users')) && (
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="btn-primary inline-flex items-center space-x-2"
-          >
-            <PlusIcon className="h-5 w-5" />
-            <span>Add Item</span>
-          </button>
-        )}
+        <button
+          onClick={() => setShowAddForm(true)}
+          className="btn-primary inline-flex items-center space-x-2"
+        >
+          <PlusIcon className="h-5 w-5" />
+          <span>Add Item</span>
+        </button>
       </div>
 
       {/* Low Stock Alert */}
@@ -263,14 +232,12 @@ export function Inventory() {
             <CubeIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No inventory items</h3>
             <p className="text-gray-600 mb-6">Add your first inventory item to get started</p>
-            {(currentUser?.role === 'admin' || currentUser?.role === 'pharmacist') && (
-              <button
-                onClick={() => setShowAddForm(true)}
-                className="btn-primary"
-              >
-                Add First Item
-              </button>
-            )}
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="btn-primary"
+            >
+              Add First Item
+            </button>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -327,15 +294,13 @@ export function Inventory() {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {(currentUser?.role === 'admin' || currentUser?.role === 'pharmacist') && (
-                        <button
-                          onClick={() => startEdit(item)}
-                          className="text-primary hover:text-primary/80 inline-flex items-center space-x-1"
-                        >
-                          <PencilIcon className="h-4 w-4" />
-                          <span>Edit</span>
-                        </button>
-                      )}
+                      <button
+                        onClick={() => startEdit(item)}
+                        className="text-primary hover:text-primary/80 inline-flex items-center space-x-1"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                        <span>Edit</span>
+                      </button>
                     </td>
                   </tr>
                 ))}

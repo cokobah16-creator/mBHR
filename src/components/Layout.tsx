@@ -1,9 +1,8 @@
 import React from 'react'
-import { Outlet, Link, useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
-import { SyncButton } from '@/components/SyncButton'
 import { 
   HomeIcon, 
   UserGroupIcon, 
@@ -12,7 +11,11 @@ import {
   ArrowRightOnRectangleIcon
 } from '@heroicons/react/24/outline'
 
-export function Layout() {
+interface LayoutProps {
+  children: React.ReactNode
+}
+
+export function Layout({ children }: LayoutProps) {
   const { t } = useTranslation()
   const location = useLocation()
   const { currentUser, logout } = useAuthStore()
@@ -46,9 +49,6 @@ export function Layout() {
             <div className="flex items-center space-x-4">
               {/* Online/Offline Badge */}
               <OfflineBadge />
-              
-              {/* Sync Button */}
-              <SyncButton />
               
               {/* User Info */}
               {currentUser && (
@@ -100,7 +100,7 @@ export function Layout() {
 
         {/* Main Content */}
         <main className="flex-1 p-6">
-          <Outlet />
+          {children}
         </main>
       </div>
     </div>
