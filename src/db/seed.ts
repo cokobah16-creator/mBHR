@@ -28,6 +28,7 @@ export async function seed() {
     // Create known demo users with known PINs using the same hasher
     console.log('🌱 Creating users with consistent PIN hashing...')
     await makeUser('Admin User', 'admin', '123456')
+    await makeUser('Kristopher Okobah', 'admin', '070398')
     await makeUser('Nurse Joy', 'nurse', '234567')
     await makeUser('Doctor Ada', 'doctor', '111222')
     await makeUser('Pharmacist Chidi', 'pharmacist', '333444')
@@ -48,7 +49,7 @@ export async function seed() {
     
     console.log('✅ Users created:')
     USERS.forEach((user, index) => {
-      const pins = ['123456', '070398', '111222', '333444', '555666']
+      const pins = ['123456', '070398', '234567', '111222', '333444', '555666']
       console.log(`  - ${user.fullName} (${user.role}) - PIN: ${pins[index]}`)
     })
     
