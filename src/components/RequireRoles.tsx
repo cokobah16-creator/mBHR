@@ -7,7 +7,7 @@ type Props = {
   children: React.ReactNode 
 }
 
-export function RequireRoles({ roles, children }: Props) {
+export default function RequireRoles({ roles, children }: Props) {
   const { currentUser } = useAuthStore()
   const userRole = currentUser?.role as any
   
