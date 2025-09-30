@@ -1,6 +1,6 @@
 // src/pages/Login.tsx
 import { useState } from 'react'
-import { login as offlineLogin } from '@/stores/auth'
+import { useAuthStore } from '@/stores/auth'
 import { isOnlineSyncEnabled } from '@/sync/adapter'
 
 export default function Login() {
@@ -16,7 +16,10 @@ export default function Login() {
     setErr(null)
     try {
       if (mode === 'offline') {
-        await offlineLogin(pin)
+        const success = await useAuthStore.getState().login(pin)
+        if (!success) {
+          throw new Error('INVALID_PIN')
+        }
       } else {
         setErr('Online login not configured yet')
       }
