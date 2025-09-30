@@ -28,7 +28,7 @@ export async function seed() {
     // Create known demo users with known PINs using the same hasher
     console.log('🌱 Creating users with consistent PIN hashing...')
     await makeUser('Admin User', 'admin', '123456')
-    await makeUser('Nurse Joy', 'nurse', '070398')
+    await makeUser('Nurse Joy', 'nurse', '234567')
     await makeUser('Doctor Ada', 'doctor', '111222')
     await makeUser('Pharmacist Chidi', 'pharmacist', '333444')
     await makeUser('Volunteer Musa', 'volunteer', '555666')
