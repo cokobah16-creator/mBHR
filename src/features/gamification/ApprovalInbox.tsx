@@ -46,7 +46,7 @@ export default function ApprovalInbox() {
 
   const loadPendingSessions = async () => {
     try {
-      const sessions = await db.gameSessions
+      const sessions = await db.gameSessions.where('committed').equals(false).and(s => !!s.finishedAt).toArray()
         .where('committed_idx')
         .equals(0)
         .and(session => !!session.finishedAt)
