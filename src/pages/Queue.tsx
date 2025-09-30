@@ -1,4 +1,3 @@
-```tsx
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import QueueBoard from '@/components/QueueBoard' // Changed to default import
@@ -38,4 +37,3 @@ export function Queue() {
     </div>
   )
 }
-```

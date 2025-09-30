@@ -1,4 +1,3 @@
-```tsx
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db as mbhrDb } from '@/db/mbhr'
 import { useQueue } from '@/stores/queue'
@@ -102,7 +101,7 @@ export function QueueBoard({ stage = 'registration', compact = false }: QueueBoa
           const Icon = stageIcons[stageName]
 
           return (
-            <div key={stageName} className={\`p-4 rounded-lg border ${stageColors[stageName]}`}>
+            <div key={ticket.id} className={`flex items-center justify-between p-3 border rounded-lg ${
               <div className="flex items-center space-x-2 mb-2">
                 <Icon className="h-5 w-5" />
                 <span className="font-medium capitalize">{stageName}</span>
@@ -213,4 +212,3 @@ function TicketList({ title, items }: { title: string; items: any[] }) {
 
 // ✅ default export too, so either import style works
 export default QueueBoard
-```
