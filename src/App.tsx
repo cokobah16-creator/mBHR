@@ -80,7 +80,7 @@ function App() {
                   } />
                   <Route path="/rx/stock" element={
                     <RequireRoles roles={['pharmacist', 'doctor', 'nurse', 'admin']}>
-                      <PharmacyStock />
+                      <PharmacyStockSkeleton />
                     </RequireRoles>
                   } />
                   <Route path="/rx/new" element={
@@ -109,11 +109,6 @@ function App() {
                     </RequireRoles>
                   } />
                   <Route path="/display" element={<PublicDisplay />} />
-                  <Route path="/rx/stock-skeleton" element={
-                    <RequireRoles roles={['pharmacist', 'doctor', 'nurse', 'admin']}>
-                      <PharmacyStockSkeleton />
-                    </RequireRoles>
-                  } />
                 </Routes>
               </Layout>
             </ProtectedRoute>
