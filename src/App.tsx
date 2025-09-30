@@ -34,12 +34,13 @@ import KnowledgeBlitz from '@/features/gamification/KnowledgeBlitz'
 import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard'
 import ApprovalInbox from '@/features/gamification/ApprovalInbox'
 import { SimpleRegister } from '@/pages/SimpleRegister'
-import FEFODispenser from '@/features/pharmacy/FEFODispenser'
-import EnhancedPharmacy from '@/features/pharmacy/EnhancedPharmacy'
 
-// Lazy load game components
+// Lazy load game components with default exports
 const TriageSprint = lazy(() => import('@/features/triage/TriageSprint'))
 const VitalsPrecisionGame = lazy(() => import('@/features/vitals/VitalsPrecisionGame'))
+const QuickTriage = lazy(() => import('@/features/triage/QuickTriage'))
+const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'))
+const EnhancedPharmacy = lazy(() => import('@/features/pharmacy/EnhancedPharmacy'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
