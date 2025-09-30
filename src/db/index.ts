@@ -338,7 +338,7 @@ export class MBHRDatabase extends Dexie {
     })
 
     // v6 — Add gamification tables
-    this.version(6).stores({
+    this.version(7).stores({
       patients:      'id, familyName, phone, state, lga, createdAt, updatedAt, _dirty, _syncedAt',
       vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
       consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
