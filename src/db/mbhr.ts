@@ -146,9 +146,6 @@ class MBHRDB extends Dexie {
       stock_moves_rx: 'id, itemId, batchId, createdAt',
       prescriptions: 'id, patientId, status, createdAt',
       dispenses: 'id, prescriptionId, patientId, dispensedAt'
-      gamification: 'id, volunteerId, updatedAt',
-      queue_metrics: 'id, stage, updatedAt',
-      daily_counters: 'id, siteId, dateStr, category'
     })
   }
 }
