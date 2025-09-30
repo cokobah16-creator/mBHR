@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
@@ -7,7 +7,6 @@ import Toasts from '@/components/Toasts'
 import useLowStockWatcher from '@/features/inventory/useLowStockWatcher'
 import { LanguageSelector } from '@/components/LanguageSelector'
 import { AccessibilityControls } from '@/components/AccessibilityControls'
-import { MessageOutbox } from '@/components/MessageOutbox'
 import { can } from '@/auth/roles'
 import type { ElementType, ReactNode } from 'react'
 import { 
@@ -21,13 +20,95 @@ import {
   GiftIcon,
   TicketIcon,
   TrophyIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   ClipboardDocumentListIcon,
-  PlusIcon,
   ChartBarIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  ArrowLeftIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
+
+// Pharmacy Overlay Component
+function PharmacyOverlay({ onClose }: { onClose: () => void }) {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose()
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  const cards = [
+    {
+      to: "/rx/dispense",
+      title: "Dispense",
+      desc: "Record prescriptions & counsel patients",
+      Icon: BeakerIcon,
+    },
+    {
+      to: "/rx/stock", 
+      title: "Inventory",
+      desc: "Stock counts, restock & FEFO tracking",
+      Icon: CubeIcon,
+    },
+    {
+      to: "/rx/new",
+      title: "New Stock", 
+      desc: "Receive deliveries / add new items",
+      Icon: ClipboardDocumentListIcon,
+    },
+    {
+      to: "/pharmacy/reports",
+      title: "Reports",
+      desc: "Daily summary & controlled log", 
+      Icon: ClipboardDocumentListIcon,
+    },
+  ]
+
+  return (
+    <main className="p-4 sm:p-6 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-4">
+        <button
+          onClick={onClose}
+          className="inline-flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900 focus:outline-none focus:ring"
+        >
+          <ArrowLeftIcon className="h-4 w-4" aria-hidden />
+          Back to Dashboard
+        </button>
+
+        <button
+          onClick={onClose}
+          aria-label="Close pharmacy menu"
+          className="rounded-full p-2 hover:bg-gray-100 focus:outline-none focus:ring"
+        >
+          <XMarkIcon className="h-5 w-5" />
+        </button>
+      </div>
+
+      <h1 className="text-2xl font-bold mb-2">Pharmacy</h1>
+      <p className="text-gray-600 mb-6">Choose what you'd like to do.</p>
+
+      <section
+        aria-label="Pharmacy options"
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+      >
+        {cards.map(({ to, title, desc, Icon }) => (
+          <Link
+            key={to}
+            to={to}
+            className="group rounded-2xl border border-gray-200 p-5 hover:shadow-md focus:outline-none focus:ring focus:ring-primary/30"
+          >
+            <div className="flex items-center gap-3">
+              <span className="rounded-xl bg-gray-100 p-3">
+                <Icon className="h-6 w-6" aria-hidden />
+              </span>
+              <h2 className="text-lg font-semibold">{title}</h2>
+            </div>
+            <p className="mt-3 text-sm text-gray-600">{desc}</p>
+            <span className="sr-only">Open {title}</span>
+          </Link>
+        ))}
+      </section>
+    </main>
+  )
+}
 
 // Fallback icon for nav items missing icons
 const FallbackIcon = (props: React.SVGProps<SVGSVGElement>) => (
@@ -50,7 +131,7 @@ export function Layout({ children }: LayoutProps) {
   const { t } = useTranslation()
   const location = useLocation()
   const { currentUser, logout } = useAuthStore()
-  const [pharmacyExpanded, setPharmacyExpanded] = React.useState(false)
+  const [overlay, setOverlay] = React.useState<null | "pharmacy">(null)
   
   // Start low stock monitoring
   useLowStockWatcher()
@@ -132,20 +213,44 @@ export function Layout({ children }: LayoutProps) {
           <div className="p-4">
             <ul className="space-y-2">
               {navigation.map((item) => {
+                const isPharmacy = item.name === 'Pharmacy'
                 const isActive = location.pathname === item.href
+                
+                const Common = (
+                  <>
+                    <item.icon className="h-5 w-5" />
+                    <span className="font-medium">{item.name}</span>
+                  </>
+                )
+                
                 return (
                   <li key={item.name}>
-                    <Link
-                      to={item.href}
-                      className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target ${
-                        isActive
-                          ? 'bg-primary text-white'
-                          : 'text-gray-700 hover:bg-gray-100'
-                      }`}
-                    >
-                      <item.icon className="h-5 w-5" />
-                      <span className="font-medium">{item.name}</span>
-                    </Link>
+                    {isPharmacy ? (
+                      <button
+                        type="button"
+                        onClick={() => setOverlay("pharmacy")}
+                        className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target text-left ${
+                          overlay === "pharmacy"
+                            ? 'bg-primary text-white'
+                            : 'text-gray-700 hover:bg-gray-100'
+                        }`}
+                        aria-haspopup="dialog"
+                        aria-controls="pharmacy-menu"
+                      >
+                        {Common}
+                      </button>
+                    ) : (
+                      <Link
+                        to={item.href}
+                        className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target ${
+                          isActive
+                            ? 'bg-primary text-white'
+                            : 'text-gray-700 hover:bg-gray-100'
+                        }`}
+                      >
+                        {Common}
+                      </Link>
+                    )}
                   </li>
                 )
               })}
@@ -154,8 +259,16 @@ export function Layout({ children }: LayoutProps) {
         </nav>
 
         {/* Main Content */}
-        <main className="flex-1 p-6">
-          {children}
+        <main className="flex-1">
+          {overlay === "pharmacy" ? (
+            <div id="pharmacy-menu" role="dialog" aria-modal="true" className="p-6">
+              <PharmacyOverlay onClose={() => setOverlay(null)} />
+            </div>
+          ) : (
+            <div className="p-6">
+              {children}
+            </div>
+          )}
         </main>
       </div>
       
