@@ -253,7 +253,7 @@ export default function Login() {
             <div className="mt-3 text-xs text-gray-600 border-t pt-2">
               <strong>Known seed PINs:</strong><br/>
               • 123456 (Admin User)<br/>
-              • 070398 (Nurse Joy)<br/>
+              • 234567 (Nurse Joy)<br/>
               • 111222 (Doctor Ada)<br/>
               • 333444 (Pharmacist Chidi)<br/>
               • 555666 (Volunteer Musa)
