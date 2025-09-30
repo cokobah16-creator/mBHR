@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type Toast = { id: string; title: string; body?: string; type?: 'info' | 'warning' | 'error' | 'success' }
+export type Toast = { id: string; title: string; body?: string }
 
 type ToastState = {
   items: Toast[]
