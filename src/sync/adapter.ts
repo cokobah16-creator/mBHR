@@ -11,14 +11,14 @@ export function isOnlineSyncEnabled() { return !!sb }
 type Tbl = 'app_users'|'patients'|'visits'|'vitals'|'consultations'|'dispenses'|'inventory'|'queue'
 
 const mapToDB: Record<Tbl, Record<string,string>> = {
+  app_users: {
+    id:'id', fullName:'full_name', role:'role', adminAccess:'admin_access', 
+    adminPermanent:'admin_permanent', createdAt:'created_at', updatedAt:'updated_at'
+  },
   patients: {
     id:'id', givenName:'given_name', familyName:'family_name', sex:'sex', dob:'dob',
     phone:'phone', address:'address', state:'state', lga:'lga', photoUrl:'photo_url',
     familyId:'family_id', createdAt:'created_at', updatedAt:'updated_at'
-  },
-  app_users: {
-    id:'id', fullName:'full_name', role:'role', adminAccess:'admin_access', 
-    adminPermanent:'admin_permanent', createdAt:'created_at', updatedAt:'updated_at'
   },
   visits: {
     id:'id', patientId:'patient_id', startedAt:'started_at', siteName:'site_name',

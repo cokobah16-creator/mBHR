@@ -94,7 +94,7 @@ VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_anon_key
 ```
 
-Then run the SQL migration in your Supabase project:
+Then run the SQL migration to create the database schema:
 
 1. Go to your Supabase project dashboard
 2. Navigate to SQL Editor
@@ -103,6 +103,14 @@ Then run the SQL migration in your Supabase project:
 
 The app will automatically detect the configuration and enable background sync!
 
+### Migration File Location
+
+The complete SQL migration is located at:
+```
+supabase/migrations/create_sync_schema.sql
+```
+
+This migration creates all necessary tables, indexes, and Row Level Security policies for syncing your offline data with Supabase.
 ## Acceptance Tests
 
 ### A1: First Run Setup
