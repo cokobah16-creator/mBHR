@@ -1,0 +1,132 @@
+import { create } from 'zustand'
+import { db, Patient, Visit, QueueItem, generateId, createAuditLog } from '@/db'
+
+interface PatientsState {
+  patients: Patient[]
+  currentPatient: Patient | null
+  searchQuery: string
+  
+  // Actions
+  loadPatients: () => Promise<void>
+  searchPatients: (query: string) => Promise<Patient[]>
+  addPatient: (patient: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>) => Promise<string>
+  updatePatient: (id: string, updates: Partial<Patient>) => Promise<void>
+  setCurrentPatient: (patient: Patient | null) => void
+  setSearchQuery: (query: string) => void
+  startVisit: (patientId: string, siteName: string) => Promise<string>
+}
+
+export const usePatientsStore = create<PatientsState>((set, get) => ({
+  patients: [],
+  currentPatient: null,
+  searchQuery: '',
+
+  loadPatients: async () => {
+    try {
+      const patients = await db.patients.orderBy('createdAt').reverse().toArray()
+      set({ patients })
+    } catch (error) {
+      console.error('Error loading patients:', error)
+    }
+  },
+
+  searchPatients: async (query: string) => {
+    if (!query.trim()) {
+      return get().patients
+    }
+    
+    try {
+      const results = await db.patients
+        .filter(patient => 
+          patient.givenName.toLowerCase().includes(query.toLowerCase()) ||
+          patient.familyName.toLowerCase().includes(query.toLowerCase()) ||
+          patient.phone.includes(query)
+        )
+        .toArray()
+      
+      return results
+    } catch (error) {
+      console.error('Error searching patients:', error)
+      return []
+    }
+  },
+
+  addPatient: async (patientData) => {
+    try {
+      const patient: Patient = {
+        ...patientData,
+        id: generateId(),
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+      
+      await db.patients.add(patient)
+      
+      // Add to queue for registration
+      const queueItem: QueueItem = {
+        id: generateId(),
+        patientId: patient.id,
+        stage: 'registration',
+        position: await db.queue.count() + 1,
+        status: 'waiting',
+        updatedAt: new Date()
+      }
+      
+      await db.queue.add(queueItem)
+      
+      // Audit log
+      await createAuditLog('system', 'create', 'patient', patient.id)
+      
+      // Refresh patients list
+      get().loadPatients()
+      
+      return patient.id
+    } catch (error) {
+      console.error('Error adding patient:', error)
+      throw error
+    }
+  },
+
+  updatePatient: async (id: string, updates: Partial<Patient>) => {
+    try {
+      await db.patients.update(id, {
+        ...updates,
+        updatedAt: new Date()
+      })
+      
+      await createAuditLog('system', 'update', 'patient', id)
+      get().loadPatients()
+    } catch (error) {
+      console.error('Error updating patient:', error)
+      throw error
+    }
+  },
+
+  setCurrentPatient: (patient: Patient | null) => {
+    set({ currentPatient: patient })
+  },
+
+  setSearchQuery: (query: string) => {
+    set({ searchQuery: query })
+  },
+
+  startVisit: async (patientId: string, siteName: string) => {
+    try {
+      const visit: Visit = {
+        id: generateId(),
+        patientId,
+        startedAt: new Date(),
+        siteName,
+        status: 'open'
+      }
+      
+      await db.visits.add(visit)
+      await createAuditLog('system', 'create', 'visit', visit.id)
+      
+      return visit.id
+    } catch (error) {
+      console.error('Error starting visit:', error)
+      throw error
+    }
+  }
+}))
