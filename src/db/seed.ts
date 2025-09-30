@@ -32,11 +32,7 @@ export async function seed() {
       console.log('🌱 Creating demo users...')
       
       const users = [
-        { fullName: 'Admin User', role: 'admin' as const, pin: '123456' },
-        { fullName: 'Dr. Sarah Johnson', role: 'doctor' as const, pin: '234567' },
-        { fullName: 'Nurse Mary', role: 'nurse' as const, pin: '345678' },
-        { fullName: 'Pharmacist John', role: 'pharmacist' as const, pin: '456789' },
-        { fullName: 'Volunteer Mike', role: 'volunteer' as const, pin: '567890' }
+        { fullName: 'Admin User', role: 'admin' as const, pin: '123456' }
       ]
       
       for (const userData of users) {
@@ -56,7 +52,7 @@ export async function seed() {
         })
       }
       
-      console.log('✅ Users created with PINs: 123456, 234567, 345678, 456789, 567890')
+      console.log('✅ Admin user created with PIN: 123456')
     }
 
     // Seed inventory if needed
