@@ -57,7 +57,7 @@ export async function seed() {
         })
       }
       
-      console.log('✅ Users created with PINs: 123456, 234567, 345678, 456789, 567890')
+      console.log('✅ Users created with PINs: 123456, 234567, 345678, 456789, 567890, 070398')
     }
 
     // Seed inventory if needed
