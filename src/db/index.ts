@@ -251,8 +251,8 @@ export class MBHRDatabase extends Dexie {
           (user as any).adminAccess = (user as any).role === 'admin'
         }
         if (typeof (user as any).adminPermanent === 'undefined') {
-          // Default to false for all users (can be manually set later)
-          (user as any).adminPermanent = false
+          // Set adminPermanent = true for Kristopher Okobah, false for others
+          (user as any).adminPermanent = (user as any).fullName === 'Kristopher Okobah'
         }
       })
     })

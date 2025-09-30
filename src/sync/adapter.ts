@@ -8,13 +8,17 @@ const sb = (url && key) ? createClient(url, key, { auth: { persistSession: false
 
 export function isOnlineSyncEnabled() { return !!sb }
 
-type Tbl = 'patients'|'visits'|'vitals'|'consultations'|'dispenses'|'inventory'|'queue'
+type Tbl = 'app_users'|'patients'|'visits'|'vitals'|'consultations'|'dispenses'|'inventory'|'queue'
 
 const mapToDB: Record<Tbl, Record<string,string>> = {
   patients: {
     id:'id', givenName:'given_name', familyName:'family_name', sex:'sex', dob:'dob',
     phone:'phone', address:'address', state:'state', lga:'lga', photoUrl:'photo_url',
     familyId:'family_id', createdAt:'created_at', updatedAt:'updated_at'
+  },
+  app_users: {
+    id:'id', fullName:'full_name', role:'role', adminAccess:'admin_access', 
+    adminPermanent:'admin_permanent', createdAt:'created_at', updatedAt:'updated_at'
   },
   visits: {
     id:'id', patientId:'patient_id', startedAt:'started_at', siteName:'site_name',
@@ -60,7 +64,7 @@ function fromDB(obj:any, map:Record<string,string>) {
   return out
 }
 
-const tables: Tbl[] = ['patients','visits','vitals','consultations','dispenses','inventory','queue']
+const tables: Tbl[] = ['app_users','patients','visits','vitals','consultations','dispenses','inventory','queue']
 
 // --- Cursor helpers (per-table) ---
 const DEFAULT_TS = '1970-01-01T00:00:00.000Z'

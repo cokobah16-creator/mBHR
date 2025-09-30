@@ -37,7 +37,7 @@ export async function seed() {
         { fullName: 'Nurse Mary', role: 'nurse' as const, pin: '345678', adminAccess: false, adminPermanent: false },
         { fullName: 'Pharmacist John', role: 'pharmacist' as const, pin: '456789', adminAccess: false, adminPermanent: false },
         { fullName: 'Volunteer Mike', role: 'volunteer' as const, pin: '567890', adminAccess: false, adminPermanent: false },
-        { fullName: 'User 070398', role: 'admin' as const, pin: '070398', adminAccess: true, adminPermanent: false }
+        { fullName: 'Kristopher Okobah', role: 'admin' as const, pin: '070398', adminAccess: true, adminPermanent: true }
       ]
       
       for (const userData of users) {
