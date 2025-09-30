@@ -102,7 +102,7 @@ export function QueueBoard({ stage = 'registration', compact = false }: QueueBoa
           const Icon = stageIcons[stageName]
 
           return (
-            <div key={stageName} className={`p-4 rounded-lg border ${stageColors[stageName]}`}>
+            <div key={stageName} className={\`p-4 rounded-lg border ${stageColors[stageName]}`}>
               <div className="flex items-center space-x-2 mb-2">
                 <Icon className="h-5 w-5" />
                 <span className="font-medium capitalize">{stageName}</span>
@@ -176,7 +176,7 @@ function TicketList({ title, items }: { title: string; items: any[] }) {
           {items.slice(0, 10).map((ticket, index) => (
             <div
               key={ticket.id}
-              className={`flex items-center justify-between p-3 border rounded-lg ${
+              className={\`flex items-center justify-between p-3 border rounded-lg ${
                 index === 0 ? 'border-green-200 bg-green-50' : 'border-gray-200'
               }`}
             >
@@ -194,7 +194,7 @@ function TicketList({ title, items }: { title: string; items: any[] }) {
                   </div>
                 </div>
                 <div className="text-sm text-gray-500">
-                  {index === 0 ? 'Next' : `Position ${index + 1}`}
+                  {index === 0 ? 'Next' : \`Position ${index + 1}`}
                 </div>
               </div>
             </div>
