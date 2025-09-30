@@ -16,7 +16,7 @@ export default function Login() {
     setErr(null)
     console.log('Attempting login with PIN:', pin)
     try {
-      if (mode === 'offline') {
+      if onlineAvailable(mode === 'offline') {
         const success = await useAuthStore.getState().login(pin)
         console.log('Login result:', success)
         if (!success) {
