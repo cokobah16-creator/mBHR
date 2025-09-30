@@ -6,6 +6,7 @@ import { OfflineBadge } from '@/components/OfflineBadge'
 import Toasts from '@/components/Toasts'
 import useLowStockWatcher from '@/features/inventory/useLowStockWatcher'
 import { can } from '@/auth/roles'
+import type { ElementType, ReactNode } from 'react'
 import { 
   HomeIcon, 
   UserGroupIcon, 
@@ -18,8 +19,23 @@ import {
   TicketIcon,
   TrophyIcon,
   ChevronDownIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  ClipboardDocumentListIcon,
+  PlusIcon
 } from '@heroicons/react/24/outline'
+
+// Fallback icon for nav items missing icons
+const FallbackIcon = (props: React.SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" fill="none" {...props}>
+    <circle cx="12" cy="12" r="9" stroke="currentColor" />
+  </svg>
+)
+
+type NavItem = {
+  name: string
+  href: string
+  icon: ElementType
+}
 
 interface LayoutProps {
   children: React.ReactNode
@@ -55,10 +71,10 @@ export function Layout({ children }: LayoutProps) {
   ]
 
   // Pharmacy navigation items
-  const pharmacyNavigation = [
-    { name: 'Pharmacy Stock', href: '/rx/stock' },
-    { name: 'New Prescription', href: '/rx/new' },
-    { name: 'Dispense', href: '/rx/dispense' }
+  const pharmacyNavigation: NavItem[] = [
+    { name: 'Pharmacy Stock', href: '/rx/stock', icon: BeakerIcon },
+    { name: 'New Prescription', href: '/rx/new', icon: ClipboardDocumentListIcon },
+    { name: 'Dispense', href: '/rx/dispense', icon: PlusIcon }
   ]
 
   // Check if any pharmacy route is active
@@ -148,6 +164,12 @@ export function Layout({ children }: LayoutProps) {
               </li>
               {pharmacyNavigation.map((item) => {
                 const isActive = location.pathname === item.href
+                const Icon = (item.icon ?? FallbackIcon) as ElementType
+                
+                if (process.env.NODE_ENV !== 'production' && !item.icon) {
+                  console.warn(`[Layout] Missing icon for nav item "${item.name}"`)
+                }
+                
                 return (
                   <li key={item.name}>
                     <Link
@@ -158,7 +180,7 @@ export function Layout({ children }: LayoutProps) {
                           : 'text-gray-700 hover:bg-gray-100'
                       }`}
                     >
-                      <item.icon className="h-5 w-5" />
+                      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                       <span className="font-medium">{item.name}</span>
                     </Link>
                   </li>
