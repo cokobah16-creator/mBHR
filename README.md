@@ -87,12 +87,21 @@ npm run lint
 
 ## Optional Cloud Sync
 
-Add Supabase configuration to `.env`:
+To enable cloud sync, add Supabase configuration to `.env`:
 
 ```
 VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_anon_key
 ```
+
+Then run the SQL migration in your Supabase project:
+
+1. Go to your Supabase project dashboard
+2. Navigate to SQL Editor
+3. Copy and paste the contents of `supabase/migrations/create_sync_schema.sql`
+4. Execute the migration
+
+The app will automatically detect the configuration and enable background sync!
 
 ## Acceptance Tests
 
