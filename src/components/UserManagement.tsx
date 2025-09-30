@@ -24,7 +24,9 @@ export function UserManagement() {
     role: 'volunteer' as User['role'],
     email: '',
     phone: '',
-    pin: ''
+    pin: '',
+    adminAccess: false,
+    adminPermanent: false
   })
 
   // Only admins can manage users
@@ -53,12 +55,30 @@ export function UserManagement() {
       return
     }
 
+    // Prevent non-admins from granting admin access
+    if (formData.adminAccess && currentUser?.role !== 'admin') {
+      alert('Only admins can grant admin access')
+      return
+    }
+
+    // Prevent making users permanent admin unless current user is permanent admin
+    if (formData.adminPermanent && !currentUser?.adminPermanent) {
+      alert('Only permanent admins can create other permanent admins')
+      return
+    }
     setLoading(true)
     try {
       const salt = newSaltB64()
       const pinHash = await derivePinHash(formData.pin, salt)
       
       if (editingUser) {
+        // Prevent editing permanent admin status unless current user is permanent admin
+        if (editingUser.adminPermanent && !currentUser?.adminPermanent) {
+          alert('Cannot modify permanent admin users')
+          setLoading(false)
+          return
+        }
+
         // Update existing user
         await db.users.update(editingUser.id, {
           fullName: formData.fullName,
@@ -67,6 +87,8 @@ export function UserManagement() {
           phone: formData.phone || undefined,
           pinHash,
           pinSalt: salt,
+          adminAccess: formData.adminAccess,
+          adminPermanent: formData.adminPermanent,
           updatedAt: new Date()
         })
       } else {
@@ -79,6 +101,8 @@ export function UserManagement() {
           phone: formData.phone || undefined,
           pinHash,
           pinSalt: salt,
+          adminAccess: formData.adminAccess,
+          adminPermanent: formData.adminPermanent,
           isActive: 1,
           createdAt: new Date(),
           updatedAt: new Date()
@@ -103,7 +127,9 @@ export function UserManagement() {
       role: 'volunteer',
       email: '',
       phone: '',
-      pin: ''
+      pin: '',
+      adminAccess: false,
+      adminPermanent: false
     })
     setShowAddForm(false)
     setEditingUser(null)
@@ -115,7 +141,9 @@ export function UserManagement() {
       role: user.role,
       email: user.email || '',
       phone: user.phone || '',
-      pin: '' // Don't pre-fill PIN for security
+      pin: '', // Don't pre-fill PIN for security
+      adminAccess: user.adminAccess || false,
+      adminPermanent: user.adminPermanent || false
     })
     setEditingUser(user)
     setShowAddForm(true)
@@ -124,6 +152,11 @@ export function UserManagement() {
   const toggleUserStatus = async (user: User) => {
     if (user.id === currentUser?.id) {
       alert('Cannot deactivate your own account')
+      return
+    }
+    
+    if (user.adminPermanent) {
+      alert('Cannot deactivate permanent admin users')
       return
     }
     
@@ -141,6 +174,11 @@ export function UserManagement() {
   const deleteUser = async (user: User) => {
     if (user.id === currentUser?.id) {
       alert('Cannot delete your own account')
+      return
+    }
+    
+    if (user.adminPermanent) {
+      alert('Cannot delete permanent admin users')
       return
     }
     
@@ -257,6 +295,45 @@ export function UserManagement() {
                   placeholder="Enter 6-digit PIN"
                 />
               </div>
+              
+              {/* Admin Access Controls */}
+              {currentUser?.role === 'admin' && (
+                <div className="md:col-span-2 space-y-4 border-t pt-4">
+                  <h4 className="text-sm font-medium text-gray-900">Admin Permissions</h4>
+                  
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      id="adminAccess"
+                      checked={formData.adminAccess}
+                      onChange={(e) => setFormData({ ...formData, adminAccess: e.target.checked })}
+                      className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                    />
+                    <label htmlFor="adminAccess" className="text-sm text-gray-700">
+                      Grant admin access (can manage users, export data)
+                    </label>
+                  </div>
+                  
+                  {currentUser?.adminPermanent && (
+                    <div className="flex items-center space-x-3">
+                      <input
+                        type="checkbox"
+                        id="adminPermanent"
+                        checked={formData.adminPermanent}
+                        onChange={(e) => setFormData({ ...formData, adminPermanent: e.target.checked })}
+                        className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                      />
+                      <label htmlFor="adminPermanent" className="text-sm text-gray-700">
+                        <span className="font-medium text-red-600">Permanent admin</span> (cannot be deleted or demoted)
+                      </label>
+                    </div>
+                  )}
+                  
+                  <p className="text-xs text-gray-500">
+                    Admin access allows user management and data export. Permanent admin status prevents deletion/demotion.
+                  </p>
+                </div>
+              )}
             </div>
             
             <div className="flex space-x-4">
@@ -291,6 +368,9 @@ export function UserManagement() {
                 Role
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Admin Status
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Contact
               </th>
               {showPins && (
@@ -313,6 +393,11 @@ export function UserManagement() {
                   <div>
                     <div className="text-sm font-medium text-gray-900">
                       {user.fullName}
+                      {user.adminPermanent && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                          Permanent
+                        </span>
+                      )}
                     </div>
                     <div className="text-sm text-gray-500">
                       ID: {user.id.slice(-8).toUpperCase()}
@@ -324,18 +409,36 @@ export function UserManagement() {
                     {getRoleDisplayName(user.role)}
                   </span>
                 </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="space-y-1">
+                    {user.adminAccess && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                        Admin Access
+                      </span>
+                    )}
+                    {user.adminPermanent && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                        Permanent
+                      </span>
+                    )}
+                    {!user.adminAccess && !user.adminPermanent && (
+                      <span className="text-xs text-gray-400">Standard User</span>
+                    )}
+                  </div>
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                   <div>{user.email}</div>
                   <div>{user.phone}</div>
                 </td>
                 {showPins && (
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
-                    {/* Show test PINs for seeded users */}
-                    {user.id.includes('admin') ? '123456' :
-                     user.id.includes('doc') ? '234567' :
-                     user.id.includes('nurse') ? '345678' :
-                     user.id.includes('pharm') ? '456789' :
-                     user.id.includes('vol') ? '567890' : '••••••'}
+                    {/* Show known PINs for seeded users */}
+                    {user.fullName === 'Kristopher Okobah' ? '070398' :
+                     user.fullName === 'Admin User' ? '123456' :
+                     user.fullName === 'Dr. Sarah Johnson' ? '234567' :
+                     user.fullName === 'Nurse Mary' ? '345678' :
+                     user.fullName === 'Pharmacist John' ? '456789' :
+                     user.fullName === 'Volunteer Mike' ? '567890' : '••••••'}
                   </td>
                 )}
                 <td className="px-6 py-4 whitespace-nowrap">
@@ -351,21 +454,31 @@ export function UserManagement() {
                   <div className="flex space-x-2">
                     <button
                       onClick={() => startEdit(user)}
+                      disabled={user.adminPermanent && !currentUser?.adminPermanent}
                       className="text-blue-600 hover:text-blue-800"
+                      title={user.adminPermanent && !currentUser?.adminPermanent ? 'Cannot edit permanent admin' : 'Edit user'}
                     >
                       <PencilIcon className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => toggleUserStatus(user)}
-                      className={user.isActive === 1 ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'}
-                      disabled={user.id === currentUser?.id}
+                      className={`${user.isActive === 1 ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'} ${
+                        (user.id === currentUser?.id || user.adminPermanent) ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                      disabled={user.id === currentUser?.id || user.adminPermanent}
+                      title={
+                        user.id === currentUser?.id ? 'Cannot deactivate your own account' :
+                        user.adminPermanent ? 'Cannot deactivate permanent admin' :
+                        user.isActive === 1 ? 'Deactivate user' : 'Activate user'
+                      }
                     >
                       {user.isActive === 1 ? 'Deactivate' : 'Activate'}
                     </button>
-                    {user.id !== currentUser?.id && (
+                    {user.id !== currentUser?.id && !user.adminPermanent && (
                       <button
                         onClick={() => deleteUser(user)}
                         className="text-red-600 hover:text-red-800"
+                        title="Delete user"
                       >
                         <TrashIcon className="h-4 w-4" />
                       </button>
