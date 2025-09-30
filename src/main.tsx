@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { safeOpenDb } from './db/safeOpen'
 import { syncNow, isOnlineSyncEnabled } from './sync/adapter'
+import { seed } from './db/seed'
 import App from './App'
 import './index.css'
 import './i18n'
@@ -22,6 +23,9 @@ if ('serviceWorker' in navigator) {
 
 // Safe database initialization before render
 safeOpenDb().then(() => {
+  // Seed initial data if needed
+  return seed()
+}).then(() => {
   // Auto-sync on app boot if online sync is enabled
   if (isOnlineSyncEnabled()) {
     syncNow().catch(error => {

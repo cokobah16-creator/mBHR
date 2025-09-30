@@ -40,35 +40,42 @@ export const useAuthStore = create<AuthState>()(
           return false
         }
 
+        if (!/^\d{6}$/.test(pin)) {
+          state.incrementFailedAttempts()
+          return false
+        }
+
         try {
-          // Get all active users
-          const users = await db.users.where('isActive').equals(true).toArray()
+          // Get all active users and check PIN
+          const users = await db.users.toArray()
           
-          for (const user of users) {
-            const salt = saltFromString(user.pinSalt)
-            const isValid = await verifyPin(pin, user.pinHash, salt)
-            
-            if (isValid) {
-              // Create session
-              const session: Session = {
-                id: generateId(),
-                userId: user.id,
-                createdAt: new Date(),
-                deviceKey: generateId(),
-                lastSeenAt: new Date()
+          for (const user of users.filter(u => u.isActive)) {
+            if (user.pinSalt && user.pinHash) {
+              const salt = saltFromString(user.pinSalt)
+              const isValid = await verifyPin(pin, user.pinHash, salt)
+              
+              if (isValid) {
+                // Create session
+                const session: Session = {
+                  id: generateId(),
+                  userId: user.id,
+                  createdAt: new Date(),
+                  deviceKey: generateId(),
+                  lastSeenAt: new Date()
+                }
+                
+                await db.sessions.add(session)
+                
+                set({
+                  currentUser: user,
+                  currentSession: session,
+                  isAuthenticated: true,
+                  failedAttempts: 0,
+                  lockoutUntil: null
+                })
+                
+                return true
               }
-              
-              await db.sessions.add(session)
-              
-              set({
-                currentUser: user,
-                currentSession: session,
-                isAuthenticated: true,
-                failedAttempts: 0,
-                lockoutUntil: null
-              })
-              
-              return true
             }
           }
           

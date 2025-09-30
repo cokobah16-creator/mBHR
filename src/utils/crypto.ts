@@ -54,6 +54,12 @@ export function saltFromString(saltStr: string): Uint8Array {
   return new Uint8Array(bytes)
 }
 
+export async function sha256Hex(s: string): Promise<string> {
+  const data = new TextEncoder().encode(s)
+  const hash = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 // Encryption facade (stub for now - pass-through)
 export async function encrypt(data: string): Promise<string> {
   // TODO: Implement AES-GCM encryption for sensitive data

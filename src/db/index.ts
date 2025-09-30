@@ -164,7 +164,7 @@ export class MBHRDatabase extends Dexie {
       visits:        'id, patientId, startedAt, status, siteName',
       queue:         'id, patientId, stage, position, status, updatedAt',
       auditLogs:     'id, actorRole, entity, entityId, at',
-      users:         'id, fullName, role, email, isActive, createdAt, updatedAt',
+      users:         'id, fullName, role, email, pinHash, createdAt, updatedAt',
       sessions:      'id, userId, createdAt, lastSeenAt',
       settings:      'key'
     })
@@ -179,7 +179,7 @@ export class MBHRDatabase extends Dexie {
       visits:        'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
       queue:         'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
       auditLogs:     'id, actorRole, entity, entityId, at',
-      users:         'id, fullName, role, email, isActive, createdAt, updatedAt',
+      users:         'id, fullName, role, email, pinHash, createdAt, updatedAt',
       sessions:      'id, userId, createdAt, lastSeenAt',
       settings:      'key'
     })
