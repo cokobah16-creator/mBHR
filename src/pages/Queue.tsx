@@ -1,6 +1,7 @@
+```tsx
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { QueueBoard } from '@/components/QueueBoard'
+import QueueBoard from '@/components/QueueBoard' // Changed to default import
 import { QueueListIcon } from '@heroicons/react/24/outline'
 
 export function Queue() {
@@ -24,14 +25,17 @@ export function Queue() {
       {/* Queue Overview */}
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Queue Overview</h2>
-        <QueueBoard compact />
+        <QueueBoard compact /> {/* This will now use the default stage 'registration' */}
       </div>
 
-      {/* Detailed Queue */}
+      {/* Detailed Queue - Render all stages */}
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">All Patients</h2>
-        <QueueBoard />
+        {(['registration', 'vitals', 'consult', 'pharmacy'] as const).map(s => (
+          <QueueBoard key={s} stage={s} />
+        ))}
       </div>
     </div>
   )
 }
+```

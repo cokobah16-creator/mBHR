@@ -1,12 +1,12 @@
-import React, { useEffect } from 'react'
+```tsx
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '@/db/mbhr'
+import { db as mbhrDb } from '@/db/mbhr'
 import { useQueue } from '@/stores/queue'
 import { usePatientsStore } from '@/stores/patients'
-import { 
-  QueueListIcon, 
-  PlayIcon, 
-  CheckIcon, 
+import {
+  QueueListIcon,
+  PlayIcon,
+  CheckIcon,
   ClockIcon,
   UserIcon
 } from '@heroicons/react/24/outline'
@@ -39,41 +39,30 @@ const statusColors = {
   done: 'bg-green-100 text-green-700'
 }
 
-interface QueueBoardProps {
-  stage?: 'registration' | 'vitals' | 'consult' | 'pharmacy'
-  compact?: boolean
+type Stage = 'registration' | 'vitals' | 'consult' | 'pharmacy'
+
+type QueueBoardProps = {
+  stage?: Stage               // optional, defaults to 'registration'
+  compact?: boolean           // optional; kept for backwards compatibility
 }
 
-export function QueueBoard({ stage, compact = false }: QueueBoardProps) {
+export function QueueBoard({ stage = 'registration', compact = false }: QueueBoardProps) {
   const { updateQueueStatus, moveToNextStage } = useQueue()
   const { patients, loadPatients } = usePatientsStore()
 
-  useEffect(() => {
-    loadPatients()
-  }, [])
-
   // ✅ give useLiveQuery an initial value so it never returns undefined
-  const allTicketsQ = useLiveQuery(
-    () => db.tickets.toArray(),
-    [],
-    [] as any[]
-  )
-
   const stageTicketsQ = useLiveQuery(
-    () => stage 
-      ? db.tickets.where('currentStage').equals(stage).toArray()
-      : db.tickets.toArray(),
+    () =>
+      mbhrDb.tickets
+        .where('currentStage')
+        .equals(stage)
+        .toArray(),
     [stage],
     [] as any[]
   )
 
   // ✅ always coerce to an array
-  const allTickets = asArray(allTicketsQ)
   const stageTickets = asArray(stageTicketsQ)
-
-  const filteredItems = stage 
-    ? stageTickets.filter(item => item.status !== 'done')
-    : allTickets
 
   // derived sets
   const waiting = stageTickets.filter(t => t.state === 'waiting')
@@ -93,11 +82,11 @@ export function QueueBoard({ stage, compact = false }: QueueBoardProps) {
     const today = new Date()
     let age = today.getFullYear() - birthDate.getFullYear()
     const monthDiff = today.getMonth() - birthDate.getMonth()
-    
+
     if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
       age--
     }
-    
+
     return age
   }
 
@@ -105,9 +94,13 @@ export function QueueBoard({ stage, compact = false }: QueueBoardProps) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {(['registration', 'vitals', 'consult', 'pharmacy'] as const).map((stageName) => {
-          const stageItems = allTickets.filter(item => item.currentStage === stageName && item.state !== 'done')
+          const stageItems = asArray(useLiveQuery(
+            () => mbhrDb.tickets.where('currentStage').equals(stageName).toArray(),
+            [stageName],
+            [] as any[]
+          )).filter(item => item.state !== 'done')
           const Icon = stageIcons[stageName]
-          
+
           return (
             <div key={stageName} className={`p-4 rounded-lg border ${stageColors[stageName]}`}>
               <div className="flex items-center space-x-2 mb-2">
@@ -173,7 +166,7 @@ function TicketList({ title, items }: { title: string; items: any[] }) {
   return (
     <div className="card">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">{title} ({items.length})</h3>
-      
+
       {items.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
           <p>No patients waiting</p>
@@ -181,8 +174,8 @@ function TicketList({ title, items }: { title: string; items: any[] }) {
       ) : (
         <div className="space-y-2">
           {items.slice(0, 10).map((ticket, index) => (
-            <div 
-              key={ticket.id} 
+            <div
+              key={ticket.id}
               className={`flex items-center justify-between p-3 border rounded-lg ${
                 index === 0 ? 'border-green-200 bg-green-50' : 'border-gray-200'
               }`}
@@ -194,16 +187,19 @@ function TicketList({ title, items }: { title: string; items: any[] }) {
                 <div>
                   <div className="font-medium text-gray-900">{ticket.number ?? '—'}</div>
                   <div className="text-sm text-gray-600 capitalize">
-                    {ticket.category ?? '—'} • {ticket.priority ?? '—'} priority
+                    {ticket.category ?? '—'} •
+                    <span className={ticket.priority === 'urgent' ? 'text-red-600' : 'text-gray-600'}>
+                      {ticket.priority ?? '—'} priority
+                    </span>
                   </div>
                 </div>
-              </div>
-              <div className="text-sm text-gray-500">
-                {index === 0 ? 'Next' : `Position ${index + 1}`}
+                <div className="text-sm text-gray-500">
+                  {index === 0 ? 'Next' : `Position ${index + 1}`}
+                </div>
               </div>
             </div>
           ))}
-          
+
           {items.length > 10 && (
             <div className="text-center text-sm text-gray-500 py-2">
               ... and {items.length - 10} more patients
@@ -214,3 +210,7 @@ function TicketList({ title, items }: { title: string; items: any[] }) {
     </div>
   )
 }
+
+// ✅ default export too, so either import style works
+export default QueueBoard
+```
