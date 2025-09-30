@@ -158,7 +158,7 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
         qty: requestedQty,
         dosage,
         directions,
-        dispensedBy: currentUser?.fullName || 'Unknown',
+        dispensedBy: 'Pharmacist', // In real app, use current user
         dispensedAt: new Date(),
         _dirty: 1
       }
@@ -202,7 +202,7 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
       onSuccess?.()
     } catch (error) {
       console.error('Error dispensing medication:', error)
-      alert(t('error.dispenseFailed'))
+      alert('Failed to dispense medication')
     } finally {
       setLoading(false)
     }
@@ -217,10 +217,10 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
         <BeakerIcon className="h-8 w-8 text-primary" />
         <div>
           <h2 className="text-2xl font-bold text-gray-900">
-            {t('pharmacy.fefoDispense')}
+            FEFO Medication Dispense
           </h2>
           <p className="text-gray-600">
-            {t('pharmacy.fefoDescription')}
+            First Expired, First Out - automatic batch selection
           </p>
         </div>
       </div>
@@ -230,17 +230,17 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
           {/* Medication Selection */}
           <div>
             <label className="block text-lg font-medium text-gray-700 mb-3">
-              {t('pharmacy.medication')} *
+              Medication *
             </label>
             <select
               value={selectedMedication}
               onChange={(e) => setSelectedMedication(e.target.value)}
               className="input-field text-lg"
             >
-              <option value="">{t('simple.selectMedication')}</option>
+              <option value="">Select medication</option>
               {medications.map((med) => (
                 <option key={med.id} value={med.id}>
-                  {med.itemName} ({med.onHandQty} {med.unit} {t('common.available')})
+                  {med.itemName} ({med.onHandQty} {med.unit} available)
                 </option>
               ))}
             </select>
@@ -249,7 +249,7 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
           {/* Quantity Selection */}
           <div>
             <label className="block text-lg font-medium text-gray-700 mb-3">
-              {t('pharmacy.quantity')} *
+              Quantity *
             </label>
             <div className="flex items-center space-x-4">
               <button
@@ -284,7 +284,7 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
           {allocation.length > 0 && (
             <div>
               <h3 className="text-lg font-medium text-gray-700 mb-3">
-                {t('pharmacy.fefoAllocation')}
+                Batch Allocation (FEFO Order)
               </h3>
               
               {isShortfall && (
@@ -292,10 +292,7 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
                   <div className="flex items-center space-x-2">
                     <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
                     <span className="text-sm text-red-800">
-                      {t('pharmacy.insufficientStock', { 
-                        available: totalAvailable.toString(), 
-                        requested: requestedQty.toString() 
-                      })}
+                      Insufficient stock: {totalAvailable} available, {requestedQty} requested
                     </span>
                   </div>
                 </div>
@@ -311,16 +308,16 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="font-medium text-gray-900">
-                            {t('pharmacy.batch')} {index + 1}: {alloc.lotNumber}
+                            Batch {index + 1}: {alloc.lotNumber}
                           </div>
                           <div className="text-sm text-gray-600">
-                            {t('pharmacy.quantity')}: {alloc.qty} • 
-                            {t('pharmacy.expires')}: {new Date(alloc.expiryDate).toLocaleDateString()}
+                            Quantity: {alloc.qty} • 
+                            Expires: {new Date(alloc.expiryDate).toLocaleDateString()}
                           </div>
                         </div>
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${expiryStatus.color}`}>
                           <StatusIcon className="h-3 w-3 mr-1" />
-                          {t(`pharmacy.expiry.${expiryStatus.status}`)}
+                          {expiryStatus.status}
                         </span>
                       </div>
                     </div>
@@ -334,27 +331,27 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-lg font-medium text-gray-700 mb-3">
-                {t('pharmacy.dosage')} *
+                Dosage *
               </label>
               <input
                 type="text"
                 value={dosage}
                 onChange={(e) => setDosage(e.target.value)}
                 className="input-field text-lg"
-                placeholder={t('simple.dosageExample')}
+                placeholder="e.g., 1 tablet, 5ml"
               />
             </div>
             
             <div>
               <label className="block text-lg font-medium text-gray-700 mb-3">
-                {t('pharmacy.directions')} *
+                Directions *
               </label>
               <textarea
                 value={directions}
                 onChange={(e) => setDirections(e.target.value)}
                 className="input-field text-lg"
                 rows={3}
-                placeholder={t('simple.directionsExample')}
+                placeholder="Take twice daily with food"
               />
             </div>
           </div>
@@ -366,14 +363,14 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
               disabled={!canDispense() || loading || isShortfall}
               className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? t('pharmacy.dispensing') : t('pharmacy.dispenseAndRemind')}
+              {loading ? 'Dispensing...' : 'Dispense & Set Reminder'}
             </button>
             {onCancel && (
               <button
                 onClick={onCancel}
                 className="btn-secondary"
               >
-                {t('action.cancel')}
+                Cancel
               </button>
             )}
           </div>
