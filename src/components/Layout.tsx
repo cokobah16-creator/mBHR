@@ -93,6 +93,7 @@ function PharmacyOverlay({ onClose }: { onClose: () => void }) {
           <Link
             key={to}
             to={to}
+            onClick={onClose}
             className="group rounded-2xl border border-gray-200 p-5 hover:shadow-md focus:outline-none focus:ring focus:ring-primary/30"
           >
             <div className="flex items-center gap-3">
