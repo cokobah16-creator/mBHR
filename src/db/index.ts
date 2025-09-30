@@ -350,12 +350,30 @@ export class MBHRDatabase extends Dexie {
       users:         'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
       sessions:      'id, userId, createdAt, lastSeenAt',
       settings:      'key',
-      gameSessions:  'id, type, volunteerId, startedAt, finishedAt, committed, _dirty, _syncedAt',
+      gameSessions:  'id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt',
       gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
       vitalsRanges:  'id, sex, metric, ageMin, ageMax, updatedAt',
       quizQuestions: 'id, topic, difficulty, updatedAt',
       triageSamples: 'id, createdAt, createdBy',
       inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt'
+    }).upgrade(async tx => {
+      // Migrate existing gameSessions to use committed_idx
+      const table = tx.table('gameSessions')
+      await table.toCollection().modify((obj: any) => {
+        if (typeof obj.committed_idx === 'undefined') {
+          obj.committed_idx = obj.committed ? 1 : 0
+        }
+        // Normalize createdAt to ISO string if it's a Date object
+        if (obj.createdAt instanceof Date) {
+          obj.createdAt = obj.createdAt.toISOString()
+        }
+        if (obj.startedAt instanceof Date) {
+          obj.startedAt = obj.startedAt.toISOString()
+        }
+        if (obj.finishedAt instanceof Date) {
+          obj.finishedAt = obj.finishedAt.toISOString()
+        }
+      })
     })
   }
 }
