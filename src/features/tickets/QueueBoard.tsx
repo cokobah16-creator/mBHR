@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { db as mbhrDb, ulid } from '@/db/mbhr'
 import { useQueue } from '@/stores/queue'
 import { 
@@ -13,41 +14,72 @@ const STAGES: Array<'registration'|'vitals'|'consult'|'pharmacy'> = ['registrati
 
 export default function QueueBoard() {
   const { callNext, completeCurrent, estimateTailMinutes, issueTicket } = useQueue()
-  const [tickets, setTickets] = useState<any[]>([])
   const [metrics, setMetrics] = useState<any[]>([])
   const [selectedStage, setSelectedStage] = useState<'registration'|'vitals'|'consult'|'pharmacy'>('vitals')
   const [etaTail, setEtaTail] = useState(0)
 
-  useEffect(() => {
-    loadData()
-  }, [])
+  // Use live queries with defensive defaults to prevent undefined.length errors
+  const allTickets = useLiveQuery(
+    () => mbhrDb.tickets.toArray(),
+    [],
+    [] as any[] // default empty array
+  )
 
-  const loadData = async () => {
+  const stageTickets = useLiveQuery(
+    () => mbhrDb.tickets
+      .where('currentStage')
+      .equals(selectedStage)
+      .toArray(),
+    [selectedStage],
+    [] as any[]
+  )
+
+  useEffect(() => {
+    loadMetrics()
+    updateETA()
+  }, [selectedStage])
+
+  const loadMetrics = async () => {
     try {
-      const [ticketsData, metricsData] = await Promise.all([
-        mbhrDb.tickets.toArray(),
-        mbhrDb.queue_metrics.toArray()
-      ])
-      setTickets(ticketsData)
+      const metricsData = await mbhrDb.queue_metrics.toArray()
       setMetrics(metricsData)
-      setEtaTail(await estimateTailMinutes(selectedStage))
     } catch (error) {
-      console.error('Error loading queue data:', error)
+      console.error('Error loading metrics:', error)
     }
   }
 
-  const stageTickets = tickets.filter(t => t.currentStage === selectedStage)
-  const waiting = stageTickets.filter(t => t.state === 'waiting')
-  const inProgress = stageTickets.find(t => t.state === 'in_progress')
+  const updateETA = async () => {
+    try {
+      const eta = await estimateTailMinutes(selectedStage)
+      setEtaTail(eta)
+    } catch (error) {
+      console.error('Error updating ETA:', error)
+    }
+  }
+
+  // Safe array access with defaults
+  const tickets = Array.isArray(allTickets) ? allTickets : []
+  const currentStageTickets = Array.isArray(stageTickets) ? stageTickets : []
   
-  const metric = metrics.find(m => m.stage === selectedStage)
-  const avgServiceSec = metric?.avgServiceSec ?? 240
+  const waiting = currentStageTickets.filter(t => t.state === 'waiting')
+  const inProgress = currentStageTickets.find(t => t.state === 'in_progress')
+
+  const handleCallNext = async () => {
+    const next = await callNext(selectedStage)
+    if (next) {
+      await updateETA()
+    }
+  }
+
+  const handleCompleteCurrent = async () => {
+    await completeCurrent(selectedStage, 240) // 4 minutes default
+    await updateETA()
+  }
 
   // Generate demo tickets if none exist
   const generateDemoTickets = async () => {
     const categories = ['adult', 'child', 'antenatal'] as const
     const priorities = ['normal', 'urgent'] as const
-    const now = new Date().toISOString()
     
     for (let i = 1; i <= 8; i++) {
       await issueTicket({
@@ -57,18 +89,21 @@ export default function QueueBoard() {
         stage: STAGES[Math.floor(Math.random() * STAGES.length)]
       })
     }
-    await loadData()
   }
 
-  async function handleCallNext() {
-    const next = await callNext(selectedStage)
-    if (next) await loadData()
+  const loadData = async () => {
+    try {
+      const metricsData = await Promise.all([
+        mbhrDb.queue_metrics.toArray()
+      ])
+      setMetrics(metricsData[0])
+    } catch (error) {
+      console.error('Error loading queue data:', error)
+    }
   }
 
-  async function handleCompleteCurrent() {
-    await completeCurrent(selectedStage, 240) // 4 minutes default
-    await loadData()
-  }
+  const metric = metrics.find(m => m.stage === selectedStage)
+  const avgServiceSec = metric?.avgServiceSec ?? 240
 
   const getStageColor = (stage: string) => {
     switch (stage) {
