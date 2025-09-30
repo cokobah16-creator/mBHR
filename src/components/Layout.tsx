@@ -2,21 +2,19 @@ import React from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
+import { OfflineBadge } from '@/components/OfflineBadge'
 import { 
   HomeIcon, 
   UserGroupIcon, 
   QueueListIcon, 
   CubeIcon,
-  ArrowRightOnRectangleIcon,
-  WifiIcon,
-  SignalSlashIcon
+  ArrowRightOnRectangleIcon
 } from '@heroicons/react/24/outline'
 
 export function Layout() {
   const { t } = useTranslation()
   const location = useLocation()
   const { currentUser, logout } = useAuthStore()
-  const isOnline = navigator.onLine
 
   const navigation = [
     { name: t('nav.dashboard'), href: '/', icon: HomeIcon },
@@ -45,17 +43,8 @@ export function Layout() {
             </div>
             
             <div className="flex items-center space-x-4">
-              {/* Online/Offline Status */}
-              <div className="flex items-center space-x-2">
-                {isOnline ? (
-                  <WifiIcon className="h-5 w-5 text-green-300" />
-                ) : (
-                  <SignalSlashIcon className="h-5 w-5 text-yellow-300" />
-                )}
-                <span className="text-sm">
-                  {isOnline ? t('app.online') : t('app.offline')}
-                </span>
-              </div>
+              {/* Online/Offline Badge */}
+              <OfflineBadge />
               
               {/* User Info */}
               {currentUser && (

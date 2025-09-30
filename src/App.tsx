@@ -4,16 +4,15 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Layout } from '@/components/Layout'
 import { Login } from '@/pages/Login'
 import { Dashboard } from '@/pages/Dashboard'
+import { Register } from '@/pages/Register'
+import { Patients } from '@/pages/Patients'
+import { PatientDetail } from '@/pages/PatientDetail'
+import { Queue } from '@/pages/Queue'
+import { Vitals } from '@/pages/Vitals'
+import { Consult } from '@/pages/Consult'
+import { Pharmacy } from '@/pages/Pharmacy'
+import { Inventory } from '@/pages/Inventory'
 import { useAuthStore } from '@/stores/auth'
-
-// Placeholder components for routes
-const Register = () => <div className="p-6">Patient Registration - Coming Soon</div>
-const Patients = () => <div className="p-6">Patients List - Coming Soon</div>
-const Queue = () => <div className="p-6">Queue Management - Coming Soon</div>
-const Inventory = () => <div className="p-6">Inventory - Coming Soon</div>
-const Vitals = () => <div className="p-6">Vitals Recording - Coming Soon</div>
-const Consult = () => <div className="p-6">Consultation - Coming Soon</div>
-const Pharmacy = () => <div className="p-6">Pharmacy - Coming Soon</div>
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -39,7 +38,7 @@ function App() {
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/register" element={<Register />} />
                   <Route path="/patients" element={<Patients />} />
-                  <Route path="/patients/:id" element={<div>Patient Details</div>} />
+                  <Route path="/patients/:id" element={<PatientDetail />} />
                   <Route path="/queue" element={<Queue />} />
                   <Route path="/inventory" element={<Inventory />} />
                   <Route path="/vitals" element={<Vitals />} />
