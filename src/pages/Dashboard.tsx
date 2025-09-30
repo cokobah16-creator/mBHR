@@ -16,7 +16,8 @@ import {
   DocumentTextIcon,
   BeakerIcon,
   CubeIcon,
-  Cog6ToothIcon
+  Cog6ToothIcon,
+  QueueListIcon
 } from '@heroicons/react/24/outline'
 
 export function Dashboard() {
