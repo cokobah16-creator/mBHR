@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueueStore } from '@/stores/queue'
 import { useAuthStore } from '@/stores/auth'
+import { ExportButtons } from '@/components/ExportButtons'
 import { 
   UserPlusIcon, 
   HeartIcon, 
@@ -168,6 +169,11 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Data Export (Admin Only) */}
+      {currentUser?.role === 'admin' && (
+        <ExportButtons />
+      )}
     </div>
   )
 }
