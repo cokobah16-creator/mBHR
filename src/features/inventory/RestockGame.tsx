@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { mbhrDb, ulid, refreshAlertsFor } from '@/db/mbhr'
+import { useGam } from '@/stores/gamification'
 
 type Delta = Record<string, number>
 
 export default function RestockGame() {
+  const { addTokens, ensureWallet, wallet } = useGam()
   const [items, setItems] = useState<any[]>([])
   const [deltas, setDeltas] = useState<Delta>({})
   const [tokens, setTokens] = useState(0)
 
   useEffect(() => {
     mbhrDb.inventory_nm.orderBy('itemName').toArray().then(setItems)
+    ensureWallet('demo-volunteer')
   }, [])
 
   const low = useMemo(
@@ -43,6 +46,10 @@ export default function RestockGame() {
         await refreshAlertsFor(itemId)
       }
     })
+    
+    // Award tokens and badges
+    await addTokens('demo-volunteer', tokens, tokens >= 50 ? 'swift_stocker' : undefined)
+    
     setDeltas({})
     setTokens(0)
     setItems(await mbhrDb.inventory_nm.orderBy('itemName').toArray())
@@ -56,7 +63,9 @@ export default function RestockGame() {
         <span className="text-sm text-gray-600">(Non-medical supplies)</span>
       </div>
       <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-        <div className="text-sm font-medium text-green-800">Tokens earned: {tokens}</div>
+        <div className="text-sm font-medium text-green-800">
+          Session tokens: {tokens} • Wallet: {wallet}
+        </div>
         <div className="text-xs text-green-600">Tap items to restock and earn tokens!</div>
       </div>
 

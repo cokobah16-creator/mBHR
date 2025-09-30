@@ -1,96 +1,101 @@
 import { create } from 'zustand'
-import { db, QueueItem, Patient, generateId } from '@/db'
+import { mbhrDb, ulid, Ticket, QueueMetric } from '@/db/mbhr'
 
-interface QueueState {
-  queueItems: (QueueItem & { patient?: Patient })[]
-  
-  // Actions
-  loadQueue: () => Promise<void>
-  moveToNextStage: (patientId: string) => Promise<void>
-  updateQueueStatus: (patientId: string, status: QueueItem['status']) => Promise<void>
-  getQueueByStage: (stage: QueueItem['stage']) => (QueueItem & { patient?: Patient })[]
+const ALPHA = 0.2 // EMA smoothing
+
+const prefixFor = (category: Ticket['category']) => {
+  switch (category) {
+    case 'adult': return 'A'
+    case 'child': return 'B'
+    case 'antenatal': return 'C'
+    default: return 'Z'
+  }
 }
 
-export const useQueueStore = create<QueueState>((set, get) => ({
-  queueItems: [],
+async function nextSequence(siteId: string, dateStr: string, category: string) {
+  const id = `${siteId}:${dateStr}:${category}`
+  const row = await mbhrDb.daily_counters.get(id)
+  const next = (row?.seq ?? 0) + 1
+  if (row) await mbhrDb.daily_counters.update(id, { seq: next })
+  else await mbhrDb.daily_counters.add({ id, siteId, dateStr, category, seq: next })
+  return next
+}
 
-  loadQueue: async () => {
-    try {
-      const items = await db.queue
-        .orderBy('position')
-        .toArray()
-      
-      // Load patient data for each queue item
-      const itemsWithPatients = await Promise.all(
-        items.map(async (item) => {
-          const patient = await db.patients.get(item.patientId)
-          return { ...item, patient }
-        })
-      )
-      
-      set({ queueItems: itemsWithPatients })
-    } catch (error) {
-      console.error('Error loading queue:', error)
+type Stage = Ticket['currentStage']
+
+type QueueState = {
+  issueTicket: (opts: {
+    siteId: string
+    category: Ticket['category']
+    priority?: Ticket['priority']
+    patientId?: string
+    stage?: Stage
+  }) => Promise<Ticket>
+
+  callNext: (stage: Stage) => Promise<Ticket | null>
+  completeCurrent: (stage: Stage, secondsSpent: number) => Promise<void>
+  estimateTailMinutes: (stage: Stage) => Promise<number>
+}
+
+export const useQueue = create<QueueState>(() => ({
+  issueTicket: async ({ siteId, category, priority = 'normal', patientId, stage = 'registration' }) => {
+    const dateStr = new Date().toISOString().slice(0, 10)
+    const seq = await nextSequence(siteId, dateStr, category)
+    const number = `${prefixFor(category)}-${String(seq).padStart(3, '0')}`
+    const t: Ticket = {
+      id: ulid(),
+      number,
+      patientId,
+      category,
+      priority,
+      createdAt: new Date().toISOString(),
+      siteId,
+      state: 'waiting',
+      currentStage: stage
     }
+    await mbhrDb.tickets.add(t)
+    return t
   },
 
-  moveToNextStage: async (patientId: string) => {
-    try {
-      const currentItem = await db.queue
-        .where('patientId')
-        .equals(patientId)
-        .first()
-      
-      if (!currentItem) return
-      
-      const stageOrder: QueueItem['stage'][] = ['registration', 'vitals', 'consult', 'pharmacy']
-      const currentIndex = stageOrder.indexOf(currentItem.stage)
-      
-      if (currentIndex < stageOrder.length - 1) {
-        const nextStage = stageOrder[currentIndex + 1]
-        
-        await db.queue.update(currentItem.id, {
-          stage: nextStage,
-          status: 'waiting',
-          updatedAt: new Date()
-        })
-        
-        get().loadQueue()
-      } else {
-        // Mark as done if at final stage
-        await db.queue.update(currentItem.id, {
-          status: 'done',
-          updatedAt: new Date()
-        })
-        
-        get().loadQueue()
-      }
-    } catch (error) {
-      console.error('Error moving to next stage:', error)
-    }
+  callNext: async (stage) => {
+    const candidates = await mbhrDb.tickets
+      .where('currentStage')
+      .equals(stage)
+      .toArray()
+
+    // Prioritize urgent -> normal -> low; then FIFO by createdAt
+    const priorityRank = { urgent: 0, normal: 1, low: 2 } as const
+    const next = candidates
+      .filter(t => t.state === 'waiting')
+      .sort((a, b) =>
+        priorityRank[a.priority] - priorityRank[b.priority] ||
+        a.createdAt.localeCompare(b.createdAt)
+      )[0]
+
+    if (!next) return null
+    await mbhrDb.tickets.update(next.id, { state: 'in_progress' })
+    return { ...next, state: 'in_progress' }
   },
 
-  updateQueueStatus: async (patientId: string, status: QueueItem['status']) => {
-    try {
-      const item = await db.queue
-        .where('patientId')
-        .equals(patientId)
-        .first()
-      
-      if (item) {
-        await db.queue.update(item.id, {
-          status,
-          updatedAt: new Date()
-        })
-        
-        get().loadQueue()
-      }
-    } catch (error) {
-      console.error('Error updating queue status:', error)
-    }
+  completeCurrent: async (stage, secondsSpent) => {
+    const all = await mbhrDb.tickets.where('currentStage').equals(stage).toArray()
+    const current = all.find(t => t.state === 'in_progress')
+    if (current) await mbhrDb.tickets.update(current.id, { state: 'done' })
+
+    const metricId = `m-${stage}`
+    const m = await mbhrDb.queue_metrics.get(metricId)
+    const prev = m?.avgServiceSec ?? 240
+    const avgServiceSec = Math.max(30, Math.round(ALPHA * secondsSpent + (1 - ALPHA) * prev))
+    const updatedAt = new Date().toISOString()
+    if (m) await mbhrDb.queue_metrics.update(metricId, { avgServiceSec, updatedAt })
+    else await mbhrDb.queue_metrics.add({ id: metricId, stage, avgServiceSec, updatedAt })
   },
 
-  getQueueByStage: (stage: QueueItem['stage']) => {
-    return get().queueItems.filter(item => item.stage === stage && item.status !== 'done')
-  }
+  estimateTailMinutes: async (stage) => {
+    const all = await mbhrDb.tickets.where('currentStage').equals(stage).toArray()
+    const waiting = all.filter(t => t.state === 'waiting').length
+    const m = await mbhrDb.queue_metrics.get(`m-${stage}`)
+    const avg = m?.avgServiceSec ?? 240
+    return Math.round((waiting * avg) / 60)
+  },
 }))

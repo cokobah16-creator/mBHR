@@ -2,6 +2,7 @@ import React from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Layout } from '@/components/Layout'
+import { RequireRoles } from '@/components/RequireRoles'
 import Login from '@/pages/Login'
 import { Dashboard } from '@/pages/Dashboard'
 import { Register } from '@/pages/Register'
@@ -63,12 +64,36 @@ function App() {
                   <Route path="/pharmacy/:visitId" element={<Pharmacy />} />
                   
                   {/* New MBHR Features */}
-                  <Route path="/inv/game" element={<RestockGame />} />
-                  <Route path="/inv/prizes" element={<PrizeShop />} />
-                  <Route path="/rx/stock" element={<PharmacyStock />} />
-                  <Route path="/rx/new" element={<RxForm />} />
-                  <Route path="/rx/dispense" element={<Dispense />} />
-                  <Route path="/tickets/queue" element={<QueueBoard />} />
+                  <Route path="/inv/game" element={
+                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                      <RestockGame />
+                    </RequireRoles>
+                  } />
+                  <Route path="/inv/prizes" element={
+                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                      <PrizeShop />
+                    </RequireRoles>
+                  } />
+                  <Route path="/rx/stock" element={
+                    <RequireRoles roles={['pharmacist', 'doctor', 'nurse', 'admin']}>
+                      <PharmacyStock />
+                    </RequireRoles>
+                  } />
+                  <Route path="/rx/new" element={
+                    <RequireRoles roles={['doctor', 'nurse', 'admin']}>
+                      <RxForm />
+                    </RequireRoles>
+                  } />
+                  <Route path="/rx/dispense" element={
+                    <RequireRoles roles={['pharmacist', 'admin']}>
+                      <Dispense />
+                    </RequireRoles>
+                  } />
+                  <Route path="/tickets/queue" element={
+                    <RequireRoles roles={['nurse', 'doctor', 'admin']}>
+                      <QueueBoard />
+                    </RequireRoles>
+                  } />
                 </Routes>
               </Layout>
             </ProtectedRoute>

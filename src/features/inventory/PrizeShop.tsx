@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { mbhrDb, ulid } from '@/db/mbhr'
+import { useGam } from '@/stores/gamification'
 import { GiftIcon, StarIcon } from '@heroicons/react/24/outline'
 
 const PRIZES = [
@@ -10,49 +10,20 @@ const PRIZES = [
 ]
 
 export default function PrizeShop() {
-  const [wallet, setWallet] = useState(0)
+  const { wallet, spendTokens, ensureWallet } = useGam()
   const [badges, setBadges] = useState<string[]>([])
 
   useEffect(() => {
-    ;(async () => {
-      // Single volunteer demo wallet
-      let g = await mbhrDb.gamification.get('demo')
-      if (!g) {
-        const now = new Date().toISOString()
-        await mbhrDb.gamification.add({ 
-          id: 'demo', 
-          volunteerId: 'demo', 
-          tokens: 450, 
-          badges: ['first_restock'], 
-          updatedAt: now 
-        })
-        g = await mbhrDb.gamification.get('demo')
-      }
-      setWallet(g?.tokens || 0)
-      setBadges(g?.badges || [])
-    })()
+    ensureWallet('demo-volunteer')
   }, [])
 
   async function redeem(prize: typeof PRIZES[0]) {
-    const g = await mbhrDb.gamification.get('demo')
-    if (!g || g.tokens < prize.cost) {
+    const success = await spendTokens('demo-volunteer', prize.cost)
+    if (!success) {
       alert('Not enough tokens! Keep restocking to earn more.')
       return
     }
     
-    const newBadges = [...g.badges]
-    if (prize.id === 'lunch' && !newBadges.includes('big_spender')) {
-      newBadges.push('big_spender')
-    }
-    
-    await mbhrDb.gamification.update('demo', { 
-      tokens: g.tokens - prize.cost, 
-      badges: newBadges,
-      updatedAt: new Date().toISOString() 
-    })
-    
-    setWallet(g.tokens - prize.cost)
-    setBadges(newBadges)
     alert(`🎉 Redeemed ${prize.name}! Check with admin to collect your prize.`)
   }
 

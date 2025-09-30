@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { mbhrDb, ulid } from '@/db/mbhr'
+import { useQueue } from '@/stores/queue'
 import { 
   QueueListIcon, 
   PlayIcon, 
@@ -11,9 +12,11 @@ import {
 const STAGES: Array<'registration'|'vitals'|'consult'|'pharmacy'> = ['registration', 'vitals', 'consult', 'pharmacy']
 
 export default function QueueBoard() {
+  const { callNext, completeCurrent, estimateTailMinutes, issueTicket } = useQueue()
   const [tickets, setTickets] = useState<any[]>([])
   const [metrics, setMetrics] = useState<any[]>([])
   const [selectedStage, setSelectedStage] = useState<'registration'|'vitals'|'consult'|'pharmacy'>('vitals')
+  const [etaTail, setEtaTail] = useState(0)
 
   useEffect(() => {
     loadData()
@@ -27,6 +30,7 @@ export default function QueueBoard() {
       ])
       setTickets(ticketsData)
       setMetrics(metricsData)
+      setEtaTail(await estimateTailMinutes(selectedStage))
     } catch (error) {
       console.error('Error loading queue data:', error)
     }
@@ -38,7 +42,6 @@ export default function QueueBoard() {
   
   const metric = metrics.find(m => m.stage === selectedStage)
   const avgServiceSec = metric?.avgServiceSec ?? 240
-  const etaTailMin = Math.round((waiting.length * avgServiceSec) / 60)
 
   // Generate demo tickets if none exist
   const generateDemoTickets = async () => {
@@ -47,47 +50,27 @@ export default function QueueBoard() {
     const now = new Date().toISOString()
     
     for (let i = 1; i <= 8; i++) {
-      await mbhrDb.tickets.add({
-        id: ulid(),
-        number: `A-${String(100 + i).padStart(3, '0')}`,
+      await issueTicket({
+        siteId: 'demo-site',
         category: categories[i % 3],
         priority: i <= 2 ? 'urgent' : 'normal',
-        createdAt: now,
-        siteId: 'demo-site',
-        state: 'waiting',
-        currentStage: STAGES[Math.floor(Math.random() * STAGES.length)]
+        stage: STAGES[Math.floor(Math.random() * STAGES.length)]
       })
     }
     await loadData()
   }
 
-  async function callNext() {
-    const next = waiting[0]
-    if (!next) return
-    
-    await mbhrDb.tickets.update(next.id, { state: 'in_progress' })
-    await loadData()
+  async function handleCallNext() {
+    const next = await callNext(selectedStage)
+    if (next) await loadData()
   }
 
-  async function completeCurrent() {
-    if (!inProgress) return
-    
-    // Move to next stage or mark as done
-    const currentStageIndex = STAGES.indexOf(inProgress.currentStage)
-    const isLastStage = currentStageIndex === STAGES.length - 1
-    
-    if (isLastStage) {
-      await mbhrDb.tickets.update(inProgress.id, { state: 'done' })
-    } else {
-      const nextStage = STAGES[currentStageIndex + 1]
-      await mbhrDb.tickets.update(inProgress.id, { 
-        state: 'waiting',
-        currentStage: nextStage
-      })
-    }
-    
+  async function handleCompleteCurrent() {
+    await completeCurrent(selectedStage, 240) // 4 minutes default
     await loadData()
   }
+    
+
 
   const getStageColor = (stage: string) => {
     switch (stage) {
@@ -146,7 +129,7 @@ export default function QueueBoard() {
         </div>
         <div className="card bg-purple-50 border-purple-200">
           <div className="text-sm text-purple-600">ETA for Last</div>
-          <div className="text-2xl font-bold text-purple-800">{etaTailMin}m</div>
+          <div className="text-2xl font-bold text-purple-800">{etaTail}m</div>
         </div>
       </div>
 
@@ -154,7 +137,7 @@ export default function QueueBoard() {
       <div className="flex space-x-4">
         <button 
           className="btn-primary flex items-center space-x-2" 
-          onClick={callNext}
+          onClick={handleCallNext}
           disabled={waiting.length === 0 || !!inProgress}
         >
           <PlayIcon className="h-5 w-5" />
@@ -162,7 +145,7 @@ export default function QueueBoard() {
         </button>
         <button 
           className="btn-secondary flex items-center space-x-2" 
-          onClick={completeCurrent} 
+          onClick={handleCompleteCurrent} 
           disabled={!inProgress}
         >
           <CheckIcon className="h-5 w-5" />
