@@ -14,6 +14,14 @@ import { Pharmacy } from '@/pages/Pharmacy'
 import { Inventory } from '@/pages/Inventory'
 import { Users } from '@/pages/Users'
 import { useAuthStore } from '@/stores/auth'
+import RestockGame from '@/features/inventory/RestockGame'
+import PrizeShop from '@/features/inventory/PrizeShop'
+import PharmacyStock from '@/features/pharmacy/PharmacyStock'
+import RxForm from '@/features/pharmacy/RxForm'
+import Dispense from '@/features/pharmacy/Dispense'
+import QueueBoard from '@/features/tickets/QueueBoard'
+import { seedDemo } from '@/db/seedMbhr'
+import { useEffect } from 'react'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -26,6 +34,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
+  useEffect(() => { 
+    seedDemo().catch(console.error)
+  }, [])
+  
   return (
     <ErrorBoundary>
       <Routes>
@@ -49,6 +61,14 @@ function App() {
                   <Route path="/consult/:visitId" element={<Consult />} />
                   <Route path="/pharmacy" element={<Pharmacy />} />
                   <Route path="/pharmacy/:visitId" element={<Pharmacy />} />
+                  
+                  {/* New MBHR Features */}
+                  <Route path="/inv/game" element={<RestockGame />} />
+                  <Route path="/inv/prizes" element={<PrizeShop />} />
+                  <Route path="/rx/stock" element={<PharmacyStock />} />
+                  <Route path="/rx/new" element={<RxForm />} />
+                  <Route path="/rx/dispense" element={<Dispense />} />
+                  <Route path="/tickets/queue" element={<QueueBoard />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

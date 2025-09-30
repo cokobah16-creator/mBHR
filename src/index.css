@@ -32,6 +32,15 @@
   .touch-target {
     @apply min-h-12 min-w-12;
   }
+  
+  /* Additional utility classes for new features */
+  .btn {
+    @apply px-3 py-2 rounded-lg border shadow-sm hover:bg-gray-50 transition-colors;
+  }
+  
+  .input {
+    @apply px-3 py-2 rounded-lg border w-full focus:ring-2 focus:ring-primary focus:border-transparent;
+  }
 }
 
 @layer utilities {

@@ -10,7 +10,10 @@ import {
   QueueListIcon, 
   CubeIcon,
   UsersIcon,
-  ArrowRightOnRectangleIcon
+  ArrowRightOnRectangleIcon,
+  BeakerIcon,
+  GiftIcon,
+  TicketIcon
 } from '@heroicons/react/24/outline'
 
 interface LayoutProps {
@@ -27,6 +30,11 @@ export function Layout({ children }: LayoutProps) {
     { name: t('nav.patients'), href: '/patients', icon: UserGroupIcon },
     { name: t('nav.queue'), href: '/queue', icon: QueueListIcon },
     { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
+    { name: 'Restock Game', href: '/inv/game', icon: GiftIcon },
+    { name: 'Pharmacy Stock', href: '/rx/stock', icon: BeakerIcon },
+    { name: 'New Prescription', href: '/rx/new', icon: BeakerIcon },
+    { name: 'Dispense', href: '/rx/dispense', icon: BeakerIcon },
+    { name: 'Queue Board', href: '/tickets/queue', icon: TicketIcon },
   ]
 
   // Add admin-only navigation items

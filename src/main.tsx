@@ -7,6 +7,7 @@ import './index.css'
 import './i18n'
 
 import { seed } from './db/seed'
+import { seedDemo } from './db/seedMbhr'
 import { db } from './db/index'
 import { safeOpenDb } from './db/safeOpen'
 
@@ -47,6 +48,7 @@ function renderFatal(msg: string) {
   try {
     console.log('[seed] starting…')
     await seed()
+    await seedDemo()
     console.log('[seed] done')
   } catch (e: any) {
     console.error('[seed] failed', e)
