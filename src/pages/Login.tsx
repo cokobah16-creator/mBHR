@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/auth'
 import { isOnlineSyncEnabled } from '@/sync/adapter'
+// import { useNavigate } from 'react-router-dom'
 
 export default function Login() {
   const [mode, setMode] = useState<'offline' | 'online'>('offline')
@@ -10,26 +11,32 @@ export default function Login() {
   const [attempts, setAttempts] = useState(0)
 
   const onlineAvailable = isOnlineSyncEnabled()
+  // const navigate = useNavigate()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErr(null)
-    console.log('Attempting login with PIN:', pin)
+
     try {
-      if onlineAvailable(mode === 'offline') {
-        const success = await useAuthStore.getState().login(pin)
-        console.log('Login result:', success)
-        if (!success) {
-          throw new Error('INVALID_PIN')
-        }
-        if (!success) {
-          throw new Error('INVALID_PIN')
-        }
-      } else {
-        setErr('Online login not configured yet')
+      if (mode === 'offline') {
+        console.log('[login] attempting offline PIN', pin)
+        await useAuthStore.getState().login(pin) // throws on bad PIN
+        console.log('[login] success (offline)')
+        // navigate('/'); // uncomment if using React Router
+        return
       }
+
+      // mode === 'online'
+      if (!onlineAvailable) {
+        setErr('Online login not available on this device')
+        return
+      }
+
+      // TODO: implement Supabase auth here
+      console.log('[login] online selected but not implemented yet')
+      setErr('Online login not configured yet')
     } catch (ex: any) {
-      console.error('Login failed:', ex)
+      console.error('[login] error', ex)
       setAttempts(a => a + 1)
       setErr(ex?.message === 'INVALID_PIN' ? 'Invalid PIN' : ex?.message || 'Login failed')
     }
