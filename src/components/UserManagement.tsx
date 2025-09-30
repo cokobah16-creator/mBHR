@@ -332,7 +332,6 @@ export function UserManagement() {
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
                     {/* Show test PINs for seeded users */}
                     {user.id.includes('admin') ? '123456' :
-                     user.fullName === 'Kristopher Okobah' ? '070398' :
                      user.id.includes('doc') ? '234567' :
                      user.id.includes('nurse') ? '345678' :
                      user.id.includes('pharm') ? '456789' :
