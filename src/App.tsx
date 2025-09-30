@@ -134,6 +134,16 @@ function App() {
                       <KnowledgeBlitz />
                     </RequireRoles>
                   } />
+                  <Route path="/games/triage-sprint" element={
+                    <RequireRoles roles={['nurse', 'doctor', 'admin']}>
+                      <TriageSprint />
+                    </RequireRoles>
+                  } />
+                  <Route path="/games/vitals-precision-enhanced" element={
+                    <RequireRoles roles={['volunteer', 'nurse', 'admin']}>
+                      <VitalsPrecisionGame />
+                    </RequireRoles>
+                  } />
                   <Route path="/analytics" element={
                     <RequireRoles roles={['admin']}>
                       <AnalyticsDashboard />
@@ -145,13 +155,14 @@ function App() {
                     </RequireRoles>
                   } />
                   <Route path="/simple/register" element={<SimpleRegister />} />
-                  <Route path="/pharmacy/fefo/:visitId" element={
+                  <Route path="/pharmacy/enhanced/:visitId" element={
                     <RequireRoles roles={['pharmacist', 'admin']}>
-                      <FEFODispenser 
-                        patientId="" 
-                        visitId="" 
-                        onSuccess={() => {}} 
-                      />
+                      <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
+                    </RequireRoles>
+                  } />
+                  <Route path="/triage/quick" element={
+                    <RequireRoles roles={['nurse', 'doctor', 'admin']}>
+                      <QuickTriage onComplete={() => {}} />
                     </RequireRoles>
                   } />
                 </Routes>

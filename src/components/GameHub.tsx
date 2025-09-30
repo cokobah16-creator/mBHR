@@ -92,6 +92,16 @@ export function GameHub({ className = '' }: GameHubProps) {
       baseTokens: 15,
       estimatedMinutes: 2,
       href: '/games/triage-sprint'
+    },
+    {
+      id: 'vitals-enhanced',
+      name: 'Enhanced Vitals',
+      description: 'Age/sex-specific vital signs validation',
+      icon: HeartIcon,
+      color: 'bg-emerald-500 hover:bg-emerald-600',
+      baseTokens: 12,
+      estimatedMinutes: 4,
+      href: '/games/vitals-precision-enhanced'
     }
   ]
 

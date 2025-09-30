@@ -290,6 +290,7 @@ export class MBHRDatabase extends Dexie {
   messageTemplates!: Table<MessageTemplate>
   stockBatches!: Table<StockBatch>
   careTasks!: Table<CareTask>
+  triageRecords!: Table<TriageRecord>
 
   constructor() {
     super(DB_NAME)

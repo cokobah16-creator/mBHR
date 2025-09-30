@@ -100,6 +100,58 @@ export async function seed() {
       console.log('✅ Gamification wallets created for', users.length, 'users')
     }
     
+    // Seed vitals ranges if needed
+    const rangesCount = await db.vitalsRanges.count()
+    if (rangesCount === 0) {
+      console.log('🌱 Adding vitals ranges...')
+      
+      const vitalsRanges = [
+        // Adult ranges
+        { sex: 'M', metric: 'hr', ageMin: 18, ageMax: 65, min: 60, max: 100, source: 'AHA Guidelines' },
+        { sex: 'F', metric: 'hr', ageMin: 18, ageMax: 65, min: 60, max: 100, source: 'AHA Guidelines' },
+        { sex: 'M', metric: 'temp', ageMin: 18, ageMax: 65, min: 36.1, max: 37.2, source: 'Clinical Standard' },
+        { sex: 'F', metric: 'temp', ageMin: 18, ageMax: 65, min: 36.1, max: 37.2, source: 'Clinical Standard' },
+        { sex: 'M', metric: 'sbp', ageMin: 18, ageMax: 65, min: 90, max: 140, source: 'AHA Guidelines' },
+        { sex: 'F', metric: 'sbp', ageMin: 18, ageMax: 65, min: 90, max: 140, source: 'AHA Guidelines' },
+        { sex: 'M', metric: 'dbp', ageMin: 18, ageMax: 65, min: 60, max: 90, source: 'AHA Guidelines' },
+        { sex: 'F', metric: 'dbp', ageMin: 18, ageMax: 65, min: 60, max: 90, source: 'AHA Guidelines' },
+        { sex: 'M', metric: 'rr', ageMin: 18, ageMax: 65, min: 12, max: 20, source: 'Clinical Standard' },
+        { sex: 'F', metric: 'rr', ageMin: 18, ageMax: 65, min: 12, max: 20, source: 'Clinical Standard' },
+        { sex: 'M', metric: 'spo2', ageMin: 18, ageMax: 65, min: 95, max: 100, source: 'Clinical Standard' },
+        { sex: 'F', metric: 'spo2', ageMin: 18, ageMax: 65, min: 95, max: 100, source: 'Clinical Standard' },
+        
+        // Pediatric ranges (simplified)
+        { sex: 'M', metric: 'hr', ageMin: 1, ageMax: 17, min: 80, max: 120, source: 'Pediatric Guidelines' },
+        { sex: 'F', metric: 'hr', ageMin: 1, ageMax: 17, min: 80, max: 120, source: 'Pediatric Guidelines' },
+        { sex: 'M', metric: 'temp', ageMin: 1, ageMax: 17, min: 36.1, max: 37.2, source: 'Pediatric Guidelines' },
+        { sex: 'F', metric: 'temp', ageMin: 1, ageMax: 17, min: 36.1, max: 37.2, source: 'Pediatric Guidelines' },
+        { sex: 'M', metric: 'sbp', ageMin: 1, ageMax: 17, min: 85, max: 110, source: 'Pediatric Guidelines' },
+        { sex: 'F', metric: 'sbp', ageMin: 1, ageMax: 17, min: 85, max: 110, source: 'Pediatric Guidelines' },
+        { sex: 'M', metric: 'dbp', ageMin: 1, ageMax: 17, min: 50, max: 70, source: 'Pediatric Guidelines' },
+        { sex: 'F', metric: 'dbp', ageMin: 1, ageMax: 17, min: 50, max: 70, source: 'Pediatric Guidelines' },
+        { sex: 'M', metric: 'rr', ageMin: 1, ageMax: 17, min: 20, max: 30, source: 'Pediatric Guidelines' },
+        { sex: 'F', metric: 'rr', ageMin: 1, ageMax: 17, min: 20, max: 30, source: 'Pediatric Guidelines' },
+        { sex: 'M', metric: 'spo2', ageMin: 1, ageMax: 17, min: 95, max: 100, source: 'Pediatric Guidelines' },
+        { sex: 'F', metric: 'spo2', ageMin: 1, ageMax: 17, min: 95, max: 100, source: 'Pediatric Guidelines' }
+      ]
+      
+      for (const range of vitalsRanges) {
+        await db.vitalsRanges.add({
+          id: generateId(),
+          sex: range.sex as 'M' | 'F' | 'U',
+          metric: range.metric as 'hr' | 'rr' | 'temp' | 'sbp' | 'dbp' | 'spo2',
+          ageMin: range.ageMin,
+          ageMax: range.ageMax,
+          min: range.min,
+          max: range.max,
+          source: range.source,
+          updatedAt: new Date()
+        })
+      }
+      
+      console.log('✅ Vitals ranges created:', vitalsRanges.length)
+    }
+    
     console.log('✅ Database seeded successfully')
   } catch (error) {
     console.error('❌ Seeding failed:', error)
