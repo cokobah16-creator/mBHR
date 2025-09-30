@@ -215,7 +215,9 @@ export function Layout({ children }: LayoutProps) {
             <ul className="space-y-2">
               {navigation.map((item) => {
                 const isPharmacy = item.name === 'Pharmacy'
-                const isActive = location.pathname === item.href
+                const isActive = isPharmacy 
+                  ? location.pathname.startsWith('/rx/') || location.pathname.startsWith('/pharmacy/')
+                  : location.pathname === item.href
                 
                 const Common = (
                   <>
@@ -231,7 +233,7 @@ export function Layout({ children }: LayoutProps) {
                         type="button"
                         onClick={() => setOverlay("pharmacy")}
                         className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target text-left ${
-                          overlay === "pharmacy" && location.pathname.startsWith('/rx/')
+                          isActive
                             ? 'bg-primary text-white'
                             : 'text-gray-700 hover:bg-gray-100'
                         }`}
