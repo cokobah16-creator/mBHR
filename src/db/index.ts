@@ -168,6 +168,23 @@ export class MBHRDatabase extends Dexie {
       // Future migration logic here
       console.log('Upgrading to version 2')
     })
+
+    // Version 3 - Fix schema conflicts
+    this.version(3).stores({
+      users: 'id, role, email, phone, isActive',
+      sessions: 'id, userId, deviceKey',
+      settings: 'key',
+      patients: 'id, givenName, familyName, phone, familyId',
+      vitals: 'id, patientId, visitId, takenAt',
+      consultations: 'id, patientId, visitId, createdAt',
+      dispenses: 'id, patientId, visitId, dispensedAt',
+      inventory: 'id, itemName',
+      visits: 'id, patientId, status',
+      queue: 'id, patientId, stage, status, position',
+      auditLogs: 'id, actorRole, entity, at'
+    }).upgrade(tx => {
+      console.log('Upgrading to version 3 - resolving schema conflicts')
+    })
   }
 }
 
