@@ -53,7 +53,7 @@ export default function Login() {
     if (showDebug) {
       (async () => {
         try {
-          const users = await db.users.where('isActive').equals(true).toArray()
+          const users = await db.users.where('isActive').equals(1).toArray()
           setDebugUsers(users.map(u => ({
             name: u.fullName,
             role: u.role,
@@ -73,7 +73,7 @@ export default function Login() {
     if (pin && debugUsers.length > 0) {
       (async () => {
         try {
-          const first = await db.users.where('isActive').equals(true).first()
+          const first = await db.users.where('isActive').equals(1).first()
           if (first?.pinSalt) {
             const h = await derivePinHash(pin, first.pinSalt)
             setComputed(h.slice(0, 12) + '…')

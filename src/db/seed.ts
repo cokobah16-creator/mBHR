@@ -6,7 +6,7 @@ const USERS: Array<Pick<User, 'fullName'|'role'|'isActive'|'pinHash'|'pinSalt'>>
 async function makeUser(fullName: string, role: User['role'], pin: string) {
   const pinSalt = newSaltB64()
   const pinHash = await derivePinHash(pin, pinSalt)
-  USERS.push({ fullName, role, isActive: true, pinSalt, pinHash })
+  USERS.push({ fullName, role, isActive: 1, pinSalt, pinHash })
 }
 
 export async function seed() {

@@ -79,7 +79,7 @@ export function UserManagement() {
           phone: formData.phone || undefined,
           pinHash,
           pinSalt: salt,
-          isActive: true,
+          isActive: 1,
           createdAt: new Date(),
           updatedAt: new Date()
         }
@@ -129,7 +129,7 @@ export function UserManagement() {
     
     try {
       await db.users.update(user.id, {
-        isActive: !user.isActive,
+        isActive: user.isActive === 1 ? 0 : 1,
         updatedAt: new Date()
       })
       await loadUsers()
@@ -340,11 +340,11 @@ export function UserManagement() {
                 )}
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    user.isActive 
+                    user.isActive === 1
                       ? 'bg-green-100 text-green-800' 
                       : 'bg-red-100 text-red-800'
                   }`}>
-                    {user.isActive ? 'Active' : 'Inactive'}
+                    {user.isActive === 1 ? 'Active' : 'Inactive'}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -357,10 +357,10 @@ export function UserManagement() {
                     </button>
                     <button
                       onClick={() => toggleUserStatus(user)}
-                      className={user.isActive ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'}
+                      className={user.isActive === 1 ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'}
                       disabled={user.id === currentUser?.id}
                     >
-                      {user.isActive ? 'Deactivate' : 'Activate'}
+                      {user.isActive === 1 ? 'Deactivate' : 'Activate'}
                     </button>
                     {user.id !== currentUser?.id && (
                       <button
