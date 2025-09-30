@@ -33,6 +33,11 @@ function renderFatal(msg: string) {
     console.log('[db] opening…')
     await safeOpenDb()
     console.log('[db] opened OK')
+    
+    // Check if database is working
+    const patientCount = await db.patients.count()
+    const userCount = await db.users.count()
+    console.log('[db] Current counts - Patients:', patientCount, 'Users:', userCount)
   } catch (e) {
     console.error('Failed to initialize database:', e)
     renderFatal('Could not open the local database.')

@@ -19,7 +19,16 @@ export function Patients() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadPatients().finally(() => setLoading(false))
+    console.log('Patients page: Loading patients...')
+    loadPatients()
+      .then(() => {
+        console.log('Patients page: Patients loaded successfully')
+        setLoading(false)
+      })
+      .catch((error) => {
+        console.error('Patients page: Error loading patients:', error)
+        setLoading(false)
+      })
   }, [])
 
   useEffect(() => {

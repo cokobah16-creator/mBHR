@@ -24,6 +24,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
   loadPatients: async () => {
     try {
       const patients = await db.patients.orderBy('createdAt').reverse().toArray()
+      console.log('Loaded patients from database:', patients.length, patients)
       set({ patients })
     } catch (error) {
       console.error('Error loading patients:', error)
@@ -62,6 +63,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       }
       
       await db.patients.add(patient)
+      console.log('Patient added to database:', patient)
       
       // Add to queue for registration
       const queueItem: QueueItem = {
@@ -74,12 +76,14 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       }
       
       await db.queue.add(queueItem)
+      console.log('Queue item added:', queueItem)
       
       // Audit log
       await createAuditLog('system', 'create', 'patient', patient.id)
       
       // Refresh patients list
-      get().loadPatients()
+      await get().loadPatients()
+      console.log('Patients list refreshed')
       
       return patient.id
     } catch (error) {

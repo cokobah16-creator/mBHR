@@ -87,17 +87,21 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
   const onSubmit = async (data: PatientFormData) => {
     setLoading(true)
+    console.log('PatientForm: Submitting patient data:', data)
     try {
       const formattedPhone = formatPhoneNG(data.phone)
+      console.log('PatientForm: Formatted phone:', formattedPhone)
       const patientId = await addPatient({
         ...data,
         phone: formattedPhone,
         photoUrl: photo || undefined
       })
       
+      console.log('PatientForm: Patient created with ID:', patientId)
       onSuccess?.(patientId)
     } catch (error) {
       console.error('Error adding patient:', error)
+      alert('Failed to register patient: ' + error.message)
     } finally {
       setLoading(false)
     }
