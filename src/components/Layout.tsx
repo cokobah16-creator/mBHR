@@ -216,7 +216,7 @@ export function Layout({ children }: LayoutProps) {
               {navigation.map((item) => {
                 const isPharmacy = item.name === 'Pharmacy'
                 const isActive = isPharmacy 
-                  ? location.pathname.startsWith('/rx/') || location.pathname.startsWith('/pharmacy/') || overlay === "pharmacy"
+                  ? (location.pathname.startsWith('/rx/') || location.pathname === '/pharmacy' || location.pathname.startsWith('/pharmacy/')) && overlay !== null
                   : location.pathname === item.href
                 
                 const Common = (
