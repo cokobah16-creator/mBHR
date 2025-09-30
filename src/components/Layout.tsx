@@ -204,11 +204,6 @@ export function Layout({ children }: LayoutProps) {
         {/* Main Content */}
         <main className="flex-1 p-6">
           {children}
-          
-          {/* Message Outbox (bottom right) */}
-          <div className="fixed bottom-6 right-6 max-w-sm">
-            <MessageOutbox />
-          </div>
         </main>
       </div>
       
