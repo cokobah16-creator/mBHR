@@ -37,6 +37,10 @@ export async function seed() {
         { fullName: 'Nurse Mary', role: 'nurse' as const, pin: '345678' },
         { fullName: 'Pharmacist John', role: 'pharmacist' as const, pin: '456789' },
         { fullName: 'Volunteer Mike', role: 'volunteer' as const, pin: '567890' }
+        { fullName: 'Dr. Sarah Johnson', role: 'doctor' as const, pin: '234567' },
+        { fullName: 'Nurse Mary', role: 'nurse' as const, pin: '345678' },
+        { fullName: 'Pharmacist John', role: 'pharmacist' as const, pin: '456789' },
+        { fullName: 'Volunteer Mike', role: 'volunteer' as const, pin: '567890' }
       ]
       
       for (const userData of users) {
