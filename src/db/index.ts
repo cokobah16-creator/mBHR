@@ -1,6 +1,6 @@
 import Dexie, { Table } from 'dexie'
 import { ulid } from 'ulid'
-import metaphone from 'metaphone'
+import * as metaphone from 'metaphone'
 
 // Types
 export interface User {
