@@ -7,6 +7,7 @@ import './index.css'
 import './i18n'
 
 import { seed } from './db/seed'
+import { db } from './db/index'
 import { safeOpenDb } from './db/safeOpen'
 import { syncNow, isOnlineSyncEnabled } from './sync/adapter'
 
