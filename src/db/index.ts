@@ -183,6 +183,28 @@ export class MBHRDatabase extends Dexie {
       sessions:      'id, userId, createdAt, lastSeenAt',
       settings:      'key'
     })
+
+    // v3 — Add isActive index to users table
+    this.version(3).stores({
+      patients:      'id, familyName, phone, state, lga, createdAt, updatedAt, _dirty, _syncedAt',
+      vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
+      consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
+      dispenses:     'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt',
+      inventory:     'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+      visits:        'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+      queue:         'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
+      auditLogs:     'id, actorRole, entity, entityId, at',
+      users:         'id, fullName, role, email, pinHash, pinSalt, isActive, createdAt, updatedAt',
+      sessions:      'id, userId, createdAt, lastSeenAt',
+      settings:      'key'
+    }).upgrade(async tx => {
+      // Set default isActive = true for existing users that lack this field
+      await tx.table('users').toCollection().modify(user => {
+        if (typeof (user as any).isActive === 'undefined') {
+          (user as any).isActive = true
+        }
+      })
+    })
   }
 }
 
