@@ -21,6 +21,8 @@ import PharmacyStock from '@/features/pharmacy/PharmacyStock'
 import RxForm from '@/features/pharmacy/RxForm'
 import Dispense from '@/features/pharmacy/Dispense'
 import QueueBoard from '@/features/tickets/QueueBoard'
+import TicketIssuer from '@/features/tickets/TicketIssuer'
+import Leaderboard from '@/features/gamification/Leaderboard'
 import { seedDemo } from '@/db/seedMbhr'
 import { useEffect } from 'react'
 
