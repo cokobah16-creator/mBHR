@@ -2,9 +2,16 @@
 import { createClient } from '@supabase/supabase-js'
 import { db } from '../db'
 
-const url  = import.meta.env.VITE_SUPABASE_URL
-const key  = import.meta.env.VITE_SUPABASE_ANON_KEY
-const sb = (url && key) ? createClient(url, key, { auth: { persistSession: false } }) : null
+const url = import.meta.env.VITE_SUPABASE_URL
+const key = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+// Check if URL and key are valid (not placeholder values)
+const isValidUrl = url && key && 
+  url !== 'your_supabase_project_url_here' && 
+  key !== 'your_supabase_anon_key_here' &&
+  (url.startsWith('http://') || url.startsWith('https://'))
+
+const sb = isValidUrl ? createClient(url, key, { auth: { persistSession: false } }) : null
 
 export function isOnlineSyncEnabled() { return !!sb }
 
