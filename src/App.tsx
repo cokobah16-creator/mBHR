@@ -35,6 +35,7 @@ import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard'
 import ApprovalInbox from '@/features/gamification/ApprovalInbox'
 import { SimpleRegister } from '@/pages/SimpleRegister'
 import FEFODispenser from '@/features/pharmacy/FEFODispenser'
+import EnhancedPharmacy from '@/features/pharmacy/EnhancedPharmacy'
 
 // Lazy load game components
 const TriageSprint = lazy(() => import('@/features/triage/TriageSprint'))
