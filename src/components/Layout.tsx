@@ -37,9 +37,6 @@ export function Layout({ children }: LayoutProps) {
     { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
     { name: 'Restock Game', href: '/inv/game', icon: GiftIcon },
     { name: 'Leaderboard', href: '/inv/leaderboard', icon: GiftIcon },
-    { name: 'Pharmacy Stock', href: '/rx/stock', icon: BeakerIcon },
-    { name: 'New Prescription', href: '/rx/new', icon: BeakerIcon },
-    { name: 'Dispense', href: '/rx/dispense', icon: BeakerIcon },
     { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
     { name: 'Public Display', href: '/display', icon: TicketIcon },
   ]
@@ -51,6 +48,14 @@ export function Layout({ children }: LayoutProps) {
       { name: 'User Management', href: '/users', icon: UsersIcon }
     ] : [])
   ]
+
+  // Pharmacy navigation items
+  const pharmacyNavigation = [
+    { name: 'Pharmacy Stock', href: '/rx/stock', icon: BeakerIcon },
+    { name: 'New Prescription', href: '/rx/new', icon: BeakerIcon },
+    { name: 'Dispense', href: '/rx/dispense', icon: BeakerIcon }
+  ]
+
   const handleLogout = async () => {
     await logout()
   }
@@ -101,6 +106,33 @@ export function Layout({ children }: LayoutProps) {
           <div className="p-4">
             <ul className="space-y-2">
               {navigation.map((item) => {
+                const isActive = location.pathname === item.href
+                return (
+                  <li key={item.name}>
+                    <Link
+                      to={item.href}
+                      className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target ${
+                        isActive
+                          ? 'bg-primary text-white'
+                          : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      <item.icon className="h-5 w-5" />
+                      <span className="font-medium">{item.name}</span>
+                    </Link>
+                  </li>
+                )
+              })}
+              
+              {/* Pharmacy Section */}
+              <li className="pt-4">
+                <div className="px-4 py-2">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Pharmacy
+                  </h3>
+                </div>
+              </li>
+              {pharmacyNavigation.map((item) => {
                 const isActive = location.pathname === item.href
                 return (
                   <li key={item.name}>
