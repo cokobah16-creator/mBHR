@@ -42,6 +42,8 @@ export interface Patient {
   familyId?: string
   createdAt: Date
   updatedAt: Date
+  _dirty?: number
+  _syncedAt?: string
 }
 
 export interface Vital {
@@ -58,6 +60,8 @@ export interface Vital {
   bmi?: number
   flags: string[]
   takenAt: Date
+  _dirty?: number
+  _syncedAt?: string
 }
 
 export interface Consultation {
@@ -71,6 +75,8 @@ export interface Consultation {
   soapPlan: string
   provisionalDx: string[]
   createdAt: Date
+  _dirty?: number
+  _syncedAt?: string
 }
 
 export interface Dispense {
@@ -83,6 +89,8 @@ export interface Dispense {
   directions: string
   dispensedBy: string
   dispensedAt: Date
+  _dirty?: number
+  _syncedAt?: string
 }
 
 export interface InventoryItem {
@@ -92,6 +100,8 @@ export interface InventoryItem {
   onHandQty: number
   reorderThreshold: number
   updatedAt: Date
+  _dirty?: number
+  _syncedAt?: string
 }
 
 export interface Visit {
@@ -100,6 +110,8 @@ export interface Visit {
   startedAt: Date
   siteName: string
   status: 'open' | 'closed'
+  _dirty?: number
+  _syncedAt?: string
 }
 
 export interface QueueItem {
@@ -109,6 +121,8 @@ export interface QueueItem {
   position: number
   status: 'waiting' | 'in_progress' | 'done'
   updatedAt: Date
+  _dirty?: number
+  _syncedAt?: string
 }
 
 export interface AuditLog {

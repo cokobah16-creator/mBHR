@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { WifiIcon, SignalSlashIcon } from '@heroicons/react/24/outline'
-import { syncAdapter } from '@/sync/adapter'
+import { isOnlineSyncEnabled, isConfigured } from '@/sync/adapter'
 
 export function OfflineBadge() {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
-  const [syncStatus, setSyncStatus] = useState<'online' | 'offline' | 'unconfigured'>('offline')
+  const [configured, setConfigured] = useState(false)
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true)
@@ -13,8 +13,8 @@ export function OfflineBadge() {
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
 
-    // Check sync adapter status
-    setSyncStatus(syncAdapter.getStatus())
+    // Check if Supabase is configured
+    setConfigured(isConfigured())
 
     return () => {
       window.removeEventListener('online', handleOnline)
@@ -31,7 +31,7 @@ export function OfflineBadge() {
       }
     }
 
-    if (syncStatus === 'unconfigured') {
+    if (!configured) {
       return {
         icon: SignalSlashIcon,
         text: 'Local Only',
@@ -39,10 +39,18 @@ export function OfflineBadge() {
       }
     }
 
+    if (isOnlineSyncEnabled()) {
+      return {
+        icon: WifiIcon,
+        text: 'Online + Sync',
+        className: 'bg-green-100 text-green-800 border-green-200'
+      }
+    }
+
     return {
       icon: WifiIcon,
       text: 'Online',
-      className: 'bg-green-100 text-green-800 border-green-200'
+      className: 'bg-blue-100 text-blue-800 border-blue-200'
     }
   }
 

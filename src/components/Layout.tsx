@@ -3,12 +3,14 @@ import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
+import { syncNow, isOnlineSyncEnabled } from '@/sync/adapter'
 import { 
   HomeIcon, 
   UserGroupIcon, 
   QueueListIcon, 
   CubeIcon,
-  ArrowRightOnRectangleIcon
+  ArrowRightOnRectangleIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline'
 
 export function Layout() {
@@ -25,6 +27,12 @@ export function Layout() {
 
   const handleLogout = async () => {
     await logout()
+  }
+
+  const handleSync = async () => {
+    if (isOnlineSyncEnabled()) {
+      await syncNow()
+    }
   }
 
   return (
@@ -45,6 +53,17 @@ export function Layout() {
             <div className="flex items-center space-x-4">
               {/* Online/Offline Badge */}
               <OfflineBadge />
+              
+              {/* Sync Button */}
+              {isOnlineSyncEnabled() && (
+                <button
+                  onClick={handleSync}
+                  className="p-2 rounded-lg hover:bg-primary/80 transition-colors touch-target"
+                  title="Sync Now"
+                >
+                  <ArrowPathIcon className="h-5 w-5" />
+                </button>
+              )}
               
               {/* User Info */}
               {currentUser && (

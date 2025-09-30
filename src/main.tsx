@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { safeOpenDb } from './db/safeOpen'
+import { syncNow, isOnlineSyncEnabled } from './sync/adapter'
 import App from './App'
 import './index.css'
 import './i18n'
@@ -21,6 +22,13 @@ if ('serviceWorker' in navigator) {
 
 // Safe database initialization before render
 safeOpenDb().then(() => {
+  // Auto-sync on app boot if online sync is enabled
+  if (isOnlineSyncEnabled()) {
+    syncNow().catch(error => {
+      console.log('Initial sync failed:', error)
+    })
+  }
+  
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <BrowserRouter>

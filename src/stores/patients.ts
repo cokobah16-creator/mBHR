@@ -57,7 +57,8 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
         ...patientData,
         id: generateId(),
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        _dirty: 1
       }
       
       await db.patients.add(patient)
