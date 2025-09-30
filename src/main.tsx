@@ -4,26 +4,9 @@ import { BrowserRouter } from 'react-router-dom'
 import { safeOpenDb } from './db/safeOpen'
 import { syncNow, isOnlineSyncEnabled } from './sync/adapter'
 import { seed } from './db/seed'
-import { BrowserRouter } from 'react-router-dom'
-import { safeOpenDb } from './db/safeOpen'
-import { syncNow, isOnlineSyncEnabled } from './sync/adapter'
-import { seed } from './db/seed'
 import App from './App'
 import './index.css'
 import './i18n'
-
-// Register service worker
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        console.log('SW registered: ', registration)
-      })
-      .catch((registrationError) => {
-        console.log('SW registration failed: ', registrationError)
-      })
-  })
-}
 
 // Register service worker
 if ('serviceWorker' in navigator) {
@@ -47,6 +30,17 @@ async function safeOpenDbWithLogging(): Promise<boolean> {
     return true
   } catch (e) {
     console.error('[db] open failed', e)
+    return false
+  }
+}
+
+function renderFatal(message: string) {
+  const rootEl = document.getElementById('root')
+  if (rootEl) {
+    rootEl.innerHTML = `
+      <div style="font-family: system-ui; padding: 24px; max-width: 720px; margin: 40px auto;">
+        <h1 style="margin:0 0 12px;color:#0A7A3B;">Med Bridge Health Reach</h1>
+        <h2 style="margin:0 0 16px;">Startup error</h2>
         <p style="margin:0 0 8px;">${message}</p>
         <p style="color:#555">Open the browser console for details.</p>
       </div>
@@ -82,14 +76,7 @@ window.addEventListener('unhandledrejection', ev => {
     console.log('[seed] done')
   } catch (e: any) {
     console.error('[seed] failed', e)
-    alert(\`Seeding failed: ${e?.message || e}`)
-  }
-
-  // Auto-sync on app boot if online sync is enabled
-  if (isOnlineSyncEnabled()) {
-    syncNow().catch(error => {
-      console.log('Initial sync failed:', error)
-    })
+    alert(`Seeding failed: ${e?.message || e}`)
   }
 
   // Auto-sync on app boot if online sync is enabled
@@ -106,10 +93,6 @@ window.addEventListener('unhandledrejection', ev => {
       <BrowserRouter>
         <App />
       </BrowserRouter>
-        <App />
-      </BrowserRouter>
     </React.StrictMode>
   )
 })()
-  }
-}
