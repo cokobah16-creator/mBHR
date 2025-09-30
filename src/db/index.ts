@@ -146,7 +146,8 @@ export interface GameSession {
   score: number
   tokensEarned: number
   payloadJson: string
-  committed: boolean
+  committed: boolean  // keep for UI logic
+  committed_idx: 0 | 1  // numeric flag for indexing
   _dirty?: number
   _syncedAt?: string
 }
@@ -349,12 +350,18 @@ export class MBHRDatabase extends Dexie {
       users:         'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
       sessions:      'id, userId, createdAt, lastSeenAt',
       settings:      'key',
-      gameSessions:  'id, type, volunteerId, startedAt, finishedAt, committed, _dirty, _syncedAt',
+      gameSessions:  'id, type, volunteerId, startedAt, finishedAt, committed_idx, [type+committed_idx], _dirty, _syncedAt',
       gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
       vitalsRanges:  'id, sex, metric, ageMin, ageMax, updatedAt',
       quizQuestions: 'id, topic, difficulty, updatedAt',
       triageSamples: 'id, createdAt, createdBy',
       inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt'
+    }).upgrade(async tx => {
+      // Backfill numeric flag for existing game sessions
+      await tx.table('gameSessions').toCollection().modify((row: any) => {
+        const b = typeof row.committed === 'boolean' ? row.committed : false
+        row.committed_idx = b ? 1 : 0
+      })
     })
   }
 }

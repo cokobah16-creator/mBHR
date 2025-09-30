@@ -61,6 +61,7 @@ export class GamificationService {
       tokensEarned: 0,
       payloadJson: JSON.stringify(payload),
       committed: false,
+      committed_idx: 0,
       _dirty: 1
     }
 
@@ -97,6 +98,7 @@ export class GamificationService {
     // Mark as committed
     await db.gameSessions.update(sessionId, {
       committed: true,
+      committed_idx: 1,
       _dirty: 1
     })
 
