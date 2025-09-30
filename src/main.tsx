@@ -21,33 +21,78 @@ if ('serviceWorker' in navigator) {
   })
 }
 
-// Safe database initialization before render
-safeOpenDb().then(() => {
-  // Seed initial data if needed
-  return seed()
-}).then(() => {
+// --- helpers ----------------------------------------------------
+async function safeOpenDbWithLogging(): Promise<boolean> {
+  try {
+    console.log('[db] opening…')
+    await safeOpenDb()
+    console.log('[db] opened OK')
+    return true
+  } catch (e) {
+    console.error('[db] open failed', e)
+    return false
+  }
+}
+
+function renderFatal(message: string) {
+  const rootEl = document.getElementById('root')
+  if (rootEl) {
+    rootEl.innerHTML = `
+      <div style="font-family: system-ui; padding: 24px; max-width: 720px; margin: 40px auto;">
+        <h1 style="margin:0 0 12px;color:#0A7A3B;">Med Bridge Health Reach</h1>
+        <h2 style="margin:0 0 16px;">Startup error</h2>
+        <p style="margin:0 0 8px;">${message}</p>
+        <p style="color:#555">Open the browser console for details.</p>
+      </div>
+    `
+  }
+}
+
+// --- global error visibility -----------------------------------
+window.addEventListener('error', ev => {
+  console.error('[global error]', ev.message, ev.error)
+})
+window.addEventListener('unhandledrejection', ev => {
+  console.error('[unhandledrejection]', ev.reason)
+})
+
+// --- boot -------------------------------------------------------
+;(async () => {
+  const ok = await safeOpenDbWithLogging().catch(err => {
+    console.error('Failed to initialize database:', err)
+    alert('Failed to initialize database. See console for details.')
+    return false
+  })
+
+  if (!ok) {
+    alert('Could not open the local database. See console for details.')
+    renderFatal('Could not open the local database.')
+    return
+  }
+
+  try {
+    console.log('[seed] starting…')
+    await seed()
+    console.log('[seed] done')
+  } catch (e: any) {
+    console.error('[seed] failed', e)
+    alert(`Seeding failed: ${e?.message || e}`)
+  }
+
   // Auto-sync on app boot if online sync is enabled
   if (isOnlineSyncEnabled()) {
     syncNow().catch(error => {
       console.log('Initial sync failed:', error)
     })
   }
-  
-  ReactDOM.createRoot(document.getElementById('root')!).render(
+
+  console.log('Application fully initialized and rendered.')
+  const root = ReactDOM.createRoot(document.getElementById('root')!)
+  root.render(
     <React.StrictMode>
       <BrowserRouter>
         <App />
       </BrowserRouter>
-    </React.StrictMode>,
+    </React.StrictMode>
   )
-}).catch(error => {
-  console.error('Failed to initialize database:', error)
-  // Render error state or fallback
-  ReactDOM.createRoot(document.getElementById('root')!).render(
-    <div style={{ padding: '20px', textAlign: 'center' }}>
-      <h1>Database Error</h1>
-      <p>Failed to initialize the application database.</p>
-      <button onClick={() => window.location.reload()}>Retry</button>
-    </div>
-  )
-})
+})()
