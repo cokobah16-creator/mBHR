@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { mbhrDb, ulid, refreshAlertsFor } from '@/db/mbhr'
+import { db as mbhrDb, ulid } from '@/db/mbhr'
 import { useGam } from '@/stores/gamification'
 
 type Delta = Record<string, number>

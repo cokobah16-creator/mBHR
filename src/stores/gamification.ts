@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { mbhrDb, Gamification, ulid } from '@/db/mbhr'
+import { db as mbhrDb, ulid } from '@/db/mbhr'
 
 type Period = 'all' | 'weekly'
 

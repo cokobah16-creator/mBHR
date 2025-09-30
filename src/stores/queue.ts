@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { mbhrDb, ulid, Ticket, QueueMetric } from '@/db/mbhr'
+import { db as mbhrDb, ulid } from '@/db/mbhr'
+import type { Ticket } from '@/db/mbhr'
 
 const ALPHA = 0.2 // EMA smoothing
 

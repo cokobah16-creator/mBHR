@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { mbhrDb } from '@/db/mbhr'
+import { db as mbhrDb } from '@/db/mbhr'
 import { BeakerIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 export default function PharmacyStock() {

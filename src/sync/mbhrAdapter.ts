@@ -1,5 +1,5 @@
 // src/sync/mbhrAdapter.ts
-import { mbhrDb } from '@/db/mbhr'
+import { db as mbhrDb } from '@/db/mbhr'
 
 export const isOnlineSyncEnabled = () => localStorage.getItem('mbhr-sync') === 'on'
 export const setOnlineSync = (on: boolean) => localStorage.setItem('mbhr-sync', on ? 'on' : 'off')

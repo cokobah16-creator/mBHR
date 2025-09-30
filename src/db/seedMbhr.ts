@@ -1,5 +1,5 @@
 // src/db/seedMbhr.ts
-import { mbhrDb, ulid } from './mbhr'
+import { db as mbhrDb, ulid } from './mbhr'
 
 export async function seedDemo() {
   const hasItems = await mbhrDb.inventory_nm.count()

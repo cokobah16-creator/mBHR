@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { liveQuery } from 'dexie'
-import { mbhrDb, ulid } from '@/db/mbhr'
+import { db as mbhrDb, ulid } from '@/db/mbhr'
 import { useToast } from '@/stores/toast'
 
 /** Show a toast at most once per item per hour */

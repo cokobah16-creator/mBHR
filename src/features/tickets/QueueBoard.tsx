@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { mbhrDb, ulid } from '@/db/mbhr'
+import { db as mbhrDb, ulid } from '@/db/mbhr'
 import { useQueue } from '@/stores/queue'
 import { 
   QueueListIcon, 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { mbhrDb, ulid } from '@/db/mbhr'
+import { db as mbhrDb, ulid } from '@/db/mbhr'
 import { DocumentTextIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 export default function RxForm() {
