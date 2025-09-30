@@ -5,6 +5,8 @@ import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
 import Toasts from '@/components/Toasts'
 import useLowStockWatcher from '@/features/inventory/useLowStockWatcher'
+import { LanguageSelector } from '@/components/LanguageSelector'
+import { AccessibilityControls } from '@/components/AccessibilityControls'
 import { can } from '@/auth/roles'
 import type { ElementType, ReactNode } from 'react'
 import { 
@@ -110,6 +112,12 @@ export function Layout({ children }: LayoutProps) {
             <div className="flex items-center space-x-4">
               {/* Online/Offline Badge */}
               <OfflineBadge />
+              
+              {/* Language Selector */}
+              <LanguageSelector />
+              
+              {/* Accessibility Controls */}
+              <AccessibilityControls />
               
               {/* User Info */}
               {currentUser && (

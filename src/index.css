@@ -47,6 +47,26 @@
   .text-shadow {
     text-shadow: 0 2px 4px rgba(0,0,0,0.1);
   }
+  
+  /* Accessibility utility classes */
+  .reduce-motion * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  
+  .large-targets .touch-target {
+    @apply min-h-16 min-w-16;
+  }
+  
+  .large-targets .btn-primary,
+  .large-targets .btn-secondary {
+    @apply min-h-16 text-xl px-8 py-4;
+  }
+  
+  .large-targets .input-field {
+    @apply min-h-16 text-xl px-6 py-4;
+  }
 }
 
 /* Dark mode support */
@@ -62,4 +82,30 @@
   .dark .input-field {
     @apply bg-gray-800 border-gray-600 text-white;
   }
+}
+
+/* High contrast mode */
+.high-contrast {
+  --tw-bg-opacity: 1;
+  --tw-text-opacity: 1;
+}
+
+.high-contrast .card {
+  @apply border-2 border-gray-900;
+}
+
+.high-contrast .btn-primary {
+  @apply bg-black text-white border-2 border-black;
+}
+
+.high-contrast .btn-secondary {
+  @apply bg-white text-black border-2 border-black;
+}
+
+.high-contrast .input-field {
+  @apply border-2 border-gray-900 bg-white text-black;
+}
+
+.high-contrast .input-field:focus {
+  @apply ring-4 ring-black border-black;
 }

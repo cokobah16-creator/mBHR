@@ -147,7 +147,6 @@ export interface GameSession {
   tokensEarned: number
   payloadJson: string
   committed: boolean  // keep for UI logic
-  committed_idx: 0 | 1  // numeric flag for indexing
   _dirty?: number
   _syncedAt?: string
 }
@@ -210,8 +209,63 @@ export interface InventoryDiscrepancy {
   _syncedAt?: string
 }
 
+// Outbox and messaging types
+export interface OutboundMessage {
+  id: string
+  patientId: string
+  channel: 'sms' | 'whatsapp'
+  to: string
+  locale: string
+  templateKey: string
+  payload: Record<string, string | number>
+  status: 'queued' | 'sending' | 'sent' | 'delivered' | 'failed'
+  createdAt: Date
+  scheduledFor?: Date
+  attempts: number
+  lastAttemptAt?: Date
+  errorMessage?: string
+  _dirty?: number
+  _syncedAt?: string
+}
+
+export interface MessageTemplate {
+  key: string
+  locale: string
+  channel: 'sms' | 'whatsapp'
+  subject?: string
+  body: string
+  maxLength: number
+}
+
+// Enhanced pharmacy types
+export interface StockBatch {
+  id: string
+  drugId: string
+  lotNumber: string
+  expiryDate: Date
+  qtyOnHand: number
+  receivedAt: Date
+  supplier?: string
+  _dirty?: number
+  _syncedAt?: string
+}
+
+export interface CareTask {
+  id: string
+  patientId: string
+  type: 'medication_reminder' | 'followup_visit' | 'lab_test' | 'vital_check'
+  title: string
+  description: string
+  status: 'pending' | 'completed' | 'overdue' | 'cancelled'
+  dueDate: Date
+  completedAt?: Date
+  createdAt: Date
+  _dirty?: number
+  _syncedAt?: string
+}
+
 // Database name - bumped to avoid incompatible older store
-export const DB_NAME = 'mbhr_v3'
+export const DB_NAME = 'mbhr_v4'
 
 // Database class
 export class MBHRDatabase extends Dexie {
@@ -232,6 +286,10 @@ export class MBHRDatabase extends Dexie {
   quizQuestions!: Table<QuizQuestion>
   triageSamples!: Table<TriageSample>
   inventoryDiscrepancies!: Table<InventoryDiscrepancy>
+  outboundMessages!: Table<OutboundMessage>
+  messageTemplates!: Table<MessageTemplate>
+  stockBatches!: Table<StockBatch>
+  careTasks!: Table<CareTask>
 
   constructor() {
     super(DB_NAME)
@@ -338,7 +396,7 @@ export class MBHRDatabase extends Dexie {
     })
 
     // v6 — Add gamification tables
-    this.version(7).stores({
+    this.version(8).stores({
       patients:      'id, familyName, phone, state, lga, createdAt, updatedAt, _dirty, _syncedAt',
       vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
       consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
@@ -355,13 +413,18 @@ export class MBHRDatabase extends Dexie {
       vitalsRanges:  'id, sex, metric, ageMin, ageMax, updatedAt',
       quizQuestions: 'id, topic, difficulty, updatedAt',
       triageSamples: 'id, createdAt, createdBy',
-      inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt'
+      inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt',
+      outboundMessages: 'id, patientId, status, channel, to, createdAt, scheduledFor, _dirty, _syncedAt',
+      messageTemplates: 'key, locale, channel',
+      stockBatches: 'id, drugId, expiryDate, updatedAt, _dirty, _syncedAt',
+      careTasks: 'id, patientId, status, dueDate, createdAt, _dirty, _syncedAt'
     }).upgrade(async tx => {
-      // Migrate existing gameSessions to use committed_idx
+      // Normalize date fields to ISO strings and ensure committed is boolean
       const table = tx.table('gameSessions')
       await table.toCollection().modify((obj: any) => {
-        if (typeof obj.committed_idx === 'undefined') {
-          obj.committed_idx = obj.committed ? 1 : 0
+        // Ensure committed is boolean
+        if (typeof obj.committed !== 'boolean') {
+          obj.committed = false
         }
         // Normalize createdAt to ISO string if it's a Date object
         if (obj.createdAt instanceof Date) {
