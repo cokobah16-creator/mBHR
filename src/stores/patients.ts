@@ -154,7 +154,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
   },
 
   checkForDuplicates: async (patientData) => {
-    return createPatientDraft({
+    const result = await createPatientDraft({
       givenName: patientData.givenName,
       familyName: patientData.familyName,
       phone: patientData.phone,
@@ -164,5 +164,6 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       state: patientData.state,
       lga: patientData.lga
     })
+    return { patient: result.rec, candidates: result.candidates }
   }
 }))

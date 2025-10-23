@@ -2,8 +2,8 @@
 import { createClient } from '@supabase/supabase-js'
 import { db } from '../db'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY
+const url = import.meta.env.VITE_SUPABASE_URL as string
+const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
 // Check if URL and key are valid (not placeholder values)
 const isValidUrl = url && key && 

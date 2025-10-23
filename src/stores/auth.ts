@@ -49,7 +49,7 @@ export const useAuthStore = create<AuthState>()(
 
         try {
           // Get all active users
-          const users = await db.users.filter(u => u.isActive).toArray()
+          const users = await db.users.filter(u => u.isActive === 1).toArray()
           console.log('[auth] Found users:', users.length)
           console.log('[auth] User details:', users.map(u => ({ 
             id: u.id, 
@@ -62,6 +62,10 @@ export const useAuthStore = create<AuthState>()(
           for (const user of users) {
             if (user.pinHash && user.pinSalt) {
               console.log('[auth] Checking PIN for user:', user.fullName, user.role)
+              console.log('[auth]   User salt:', user.pinSalt.substring(0, 15), '...')
+              console.log('[auth]   User hash:', user.pinHash.substring(0, 20), '...')
+              console.log('[auth]   Entered PIN:', pin)
+
               const isValid = await verifyPin(pin, user.pinHash, user.pinSalt)
               console.log('[auth] PIN valid for', user.fullName, ':', isValid)
               

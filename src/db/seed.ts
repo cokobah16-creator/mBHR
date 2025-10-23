@@ -19,19 +19,19 @@ const INVENTORY_ITEMS = [
 export async function seed() {
   try {
     console.log('🌱 Starting database seeding...')
-    
+
     // Check existing data
     const [userCount, inventoryCount] = await Promise.all([
       db.users.count(),
       db.inventory.count()
     ])
-    
+
     console.log('Existing counts - Users:', userCount, 'Inventory:', inventoryCount)
-    
+
     // Seed users if needed
     if (userCount === 0) {
       console.log('🌱 Creating demo users...')
-      
+
       const users = [
         { fullName: 'Admin User', role: 'admin' as const, pin: '123456', adminAccess: true, adminPermanent: false },
         { fullName: 'Dr. Sarah Johnson', role: 'doctor' as const, pin: '234567', adminAccess: false, adminPermanent: false },
@@ -40,13 +40,18 @@ export async function seed() {
         { fullName: 'Volunteer Mike', role: 'volunteer' as const, pin: '567890', adminAccess: false, adminPermanent: false },
         { fullName: 'Kristopher Okobah', role: 'admin' as const, pin: '070398', adminAccess: true, adminPermanent: true }
       ]
-      
+
       for (const userData of users) {
         const pinSalt = newSaltB64()
         const pinHash = await derivePinHash(userData.pin, pinSalt)
-        
+
+        console.log(`Creating user: ${userData.fullName}, PIN: ${userData.pin}`)
+        console.log(`  Salt: ${pinSalt.substring(0, 10)}...`)
+        console.log(`  Hash: ${pinHash.substring(0, 20)}...`)
+
+        const userId = generateId()
         await db.users.add({
-          id: generateId(),
+          id: userId,
           fullName: userData.fullName,
           role: userData.role,
           email: `${userData.role}@local`,
@@ -58,9 +63,22 @@ export async function seed() {
           createdAt: new Date(),
           updatedAt: new Date()
         })
+
+        // Verify the user was created correctly
+        const createdUser = await db.users.get(userId)
+        if (createdUser) {
+          console.log(`✓ User created: ${createdUser.fullName}, Active: ${createdUser.isActive}, HasHash: ${!!createdUser.pinHash}, HasSalt: ${!!createdUser.pinSalt}`)
+        }
       }
-      
+
       console.log('✅ Users created with PINs: 123456, 234567, 345678, 456789, 567890, 070398')
+
+      // Final verification
+      const allUsers = await db.users.where('isActive').equals(1).toArray()
+      console.log(`✅ Verified ${allUsers.length} active users in database`)
+      allUsers.forEach(u => {
+        console.log(`  - ${u.fullName} (${u.role}) - Hash: ${u.pinHash?.substring(0, 10)}..., Salt: ${u.pinSalt?.substring(0, 10)}...`)
+      })
     }
 
     // Seed inventory if needed

@@ -1,0 +1,179 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { useEffect, useState } from 'react';
+import { db, epochDay } from '@/db';
+import { useAuthStore } from '@/stores/auth';
+import { can } from '@/auth/roles';
+import { ChartBarIcon, UsersIcon, HeartIcon, DocumentTextIcon, BeakerIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+export function OfflineAnalytics() {
+    const { currentUser } = useAuthStore();
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [selectedPeriod, setSelectedPeriod] = useState('today');
+    // Only admins and leads can see analytics
+    if (!currentUser || !can(currentUser.role, 'export')) {
+        return null;
+    }
+    useEffect(() => {
+        loadAnalyticsData();
+        const interval = setInterval(loadAnalyticsData, 60000); // Refresh every minute
+        return () => clearInterval(interval);
+    }, []);
+    const loadAnalyticsData = async () => {
+        try {
+            const now = new Date();
+            const today = epochDay(now);
+            const yesterday = today - 1;
+            const weekStart = today - 6;
+            // Get daily counts
+            const [todayData, yesterdayData, weekData] = await Promise.all([
+                getDailyCount(today),
+                getDailyCount(yesterday),
+                getWeekTotal(weekStart, today)
+            ]);
+            // Calculate trends (today vs yesterday)
+            const trends = {
+                registrations: calculateTrend(todayData.registrations, yesterdayData.registrations),
+                vitals: calculateTrend(todayData.vitals, yesterdayData.vitals),
+                consultations: calculateTrend(todayData.consultations, yesterdayData.consultations),
+                dispenses: calculateTrend(todayData.dispenses, yesterdayData.dispenses)
+            };
+            // Identify bottlenecks
+            const bottlenecks = identifyBottlenecks(todayData);
+            setData({
+                today: todayData,
+                yesterday: yesterdayData,
+                weekTotal: weekData,
+                trends,
+                bottlenecks
+            });
+        }
+        catch (error) {
+            console.error('Error loading analytics:', error);
+        }
+        finally {
+            setLoading(false);
+        }
+    };
+    const getDailyCount = async (day) => {
+        const existing = await db.dailyCounts.where('day').equals(day).first();
+        if (existing)
+            return existing;
+        // Calculate from raw data if no pre-aggregated count exists
+        const dayStart = new Date(day * 86400000);
+        const dayEnd = new Date((day + 1) * 86400000);
+        const [registrations, vitals, consultations, dispenses, visits] = await Promise.all([
+            db.patients.where('createdAt').between(dayStart, dayEnd, true, false).count(),
+            db.vitals.where('takenAt').between(dayStart, dayEnd, true, false).count(),
+            db.consultations.where('createdAt').between(dayStart, dayEnd, true, false).count(),
+            db.dispenses.where('dispensedAt').between(dayStart, dayEnd, true, false).count(),
+            db.visits.where('startedAt').between(dayStart, dayEnd, true, false).count()
+        ]);
+        const count = {
+            day,
+            registrations,
+            vitals,
+            consultations,
+            dispenses,
+            visits
+        };
+        // Cache for future use
+        await db.dailyCounts.add(count).catch(() => { }); // Ignore if already exists
+        return count;
+    };
+    const getWeekTotal = async (startDay, endDay) => {
+        const weekCounts = await db.dailyCounts
+            .where('day')
+            .between(startDay, endDay, true, true)
+            .toArray();
+        return weekCounts.reduce((total, day) => ({
+            day: endDay,
+            registrations: total.registrations + day.registrations,
+            vitals: total.vitals + day.vitals,
+            consultations: total.consultations + day.consultations,
+            dispenses: total.dispenses + day.dispenses,
+            visits: total.visits + day.visits
+        }), {
+            day: endDay,
+            registrations: 0,
+            vitals: 0,
+            consultations: 0,
+            dispenses: 0,
+            visits: 0
+        });
+    };
+    const calculateTrend = (today, yesterday) => {
+        if (yesterday === 0)
+            return today > 0 ? 100 : 0;
+        return Math.round(((today - yesterday) / yesterday) * 100);
+    };
+    const identifyBottlenecks = (todayData) => {
+        const bottlenecks = [];
+        // Check for flow imbalances
+        if (todayData.registrations > todayData.vitals * 1.5) {
+            bottlenecks.push('Vitals station may be a bottleneck');
+        }
+        if (todayData.vitals > todayData.consultations * 1.5) {
+            bottlenecks.push('Consultation may be a bottleneck');
+        }
+        if (todayData.consultations > todayData.dispenses * 1.5) {
+            bottlenecks.push('Pharmacy may be a bottleneck');
+        }
+        return bottlenecks;
+    };
+    const formatTrend = (trend) => {
+        const isPositive = trend > 0;
+        const isNegative = trend < 0;
+        return {
+            value: Math.abs(trend),
+            color: isPositive ? 'text-green-600' : isNegative ? 'text-red-600' : 'text-gray-600',
+            icon: isPositive ? '↗' : isNegative ? '↘' : '→'
+        };
+    };
+    if (loading) {
+        return (_jsxs("div", { className: "card", children: [_jsxs("div", { className: "flex items-center space-x-3 mb-4", children: [_jsx(ChartBarIcon, { className: "h-6 w-6 text-primary" }), _jsx("h3", { className: "text-lg font-semibold text-gray-900", children: "Analytics" })] }), _jsx("div", { className: "animate-pulse space-y-4", children: _jsx("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4", children: [...Array(4)].map((_, i) => (_jsx("div", { className: "h-20 bg-gray-200 rounded-lg" }, i))) }) })] }));
+    }
+    if (!data)
+        return null;
+    const displayData = selectedPeriod === 'today' ? data.today : data.weekTotal;
+    const metrics = [
+        {
+            name: 'Registrations',
+            value: displayData.registrations,
+            icon: UsersIcon,
+            color: 'text-blue-600 bg-blue-50',
+            trend: data.trends.registrations
+        },
+        {
+            name: 'Vitals',
+            value: displayData.vitals,
+            icon: HeartIcon,
+            color: 'text-green-600 bg-green-50',
+            trend: data.trends.vitals
+        },
+        {
+            name: 'Consultations',
+            value: displayData.consultations,
+            icon: DocumentTextIcon,
+            color: 'text-purple-600 bg-purple-50',
+            trend: data.trends.consultations
+        },
+        {
+            name: 'Dispenses',
+            value: displayData.dispenses,
+            icon: BeakerIcon,
+            color: 'text-orange-600 bg-orange-50',
+            trend: data.trends.dispenses
+        }
+    ];
+    return (_jsxs("div", { className: "card", children: [_jsxs("div", { className: "flex items-center justify-between mb-6", children: [_jsxs("div", { className: "flex items-center space-x-3", children: [_jsx(ChartBarIcon, { className: "h-6 w-6 text-primary" }), _jsx("h3", { className: "text-lg font-semibold text-gray-900", children: "Clinic Analytics" })] }), _jsxs("div", { className: "flex space-x-2", children: [_jsx("button", { onClick: () => setSelectedPeriod('today'), className: `px-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedPeriod === 'today'
+                                    ? 'bg-primary text-white'
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`, children: "Today" }), _jsx("button", { onClick: () => setSelectedPeriod('week'), className: `px-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedPeriod === 'week'
+                                    ? 'bg-primary text-white'
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`, children: "This Week" })] })] }), _jsx("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4 mb-6", children: metrics.map((metric) => {
+                    const trendInfo = formatTrend(metric.trend);
+                    const Icon = metric.icon;
+                    return (_jsxs("div", { className: "p-4 rounded-lg border", children: [_jsxs("div", { className: "flex items-center justify-between mb-2", children: [_jsx("div", { className: `p-2 rounded-lg ${metric.color}`, children: _jsx(Icon, { className: "h-5 w-5" }) }), selectedPeriod === 'today' && (_jsxs("div", { className: `text-xs font-medium ${trendInfo.color}`, children: [trendInfo.icon, " ", trendInfo.value, "%"] }))] }), _jsx("div", { className: "text-2xl font-bold text-gray-900", children: metric.value }), _jsx("div", { className: "text-sm text-gray-600", children: metric.name })] }, metric.name));
+                }) }), data.bottlenecks.length > 0 && (_jsxs("div", { className: "bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4", children: [_jsxs("div", { className: "flex items-center space-x-2 mb-2", children: [_jsx(ExclamationTriangleIcon, { className: "h-5 w-5 text-yellow-600" }), _jsx("h4", { className: "font-medium text-yellow-800", children: "Potential Bottlenecks" })] }), _jsx("ul", { className: "text-sm text-yellow-700 space-y-1", children: data.bottlenecks.map((bottleneck, index) => (_jsxs("li", { children: ["\u2022 ", bottleneck] }, index))) })] })), _jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4 text-sm", children: [_jsxs("div", { className: "bg-gray-50 p-3 rounded-lg", children: [_jsx("div", { className: "font-medium text-gray-900 mb-1", children: "Patient Flow Efficiency" }), _jsx("div", { className: "text-gray-600", children: data.today.dispenses > 0 && data.today.registrations > 0
+                                    ? `${Math.round((data.today.dispenses / data.today.registrations) * 100)}% completion rate`
+                                    : 'No completed flows today' })] }), _jsxs("div", { className: "bg-gray-50 p-3 rounded-lg", children: [_jsx("div", { className: "font-medium text-gray-900 mb-1", children: "Data Freshness" }), _jsxs("div", { className: "text-gray-600", children: ["Updated: ", new Date().toLocaleTimeString()] })] })] })] }));
+}
