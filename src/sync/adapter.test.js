@@ -60,12 +60,14 @@ describe('Sync Adapter - Operations Queue Integration', () => {
                 priority: 'normal',
                 maxAttempts: 3
             });
-            const op = queueStore.getNextOperation();
+            let state = useOperationsQueue.getState();
+            const op = state.getNextOperation();
             expect(op).toBeDefined();
             if (op) {
                 queueStore.markAsProcessing(op.id);
                 queueStore.markAsFailed(op.id, 'Network error');
-                const failedOp = queueStore.operations.find(o => o.id === op.id);
+                state = useOperationsQueue.getState();
+                const failedOp = state.operations.find(o => o.id === op.id);
                 expect(failedOp?.status).toBe('pending');
                 expect(failedOp?.attempts).toBe(1);
                 expect(failedOp?.nextRetryAt).toBeGreaterThan(Date.now());
@@ -81,16 +83,18 @@ describe('Sync Adapter - Operations Queue Integration', () => {
                 priority: 'normal',
                 maxAttempts: 2
             });
-            const op = queueStore.getNextOperation();
+            let state = useOperationsQueue.getState();
+            const op = state.getNextOperation();
             if (op) {
                 queueStore.markAsProcessing(op.id);
                 queueStore.markAsFailed(op.id, 'Error 1');
                 queueStore.markAsProcessing(op.id);
                 queueStore.markAsFailed(op.id, 'Error 2');
-                const failedOp = queueStore.operations.find(o => o.id === op.id);
+                state = useOperationsQueue.getState();
+                const failedOp = state.operations.find(o => o.id === op.id);
                 expect(failedOp?.status).toBe('failed');
                 expect(failedOp?.attempts).toBe(2);
-                expect(queueStore.getFailedCount()).toBe(1);
+                expect(state.getFailedCount()).toBe(1);
             }
         });
         it('should track total processed and failed operations', async () => {
@@ -111,18 +115,21 @@ describe('Sync Adapter - Operations Queue Integration', () => {
                 priority: 'normal',
                 maxAttempts: 1
             });
-            const op1 = queueStore.getNextOperation();
+            let state = useOperationsQueue.getState();
+            const op1 = state.getNextOperation();
             if (op1) {
                 queueStore.markAsProcessing(op1.id);
                 queueStore.markAsCompleted(op1.id);
             }
-            const op2 = queueStore.operations.find(o => o.entityId === 'patient-2');
+            state = useOperationsQueue.getState();
+            const op2 = state.operations.find(o => o.entityId === 'patient-2');
             if (op2) {
                 queueStore.markAsProcessing(op2.id);
                 queueStore.markAsFailed(op2.id, 'Error');
             }
-            expect(queueStore.totalProcessed).toBe(1);
-            expect(queueStore.totalFailed).toBe(1);
+            state = useOperationsQueue.getState();
+            expect(state.totalProcessed).toBe(1);
+            expect(state.totalFailed).toBe(1);
         });
     });
     describe('Conflict Detection', () => {

@@ -17,7 +17,8 @@ describe('Operations Queue Store', () => {
                 priority: 'high',
                 maxAttempts: 3
             });
-            const op = store.operations[0];
+            const updatedStore = useOperationsQueue.getState();
+            const op = updatedStore.operations[0];
             expect(op.id).toMatch(/^op_/);
             expect(op.status).toBe('pending');
             expect(op.attempts).toBe(0);
@@ -36,9 +37,10 @@ describe('Operations Queue Store', () => {
                     maxAttempts: 3
                 });
             });
-            expect(store.operations).toHaveLength(6);
+            const updatedStore = useOperationsQueue.getState();
+            expect(updatedStore.operations).toHaveLength(6);
             entities.forEach((entity, i) => {
-                expect(store.operations[i].entity).toBe(entity);
+                expect(updatedStore.operations[i].entity).toBe(entity);
             });
         });
         it('should support all operation types', () => {
@@ -54,9 +56,10 @@ describe('Operations Queue Store', () => {
                     maxAttempts: 3
                 });
             });
-            expect(store.operations).toHaveLength(3);
+            const updatedStore = useOperationsQueue.getState();
+            expect(updatedStore.operations).toHaveLength(3);
             types.forEach((type, i) => {
-                expect(store.operations[i].type).toBe(type);
+                expect(updatedStore.operations[i].type).toBe(type);
             });
         });
     });
@@ -133,11 +136,13 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 3
             });
-            const op1 = store.operations[0];
+            const state1 = useOperationsQueue.getState();
+            const op1 = state1.operations[0];
             store.updateOperation(op1.id, {
                 nextRetryAt: Date.now() + 10000
             });
-            const next = store.getNextOperation();
+            const state2 = useOperationsQueue.getState();
+            const next = state2.getNextOperation();
             expect(next?.entityId).toBe('ready-now');
         });
     });
@@ -152,10 +157,12 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 3
             });
-            const op = store.operations[0];
+            const state1 = useOperationsQueue.getState();
+            const op = state1.operations[0];
             const beforeAttempts = op.attempts;
             store.markAsProcessing(op.id);
-            const updated = store.operations[0];
+            const state2 = useOperationsQueue.getState();
+            const updated = state2.operations[0];
             expect(updated.status).toBe('processing');
             expect(updated.attempts).toBe(beforeAttempts + 1);
             expect(updated.lastAttemptAt).toBeDefined();
@@ -172,12 +179,14 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 3
             });
-            const initialCount = store.totalProcessed;
-            const op = store.operations[0];
+            const state1 = useOperationsQueue.getState();
+            const initialCount = state1.totalProcessed;
+            const op = state1.operations[0];
             store.markAsCompleted(op.id);
-            expect(store.operations[0].status).toBe('completed');
-            expect(store.totalProcessed).toBe(initialCount + 1);
-            expect(store.lastProcessedAt).toBeGreaterThan(0);
+            const state2 = useOperationsQueue.getState();
+            expect(state2.operations[0].status).toBe('completed');
+            expect(state2.totalProcessed).toBe(initialCount + 1);
+            expect(state2.lastProcessedAt).toBeGreaterThan(0);
         });
     });
     describe('markAsFailed', () => {
@@ -191,10 +200,12 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 3
             });
-            const op = store.operations[0];
+            const state1 = useOperationsQueue.getState();
+            const op = state1.operations[0];
             store.markAsProcessing(op.id);
             store.markAsFailed(op.id, 'Network error');
-            const failed = store.operations[0];
+            const state2 = useOperationsQueue.getState();
+            const failed = state2.operations[0];
             expect(failed.status).toBe('pending');
             expect(failed.error).toBe('Network error');
             expect(failed.nextRetryAt).toBeGreaterThan(Date.now());
@@ -209,12 +220,14 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 1
             });
-            const op = store.operations[0];
+            const state1 = useOperationsQueue.getState();
+            const op = state1.operations[0];
             store.markAsProcessing(op.id);
             store.markAsFailed(op.id, 'Error');
-            const failed = store.operations[0];
+            const state2 = useOperationsQueue.getState();
+            const failed = state2.operations[0];
             expect(failed.status).toBe('failed');
-            expect(store.totalFailed).toBe(1);
+            expect(state2.totalFailed).toBe(1);
         });
         it('should calculate exponential backoff', () => {
             const store = useOperationsQueue.getState();
@@ -226,12 +239,16 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 5
             });
-            const op = store.operations[0];
+            let state = useOperationsQueue.getState();
+            let op = state.operations[0];
             for (let i = 0; i < 3; i++) {
                 store.markAsProcessing(op.id);
                 store.markAsFailed(op.id, `Error ${i}`);
+                state = useOperationsQueue.getState();
+                op = state.operations[0];
             }
-            const failed = store.operations[0];
+            const finalState = useOperationsQueue.getState();
+            const failed = finalState.operations[0];
             expect(failed.attempts).toBe(3);
             expect(failed.nextRetryAt).toBeGreaterThan(Date.now());
         });
@@ -255,11 +272,14 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 3
             });
-            expect(store.getPendingCount()).toBe(2);
-            store.markAsProcessing(store.operations[0].id);
-            expect(store.getPendingCount()).toBe(2);
-            store.markAsCompleted(store.operations[0].id);
-            expect(store.getPendingCount()).toBe(1);
+            let state = useOperationsQueue.getState();
+            expect(state.getPendingCount()).toBe(2);
+            store.markAsProcessing(state.operations[0].id);
+            state = useOperationsQueue.getState();
+            expect(state.getPendingCount()).toBe(2);
+            store.markAsCompleted(state.operations[0].id);
+            state = useOperationsQueue.getState();
+            expect(state.getPendingCount()).toBe(1);
         });
     });
     describe('getFailedCount', () => {
@@ -281,12 +301,15 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 1
             });
-            store.markAsProcessing(store.operations[0].id);
-            store.markAsFailed(store.operations[0].id, 'Error');
-            expect(store.getFailedCount()).toBe(1);
-            store.markAsProcessing(store.operations[1].id);
-            store.markAsFailed(store.operations[1].id, 'Error');
-            expect(store.getFailedCount()).toBe(2);
+            let state = useOperationsQueue.getState();
+            store.markAsProcessing(state.operations[0].id);
+            store.markAsFailed(state.operations[0].id, 'Error');
+            state = useOperationsQueue.getState();
+            expect(state.getFailedCount()).toBe(1);
+            store.markAsProcessing(state.operations[1].id);
+            store.markAsFailed(state.operations[1].id, 'Error');
+            state = useOperationsQueue.getState();
+            expect(state.getFailedCount()).toBe(2);
         });
     });
     describe('retryOperation', () => {
@@ -300,14 +323,17 @@ describe('Operations Queue Store', () => {
                 priority: 'normal',
                 maxAttempts: 1
             });
-            const op = store.operations[0];
+            let state = useOperationsQueue.getState();
+            const op = state.operations[0];
             store.markAsProcessing(op.id);
             store.markAsFailed(op.id, 'Error');
-            expect(store.operations[0].status).toBe('failed');
+            state = useOperationsQueue.getState();
+            expect(state.operations[0].status).toBe('failed');
             store.retryOperation(op.id);
-            expect(store.operations[0].status).toBe('pending');
-            expect(store.operations[0].error).toBeUndefined();
-            expect(store.operations[0].nextRetryAt).toBeUndefined();
+            state = useOperationsQueue.getState();
+            expect(state.operations[0].status).toBe('pending');
+            expect(state.operations[0].error).toBeUndefined();
+            expect(state.operations[0].nextRetryAt).toBeUndefined();
         });
     });
     describe('processQueue', () => {
@@ -333,8 +359,9 @@ describe('Operations Queue Store', () => {
             await processQueue(async (op) => {
                 processed.push(op.entityId);
             });
+            const state = useOperationsQueue.getState();
             expect(processed).toEqual(['p1', 'p2']);
-            expect(store.operations.filter(op => op.status === 'completed')).toHaveLength(2);
+            expect(state.operations.filter(op => op.status === 'completed')).toHaveLength(2);
         });
         it('should handle processor errors', async () => {
             const store = useOperationsQueue.getState();
@@ -349,7 +376,8 @@ describe('Operations Queue Store', () => {
             await processQueue(async () => {
                 throw new Error('Processor error');
             });
-            const op = store.operations[0];
+            const state = useOperationsQueue.getState();
+            const op = state.operations[0];
             expect(op.status).toBe('pending');
             expect(op.error).toBe('Processor error');
         });
