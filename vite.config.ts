@@ -12,43 +12,60 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          // Core React libraries
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          // Form libraries
-          'form-vendor': ['react-hook-form', '@hookform/resolvers', 'zod'],
-          // UI libraries
-          'ui-vendor': ['@headlessui/react', '@heroicons/react'],
-          // Database libraries
-          'db-vendor': ['dexie', 'dexie-react-hooks', 'idb-keyval'],
-          // Internationalization
-          'i18n-vendor': ['i18next', 'react-i18next', 'i18next-browser-languagedetector'],
-          // State management
-          'state-vendor': ['zustand'],
-          // Supabase
-          'supabase-vendor': ['@supabase/supabase-js'],
-          // Gamification features (lazy loaded)
-          'gamification': [
-            './src/features/gamification/Leaderboard',
-            './src/features/gamification/QueueMaestro',
-            './src/features/gamification/KnowledgeBlitz',
-            './src/features/gamification/ApprovalInbox',
-            './src/features/gamification/VitalsPrecision'
-          ],
-          // Analytics (admin only)
-          'analytics': ['./src/features/analytics/AnalyticsDashboard'],
-          // Pharmacy features
-          'pharmacy': [
-            './src/features/pharmacy/PharmacyStock',
-            './src/features/pharmacy/RxForm',
-            './src/features/pharmacy/Dispense',
-            './src/features/pharmacy/EnhancedPharmacy',
-            './src/features/pharmacy/FEFODispenser'
-          ]
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
+              return 'react-vendor';
+            }
+            if (id.includes('react-hook-form') || id.includes('zod') || id.includes('@hookform')) {
+              return 'form-vendor';
+            }
+            if (id.includes('@headlessui') || id.includes('@heroicons')) {
+              return 'ui-vendor';
+            }
+            if (id.includes('dexie') || id.includes('idb-keyval')) {
+              return 'db-vendor';
+            }
+            if (id.includes('i18next')) {
+              return 'i18n-vendor';
+            }
+            if (id.includes('zustand')) {
+              return 'state-vendor';
+            }
+            if (id.includes('@supabase')) {
+              return 'supabase-vendor';
+            }
+            if (id.includes('@sentry')) {
+              return 'sentry-vendor';
+            }
+          }
+
+          if (id.includes('/features/gamification/')) {
+            return 'gamification';
+          }
+          if (id.includes('/features/analytics/')) {
+            return 'analytics';
+          }
+          if (id.includes('/features/pharmacy/')) {
+            return 'pharmacy';
+          }
+          if (id.includes('/i18n/locales/')) {
+            const lang = id.match(/locales\/(\w+)\.json/)?.[1];
+            if (lang) return lang;
+          }
         }
       }
     },
-    chunkSizeWarningLimit: 1000
+    chunkSizeWarningLimit: 1000,
+    target: 'es2020',
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: process.env.NODE_ENV === 'production',
+        drop_debugger: true,
+        pure_funcs: process.env.NODE_ENV === 'production' ? ['console.log', 'console.info'] : []
+      }
+    }
   },
   esbuild: {
     drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : []
