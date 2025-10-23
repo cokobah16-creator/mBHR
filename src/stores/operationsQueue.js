@@ -109,7 +109,7 @@ export const useOperationsQueue = create()(persist((set, get) => ({
         }));
     },
     clearAll: () => {
-        set({ operations: [] });
+        set({ operations: [], totalProcessed: 0, totalFailed: 0 });
     },
     getNextOperation: () => {
         const now = Date.now();

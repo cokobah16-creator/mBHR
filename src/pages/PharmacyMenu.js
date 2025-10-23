@@ -1,6 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { Link } from 'react-router-dom';
-import { BeakerIcon, CubeIcon, ClipboardDocumentListIcon, ArrowLeftIcon, } from '@heroicons/react/24/outline';
+import { BeakerIcon, CubeIcon, ClipboardDocumentListIcon, ArrowLeftIcon, EnvelopeIcon, } from '@heroicons/react/24/outline';
 const cards = [
     {
         to: '/rx/dispense',
@@ -19,6 +19,12 @@ const cards = [
         title: 'New Stock',
         desc: 'Receive deliveries / add new items',
         Icon: ClipboardDocumentListIcon,
+    },
+    {
+        to: '/pharmacy/sms-reminders',
+        title: 'SMS Reminders',
+        desc: 'Manage medication reminders & alerts',
+        Icon: EnvelopeIcon,
     },
     {
         to: '/pharmacy/reports',

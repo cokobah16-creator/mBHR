@@ -187,7 +187,7 @@ export const useOperationsQueue = create<OperationsQueueState & OperationsQueueA
       },
 
       clearAll: () => {
-        set({ operations: [] })
+        set({ operations: [], totalProcessed: 0, totalFailed: 0 })
       },
 
       getNextOperation: () => {

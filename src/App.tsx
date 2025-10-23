@@ -30,6 +30,12 @@ const RxForm = lazy(() => import('@/features/pharmacy/RxForm'))
 const Dispense = lazy(() => import('@/features/pharmacy/Dispense'))
 const EnhancedPharmacy = lazy(() => import('@/features/pharmacy/EnhancedPharmacy'))
 const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'))
+const SMSReminders = lazy(() => import('@/pages/SMSReminders'))
+
+// Labs and appointments (Sprint 5 features)
+const LabOrderForm = lazy(() => import('@/features/labs/LabOrderForm').then(m => ({ default: m.LabOrderForm })))
+const LabResultsDashboard = lazy(() => import('@/features/labs/LabResultsDashboard').then(m => ({ default: m.LabResultsDashboard })))
+const AppointmentCalendar = lazy(() => import('@/features/appointments/AppointmentCalendar').then(m => ({ default: m.AppointmentCalendar })))
 
 // Inventory and gamification
 const Inventory = lazy(() => import('@/pages/Inventory').then(m => ({ default: m.Inventory })))
@@ -194,9 +200,24 @@ function App() {
                         <PharmacyReports />
                       </RequireRoles>
                     } />
+                    <Route path="/pharmacy/sms-reminders" element={
+                      <RequireRoles roles={['pharmacist', 'admin']}>
+                        <SMSReminders />
+                      </RequireRoles>
+                    } />
                     <Route path="/pharmacy/enhanced/:visitId" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
                         <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
+                      </RequireRoles>
+                    } />
+                    <Route path="/labs" element={
+                      <RequireRoles roles={['doctor', 'nurse', 'admin']}>
+                        <LabResultsDashboard userId="" />
+                      </RequireRoles>
+                    } />
+                    <Route path="/appointments" element={
+                      <RequireRoles roles={['doctor', 'nurse', 'volunteer', 'admin']}>
+                        <AppointmentCalendar createdBy="" />
                       </RequireRoles>
                     } />
                     <Route path="/triage/quick" element={

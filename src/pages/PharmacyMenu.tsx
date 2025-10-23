@@ -4,6 +4,7 @@ import {
   CubeIcon,
   ClipboardDocumentListIcon,
   ArrowLeftIcon,
+  EnvelopeIcon,
 } from '@heroicons/react/24/outline'
 
 const cards = [
@@ -14,21 +15,27 @@ const cards = [
     Icon: BeakerIcon,
   },
   {
-    to: '/rx/stock', 
+    to: '/rx/stock',
     title: 'Inventory',
     desc: 'Stock counts, restock & FEFO tracking',
     Icon: CubeIcon,
   },
   {
     to: '/rx/new',
-    title: 'New Stock', 
+    title: 'New Stock',
     desc: 'Receive deliveries / add new items',
     Icon: ClipboardDocumentListIcon,
   },
   {
+    to: '/pharmacy/sms-reminders',
+    title: 'SMS Reminders',
+    desc: 'Manage medication reminders & alerts',
+    Icon: EnvelopeIcon,
+  },
+  {
     to: '/pharmacy/reports',
     title: 'Reports',
-    desc: 'Daily summary & controlled log', 
+    desc: 'Daily summary & controlled log',
     Icon: ClipboardDocumentListIcon,
   },
 ]

@@ -11,7 +11,7 @@ import { EnhancedQueueBoard } from '@/components/EnhancedQueueBoard';
 import { ExportButtons } from '@/components/ExportButtons';
 import { AudioButton } from '@/components/AudioButton';
 import { MessageOutbox } from '@/components/MessageOutbox';
-import { UserPlusIcon, UsersIcon, HeartIcon, CubeIcon, Cog6ToothIcon, QueueListIcon } from '@heroicons/react/24/outline';
+import { UserPlusIcon, UsersIcon, HeartIcon, BeakerIcon, CubeIcon, Cog6ToothIcon, QueueListIcon, CalendarIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 // Memoized stat card component
 const StatCard = memo(({ icon: Icon, label, value, colorClass }) => (_jsx("div", { className: "bg-white rounded-lg shadow-sm p-6", children: _jsxs("div", { className: "flex items-center", children: [_jsx("div", { className: `flex-shrink-0 p-2 rounded-lg ${colorClass}`, children: _jsx(Icon, { className: "h-6 w-6" }) }), _jsxs("div", { className: "ml-4", children: [_jsx("p", { className: "text-sm font-medium text-gray-500", children: label }), _jsx("p", { className: "text-2xl font-bold text-gray-900", children: value })] })] }) })));
 StatCard.displayName = 'StatCard';
@@ -89,15 +89,48 @@ export function Dashboard() {
                 description: 'Stock management'
             }
         ];
-        // Add admin-only actions
-        if (currentUser && can(currentUser.role, 'users')) {
-            actions.push({
-                name: 'User Management',
-                href: '/users',
-                icon: Cog6ToothIcon,
-                color: 'bg-purple-500 hover:bg-purple-600',
-                description: 'Manage users'
-            });
+        // Add role-specific actions
+        if (currentUser) {
+            // Lab results for doctors and nurses
+            if (can(currentUser.role, 'consult')) {
+                actions.push({
+                    name: 'Lab Results',
+                    href: '/labs',
+                    icon: BeakerIcon,
+                    color: 'bg-teal-500 hover:bg-teal-600',
+                    description: 'Lab orders & results'
+                });
+            }
+            // Appointments for all clinical staff
+            if (can(currentUser.role, 'vitals')) {
+                actions.push({
+                    name: 'Appointments',
+                    href: '/appointments',
+                    icon: CalendarIcon,
+                    color: 'bg-indigo-500 hover:bg-indigo-600',
+                    description: 'Schedule & manage'
+                });
+            }
+            // SMS reminders for pharmacists
+            if (can(currentUser.role, 'dispense')) {
+                actions.push({
+                    name: 'SMS Reminders',
+                    href: '/pharmacy/sms-reminders',
+                    icon: EnvelopeIcon,
+                    color: 'bg-pink-500 hover:bg-pink-600',
+                    description: 'Medication alerts'
+                });
+            }
+            // Admin actions
+            if (can(currentUser.role, 'users')) {
+                actions.push({
+                    name: 'User Management',
+                    href: '/users',
+                    icon: Cog6ToothIcon,
+                    color: 'bg-purple-500 hover:bg-purple-600',
+                    description: 'Manage users'
+                });
+            }
         }
         return actions;
     }, [currentUser]);

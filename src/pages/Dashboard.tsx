@@ -10,15 +10,17 @@ import { EnhancedQueueBoard } from '@/components/EnhancedQueueBoard'
 import { ExportButtons } from '@/components/ExportButtons'
 import { AudioButton } from '@/components/AudioButton'
 import { MessageOutbox } from '@/components/MessageOutbox'
-import { 
-  UserPlusIcon, 
+import {
+  UserPlusIcon,
   UsersIcon,
   HeartIcon,
   DocumentTextIcon,
   BeakerIcon,
   CubeIcon,
   Cog6ToothIcon,
-  QueueListIcon
+  QueueListIcon,
+  CalendarIcon,
+  EnvelopeIcon
 } from '@heroicons/react/24/outline'
 
 // Memoized stat card component
@@ -124,15 +126,51 @@ export function Dashboard() {
       }
     ]
 
-    // Add admin-only actions
-    if (currentUser && can(currentUser.role, 'users')) {
-      actions.push({
-        name: 'User Management',
-        href: '/users',
-        icon: Cog6ToothIcon,
-        color: 'bg-purple-500 hover:bg-purple-600',
-        description: 'Manage users'
-      })
+    // Add role-specific actions
+    if (currentUser) {
+      // Lab results for doctors and nurses
+      if (can(currentUser.role, 'consult')) {
+        actions.push({
+          name: 'Lab Results',
+          href: '/labs',
+          icon: BeakerIcon,
+          color: 'bg-teal-500 hover:bg-teal-600',
+          description: 'Lab orders & results'
+        })
+      }
+
+      // Appointments for all clinical staff
+      if (can(currentUser.role, 'vitals')) {
+        actions.push({
+          name: 'Appointments',
+          href: '/appointments',
+          icon: CalendarIcon,
+          color: 'bg-indigo-500 hover:bg-indigo-600',
+          description: 'Schedule & manage'
+        })
+      }
+
+      // SMS reminders for pharmacists
+      if (can(currentUser.role, 'dispense')) {
+        actions.push({
+          name: 'SMS Reminders',
+          href: '/pharmacy/sms-reminders',
+          icon: EnvelopeIcon,
+          color: 'bg-pink-500 hover:bg-pink-600',
+          description: 'Medication alerts'
+        })
+      }
+
+      // Admin actions
+      if (can(currentUser.role, 'users')) {
+        actions.push({
+          name: 'User Management',
+          href: '/users',
+          icon: Cog6ToothIcon,
+          color: 'bg-purple-500 hover:bg-purple-600',
+          description: 'Manage users'
+        })
+      }
     }
 
     return actions
