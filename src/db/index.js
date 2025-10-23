@@ -163,6 +163,7 @@ export class MBHRDatabase extends Dexie {
             users: 'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
             sessions: 'id, userId, createdAt, lastSeenAt',
             settings: 'key',
+            meta: 'key',
             gameSessions: 'id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt',
             gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
             vitalsRanges: 'id, sex, metric, ageMin, ageMax, updatedAt',
