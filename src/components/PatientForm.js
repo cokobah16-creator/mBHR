@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { usePatientsStore } from '@/stores/patients';
 import { PatientDedupeModal } from '@/components/PatientDedupeModal';
 import { AudioButton } from '@/components/AudioButton';
+import { PhotoCapture } from '@/components/PhotoCapture';
 import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG, validatePhoneNG } from '@/utils/nigeria';
 import { CameraIcon, UserIcon } from '@heroicons/react/24/outline';
 const patientSchema = z.object({
@@ -26,6 +27,7 @@ export function PatientForm({ onSuccess, onCancel }) {
     const { addPatient } = usePatientsStore();
     const [loading, setLoading] = useState(false);
     const [photo, setPhoto] = useState(null);
+    const [showPhotoCapture, setShowPhotoCapture] = useState(false);
     const [selectedState, setSelectedState] = useState('');
     const [showDedupeModal, setShowDedupeModal] = useState(false);
     const [dedupeData, setDedupeData] = useState(null);
@@ -34,41 +36,12 @@ export function PatientForm({ onSuccess, onCancel }) {
     });
     const watchedState = watch('state');
     const availableLGAs = LGAS_BY_STATE[watchedState] || [];
-    const handlePhotoCapture = (e) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const result = event.target?.result;
-                // Create thumbnail (max 200x200)
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    const maxSize = 200;
-                    let { width, height } = img;
-                    if (width > height) {
-                        if (width > maxSize) {
-                            height = (height * maxSize) / width;
-                            width = maxSize;
-                        }
-                    }
-                    else {
-                        if (height > maxSize) {
-                            width = (width * maxSize) / height;
-                            height = maxSize;
-                        }
-                    }
-                    canvas.width = width;
-                    canvas.height = height;
-                    ctx?.drawImage(img, 0, 0, width, height);
-                    const thumbnail = canvas.toDataURL('image/jpeg', 0.8);
-                    setPhoto(thumbnail);
-                };
-                img.src = result;
-            };
-            reader.readAsDataURL(file);
-        }
+    const handlePhotoCapture = (photoDataUrl) => {
+        setPhoto(photoDataUrl);
+        setShowPhotoCapture(false);
+    };
+    const handleRemovePhoto = () => {
+        setPhoto(null);
     };
     const onSubmit = async (data) => {
         setLoading(true);
@@ -125,12 +98,12 @@ export function PatientForm({ onSuccess, onCancel }) {
         }
         setDedupeData(null);
     };
-    return (_jsxs(_Fragment, { children: [_jsx("div", { className: "max-w-2xl mx-auto", children: _jsxs("div", { className: "card", children: [_jsxs("div", { className: "flex items-center space-x-3 mb-6", children: [_jsx(UserIcon, { className: "h-8 w-8 text-primary" }), _jsx("h2", { className: "text-2xl font-bold text-gray-900", children: t('patient.register') })] }), _jsxs("form", { onSubmit: handleSubmit(onSubmit), className: "space-y-6", children: [_jsxs("div", { className: "flex flex-col items-center space-y-4", children: [_jsxs("div", { className: "relative", children: [photo ? (_jsx("img", { src: photo, alt: "Patient", className: "w-32 h-32 rounded-full object-cover border-4 border-gray-200" })) : (_jsx("div", { className: "w-32 h-32 rounded-full bg-gray-100 flex items-center justify-center border-4 border-gray-200", children: _jsx(UserIcon, { className: "h-16 w-16 text-gray-400" }) })), _jsxs("label", { className: "absolute bottom-0 right-0 bg-primary text-white rounded-full p-2 cursor-pointer hover:bg-primary/90 transition-colors touch-target", children: [_jsx(CameraIcon, { className: "h-5 w-5" }), _jsx("input", { type: "file", accept: "image/*", capture: "user", onChange: handlePhotoCapture, className: "hidden" })] })] }), _jsx("p", { className: "text-sm text-gray-600", children: "Tap camera to add photo" })] }), _jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4", children: [_jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.givenName'), " *"] }), _jsx("input", { ...register('givenName'), className: "input-field", placeholder: "Enter given name" }), errors.givenName && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.givenName.message }))] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.familyName'), " *"] }), _jsx("input", { ...register('familyName'), className: "input-field", placeholder: "Enter family name" }), errors.familyName && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.familyName.message }))] })] }), _jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4", children: [_jsxs("div", { children: [_jsx("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: "Sex *" }), _jsxs("select", { ...register('sex'), className: "input-field", children: [_jsx("option", { value: "", children: "Select sex" }), _jsx("option", { value: "male", children: "Male" }), _jsx("option", { value: "female", children: "Female" }), _jsx("option", { value: "other", children: "Other" })] }), errors.sex && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.sex.message }))] }), _jsxs("div", { children: [_jsx("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: "Date of Birth *" }), _jsx("input", { ...register('dob'), type: "date", className: "input-field", max: new Date().toISOString().split('T')[0] }), errors.dob && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.dob.message }))] })] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.phone'), " *"] }), _jsx("input", { ...register('phone'), type: "tel", className: "input-field", placeholder: "08012345678 or +2348012345678" }), errors.phone && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.phone.message }))] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.address'), " *"] }), _jsx("textarea", { ...register('address'), className: "input-field", rows: 3, placeholder: "Enter full address" }), errors.address && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.address.message }))] }), _jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4", children: [_jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.state'), " *"] }), _jsxs("select", { ...register('state'), onChange: (e) => {
+    return (_jsxs(_Fragment, { children: [_jsx("div", { className: "max-w-2xl mx-auto", children: _jsxs("div", { className: "card", children: [_jsxs("div", { className: "flex items-center space-x-3 mb-6", children: [_jsx(UserIcon, { className: "h-8 w-8 text-primary" }), _jsx("h2", { className: "text-2xl font-bold text-gray-900", children: t('patient.register') })] }), _jsxs("form", { onSubmit: handleSubmit(onSubmit), className: "space-y-6", children: [_jsxs("div", { className: "flex flex-col items-center space-y-4", children: [_jsxs("div", { className: "relative", children: [photo ? (_jsx("img", { src: photo, alt: "Patient", className: "w-32 h-32 rounded-full object-cover border-4 border-gray-200" })) : (_jsx("div", { className: "w-32 h-32 rounded-full bg-gray-100 flex items-center justify-center border-4 border-gray-200", children: _jsx(UserIcon, { className: "h-16 w-16 text-gray-400" }) })), photo && (_jsx("button", { type: "button", onClick: handleRemovePhoto, className: "absolute top-0 right-0 bg-red-500 text-white rounded-full p-1 m-1", children: "\u00D7" })), _jsx("button", { type: "button", onClick: () => setShowPhotoCapture(true), className: "absolute bottom-0 right-0 bg-primary text-white rounded-full p-2 cursor-pointer hover:bg-primary/90 transition-colors touch-target", children: _jsx(CameraIcon, { className: "h-5 w-5" }) })] }), _jsxs("p", { className: "text-sm text-gray-600", children: ["Tap camera to ", photo ? 'change' : 'add', " photo"] })] }), _jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4", children: [_jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.givenName'), " *"] }), _jsx("input", { ...register('givenName'), className: "input-field", placeholder: "Enter given name" }), errors.givenName && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.givenName.message }))] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.familyName'), " *"] }), _jsx("input", { ...register('familyName'), className: "input-field", placeholder: "Enter family name" }), errors.familyName && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.familyName.message }))] })] }), _jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4", children: [_jsxs("div", { children: [_jsx("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: "Sex *" }), _jsxs("select", { ...register('sex'), className: "input-field", children: [_jsx("option", { value: "", children: "Select sex" }), _jsx("option", { value: "male", children: "Male" }), _jsx("option", { value: "female", children: "Female" }), _jsx("option", { value: "other", children: "Other" })] }), errors.sex && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.sex.message }))] }), _jsxs("div", { children: [_jsx("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: "Date of Birth *" }), _jsx("input", { ...register('dob'), type: "date", className: "input-field", max: new Date().toISOString().split('T')[0] }), errors.dob && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.dob.message }))] })] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.phone'), " *"] }), _jsx("input", { ...register('phone'), type: "tel", className: "input-field", placeholder: "08012345678 or +2348012345678" }), errors.phone && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.phone.message }))] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.address'), " *"] }), _jsx("textarea", { ...register('address'), className: "input-field", rows: 3, placeholder: "Enter full address" }), errors.address && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.address.message }))] }), _jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4", children: [_jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.state'), " *"] }), _jsxs("select", { ...register('state'), onChange: (e) => {
                                                         setSelectedState(e.target.value);
                                                         setValue('lga', ''); // Reset LGA when state changes
                                                     }, className: "input-field", children: [_jsx("option", { value: "", children: "Select state" }), NIGERIAN_STATES.map((state) => (_jsx("option", { value: state, children: state }, state)))] }), errors.state && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.state.message }))] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: [t('patient.lga'), " *"] }), _jsxs("select", { ...register('lga'), className: "input-field", disabled: !watchedState, children: [_jsx("option", { value: "", children: "Select LGA" }), availableLGAs.map((lga) => (_jsx("option", { value: lga, children: lga }, lga)))] }), errors.lga && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.lga.message }))] })] }), _jsxs("div", { children: [_jsx("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: "Family ID (Optional)" }), _jsx("input", { ...register('familyId'), className: "input-field", placeholder: "Link to existing family member" })] }), _jsxs("div", { className: "flex space-x-4 pt-6", children: [_jsx(AudioButton, { audioKey: "action.register", fallbackText: "Register Patient", type: "submit", disabled: loading, className: "btn-primary flex-1", children: loading ? 'Registering...' : 'Register Patient' }), onCancel && (_jsx(AudioButton, { audioKey: "action.cancel", fallbackText: "Cancel", type: "button", onClick: onCancel, className: "btn-secondary flex-1", children: "Cancel" }))] })] })] }) }), showDedupeModal && dedupeData && (_jsx(PatientDedupeModal, { newPatient: dedupeData.patient, candidates: dedupeData.candidates, onResolve: handleDedupeResolve, onCancel: () => {
                     setShowDedupeModal(false);
                     setDedupeData(null);
                     setLoading(false);
-                } }))] }));
+                } })), showPhotoCapture && (_jsx(PhotoCapture, { onCapture: handlePhotoCapture, onCancel: () => setShowPhotoCapture(false), currentPhoto: photo || undefined }))] }));
 }

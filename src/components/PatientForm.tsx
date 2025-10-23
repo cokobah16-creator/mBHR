@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { usePatientsStore } from '@/stores/patients'
 import { PatientDedupeModal } from '@/components/PatientDedupeModal'
 import { AudioButton } from '@/components/AudioButton'
+import { PhotoCapture } from '@/components/PhotoCapture'
 import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG, validatePhoneNG } from '@/utils/nigeria'
 import { CameraIcon, UserIcon } from '@heroicons/react/24/outline'
 
@@ -34,6 +35,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const { addPatient } = usePatientsStore()
   const [loading, setLoading] = useState(false)
   const [photo, setPhoto] = useState<string | null>(null)
+  const [showPhotoCapture, setShowPhotoCapture] = useState(false)
   const [selectedState, setSelectedState] = useState('')
   const [showDedupeModal, setShowDedupeModal] = useState(false)
   const [dedupeData, setDedupeData] = useState<{ patient: any; candidates: any[] } | null>(null)
@@ -51,43 +53,13 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const watchedState = watch('state')
   const availableLGAs = LGAS_BY_STATE[watchedState] || []
 
-  const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        const result = event.target?.result as string
-        // Create thumbnail (max 200x200)
-        const img = new Image()
-        img.onload = () => {
-          const canvas = document.createElement('canvas')
-          const ctx = canvas.getContext('2d')
-          const maxSize = 200
-          
-          let { width, height } = img
-          if (width > height) {
-            if (width > maxSize) {
-              height = (height * maxSize) / width
-              width = maxSize
-            }
-          } else {
-            if (height > maxSize) {
-              width = (width * maxSize) / height
-              height = maxSize
-            }
-          }
-          
-          canvas.width = width
-          canvas.height = height
-          ctx?.drawImage(img, 0, 0, width, height)
-          
-          const thumbnail = canvas.toDataURL('image/jpeg', 0.8)
-          setPhoto(thumbnail)
-        }
-        img.src = result
-      }
-      reader.readAsDataURL(file)
-    }
+  const handlePhotoCapture = (photoDataUrl: string) => {
+    setPhoto(photoDataUrl)
+    setShowPhotoCapture(false)
+  }
+
+  const handleRemovePhoto = () => {
+    setPhoto(null)
   }
 
   const onSubmit = async (data: PatientFormData) => {
@@ -173,18 +145,24 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <UserIcon className="h-16 w-16 text-gray-400" />
                 </div>
               )}
-              <label className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-2 cursor-pointer hover:bg-primary/90 transition-colors touch-target">
+              {photo && (
+                <button
+                  type="button"
+                  onClick={handleRemovePhoto}
+                  className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1 m-1"
+                >
+                  ×
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowPhotoCapture(true)}
+                className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-2 cursor-pointer hover:bg-primary/90 transition-colors touch-target"
+              >
                 <CameraIcon className="h-5 w-5" />
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="user"
-                  onChange={handlePhotoCapture}
-                  className="hidden"
-                />
-              </label>
+              </button>
             </div>
-            <p className="text-sm text-gray-600">Tap camera to add photo</p>
+            <p className="text-sm text-gray-600">Tap camera to {photo ? 'change' : 'add'} photo</p>
           </div>
 
           {/* Name Fields */}
@@ -381,6 +359,15 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
           setDedupeData(null)
           setLoading(false)
         }}
+      />
+    )}
+
+    {/* Photo Capture Modal */}
+    {showPhotoCapture && (
+      <PhotoCapture
+        onCapture={handlePhotoCapture}
+        onCancel={() => setShowPhotoCapture(false)}
+        currentPhoto={photo || undefined}
       />
     )}
     </>
