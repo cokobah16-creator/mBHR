@@ -234,7 +234,7 @@ export function Layout({ children }: LayoutProps) {
         </div>
       </header>
 
-      <div className="flex relative">
+      <div className="flex relative min-h-[calc(100vh-73px)]">
         {/* Mobile Menu Overlay */}
         {mobileMenuOpen && (
           <div
@@ -245,11 +245,11 @@ export function Layout({ children }: LayoutProps) {
 
         {/* Sidebar */}
         <nav className={`
-          fixed md:static inset-y-0 left-0 z-50
+          fixed md:sticky md:top-0 inset-y-0 left-0 z-50
           w-64 bg-white shadow-lg md:shadow-sm
           transform transition-transform duration-300 ease-in-out
           ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-          overflow-y-auto
+          overflow-y-auto md:h-[calc(100vh-73px)] md:self-start
         `}>
           <div className="p-4">
             {/* Mobile Menu Header */}
@@ -326,13 +326,13 @@ export function Layout({ children }: LayoutProps) {
         </nav>
 
         {/* Main Content */}
-        <main className="flex-1 w-full md:w-auto overflow-x-hidden">
+        <main className="flex-1 w-full md:w-auto overflow-x-hidden min-h-full">
           {overlay === "pharmacy" ? (
             <div id="pharmacy-menu" role="dialog" aria-modal="true" className="p-4 sm:p-6">
               <PharmacyOverlay onClose={() => setOverlay(null)} />
             </div>
           ) : (
-            <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+            <div className="p-4 sm:p-6 max-w-7xl mx-auto min-h-full">
               {children}
             </div>
           )}

@@ -83,7 +83,22 @@
   .text-shadow {
     text-shadow: 0 2px 4px rgba(0,0,0,0.1);
   }
-  
+
+  /* Sticky sidebar utility */
+  .sidebar-sticky {
+    position: sticky;
+    top: 0;
+    height: calc(100vh - 73px);
+    overflow-y: auto;
+  }
+
+  @media (max-width: 768px) {
+    .sidebar-sticky {
+      position: fixed;
+      height: 100vh;
+    }
+  }
+
   /* Accessibility utility classes */
   .reduce-motion * {
     animation-duration: 0.01ms !important;
