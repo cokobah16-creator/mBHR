@@ -4,6 +4,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import { GlobalErrorBoundary } from './components/GlobalErrorBoundary';
 import './index.css';
 import './i18n';
 import { seed } from './db/seed';
@@ -55,7 +56,7 @@ function renderFatal(msg) {
         // Don't fail the app if seeding fails, just log it
         console.warn('Seeding failed but continuing with app startup');
     }
-    console.log('Application fully initialized and rendered.');
+    log('Application fully initialized and rendered.');
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(_jsx(React.StrictMode, { children: _jsx(BrowserRouter, { children: _jsx(App, {}) }) }));
+    root.render(_jsx(React.StrictMode, { children: _jsx(GlobalErrorBoundary, { children: _jsx(BrowserRouter, { children: _jsx(App, {}) }) }) }));
 })();

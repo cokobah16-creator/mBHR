@@ -7,7 +7,6 @@
   "nav.users": "Masu Amfani",
   "nav.analytics": "Bincike",
   "nav.games": "Wasanni",
-  
   "action.save": "Ajiye",
   "action.cancel": "Soke",
   "action.delete": "Share",
@@ -18,7 +17,6 @@
   "action.next": "Na gaba",
   "action.back": "Koma baya",
   "action.submit": "Aika",
-  
   "auth.login": "Shiga",
   "auth.logout": "Fita",
   "auth.pin": "Lambar Sirri",
@@ -26,7 +24,6 @@
   "auth.invalidPin": "Lambar sirri ba daidai ba",
   "auth.lockedOut": "An kulle asusun. Sake gwadawa bayan lokaci",
   "auth.welcome": "Maraba",
-  
   "patient.register": "Rubuta Majiyyaci",
   "patient.givenName": "Suna na Farko",
   "patient.familyName": "Sunan Iyali",
@@ -40,7 +37,6 @@
   "patient.female": "Mace",
   "patient.other": "Wani",
   "patient.photo": "Hoto",
-  
   "vitals.height": "Tsawo (cm)",
   "vitals.weight": "Nauyi (kg)",
   "vitals.temperature": "Zafin Jiki (°C)",
@@ -54,14 +50,12 @@
   "vitals.abnormal": "Ba na al'ada ba",
   "vitals.high": "Sama",
   "vitals.low": "Kasa",
-  
   "triage.priority.urgent": "Gaggawa",
   "triage.priority.normal": "Na al'ada",
   "triage.priority.low": "Kadan",
   "triage.category.adult": "Babba",
   "triage.category.child": "Yaro",
   "triage.category.antenatal": "Mata masu juna biyu",
-  
   "pharmacy.dispense": "Raba Magani",
   "pharmacy.medication": "Magani",
   "pharmacy.dosage": "Adadin",
@@ -72,7 +66,6 @@
   "pharmacy.withFood": "Tare da abinci",
   "pharmacy.beforeFood": "Kafin abinci",
   "pharmacy.asNeeded": "Lokacin da ake bukata",
-  
   "queue.registration": "Rajista",
   "queue.vitals": "Alamun Lafiya",
   "queue.consultation": "Shawarwari",
@@ -80,7 +73,6 @@
   "queue.waiting": "Jira",
   "queue.inProgress": "Ana aiki",
   "queue.completed": "An gama",
-  
   "status.loading": "Ana lodawa...",
   "status.saving": "Ana ajiyewa...",
   "status.success": "Nasara",
@@ -88,22 +80,145 @@
   "status.offline": "Babu hanyar sadarwa",
   "status.online": "Akwai hanyar sadarwa",
   "status.syncing": "Ana daidaitawa...",
-  
   "number.one": "Daya",
   "number.two": "Biyu",
-  "number.three": "Uku", 
+  "number.three": "Uku",
   "number.four": "Hudu",
   "number.five": "Biyar",
   "number.morning": "Safiya",
   "number.afternoon": "Rana",
   "number.evening": "Yamma",
   "number.night": "Dare",
-  
   "medical.fever": "Zazzabi",
   "medical.pain": "Ciwo",
   "medical.cough": "Tari",
   "medical.headache": "Ciwon kai",
   "medical.nausea": "Tashin hankali",
   "medical.dizziness": "Jujjuyawa",
-  "medical.fatigue": "Gajiya"
+  "medical.fatigue": "Gajiya",
+  "accessibility": {
+    "audioPrompts": "[EN] Audio Prompts",
+    "fontSize": "[EN] Text Size",
+    "highContrast": "[EN] High Contrast",
+    "largeButtons": "[EN] Large Buttons",
+    "playAudio": "[EN] Play audio",
+    "reduceMotion": "[EN] Reduce Motion"
+  },
+  "action": {
+    "consult": "[EN] Consultation",
+    "pharmacy": "[EN] Pharmacy",
+    "queue": "[EN] View Queue",
+    "register": "[EN] Register Patient",
+    "vitals": "[EN] Record Vitals"
+  },
+  "careplan": {
+    "addTask": "[EN] Add Task",
+    "description": "[EN] Description",
+    "descriptionPlaceholder": "[EN] Additional instructions or notes",
+    "dueDate": "[EN] Due Date",
+    "followupVisit": "[EN] Follow-up Visit",
+    "labTest": "[EN] Laboratory Test",
+    "medicationReminder": "[EN] Medication Reminder",
+    "newTask": "[EN] New Care Task",
+    "noTasks": "[EN] No care tasks scheduled",
+    "status": {
+      "cancelled": "[EN] Cancelled",
+      "completed": "[EN] Completed",
+      "overdue": "[EN] Overdue",
+      "pending": "[EN] Pending"
+    },
+    "taskTitle": "[EN] Task Title",
+    "taskType": "[EN] Task Type",
+    "title": "[EN] Care Plan",
+    "titlePlaceholder": "[EN] e.g., Take morning medication",
+    "type": {
+      "followup_visit": "[EN] Follow-up",
+      "lab_test": "[EN] Lab Test",
+      "medication_reminder": "[EN] Medication",
+      "vital_check": "[EN] Vitals"
+    },
+    "vitalCheck": "[EN] Vital Signs Check"
+  },
+  "common": {
+    "all": "[EN] All",
+    "available": "[EN] available",
+    "of": "[EN] of",
+    "years": "[EN] years"
+  },
+  "consultation": {
+    "assessment": "[EN] Assessment",
+    "plan": "[EN] Plan"
+  },
+  "error": {
+    "dispenseFailed": "[EN] Failed to dispense medication",
+    "registrationFailed": "[EN] Failed to register patient"
+  },
+  "messaging": {
+    "delivered": "[EN] Delivered",
+    "failed": "[EN] Failed",
+    "lastSync": "[EN] Last sync",
+    "neverSynced": "[EN] Never synced",
+    "noMessages": "[EN] No messages to send",
+    "offlineQueue": "[EN] {{count}} messages queued for when online",
+    "outbox": "[EN] Message Outbox",
+    "processComplete": "[EN] Sent {{sent}} messages, {{failed}} failed",
+    "processError": "[EN] Failed to process messages",
+    "queued": "[EN] Queued",
+    "sendQueued": "[EN] Send Queued Messages",
+    "sending": "[EN] Sending...",
+    "sent": "[EN] Sent"
+  },
+  "patient": {
+    "age": "[EN] Age",
+    "contact": "[EN] Contact Information",
+    "demographics": "[EN] Age and Gender",
+    "location": "[EN] Location",
+    "names": "[EN] Patient Names",
+    "registrationSuccess": "[EN] Patient registered successfully!"
+  },
+  "pharmacy": {
+    "batch": "[EN] Batch",
+    "dispenseAndRemind": "[EN] Dispense & Set Reminder",
+    "dispensing": "[EN] Dispensing...",
+    "expires": "[EN] Expires",
+    "expiry": {
+      "expired": "[EN] Expired",
+      "expiring": "[EN] Expiring Soon",
+      "good": "[EN] Good",
+      "warning": "[EN] Expires Soon"
+    },
+    "fefoAllocation": "[EN] Batch Allocation (FEFO Order)",
+    "fefoDescription": "[EN] First Expired, First Out - automatic batch selection",
+    "fefoDispense": "[EN] FEFO Medication Dispense",
+    "insufficientStock": "[EN] Insufficient stock: {{available}} available, {{requested}} requested"
+  },
+  "simple": {
+    "chooseAction": "[EN] Choose what you want to do",
+    "directionsExample": "[EN] Take twice daily with food",
+    "dosageExample": "[EN] e.g., 1 tablet, 5ml",
+    "enterAddress": "[EN] Enter home address",
+    "enterFirstName": "[EN] Enter first name",
+    "enterLastName": "[EN] Enter last name",
+    "phoneExample": "[EN] Example: 08012345678 or +2348012345678",
+    "registerDescription": "[EN] Add a new patient step by step",
+    "selectLGA": "[EN] Choose your local government",
+    "selectMedication": "[EN] Choose medication",
+    "selectState": "[EN] Choose your state",
+    "tapCameraToAddPhoto": "[EN] Tap camera to add photo (optional)",
+    "tapToHear": "[EN] Tap any button to hear it spoken"
+  },
+  "stepper": {
+    "step": "[EN] Step"
+  },
+  "timeline": {
+    "consultationCompleted": "[EN] Consultation Completed",
+    "consultations": "[EN] Consultations",
+    "medicalHistory": "[EN] Medical History",
+    "medicationDispensed": "[EN] Medication Dispensed",
+    "medications": "[EN] Medications",
+    "noEvents": "[EN] No medical history recorded",
+    "viewDetails": "[EN] View details",
+    "visitStarted": "[EN] Visit Started",
+    "vitalsRecorded": "[EN] Vitals Recorded"
+  }
 }

@@ -3,6 +3,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
+import { GlobalErrorBoundary } from './components/GlobalErrorBoundary'
 import './index.css'
 import './i18n'
 
@@ -11,6 +12,8 @@ import { seedDemo } from './db/seedMbhr'
 import { seedGamificationData } from './db/gamification'
 import { db } from './db/index'
 import { safeOpenDb } from './db/safeOpen'
+import { runMigrations } from './db/migrations/migration-runner'
+import { log, error } from '@/lib/logger'
 
 // Global error visibility
 window.addEventListener('error', ev => console.error('[global error]', ev.message, ev.error))
@@ -32,39 +35,46 @@ function renderFatal(msg: string) {
 
 ;(async () => {
   try {
-    console.log('[db] opening…')
+    log('[db] opening…')
     await safeOpenDb()
-    console.log('[db] opened OK')
-    
+    log('[db] opened OK')
+
+    // Run database migrations
+    log('[migrations] checking for pending migrations…')
+    await runMigrations()
+    log('[migrations] complete')
+
     // Check if database is working
     const patientCount = await db.patients.count()
     const userCount = await db.users.count()
-    console.log('[db] Current counts - Patients:', patientCount, 'Users:', userCount)
+    log('[db] Current counts - Patients:', patientCount, 'Users:', userCount)
   } catch (e) {
-    console.error('Failed to initialize database:', e)
+    error('Failed to initialize database:', e)
     renderFatal('Could not open the local database.')
     return
   }
 
   try {
-    console.log('[seed] starting…')
+    log('[seed] starting…')
     await seed()
     await seedDemo()
     await seedGamificationData()
-    console.log('[seed] done')
+    log('[seed] done')
   } catch (e: any) {
-    console.error('[seed] failed', e)
+    error('[seed] failed', e)
     // Don't fail the app if seeding fails, just log it
-    console.warn('Seeding failed but continuing with app startup')
+    log('Seeding failed but continuing with app startup')
   }
 
-  console.log('Application fully initialized and rendered.')
+  log('Application fully initialized and rendered.')
   const root = ReactDOM.createRoot(document.getElementById('root')!)
   root.render(
     <React.StrictMode>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <GlobalErrorBoundary>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </GlobalErrorBoundary>
     </React.StrictMode>
   )
 })()

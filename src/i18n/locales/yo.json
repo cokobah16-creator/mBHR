@@ -7,7 +7,6 @@
   "nav.users": "Àwọn Òǹlò",
   "nav.analytics": "Ìtúpalẹ̀",
   "nav.games": "Àwọn Eré",
-  
   "action.save": "Fi pamọ́",
   "action.cancel": "Fagilee",
   "action.delete": "Parẹ́",
@@ -18,7 +17,6 @@
   "action.next": "Tókàn",
   "action.back": "Padà",
   "action.submit": "Fíránṣẹ́",
-  
   "auth.login": "Wọlé",
   "auth.logout": "Jáde",
   "auth.pin": "Nọ́mbà Ìpamọ́",
@@ -26,7 +24,6 @@
   "auth.invalidPin": "Nọ́mbà ìpamọ́ kò tọ́",
   "auth.lockedOut": "Ìgbìyànjú púpọ̀. Gbìyànjú lẹ́yìn àkókò",
   "auth.welcome": "Káàbọ̀",
-  
   "patient.register": "Forúkọsílẹ̀ Aláìsàn",
   "patient.givenName": "Orúkọ Àkọ́kọ́",
   "patient.familyName": "Orúkọ Ìdílé",
@@ -40,7 +37,6 @@
   "patient.female": "Abo",
   "patient.other": "Òmíràn",
   "patient.photo": "Fọ́tò",
-  
   "vitals.height": "Gíga (cm)",
   "vitals.weight": "Ìwúwo (kg)",
   "vitals.temperature": "Ìgbóná Ara (°C)",
@@ -54,14 +50,12 @@
   "vitals.abnormal": "Kò déédéé",
   "vitals.high": "Gíga",
   "vitals.low": "Kékeré",
-  
   "triage.priority.urgent": "Kíákíá",
   "triage.priority.normal": "Déédéé",
   "triage.priority.low": "Kékeré",
   "triage.category.adult": "Àgbàlagbà",
   "triage.category.child": "Ọmọdé",
   "triage.category.antenatal": "Aboyún",
-  
   "pharmacy.dispense": "Pín Ògùn",
   "pharmacy.medication": "Ògùn",
   "pharmacy.dosage": "Ìwọ̀n",
@@ -72,7 +66,6 @@
   "pharmacy.withFood": "Pẹ̀lú oúnjẹ",
   "pharmacy.beforeFood": "Kí o tó jẹun",
   "pharmacy.asNeeded": "Bí o bá nílò",
-  
   "queue.registration": "Ìforúkọsílẹ̀",
   "queue.vitals": "Àyẹ̀wò Ara",
   "queue.consultation": "Ìjíròrò",
@@ -80,7 +73,6 @@
   "queue.waiting": "Ń dúró",
   "queue.inProgress": "Ń lọ lọ́wọ́",
   "queue.completed": "Ti parí",
-  
   "status.loading": "Ń gbé wọlé...",
   "status.saving": "Ń fi pamọ́...",
   "status.success": "Àṣeyọrí",
@@ -88,7 +80,6 @@
   "status.offline": "Kò sí ìbánisọ̀rọ̀",
   "status.online": "Ìbánisọ̀rọ̀ wà",
   "status.syncing": "Ń ṣàmúṣiṣẹ́pọ̀...",
-  
   "number.one": "Ọ̀kan",
   "number.two": "Méjì",
   "number.three": "Mẹ́ta",
@@ -98,12 +89,136 @@
   "number.afternoon": "Ọ̀sán",
   "number.evening": "Àṣálẹ́",
   "number.night": "Òru",
-  
   "medical.fever": "Ibà",
   "medical.pain": "Ìrora",
   "medical.cough": "Ikọ́",
   "medical.headache": "Orí ń fọ́ mi",
   "medical.nausea": "Ìfọ̀",
   "medical.dizziness": "Orí ń yí mi",
-  "medical.fatigue": "Àárẹ̀"
+  "medical.fatigue": "Àárẹ̀",
+  "accessibility": {
+    "audioPrompts": "[EN] Audio Prompts",
+    "fontSize": "[EN] Text Size",
+    "highContrast": "[EN] High Contrast",
+    "largeButtons": "[EN] Large Buttons",
+    "playAudio": "[EN] Play audio",
+    "reduceMotion": "[EN] Reduce Motion"
+  },
+  "action": {
+    "consult": "[EN] Consultation",
+    "pharmacy": "[EN] Pharmacy",
+    "queue": "[EN] View Queue",
+    "register": "[EN] Register Patient",
+    "vitals": "[EN] Record Vitals"
+  },
+  "careplan": {
+    "addTask": "[EN] Add Task",
+    "description": "[EN] Description",
+    "descriptionPlaceholder": "[EN] Additional instructions or notes",
+    "dueDate": "[EN] Due Date",
+    "followupVisit": "[EN] Follow-up Visit",
+    "labTest": "[EN] Laboratory Test",
+    "medicationReminder": "[EN] Medication Reminder",
+    "newTask": "[EN] New Care Task",
+    "noTasks": "[EN] No care tasks scheduled",
+    "status": {
+      "cancelled": "[EN] Cancelled",
+      "completed": "[EN] Completed",
+      "overdue": "[EN] Overdue",
+      "pending": "[EN] Pending"
+    },
+    "taskTitle": "[EN] Task Title",
+    "taskType": "[EN] Task Type",
+    "title": "[EN] Care Plan",
+    "titlePlaceholder": "[EN] e.g., Take morning medication",
+    "type": {
+      "followup_visit": "[EN] Follow-up",
+      "lab_test": "[EN] Lab Test",
+      "medication_reminder": "[EN] Medication",
+      "vital_check": "[EN] Vitals"
+    },
+    "vitalCheck": "[EN] Vital Signs Check"
+  },
+  "common": {
+    "all": "[EN] All",
+    "available": "[EN] available",
+    "of": "[EN] of",
+    "years": "[EN] years"
+  },
+  "consultation": {
+    "assessment": "[EN] Assessment",
+    "plan": "[EN] Plan"
+  },
+  "error": {
+    "dispenseFailed": "[EN] Failed to dispense medication",
+    "registrationFailed": "[EN] Failed to register patient"
+  },
+  "messaging": {
+    "delivered": "[EN] Delivered",
+    "failed": "[EN] Failed",
+    "lastSync": "[EN] Last sync",
+    "neverSynced": "[EN] Never synced",
+    "noMessages": "[EN] No messages to send",
+    "offlineQueue": "[EN] {{count}} messages queued for when online",
+    "outbox": "[EN] Message Outbox",
+    "processComplete": "[EN] Sent {{sent}} messages, {{failed}} failed",
+    "processError": "[EN] Failed to process messages",
+    "queued": "[EN] Queued",
+    "sendQueued": "[EN] Send Queued Messages",
+    "sending": "[EN] Sending...",
+    "sent": "[EN] Sent"
+  },
+  "patient": {
+    "age": "[EN] Age",
+    "contact": "[EN] Contact Information",
+    "demographics": "[EN] Age and Gender",
+    "location": "[EN] Location",
+    "names": "[EN] Patient Names",
+    "registrationSuccess": "[EN] Patient registered successfully!"
+  },
+  "pharmacy": {
+    "batch": "[EN] Batch",
+    "dispenseAndRemind": "[EN] Dispense & Set Reminder",
+    "dispensing": "[EN] Dispensing...",
+    "expires": "[EN] Expires",
+    "expiry": {
+      "expired": "[EN] Expired",
+      "expiring": "[EN] Expiring Soon",
+      "good": "[EN] Good",
+      "warning": "[EN] Expires Soon"
+    },
+    "fefoAllocation": "[EN] Batch Allocation (FEFO Order)",
+    "fefoDescription": "[EN] First Expired, First Out - automatic batch selection",
+    "fefoDispense": "[EN] FEFO Medication Dispense",
+    "insufficientStock": "[EN] Insufficient stock: {{available}} available, {{requested}} requested"
+  },
+  "simple": {
+    "chooseAction": "[EN] Choose what you want to do",
+    "directionsExample": "[EN] Take twice daily with food",
+    "dosageExample": "[EN] e.g., 1 tablet, 5ml",
+    "enterAddress": "[EN] Enter home address",
+    "enterFirstName": "[EN] Enter first name",
+    "enterLastName": "[EN] Enter last name",
+    "phoneExample": "[EN] Example: 08012345678 or +2348012345678",
+    "registerDescription": "[EN] Add a new patient step by step",
+    "selectLGA": "[EN] Choose your local government",
+    "selectMedication": "[EN] Choose medication",
+    "selectState": "[EN] Choose your state",
+    "tapCameraToAddPhoto": "[EN] Tap camera to add photo (optional)",
+    "tapToHear": "[EN] Tap any button to hear it spoken"
+  },
+  "stepper": {
+    "step": "[EN] Step"
+  },
+  "timeline": {
+    "consultationCompleted": "[EN] Consultation Completed",
+    "consultations": "[EN] Consultations",
+    "medicalHistory": "[EN] Medical History",
+    "medicationDispensed": "[EN] Medication Dispensed",
+    "medications": "[EN] Medications",
+    "noEvents": "[EN] No medical history recorded",
+    "viewDetails": "[EN] View details",
+    "visitStarted": "[EN] Visit Started",
+    "vitalsRecorded": "[EN] Vitals Recorded"
+  }
 }
