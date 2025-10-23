@@ -147,20 +147,20 @@ export function Dashboard() {
     })
   }, [])
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Welcome Header */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <div className="flex items-center justify-between">
+      <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
               Welcome back, {currentUser?.fullName}
             </h1>
-            <p className="text-gray-600 mt-1">
+            <p className="text-sm sm:text-base text-gray-600 mt-1">
               Here's what's happening at your clinic today
             </p>
           </div>
-          <div className="text-right">
-            <p className="text-sm text-gray-500">
+          <div className="text-left sm:text-right">
+            <p className="text-xs sm:text-sm text-gray-500">
               {formattedDate}
             </p>
           </div>
@@ -168,7 +168,7 @@ export function Dashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
         <StatCard
           icon={UsersIcon}
           label="Total Patients"
@@ -202,8 +202,8 @@ export function Dashboard() {
       <ExportButtons />
 
       {/* Getting Started */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Getting Started</h2>
+      <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
+        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">Getting Started</h2>
         <div className="space-y-3">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
@@ -235,7 +235,7 @@ export function Dashboard() {
         </div>
         
         <div className="mt-6 pt-4 border-t border-gray-200">
-          <div className="flex space-x-4">
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
             <AudioButton
               audioKey="action.register"
               fallbackText="Register Patient"

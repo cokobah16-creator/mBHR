@@ -7,12 +7,13 @@ import Toasts from '@/components/Toasts'
 import useLowStockWatcher from '@/features/inventory/useLowStockWatcher'
 import { LanguageSelector } from '@/components/LanguageSelector'
 import { AccessibilityControls } from '@/components/AccessibilityControls'
+import { SyncButton } from '@/components/SyncButton'
 import { can } from '@/auth/roles'
 import type { ElementType, ReactNode } from 'react'
-import { 
-  HomeIcon, 
-  UserGroupIcon, 
-  QueueListIcon, 
+import {
+  HomeIcon,
+  UserGroupIcon,
+  QueueListIcon,
   CubeIcon,
   UsersIcon,
   ArrowRightOnRectangleIcon,
@@ -24,7 +25,8 @@ import {
   ChartBarIcon,
   CheckCircleIcon,
   ArrowLeftIcon,
-  XMarkIcon
+  XMarkIcon,
+  Bars3Icon
 } from '@heroicons/react/24/outline'
 
 // Pharmacy Overlay Component
@@ -133,9 +135,15 @@ export function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const { currentUser, logout } = useAuthStore()
   const [overlay, setOverlay] = React.useState<null | "pharmacy">(null)
-  
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false)
+
   // Start low stock monitoring
   useLowStockWatcher()
+
+  // Close mobile menu on route change
+  React.useEffect(() => {
+    setMobileMenuOpen(false)
+  }, [location.pathname])
 
   const baseNavigation = [
     { name: t('nav.dashboard'), href: '/', icon: HomeIcon },
@@ -165,38 +173,56 @@ export function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-primary text-white shadow-lg">
+      <header className="bg-primary text-white shadow-lg sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div>
-              <h1 className="text-xl font-bold text-shadow">
+          <div className="flex justify-between items-center py-3 md:py-4">
+            {/* Mobile Menu Button */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 rounded-lg hover:bg-primary/80 transition-colors min-h-touch-target min-w-touch-target"
+              aria-label="Toggle menu"
+            >
+              <Bars3Icon className="h-6 w-6" />
+            </button>
+
+            <div className="flex-1 md:flex-initial">
+              <h1 className="text-lg md:text-xl font-bold text-shadow">
                 {t('app.title')}
               </h1>
-              <p className="text-sm opacity-90">
+              <p className="text-xs md:text-sm opacity-90 hidden sm:block">
                 {t('app.subtitle')}
               </p>
             </div>
-            
-            <div className="flex items-center space-x-4">
-              {/* Online/Offline Badge */}
-              <OfflineBadge />
-              
-              {/* Language Selector */}
-              <LanguageSelector />
-              
-              {/* Accessibility Controls */}
-              <AccessibilityControls />
-              
-              {/* User Info */}
+
+            <div className="flex items-center gap-2 md:gap-4">
+              {/* Online/Offline Badge - Hidden on very small screens */}
+              <div className="hidden xs:block">
+                <OfflineBadge />
+              </div>
+
+              {/* Sync Button */}
+              <SyncButton />
+
+              {/* Language Selector - Hidden on mobile */}
+              <div className="hidden md:block">
+                <LanguageSelector />
+              </div>
+
+              {/* Accessibility Controls - Hidden on mobile */}
+              <div className="hidden lg:block">
+                <AccessibilityControls />
+              </div>
+
+              {/* User Info - Compact on mobile */}
               {currentUser && (
-                <div className="flex items-center space-x-3">
-                  <div className="text-right">
+                <div className="flex items-center gap-2">
+                  <div className="text-right hidden md:block">
                     <p className="text-sm font-medium">{currentUser.fullName}</p>
                     <p className="text-xs opacity-75 capitalize">{currentUser.role}</p>
                   </div>
                   <button
                     onClick={handleLogout}
-                    className="p-2 rounded-lg hover:bg-primary/80 transition-colors touch-target"
+                    className="p-2 rounded-lg hover:bg-primary/80 transition-colors min-h-touch-target min-w-touch-target"
                     title={t('auth.logout')}
                   >
                     <ArrowRightOnRectangleIcon className="h-5 w-5" />
@@ -208,11 +234,46 @@ export function Layout({ children }: LayoutProps) {
         </div>
       </header>
 
-      <div className="flex">
+      <div className="flex relative">
+        {/* Mobile Menu Overlay */}
+        {mobileMenuOpen && (
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+        )}
+
         {/* Sidebar */}
-        <nav className="w-64 bg-white shadow-sm min-h-screen">
+        <nav className={`
+          fixed md:static inset-y-0 left-0 z-50
+          w-64 bg-white shadow-lg md:shadow-sm
+          transform transition-transform duration-300 ease-in-out
+          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          overflow-y-auto
+        `}>
           <div className="p-4">
-            <ul className="space-y-2">
+            {/* Mobile Menu Header */}
+            <div className="flex items-center justify-between mb-4 md:hidden">
+              <div>
+                <p className="font-semibold text-gray-900">{currentUser?.fullName}</p>
+                <p className="text-xs text-gray-600 capitalize">{currentUser?.role}</p>
+              </div>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="p-2 rounded-lg hover:bg-gray-100 min-h-touch-target min-w-touch-target"
+                aria-label="Close menu"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Mobile-only controls */}
+            <div className="mb-4 space-y-2 md:hidden">
+              <LanguageSelector />
+              <AccessibilityControls />
+            </div>
+
+            <ul className="space-y-1 md:space-y-2">
               {navigation.map((item) => {
                 const isPharmacy = item.name === 'Pharmacy'
                 const isActive = isPharmacy 
@@ -231,11 +292,14 @@ export function Layout({ children }: LayoutProps) {
                     {isPharmacy ? (
                       <button
                         type="button"
-                        onClick={() => setOverlay("pharmacy")}
-                        className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target text-left ${
+                        onClick={() => {
+                          setOverlay("pharmacy")
+                          setMobileMenuOpen(false)
+                        }}
+                        className={`w-full flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target text-left ${
                           isActive
                             ? 'bg-primary text-white'
-                            : 'text-gray-700 hover:bg-gray-100'
+                            : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'
                         }`}
                         aria-haspopup="dialog"
                         aria-controls="pharmacy-menu"
@@ -245,10 +309,10 @@ export function Layout({ children }: LayoutProps) {
                     ) : (
                       <Link
                         to={item.href}
-                        className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target ${
+                        className={`flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target ${
                           isActive
                             ? 'bg-primary text-white'
-                            : 'text-gray-700 hover:bg-gray-100'
+                            : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'
                         }`}
                       >
                         {Common}
@@ -262,13 +326,13 @@ export function Layout({ children }: LayoutProps) {
         </nav>
 
         {/* Main Content */}
-        <main className="flex-1">
+        <main className="flex-1 w-full md:w-auto overflow-x-hidden">
           {overlay === "pharmacy" ? (
-            <div id="pharmacy-menu" role="dialog" aria-modal="true" className="p-6">
+            <div id="pharmacy-menu" role="dialog" aria-modal="true" className="p-4 sm:p-6">
               <PharmacyOverlay onClose={() => setOverlay(null)} />
             </div>
           ) : (
-            <div className="p-6">
+            <div className="p-4 sm:p-6 max-w-7xl mx-auto">
               {children}
             </div>
           )}

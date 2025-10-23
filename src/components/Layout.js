@@ -8,8 +8,9 @@ import Toasts from '@/components/Toasts';
 import useLowStockWatcher from '@/features/inventory/useLowStockWatcher';
 import { LanguageSelector } from '@/components/LanguageSelector';
 import { AccessibilityControls } from '@/components/AccessibilityControls';
+import { SyncButton } from '@/components/SyncButton';
 import { can } from '@/auth/roles';
-import { HomeIcon, UserGroupIcon, QueueListIcon, CubeIcon, UsersIcon, ArrowRightOnRectangleIcon, BeakerIcon, GiftIcon, TicketIcon, TrophyIcon, ClipboardDocumentListIcon, ChartBarIcon, CheckCircleIcon, ArrowLeftIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { HomeIcon, UserGroupIcon, QueueListIcon, CubeIcon, UsersIcon, ArrowRightOnRectangleIcon, BeakerIcon, GiftIcon, TicketIcon, TrophyIcon, ClipboardDocumentListIcon, ChartBarIcon, CheckCircleIcon, ArrowLeftIcon, XMarkIcon, Bars3Icon } from '@heroicons/react/24/outline';
 // Pharmacy Overlay Component
 function PharmacyOverlay({ onClose }) {
     React.useEffect(() => {
@@ -52,8 +53,13 @@ export function Layout({ children }) {
     const location = useLocation();
     const { currentUser, logout } = useAuthStore();
     const [overlay, setOverlay] = React.useState(null);
+    const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
     // Start low stock monitoring
     useLowStockWatcher();
+    // Close mobile menu on route change
+    React.useEffect(() => {
+        setMobileMenuOpen(false);
+    }, [location.pathname]);
     const baseNavigation = [
         { name: t('nav.dashboard'), href: '/', icon: HomeIcon },
         { name: t('nav.patients'), href: '/patients', icon: UserGroupIcon },
@@ -76,16 +82,25 @@ export function Layout({ children }) {
     const handleLogout = async () => {
         await logout();
     };
-    return (_jsxs("div", { className: "min-h-screen bg-gray-50", children: [_jsx("header", { className: "bg-primary text-white shadow-lg", children: _jsx("div", { className: "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8", children: _jsxs("div", { className: "flex justify-between items-center py-4", children: [_jsxs("div", { children: [_jsx("h1", { className: "text-xl font-bold text-shadow", children: t('app.title') }), _jsx("p", { className: "text-sm opacity-90", children: t('app.subtitle') })] }), _jsxs("div", { className: "flex items-center space-x-4", children: [_jsx(OfflineBadge, {}), _jsx(LanguageSelector, {}), _jsx(AccessibilityControls, {}), currentUser && (_jsxs("div", { className: "flex items-center space-x-3", children: [_jsxs("div", { className: "text-right", children: [_jsx("p", { className: "text-sm font-medium", children: currentUser.fullName }), _jsx("p", { className: "text-xs opacity-75 capitalize", children: currentUser.role })] }), _jsx("button", { onClick: handleLogout, className: "p-2 rounded-lg hover:bg-primary/80 transition-colors touch-target", title: t('auth.logout'), children: _jsx(ArrowRightOnRectangleIcon, { className: "h-5 w-5" }) })] }))] })] }) }) }), _jsxs("div", { className: "flex", children: [_jsx("nav", { className: "w-64 bg-white shadow-sm min-h-screen", children: _jsx("div", { className: "p-4", children: _jsx("ul", { className: "space-y-2", children: navigation.map((item) => {
-                                    const isPharmacy = item.name === 'Pharmacy';
-                                    const isActive = isPharmacy
-                                        ? (location.pathname.startsWith('/rx/') || location.pathname === '/pharmacy' || location.pathname.startsWith('/pharmacy/')) && overlay !== null
-                                        : location.pathname === item.href;
-                                    const Common = (_jsxs(_Fragment, { children: [_jsx(item.icon, { className: "h-5 w-5" }), _jsx("span", { className: "font-medium", children: item.name })] }));
-                                    return (_jsx("li", { children: isPharmacy ? (_jsx("button", { type: "button", onClick: () => setOverlay("pharmacy"), className: `w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target text-left ${isActive
-                                                ? 'bg-primary text-white'
-                                                : 'text-gray-700 hover:bg-gray-100'}`, "aria-haspopup": "dialog", "aria-controls": "pharmacy-menu", children: Common })) : (_jsx(Link, { to: item.href, className: `flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors touch-target ${isActive
-                                                ? 'bg-primary text-white'
-                                                : 'text-gray-700 hover:bg-gray-100'}`, children: Common })) }, item.name));
-                                }) }) }) }), _jsx("main", { className: "flex-1", children: overlay === "pharmacy" ? (_jsx("div", { id: "pharmacy-menu", role: "dialog", "aria-modal": "true", className: "p-6", children: _jsx(PharmacyOverlay, { onClose: () => setOverlay(null) }) })) : (_jsx("div", { className: "p-6", children: children })) })] }), _jsx(Toasts, {})] }));
+    return (_jsxs("div", { className: "min-h-screen bg-gray-50", children: [_jsx("header", { className: "bg-primary text-white shadow-lg sticky top-0 z-30", children: _jsx("div", { className: "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8", children: _jsxs("div", { className: "flex justify-between items-center py-3 md:py-4", children: [_jsx("button", { onClick: () => setMobileMenuOpen(!mobileMenuOpen), className: "md:hidden p-2 rounded-lg hover:bg-primary/80 transition-colors min-h-touch-target min-w-touch-target", "aria-label": "Toggle menu", children: _jsx(Bars3Icon, { className: "h-6 w-6" }) }), _jsxs("div", { className: "flex-1 md:flex-initial", children: [_jsx("h1", { className: "text-lg md:text-xl font-bold text-shadow", children: t('app.title') }), _jsx("p", { className: "text-xs md:text-sm opacity-90 hidden sm:block", children: t('app.subtitle') })] }), _jsxs("div", { className: "flex items-center gap-2 md:gap-4", children: [_jsx("div", { className: "hidden xs:block", children: _jsx(OfflineBadge, {}) }), _jsx(SyncButton, {}), _jsx("div", { className: "hidden md:block", children: _jsx(LanguageSelector, {}) }), _jsx("div", { className: "hidden lg:block", children: _jsx(AccessibilityControls, {}) }), currentUser && (_jsxs("div", { className: "flex items-center gap-2", children: [_jsxs("div", { className: "text-right hidden md:block", children: [_jsx("p", { className: "text-sm font-medium", children: currentUser.fullName }), _jsx("p", { className: "text-xs opacity-75 capitalize", children: currentUser.role })] }), _jsx("button", { onClick: handleLogout, className: "p-2 rounded-lg hover:bg-primary/80 transition-colors min-h-touch-target min-w-touch-target", title: t('auth.logout'), children: _jsx(ArrowRightOnRectangleIcon, { className: "h-5 w-5" }) })] }))] })] }) }) }), _jsxs("div", { className: "flex relative", children: [mobileMenuOpen && (_jsx("div", { className: "fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden", onClick: () => setMobileMenuOpen(false) })), _jsx("nav", { className: `
+          fixed md:static inset-y-0 left-0 z-50
+          w-64 bg-white shadow-lg md:shadow-sm
+          transform transition-transform duration-300 ease-in-out
+          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          overflow-y-auto
+        `, children: _jsxs("div", { className: "p-4", children: [_jsxs("div", { className: "flex items-center justify-between mb-4 md:hidden", children: [_jsxs("div", { children: [_jsx("p", { className: "font-semibold text-gray-900", children: currentUser?.fullName }), _jsx("p", { className: "text-xs text-gray-600 capitalize", children: currentUser?.role })] }), _jsx("button", { onClick: () => setMobileMenuOpen(false), className: "p-2 rounded-lg hover:bg-gray-100 min-h-touch-target min-w-touch-target", "aria-label": "Close menu", children: _jsx(XMarkIcon, { className: "h-5 w-5" }) })] }), _jsxs("div", { className: "mb-4 space-y-2 md:hidden", children: [_jsx(LanguageSelector, {}), _jsx(AccessibilityControls, {})] }), _jsx("ul", { className: "space-y-1 md:space-y-2", children: navigation.map((item) => {
+                                        const isPharmacy = item.name === 'Pharmacy';
+                                        const isActive = isPharmacy
+                                            ? (location.pathname.startsWith('/rx/') || location.pathname === '/pharmacy' || location.pathname.startsWith('/pharmacy/')) && overlay !== null
+                                            : location.pathname === item.href;
+                                        const Common = (_jsxs(_Fragment, { children: [_jsx(item.icon, { className: "h-5 w-5" }), _jsx("span", { className: "font-medium", children: item.name })] }));
+                                        return (_jsx("li", { children: isPharmacy ? (_jsx("button", { type: "button", onClick: () => {
+                                                    setOverlay("pharmacy");
+                                                    setMobileMenuOpen(false);
+                                                }, className: `w-full flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target text-left ${isActive
+                                                    ? 'bg-primary text-white'
+                                                    : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'}`, "aria-haspopup": "dialog", "aria-controls": "pharmacy-menu", children: Common })) : (_jsx(Link, { to: item.href, className: `flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target ${isActive
+                                                    ? 'bg-primary text-white'
+                                                    : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'}`, children: Common })) }, item.name));
+                                    }) })] }) }), _jsx("main", { className: "flex-1 w-full md:w-auto overflow-x-hidden", children: overlay === "pharmacy" ? (_jsx("div", { id: "pharmacy-menu", role: "dialog", "aria-modal": "true", className: "p-4 sm:p-6", children: _jsx(PharmacyOverlay, { onClose: () => setOverlay(null) }) })) : (_jsx("div", { className: "p-4 sm:p-6 max-w-7xl mx-auto", children: children })) })] }), _jsx(Toasts, {})] }));
 }

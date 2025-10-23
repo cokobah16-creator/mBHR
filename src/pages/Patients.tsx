@@ -74,21 +74,21 @@ export function Patients() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
             Patients
           </h1>
-          <p className="text-gray-600">
+          <p className="text-sm sm:text-base text-gray-600">
             Manage patient records and information
           </p>
         </div>
-        
+
         <Link
           to="/register"
-          className="btn-primary inline-flex items-center space-x-2"
+          className="btn-primary inline-flex items-center justify-center gap-2 w-full sm:w-auto"
         >
           <UserPlusIcon className="h-5 w-5" />
           <span>Register Patient</span>
@@ -133,21 +133,21 @@ export function Patients() {
           filteredPatients.map((patient) => (
             <div
               key={patient.id}
-              className="card hover:shadow-md transition-shadow cursor-pointer"
+              className="card hover:shadow-md transition-shadow cursor-pointer active:bg-gray-50 p-4 sm:p-6"
               onClick={() => navigate(`/patients/${patient.id}`)}
             >
-              <div className="flex items-center space-x-4">
+              <div className="flex items-center gap-3 sm:gap-4">
                 {/* Patient Photo */}
                 <div className="flex-shrink-0">
                   {patient.photoUrl ? (
                     <img
                       src={patient.photoUrl}
                       alt={`${patient.givenName} ${patient.familyName}`}
-                      className="w-16 h-16 rounded-full object-cover"
+                      className="w-12 h-12 sm:w-16 sm:h-16 rounded-full object-cover"
                     />
                   ) : (
-                    <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center">
-                      <span className="text-xl font-medium text-gray-600">
+                    <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-gray-200 flex items-center justify-center">
+                      <span className="text-lg sm:text-xl font-medium text-gray-600">
                         {patient.givenName[0]}{patient.familyName[0]}
                       </span>
                     </div>
