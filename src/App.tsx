@@ -7,6 +7,7 @@ import RequireRoles from '@/components/RequireRoles'
 import Login from '@/pages/Login'
 import { useAuthStore } from '@/stores/auth'
 import { seedDemo } from '@/db/seedMbhr'
+import { PWAInstallPrompt } from '@/components/PWAInstallPrompt'
 
 // Core pages - loaded eagerly for initial navigation
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })))
@@ -70,12 +71,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
-  useEffect(() => { 
+  useEffect(() => {
     seedDemo().catch(console.error)
   }, [])
-  
+
   return (
     <ErrorBoundary>
+      <PWAInstallPrompt />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route
