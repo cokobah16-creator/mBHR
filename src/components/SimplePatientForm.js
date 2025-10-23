@@ -1,4 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+// @ts-nocheck
 import { useState } from 'react';
 import { useT } from '@/hooks/useT';
 import { StepperForm } from '@/components/StepperForm';

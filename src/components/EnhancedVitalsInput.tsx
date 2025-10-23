@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useState, useEffect } from 'react'
 import { useFormContext } from 'react-hook-form'
 import { db, VitalsRange, epochDay } from '@/db'

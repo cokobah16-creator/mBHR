@@ -45,6 +45,15 @@ const ROLE_PERMISSIONS = {
         inventory: true,
         export: true,
         users: true
+    },
+    guest: {
+        register: false,
+        vitals: false,
+        consult: false,
+        dispense: false,
+        inventory: false,
+        export: false,
+        users: false
     }
 };
 export function can(role, permission) {
@@ -62,6 +71,8 @@ export function getRoleColor(role) {
             return 'bg-orange-100 text-orange-800';
         case 'volunteer':
             return 'bg-gray-100 text-gray-800';
+        case 'guest':
+            return 'bg-gray-100 text-gray-500';
         default:
             return 'bg-gray-100 text-gray-800';
     }

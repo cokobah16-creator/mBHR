@@ -31,7 +31,7 @@ class SupabaseSync {
     }
     onStatusChange(callback) {
         this.listeners.add(callback);
-        return () => this.listeners.delete(callback);
+        return () => { this.listeners.delete(callback); };
     }
     notifyListeners() {
         this.listeners.forEach(listener => listener(this.syncStatus));

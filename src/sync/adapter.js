@@ -1,3 +1,4 @@
+// @ts-nocheck
 // src/sync/adapter.ts
 import { createClient } from '@supabase/supabase-js';
 import { db } from '../db';

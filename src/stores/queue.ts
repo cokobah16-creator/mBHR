@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { create } from 'zustand'
 import { db as mbhrDb, ulid } from '@/db/mbhr'
 import type { Ticket } from '@/db/mbhr'

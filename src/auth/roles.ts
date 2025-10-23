@@ -1,6 +1,6 @@
 // Role-based access control system
 
-export type Role = 'admin' | 'doctor' | 'nurse' | 'pharmacist' | 'volunteer'
+export type Role = 'admin' | 'doctor' | 'nurse' | 'pharmacist' | 'volunteer' | 'guest'
 
 export type Permission = 
   | 'register'     // Register new patients
@@ -57,6 +57,15 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     inventory: true,
     export: true,
     users: true
+  },
+  guest: {
+    register: false,
+    vitals: false,
+    consult: false,
+    dispense: false,
+    inventory: false,
+    export: false,
+    users: false
   }
 }
 
@@ -76,6 +85,8 @@ export function getRoleColor(role: Role): string {
       return 'bg-orange-100 text-orange-800'
     case 'volunteer':
       return 'bg-gray-100 text-gray-800'
+    case 'guest':
+      return 'bg-gray-100 text-gray-500'
     default:
       return 'bg-gray-100 text-gray-800'
   }

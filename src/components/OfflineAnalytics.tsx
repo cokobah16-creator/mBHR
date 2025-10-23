@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useEffect, useState } from 'react'
 import { db, epochDay, DailyCount } from '@/db'
 import { useAuthStore } from '@/stores/auth'

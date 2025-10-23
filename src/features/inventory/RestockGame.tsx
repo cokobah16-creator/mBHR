@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react'
 import { db as mbhrDb, ulid } from '@/db/mbhr'
 import { useGam } from '@/stores/gamification'

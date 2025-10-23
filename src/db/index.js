@@ -1,6 +1,6 @@
 import Dexie from 'dexie';
 import { ulid } from 'ulid';
-import * as metaphone from 'metaphone';
+import { metaphone } from 'metaphone';
 // Helper functions for date handling
 export const epochDay = (d) => Math.floor(d.getTime() / 86400000);
 export const normPhone = (s) => s.replace(/\D/g, '');

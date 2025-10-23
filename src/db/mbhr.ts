@@ -127,9 +127,6 @@ class MBHRDB extends Dexie {
   stock_moves_rx!: Table<StockMoveRx, string>
   prescriptions!: Table<Prescription, string>
   dispenses!: Table<Dispense, string>
-  gamification!: Table<Gamification, string>
-  queue_metrics!: Table<QueueMetric, string>
-  daily_counters!: Table<DailyCounter, string>
 
   constructor() {
     super('mbhr')

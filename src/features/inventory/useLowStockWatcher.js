@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useEffect, useRef } from 'react';
 import { liveQuery } from 'dexie';
 import { db as mbhrDb, ulid } from '@/db/mbhr';

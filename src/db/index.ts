@@ -1,6 +1,6 @@
 import Dexie, { Table } from 'dexie'
 import { ulid } from 'ulid'
-import * as metaphone from 'metaphone'
+import { metaphone } from 'metaphone'
 
 // Types
 export interface User {
@@ -49,6 +49,12 @@ export interface Patient {
   lga: string
   photoUrl?: string
   familyId?: string
+  phoneN?: string
+  nameKey?: string
+  dobDay?: number
+  createdDay?: number
+  updatedDay?: number
+  mergeInto?: string
   createdAt: Date
   updatedAt: Date
   _dirty?: number
@@ -229,6 +235,18 @@ export interface TriageSample {
   caseHash: string
   goldPriority: 'urgent' | 'normal' | 'low'
   createdBy: string
+}
+
+export interface TriageRecord {
+  id: string
+  patientId: string
+  visitId: string
+  priority: 'urgent' | 'normal' | 'low'
+  chiefComplaint: string
+  createdAt: Date
+  createdBy: string
+  _dirty?: number
+  _syncedAt?: string
 }
 
 export interface InventoryDiscrepancy {
