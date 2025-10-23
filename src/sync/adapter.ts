@@ -1,7 +1,9 @@
-// @ts-nocheck
 // src/sync/adapter.ts
 import { createClient } from '@supabase/supabase-js'
 import { db } from '../db'
+import { useOperationsQueue, PendingOperation, processQueue } from '../stores/operationsQueue'
+import { useSyncStore } from '../stores/syncStore'
+import { ConflictData, ConflictField } from '../components/ConflictResolutionModal'
 
 const url = import.meta.env.VITE_SUPABASE_URL as string
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string
@@ -90,20 +92,110 @@ async function getCursor(table: Tbl): Promise<string> {
 
 async function setCursor(table: Tbl, ts: string) {
   const iso = new Date(ts).toISOString()
-  await db.settings.put({ key: CURSOR_KEY(table), value: { ts: iso } })
+  await db.settings.put({ key: CURSOR_KEY(table), value: iso as any })
+}
+
+// Detect conflicts by comparing local and remote versions
+type ConflictDetectionResult = {
+  hasConflict: boolean
+  conflicts?: ConflictField[]
+  localData?: any
+  remoteData?: any
+}
+
+async function detectConflict(table: Tbl, id: string, localData: any): Promise<ConflictDetectionResult> {
+  if (!sb) return { hasConflict: false }
+
+  try {
+    const { data: remoteData, error } = await sb.from(table).select('*').eq('id', id).maybeSingle()
+
+    if (error || !remoteData) return { hasConflict: false }
+
+    const localUpdated = new Date(localData.updatedAt || localData.updated_at).getTime()
+    const remoteUpdated = new Date(remoteData.updated_at).getTime()
+
+    // No conflict if local is newer or same timestamp
+    if (localUpdated >= remoteUpdated) return { hasConflict: false }
+
+    // Check if there's a synced timestamp and data hasn't changed since
+    if (localData._syncedAt) {
+      const syncedAt = new Date(localData._syncedAt).getTime()
+      if (remoteUpdated <= syncedAt) return { hasConflict: false }
+    }
+
+    // Detect field-level conflicts
+    const conflicts: ConflictField[] = []
+    const dbMap = mapToDB[table]
+    const fieldMap = mapFromDB[table]
+
+    for (const [appKey, dbKey] of Object.entries(dbMap)) {
+      const localVal = localData[appKey]
+      const remoteVal = remoteData[dbKey]
+
+      if (localVal !== remoteVal && appKey !== 'updatedAt' && appKey !== 'createdAt') {
+        conflicts.push({
+          field: appKey,
+          label: appKey.replace(/([A-Z])/g, ' $1').trim(),
+          localValue: localVal,
+          remoteValue: remoteVal,
+          type: typeof localVal === 'number' ? 'number' :
+                localVal instanceof Date ? 'date' :
+                typeof localVal === 'object' ? 'object' : 'string'
+        })
+      }
+    }
+
+    if (conflicts.length === 0) return { hasConflict: false }
+
+    return {
+      hasConflict: true,
+      conflicts,
+      localData,
+      remoteData
+    }
+  } catch (err) {
+    return { hasConflict: false }
+  }
 }
 
 export async function pushChanges() {
-  if (!sb) return
+  if (!sb) return { conflicts: [] as ConflictData[] }
+
+  const detectedConflicts: ConflictData[] = []
+
   for (const t of tables) {
     const dirty = await (db as any)[t].where('_dirty').equals(1).toArray().catch(() => [])
     if (!dirty?.length) continue
-    const payload = dirty.map((r:any) => toDB(r, mapToDB[t]))
-    console.log('SYNC push payload', t, payload[0])
-    const { error } = await sb.from(t).upsert(payload, { onConflict: 'id' })
-    if (error) { console.warn('push error', t, error); continue }
-    await (db as any)[t].where('_dirty').equals(1).modify({ _dirty: 0, _syncedAt: new Date().toISOString() })
+
+    for (const record of dirty) {
+      // Check for conflicts before pushing
+      const conflictCheck = await detectConflict(t, record.id, record)
+
+      if (conflictCheck.hasConflict && conflictCheck.conflicts) {
+        detectedConflicts.push({
+          entityType: t,
+          entityId: record.id,
+          localTimestamp: record.updatedAt || new Date().toISOString(),
+          remoteTimestamp: conflictCheck.remoteData.updated_at,
+          conflicts: conflictCheck.conflicts
+        })
+        continue // Skip this record, needs manual resolution
+      }
+
+      // No conflict, proceed with push
+      const payload = toDB(record, mapToDB[t])
+      const { error } = await sb.from(t).upsert(payload, { onConflict: 'id' })
+
+      if (!error) {
+        await (db as any)[t].update(record.id, {
+          _dirty: 0,
+          _syncedAt: new Date().toISOString()
+        })
+      }
+    }
   }
+
+  return { conflicts: detectedConflicts }
 }
 
 export async function pullChanges() {
@@ -127,18 +219,98 @@ export async function pullChanges() {
   }
 }
 
+// Process operations queue and sync with conflict detection
+export async function processOperationsQueue(): Promise<ConflictData[]> {
+  const detectedConflicts: ConflictData[] = []
+
+  await processQueue(async (operation: PendingOperation) => {
+    const table = operation.entity === 'patient' ? 'patients' :
+                  operation.entity === 'visit' ? 'visits' :
+                  operation.entity === 'vital' ? 'vitals' :
+                  operation.entity === 'consultation' ? 'consultations' :
+                  operation.entity === 'dispense' ? 'dispenses' :
+                  operation.entity === 'inventory' ? 'inventory' : null
+
+    if (!table) throw new Error(`Unknown entity type: ${operation.entity}`)
+
+    // Check for conflicts
+    const conflictCheck = await detectConflict(table as Tbl, operation.entityId, operation.data)
+
+    if (conflictCheck.hasConflict && conflictCheck.conflicts) {
+      detectedConflicts.push({
+        entityType: table,
+        entityId: operation.entityId,
+        localTimestamp: (operation.data.updatedAt as string) || new Date().toISOString(),
+        remoteTimestamp: conflictCheck.remoteData.updated_at,
+        conflicts: conflictCheck.conflicts
+      })
+      throw new Error('Conflict detected - needs resolution')
+    }
+
+    // Process operation based on type
+    if (operation.type === 'create' || operation.type === 'update') {
+      const payload = toDB(operation.data, mapToDB[table as Tbl])
+      const { error } = await sb!.from(table).upsert(payload, { onConflict: 'id' })
+      if (error) throw error
+
+      // Mark as synced in local DB
+      await (db as any)[table].update(operation.entityId, {
+        _dirty: 0,
+        _syncedAt: new Date().toISOString()
+      })
+    } else if (operation.type === 'delete') {
+      const { error } = await sb!.from(table).delete().eq('id', operation.entityId)
+      if (error) throw error
+    }
+  })
+
+  return detectedConflicts
+}
+
 export async function syncNow() {
-  if (!isOnlineSyncEnabled()) return
-  
+  if (!isOnlineSyncEnabled()) return { success: false, conflicts: [] }
+
+  const syncStore = useSyncStore.getState()
+  syncStore.setStatus('syncing')
+
   try {
-    await pushChanges()
+    // Process operations queue first
+    const queueConflicts = await processOperationsQueue()
+
+    // Then push remaining dirty records
+    const { conflicts: pushConflicts } = await pushChanges()
+
+    // Pull remote changes
     await pullChanges()
-    console.log('Sync completed successfully')
+
+    const allConflicts = [...queueConflicts, ...pushConflicts]
+
+    syncStore.setLastSuccessAt(Date.now())
+    syncStore.setStatus('ok')
+
+    return { success: true, conflicts: allConflicts }
   } catch (error) {
-    console.error('Sync failed:', error)
+    const message = error instanceof Error ? error.message : 'Sync failed'
+    syncStore.setLastErrorAt(Date.now(), message)
+    syncStore.setStatus('error')
+    return { success: false, conflicts: [], error: message }
   }
 }
 
 export function isConfigured() {
   return !!sb
+}
+
+// Auto-sync on network reconnection
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', async () => {
+    const syncStore = useSyncStore.getState()
+    if (syncStore.isOnline && isOnlineSyncEnabled()) {
+      setTimeout(() => {
+        syncNow().catch(err => {
+          console.error('Auto-sync on reconnection failed:', err)
+        })
+      }, 2000) // Wait 2s for stable connection
+    }
+  })
 }
