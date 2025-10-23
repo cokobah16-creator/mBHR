@@ -1,48 +1,54 @@
 import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Layout } from '@/components/Layout';
 import RequireRoles from '@/components/RequireRoles';
 import Login from '@/pages/Login';
-import { Dashboard } from '@/pages/Dashboard';
-import { Register } from '@/pages/Register';
-import { Patients } from '@/pages/Patients';
-import { PatientDetail } from '@/pages/PatientDetail';
-import { Queue } from '@/pages/Queue';
-import { Vitals } from '@/pages/Vitals';
-import { Consult } from '@/pages/Consult';
-import { Pharmacy } from '@/pages/Pharmacy';
-import { Inventory } from '@/pages/Inventory';
-import { Users } from '@/pages/Users';
 import { useAuthStore } from '@/stores/auth';
-import RestockGame from '@/features/inventory/RestockGame';
-import PrizeShop from '@/features/inventory/PrizeShop';
-import PharmacyStock from '@/features/pharmacy/PharmacyStock';
-import RxForm from '@/features/pharmacy/RxForm';
-import Dispense from '@/features/pharmacy/Dispense';
-import QueueBoard from '@/features/tickets/QueueBoard';
-import TicketIssuer from '@/features/tickets/TicketIssuer';
-import Leaderboard from '@/features/gamification/Leaderboard';
-import PublicDisplay from '@/features/tickets/PublicDisplay';
-import { QuestBoard } from '@/components/QuestBoard';
-import QueueMaestro from '@/features/gamification/QueueMaestro';
 import { seedDemo } from '@/db/seedMbhr';
-import { useEffect } from 'react';
-import { GameHub } from '@/components/GameHub';
-import KnowledgeBlitz from '@/features/gamification/KnowledgeBlitz';
-import AnalyticsDashboard from '@/features/analytics/AnalyticsDashboard';
-import ApprovalInbox from '@/features/gamification/ApprovalInbox';
-import { SimpleRegister } from '@/pages/SimpleRegister';
-// Pharmacy menu components
+// Core pages - loaded eagerly for initial navigation
+const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Register = lazy(() => import('@/pages/Register').then(m => ({ default: m.Register })));
+const Patients = lazy(() => import('@/pages/Patients').then(m => ({ default: m.Patients })));
+const SimpleRegister = lazy(() => import('@/pages/SimpleRegister').then(m => ({ default: m.SimpleRegister })));
+// Patient detail and workflow pages
+const PatientDetail = lazy(() => import('@/pages/PatientDetail').then(m => ({ default: m.PatientDetail })));
+const Queue = lazy(() => import('@/pages/Queue').then(m => ({ default: m.Queue })));
+const Vitals = lazy(() => import('@/pages/Vitals').then(m => ({ default: m.Vitals })));
+const Consult = lazy(() => import('@/pages/Consult').then(m => ({ default: m.Consult })));
+// Pharmacy pages
+const Pharmacy = lazy(() => import('@/pages/Pharmacy').then(m => ({ default: m.Pharmacy })));
 const PharmacyMenu = lazy(() => import('@/pages/PharmacyMenu'));
 const PharmacyReports = lazy(() => import('@/pages/PharmacyReports'));
-// Lazy load game components with default exports
-const TriageSprint = lazy(() => import('@/features/triage/TriageSprint'));
-const VitalsPrecisionGame = lazy(() => import('@/features/vitals/VitalsPrecisionGame'));
-const QuickTriage = lazy(() => import('@/features/triage/QuickTriage'));
-const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'));
+const PharmacyStock = lazy(() => import('@/features/pharmacy/PharmacyStock'));
+const RxForm = lazy(() => import('@/features/pharmacy/RxForm'));
+const Dispense = lazy(() => import('@/features/pharmacy/Dispense'));
 const EnhancedPharmacy = lazy(() => import('@/features/pharmacy/EnhancedPharmacy'));
+const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'));
+// Inventory and gamification
+const Inventory = lazy(() => import('@/pages/Inventory').then(m => ({ default: m.Inventory })));
+const RestockGame = lazy(() => import('@/features/inventory/RestockGame'));
+const PrizeShop = lazy(() => import('@/features/inventory/PrizeShop'));
+// Queue/ticket management
+const QueueBoard = lazy(() => import('@/features/tickets/QueueBoard'));
+const TicketIssuer = lazy(() => import('@/features/tickets/TicketIssuer'));
+const PublicDisplay = lazy(() => import('@/features/tickets/PublicDisplay'));
+// Gamification features
+const GameHub = lazy(() => import('@/components/GameHub').then(m => ({ default: m.GameHub })));
+const QuestBoard = lazy(() => import('@/components/QuestBoard').then(m => ({ default: m.QuestBoard })));
+const Leaderboard = lazy(() => import('@/features/gamification/Leaderboard'));
+const QueueMaestro = lazy(() => import('@/features/gamification/QueueMaestro'));
+const KnowledgeBlitz = lazy(() => import('@/features/gamification/KnowledgeBlitz'));
+const VitalsPrecisionGame = lazy(() => import('@/features/vitals/VitalsPrecisionGame'));
+const ApprovalInbox = lazy(() => import('@/features/gamification/ApprovalInbox'));
+// Triage features
+const TriageSprint = lazy(() => import('@/features/triage/TriageSprint'));
+const QuickTriage = lazy(() => import('@/features/triage/QuickTriage'));
+// Analytics (admin only)
+const AnalyticsDashboard = lazy(() => import('@/features/analytics/AnalyticsDashboard'));
+// Admin
+const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users })));
 function ProtectedRoute({ children }) {
     const { isAuthenticated } = useAuthStore();
     if (!isAuthenticated) {

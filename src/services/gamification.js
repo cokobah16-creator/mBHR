@@ -22,7 +22,6 @@ export class GamificationService {
             tokensEarned: 0,
             payloadJson: JSON.stringify(payload),
             committed: false,
-            committed_idx: 0,
             _dirty: 1
         };
         await db.gameSessions.add(session);

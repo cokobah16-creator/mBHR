@@ -36,6 +36,9 @@ export const useAuthStore = create()(persist((set, get) => ({
             for (const user of users) {
                 if (user.pinHash && user.pinSalt) {
                     console.log('[auth] Checking PIN for user:', user.fullName, user.role);
+                    console.log('[auth]   User salt:', user.pinSalt.substring(0, 15), '...');
+                    console.log('[auth]   User hash:', user.pinHash.substring(0, 20), '...');
+                    console.log('[auth]   Entered PIN:', pin);
                     const isValid = await verifyPin(pin, user.pinHash, user.pinSalt);
                     console.log('[auth] PIN valid for', user.fullName, ':', isValid);
                     if (isValid) {
@@ -71,9 +74,29 @@ export const useAuthStore = create()(persist((set, get) => ({
         }
     },
     loginOnline: async (email, password) => {
-        // TODO: Implement Supabase authentication
-        // For now, return false to force offline PIN login
-        return false;
+        const state = get();
+        // Check lockout
+        if (state.checkLockout()) {
+            console.log('Account locked out');
+            return false;
+        }
+        try {
+            const { supabaseSync } = await import('@/services/supabaseSync');
+            if (!supabaseSync.isInitialized()) {
+                console.error('Supabase not configured');
+                return false;
+            }
+            // TODO: Implement actual Supabase auth login
+            // This would use supabase.auth.signInWithPassword({ email, password })
+            // For now, return false as it requires Supabase auth setup
+            console.log('Online login not fully implemented yet');
+            return false;
+        }
+        catch (error) {
+            console.error('Online login error:', error);
+            state.incrementFailedAttempts();
+            return false;
+        }
     },
     logout: async () => {
         const state = get();

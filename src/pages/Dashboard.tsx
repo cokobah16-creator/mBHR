@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo, useCallback, memo } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { db } from '@/db'
 import { can } from '@/auth/roles'
+import { queryCache, createCacheKey } from '@/utils/queryCache'
 import { OfflineAnalytics } from '@/components/OfflineAnalytics'
 import { EnhancedQueueBoard } from '@/components/EnhancedQueueBoard'
 import { ExportButtons } from '@/components/ExportButtons'
@@ -20,6 +21,27 @@ import {
   QueueListIcon
 } from '@heroicons/react/24/outline'
 
+// Memoized stat card component
+const StatCard = memo(({ icon: Icon, label, value, colorClass }: {
+  icon: any
+  label: string
+  value: number
+  colorClass: string
+}) => (
+  <div className="bg-white rounded-lg shadow-sm p-6">
+    <div className="flex items-center">
+      <div className={`flex-shrink-0 p-2 rounded-lg ${colorClass}`}>
+        <Icon className="h-6 w-6" />
+      </div>
+      <div className="ml-4">
+        <p className="text-sm font-medium text-gray-500">{label}</p>
+        <p className="text-2xl font-bold text-gray-900">{value}</p>
+      </div>
+    </div>
+  </div>
+))
+StatCard.displayName = 'StatCard'
+
 export function Dashboard() {
   const { t } = useTranslation()
   const { currentUser } = useAuthStore()
@@ -29,12 +51,17 @@ export function Dashboard() {
     totalUsers: 0
   })
 
-  useEffect(() => {
-    loadStats()
-  }, [])
-
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
+      // Check cache first
+      const cacheKey = createCacheKey('dashboard', 'stats', new Date().toDateString())
+      const cached = queryCache.get<typeof stats>(cacheKey)
+
+      if (cached) {
+        setStats(cached)
+        return
+      }
+
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       const tomorrow = new Date(today)
@@ -46,57 +73,79 @@ export function Dashboard() {
         db.users.count()
       ])
 
-      setStats({
+      const newStats = {
         totalPatients,
         todayRegistrations,
         totalUsers
-      })
+      }
+
+      setStats(newStats)
+      // Cache for 5 minutes
+      queryCache.set(cacheKey, newStats, 5 * 60 * 1000)
     } catch (error) {
       console.error('Error loading stats:', error)
     }
-  }
+  }, [])
 
-  const quickActions = [
-    {
-      name: 'Register Patient',
-      href: '/register',
-      icon: UserPlusIcon,
-      color: 'bg-blue-500 hover:bg-blue-600',
-      description: 'Add new patient'
-    },
-    {
-      name: 'View Patients',
-      href: '/patients',
-      icon: UsersIcon,
-      color: 'bg-green-500 hover:bg-green-600',
-      description: 'Patient records'
-    },
-    {
-      name: 'View Queue',
-      href: '/queue',
-      icon: HeartIcon,
-      color: 'bg-purple-500 hover:bg-purple-600',
-      description: 'Patient flow'
-    },
-    {
-      name: 'Inventory',
-      href: '/inventory',
-      icon: CubeIcon,
-      color: 'bg-orange-500 hover:bg-orange-600',
-      description: 'Stock management'
+  useEffect(() => {
+    loadStats()
+  }, [loadStats])
+
+  // Memoize quick actions based on user role
+  const quickActions = useMemo(() => {
+    const actions = [
+      {
+        name: 'Register Patient',
+        href: '/register',
+        icon: UserPlusIcon,
+        color: 'bg-blue-500 hover:bg-blue-600',
+        description: 'Add new patient'
+      },
+      {
+        name: 'View Patients',
+        href: '/patients',
+        icon: UsersIcon,
+        color: 'bg-green-500 hover:bg-green-600',
+        description: 'Patient records'
+      },
+      {
+        name: 'View Queue',
+        href: '/queue',
+        icon: HeartIcon,
+        color: 'bg-purple-500 hover:bg-purple-600',
+        description: 'Patient flow'
+      },
+      {
+        name: 'Inventory',
+        href: '/inventory',
+        icon: CubeIcon,
+        color: 'bg-orange-500 hover:bg-orange-600',
+        description: 'Stock management'
+      }
+    ]
+
+    // Add admin-only actions
+    if (currentUser && can(currentUser.role, 'users')) {
+      actions.push({
+        name: 'User Management',
+        href: '/users',
+        icon: Cog6ToothIcon,
+        color: 'bg-purple-500 hover:bg-purple-600',
+        description: 'Manage users'
+      })
     }
-  ]
 
-  // Add admin-only actions
-  if (currentUser && can(currentUser.role, 'users')) {
-    quickActions.push({
-      name: 'User Management',
-      href: '/users',
-      icon: Cog6ToothIcon,
-      color: 'bg-purple-500 hover:bg-purple-600',
-      description: 'Manage users'
+    return actions
+  }, [currentUser])
+
+  const formattedDate = useMemo(() => {
+    return new Date().toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
     })
-  }
+  }, [])
   return (
     <div className="space-y-6">
       {/* Welcome Header */}
@@ -112,12 +161,7 @@ export function Dashboard() {
           </div>
           <div className="text-right">
             <p className="text-sm text-gray-500">
-              {new Date().toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-              })}
+              {formattedDate}
             </p>
           </div>
         </div>
@@ -125,41 +169,24 @@ export function Dashboard() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 p-2 rounded-lg bg-blue-50">
-              <UsersIcon className="h-6 w-6 text-blue-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500">Total Patients</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.totalPatients}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 p-2 rounded-lg bg-green-50">
-              <UserPlusIcon className="h-6 w-6 text-green-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500">Today's Registrations</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.todayRegistrations}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 p-2 rounded-lg bg-purple-50">
-              <HeartIcon className="h-6 w-6 text-purple-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500">System Users</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.totalUsers}</p>
-            </div>
-          </div>
-        </div>
+        <StatCard
+          icon={UsersIcon}
+          label="Total Patients"
+          value={stats.totalPatients}
+          colorClass="bg-blue-50 text-blue-600"
+        />
+        <StatCard
+          icon={UserPlusIcon}
+          label="Today's Registrations"
+          value={stats.todayRegistrations}
+          colorClass="bg-green-50 text-green-600"
+        />
+        <StatCard
+          icon={HeartIcon}
+          label="System Users"
+          value={stats.totalUsers}
+          colorClass="bg-purple-50 text-purple-600"
+        />
       </div>
 
       {/* Message Outbox */}

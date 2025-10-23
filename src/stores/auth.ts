@@ -107,9 +107,32 @@ export const useAuthStore = create<AuthState>()(
       },
 
       loginOnline: async (email: string, password: string) => {
-        // TODO: Implement Supabase authentication
-        // For now, return false to force offline PIN login
-        return false
+        const state = get()
+
+        // Check lockout
+        if (state.checkLockout()) {
+          console.log('Account locked out')
+          return false
+        }
+
+        try {
+          const { supabaseSync } = await import('@/services/supabaseSync')
+
+          if (!supabaseSync.isInitialized()) {
+            console.error('Supabase not configured')
+            return false
+          }
+
+          // TODO: Implement actual Supabase auth login
+          // This would use supabase.auth.signInWithPassword({ email, password })
+          // For now, return false as it requires Supabase auth setup
+          console.log('Online login not fully implemented yet')
+          return false
+        } catch (error) {
+          console.error('Online login error:', error)
+          state.incrementFailedAttempts()
+          return false
+        }
       },
 
       logout: async () => {
