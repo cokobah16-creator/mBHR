@@ -52,7 +52,7 @@ export async function checkBadgeEligibility(actorId, taskCode) {
             newBadges.push('first_quest');
         }
         // Streak badges
-        if (wallet?.streakDays >= 7 && !existingBadgeCodes.has('week_warrior')) {
+        if (wallet?.streakDays && wallet.streakDays >= 7 && !existingBadgeCodes.has('week_warrior')) {
             newBadges.push('week_warrior');
         }
         // Token milestone badges

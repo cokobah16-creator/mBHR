@@ -146,11 +146,11 @@ export class GamificationService {
                 newBadges.push('first_quest');
             }
             // Streak badges
-            if (wallet?.streakDays >= 7) {
+            if (wallet?.streakDays && wallet.streakDays >= 7) {
                 newBadges.push('week_warrior');
             }
             // Token milestone badges
-            if (wallet?.lifetimeTokens >= 1000) {
+            if (wallet?.lifetimeTokens && wallet.lifetimeTokens >= 1000) {
                 newBadges.push('token_collector');
             }
             // Game-specific badges
