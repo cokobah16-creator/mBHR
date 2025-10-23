@@ -31,6 +31,12 @@ export interface Setting {
   value: string
 }
 
+export interface Meta {
+  key: string
+  value: any
+  updatedAt: number
+}
+
 export interface Patient {
   id: string
   givenName: string
@@ -308,6 +314,7 @@ export class MBHRDatabase extends Dexie {
   users!: Table<User>
   sessions!: Table<Session>
   settings!: Table<Setting>
+  meta!: Table<Meta>
   patients!: Table<Patient>
   vitals!: Table<Vital>
   consultations!: Table<Consultation>

@@ -39,10 +39,10 @@ function renderFatal(msg: string) {
     await safeOpenDb()
     log('[db] opened OK')
 
-    // Run database migrations
-    log('[migrations] checking for pending migrations…')
-    await runMigrations()
-    log('[migrations] complete')
+    // Run database migrations (disabled until meta table exists)
+    // log('[migrations] checking for pending migrations…')
+    // await runMigrations()
+    // log('[migrations] complete')
 
     // Check if database is working
     const patientCount = await db.patients.count()

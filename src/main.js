@@ -12,7 +12,6 @@ import { seedDemo } from './db/seedMbhr';
 import { seedGamificationData } from './db/gamification';
 import { db } from './db/index';
 import { safeOpenDb } from './db/safeOpen';
-import { runMigrations } from './db/migrations/migration-runner';
 import { log, error } from '@/lib/logger';
 // Global error visibility
 window.addEventListener('error', ev => console.error('[global error]', ev.message, ev.error));
@@ -36,10 +35,10 @@ function renderFatal(msg) {
         log('[db] opening…');
         await safeOpenDb();
         log('[db] opened OK');
-        // Run database migrations
-        log('[migrations] checking for pending migrations…');
-        await runMigrations();
-        log('[migrations] complete');
+        // Run database migrations (disabled until meta table exists)
+        // log('[migrations] checking for pending migrations…')
+        // await runMigrations()
+        // log('[migrations] complete')
         // Check if database is working
         const patientCount = await db.patients.count();
         const userCount = await db.users.count();
