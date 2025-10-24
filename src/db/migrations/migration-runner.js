@@ -1,7 +1,8 @@
 import { db } from '../index';
 import { log, error as logError } from '@/lib/logger';
 import { migration0001 } from './0001-committed-idx';
-const migrations = [migration0001];
+import { migration0002 } from './0002-vitals-ranges';
+const migrations = [migration0001, migration0002];
 export async function runMigrations() {
     const metaKey = 'db_version';
     const meta = await db.meta.get(metaKey);

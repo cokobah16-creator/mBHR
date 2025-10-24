@@ -447,6 +447,33 @@ class EnhancedSync {
                     _dirty: 0,
                     _syncedAt: new Date().toISOString()
                 })
+            },
+            {
+                localTable: 'vitalsRanges',
+                remoteTable: 'vitals_ranges',
+                hasDirtyFlag: false,
+                localToRemote: (v) => ({
+                    id: v.id,
+                    age_min: v.ageMin,
+                    age_max: v.ageMax,
+                    sex: v.sex,
+                    metric: v.metric,
+                    min_value: v.min,
+                    max_value: v.max,
+                    source: v.source,
+                    updated_at: v.updatedAt instanceof Date ? v.updatedAt.toISOString() : v.updatedAt
+                }),
+                remoteToLocal: (r) => ({
+                    id: r.id,
+                    ageMin: r.age_min,
+                    ageMax: r.age_max,
+                    sex: r.sex,
+                    metric: r.metric,
+                    min: r.min_value,
+                    max: r.max_value,
+                    source: r.source,
+                    updatedAt: new Date(r.updated_at)
+                })
             }
         ];
     }

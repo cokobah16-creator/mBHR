@@ -10,6 +10,8 @@ import { EnhancedQueueBoard } from '@/components/EnhancedQueueBoard'
 import { ExportButtons } from '@/components/ExportButtons'
 import { AudioButton } from '@/components/AudioButton'
 import { MessageOutbox } from '@/components/MessageOutbox'
+import { SyncDashboard } from '@/components/SyncDashboard'
+import { AppointmentCalendar } from '@/features/appointments/AppointmentCalendar'
 import {
   UserPlusIcon,
   UsersIcon,
@@ -20,7 +22,8 @@ import {
   Cog6ToothIcon,
   QueueListIcon,
   CalendarIcon,
-  EnvelopeIcon
+  EnvelopeIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline'
 
 // Memoized stat card component
@@ -52,6 +55,8 @@ export function Dashboard() {
     todayRegistrations: 0,
     totalUsers: 0
   })
+  const [showAppointments, setShowAppointments] = useState(false)
+  const [showSync, setShowSync] = useState(false)
 
   const loadStats = useCallback(async () => {
     try {
@@ -226,6 +231,38 @@ export function Dashboard() {
           colorClass="bg-purple-50 text-purple-600"
         />
       </div>
+
+      {/* Control Buttons */}
+      <div className="flex flex-wrap gap-3">
+        {currentUser && can(currentUser.role, 'vitals') && (
+          <button
+            onClick={() => setShowAppointments(!showAppointments)}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          >
+            <CalendarIcon className="h-5 w-5 mr-2 text-gray-400" />
+            {showAppointments ? 'Hide Appointments' : 'Show Appointments'}
+          </button>
+        )}
+        {currentUser && can(currentUser.role, 'users') && (
+          <button
+            onClick={() => setShowSync(!showSync)}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          >
+            <ArrowPathIcon className="h-5 w-5 mr-2 text-gray-400" />
+            {showSync ? 'Hide Sync Dashboard' : 'Show Sync Dashboard'}
+          </button>
+        )}
+      </div>
+
+      {/* Appointments Section */}
+      {showAppointments && currentUser && (
+        <AppointmentCalendar createdBy={currentUser.id} />
+      )}
+
+      {/* Sync Dashboard */}
+      {showSync && currentUser && can(currentUser.role, 'users') && (
+        <SyncDashboard />
+      )}
 
       {/* Message Outbox */}
       <MessageOutbox />

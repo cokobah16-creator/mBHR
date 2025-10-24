@@ -38,7 +38,7 @@ export function SyncDashboard() {
       'patients', 'visits', 'vitals', 'consultations', 'dispenses',
       'inventory', 'queue', 'gameSessions', 'gamificationWallets',
       'stockBatches', 'careTasks', 'triageRecords',
-      'patientAllergies', 'patientPreferences'
+      'patientAllergies', 'patientPreferences', 'vitalsRanges'
     ]
 
     const lastSync: Record<string, Date | null> = {}
