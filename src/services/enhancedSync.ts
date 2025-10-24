@@ -25,12 +25,16 @@ class EnhancedSync {
   private lastSyncTimes: Map<string, Date> = new Map()
 
   initialize(url: string, anonKey: string): boolean {
-    if (!url || !anonKey) return false
+    if (!url || !anonKey || url === 'your_supabase_project_url_here') {
+      logger.log('Supabase not configured, running in offline-only mode')
+      return false
+    }
 
     try {
       this.client = createClient(url, anonKey, {
         auth: { persistSession: true }
       })
+      logger.log('Supabase client initialized successfully')
       return true
     } catch (error) {
       logger.error('Failed to initialize Supabase client', error)
