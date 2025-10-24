@@ -38,3 +38,7 @@ export function validatePhoneNG(phone) {
 export function getLGAsForState(state) {
     return LGAS_BY_STATE[state] || [];
 }
+// Aliases for backward compatibility with tests
+export const formatPhoneNumber = formatPhoneNG;
+export const validatePhoneNumber = validatePhoneNG;
+export const getLGAs = getLGAsForState;

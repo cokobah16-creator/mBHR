@@ -67,9 +67,7 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
     const input: CreatePreferenceInput = {
       patientId,
       preferredLanguage: data.preferredLanguage,
-      communicationChannel: (data.communicationChannel && data.communicationChannel !== '')
-        ? (data.communicationChannel as 'sms' | 'whatsapp' | 'call' | 'in-person')
-        : undefined,
+      communicationChannel: data.communicationChannel || undefined,
       bestContactTime: data.bestContactTime,
       dietaryRestrictions: data.dietaryRestrictions,
       religiousCultural: data.religiousCultural,

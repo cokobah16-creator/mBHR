@@ -39,7 +39,7 @@ export function GameHub({ className = '' }: GameHubProps) {
         db.gameSessions
           .where('volunteerId')
           .equals(currentUser.id)
-          .and(session => !session.committed && session.finishedAt)
+          .and(session => !session.committed && !!session.finishedAt)
           .toArray()
       ])
 

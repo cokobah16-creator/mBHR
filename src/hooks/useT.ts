@@ -13,7 +13,7 @@ interface TranslationState {
 // Global state for translations
 let globalState: TranslationState = {
   locale: 'en',
-  pack: {},
+  pack: {} as LocalePack,
   loading: true,
   error: null
 }

@@ -100,14 +100,14 @@ export function SimplePatientForm({ onSuccess, onCancel, className }) {
             id: 'names',
             title: t('patient.names'),
             audioKey: 'patient.names',
-            isValid: formData.givenName.trim() && formData.familyName.trim(),
+            isValid: !!(formData.givenName.trim() && formData.familyName.trim()),
             component: (_jsxs("div", { className: "space-y-6", children: [_jsxs("div", { children: [_jsxs("label", { className: "block text-lg font-medium text-gray-700 mb-3 flex items-center space-x-2", children: [_jsx(IdentificationIcon, { className: "h-6 w-6 text-primary" }), _jsxs("span", { children: [t('patient.givenName'), " *"] })] }), _jsx("input", { type: "text", value: formData.givenName, onChange: (e) => setFormData(prev => ({ ...prev, givenName: e.target.value })), className: "input-field text-xl", placeholder: t('simple.enterFirstName'), autoFocus: true })] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-lg font-medium text-gray-700 mb-3 flex items-center space-x-2", children: [_jsx(IdentificationIcon, { className: "h-6 w-6 text-primary" }), _jsxs("span", { children: [t('patient.familyName'), " *"] })] }), _jsx("input", { type: "text", value: formData.familyName, onChange: (e) => setFormData(prev => ({ ...prev, familyName: e.target.value })), className: "input-field text-xl", placeholder: t('simple.enterLastName') })] })] }))
         },
         {
             id: 'demographics',
             title: t('patient.demographics'),
             audioKey: 'patient.demographics',
-            isValid: formData.sex && formData.age > 0,
+            isValid: !!(formData.sex && formData.age > 0),
             component: (_jsxs("div", { className: "space-y-8", children: [_jsxs("div", { children: [_jsxs("label", { className: "block text-lg font-medium text-gray-700 mb-4 text-center", children: [t('patient.sex'), " *"] }), _jsx("div", { className: "grid grid-cols-3 gap-4", children: [
                                     { value: 'male', label: t('patient.male'), icon: '👨', color: 'bg-blue-100 border-blue-300 text-blue-800' },
                                     { value: 'female', label: t('patient.female'), icon: '👩', color: 'bg-pink-100 border-pink-300 text-pink-800' },
@@ -120,14 +120,14 @@ export function SimplePatientForm({ onSuccess, onCancel, className }) {
             id: 'contact',
             title: t('patient.contact'),
             audioKey: 'patient.contact',
-            isValid: formData.phone.trim(),
+            isValid: !!formData.phone.trim(),
             component: (_jsxs("div", { className: "space-y-6", children: [_jsxs("div", { children: [_jsxs("label", { className: "block text-lg font-medium text-gray-700 mb-3 flex items-center space-x-2", children: [_jsx(PhoneIcon, { className: "h-6 w-6 text-primary" }), _jsxs("span", { children: [t('patient.phone'), " *"] })] }), _jsx("input", { type: "tel", value: formData.phone, onChange: (e) => setFormData(prev => ({ ...prev, phone: e.target.value })), className: "input-field text-xl", placeholder: "08012345678" }), _jsx("p", { className: "text-sm text-gray-600 mt-2", children: t('simple.phoneExample') })] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-lg font-medium text-gray-700 mb-3 flex items-center space-x-2", children: [_jsx(MapPinIcon, { className: "h-6 w-6 text-primary" }), _jsx("span", { children: t('patient.address') })] }), _jsx("textarea", { value: formData.address, onChange: (e) => setFormData(prev => ({ ...prev, address: e.target.value })), className: "input-field text-lg", rows: 3, placeholder: t('simple.enterAddress') })] })] }))
         },
         {
             id: 'location',
             title: t('patient.location'),
             audioKey: 'patient.location',
-            isValid: formData.state && formData.lga,
+            isValid: !!(formData.state && formData.lga),
             component: (_jsxs("div", { className: "space-y-6", children: [_jsxs("div", { children: [_jsxs("label", { className: "block text-lg font-medium text-gray-700 mb-3", children: [t('patient.state'), " *"] }), _jsxs("select", { value: formData.state, onChange: (e) => {
                                     setFormData(prev => ({ ...prev, state: e.target.value, lga: '' }));
                                 }, className: "input-field text-xl", children: [_jsx("option", { value: "", children: t('simple.selectState') }), NIGERIAN_STATES.map((state) => (_jsx("option", { value: state, children: state }, state)))] })] }), _jsxs("div", { children: [_jsxs("label", { className: "block text-lg font-medium text-gray-700 mb-3", children: [t('patient.lga'), " *"] }), _jsxs("select", { value: formData.lga, onChange: (e) => setFormData(prev => ({ ...prev, lga: e.target.value })), className: "input-field text-xl", disabled: !formData.state, children: [_jsx("option", { value: "", children: t('simple.selectLGA') }), (LGAS_BY_STATE[formData.state] || []).map((lga) => (_jsx("option", { value: lga, children: lga }, lga)))] })] })] }))

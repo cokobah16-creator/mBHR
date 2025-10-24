@@ -12,12 +12,12 @@ export function ExportButtons() {
   if (!currentUser || !can(currentUser.role, 'export')) return null
 
   const exports = [
-    { table: db.patients, filename: 'patients.csv', label: 'Patients' },
-    { table: db.vitals, filename: 'vitals.csv', label: 'Vitals' },
-    { table: db.consultations, filename: 'consultations.csv', label: 'Consultations' },
-    { table: db.dispenses, filename: 'dispenses.csv', label: 'Dispenses' },
-    { table: db.inventory, filename: 'inventory.csv', label: 'Inventory' },
-    { table: db.auditLogs, filename: 'audit_logs.csv', label: 'Audit Logs' }
+    { table: db.patients as any, filename: 'patients.csv', label: 'Patients' },
+    { table: db.vitals as any, filename: 'vitals.csv', label: 'Vitals' },
+    { table: db.consultations as any, filename: 'consultations.csv', label: 'Consultations' },
+    { table: db.dispenses as any, filename: 'dispenses.csv', label: 'Dispenses' },
+    { table: db.inventory as any, filename: 'inventory.csv', label: 'Inventory' },
+    { table: db.auditLogs as any, filename: 'audit_logs.csv', label: 'Audit Logs' }
   ]
 
   return (

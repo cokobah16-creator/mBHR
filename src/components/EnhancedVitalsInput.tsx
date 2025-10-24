@@ -188,7 +188,7 @@ export function EnhancedVitalsInput({
       {/* Validation Error */}
       {errors[name] && (
         <p className="text-red-600 text-sm" role="alert">
-          {errors[name]?.message}
+          {String(errors[name]?.message || '')}
         </p>
       )}
     </div>

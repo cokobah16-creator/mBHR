@@ -44,7 +44,7 @@ export function EnhancedQueueBoard() {
     []
   )
 
-  const patientMap = new Map(patients.map(p => [p.id, p]))
+  const patientMap = new Map<string, Patient>(patients.map(p => [p.id, p] as [string, Patient]))
 
   useEffect(() => {
     calculateStageMetrics()

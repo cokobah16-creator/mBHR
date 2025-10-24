@@ -53,10 +53,10 @@ export function MessageOutbox() {
       await loadStats()
 
       if (result.sent > 0 || result.failed > 0) {
-        alert(t('messaging.processComplete', {
-          sent: result.sent.toString(),
-          failed: result.failed.toString()
-        }))
+        const message = t('messaging.processComplete')
+          .replace('{{sent}}', result.sent.toString())
+          .replace('{{failed}}', result.failed.toString())
+        alert(message)
       } else {
         alert(t('messaging.noMessages'))
       }
@@ -174,7 +174,7 @@ export function MessageOutbox() {
           <div className="flex items-center space-x-2">
             <ExclamationTriangleIcon className="h-5 w-5 text-yellow-600" />
             <span className="text-sm text-yellow-800">
-              {t('messaging.offlineQueue', { count: stats.queued.toString() })}
+              {t('messaging.offlineQueue').replace('{{count}}', stats.queued.toString())}
             </span>
           </div>
         </div>

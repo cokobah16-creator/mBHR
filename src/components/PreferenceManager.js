@@ -51,9 +51,7 @@ export function PreferenceManager({ patientId }) {
         const input = {
             patientId,
             preferredLanguage: data.preferredLanguage,
-            communicationChannel: data.communicationChannel && data.communicationChannel !== ''
-                ? data.communicationChannel
-                : undefined,
+            communicationChannel: data.communicationChannel || undefined,
             bestContactTime: data.bestContactTime,
             dietaryRestrictions: data.dietaryRestrictions,
             religiousCultural: data.religiousCultural,

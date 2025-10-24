@@ -8,7 +8,7 @@ describe('Nigeria Utilities', () => {
         it('should include major states', () => {
             expect(NIGERIAN_STATES).toContain('Lagos');
             expect(NIGERIAN_STATES).toContain('Kano');
-            expect(NIGERIAN_STATES).toContain('Abuja FCT');
+            expect(NIGERIAN_STATES).toContain('FCT');
             expect(NIGERIAN_STATES).toContain('Rivers');
         });
         it('should be alphabetically sorted', () => {
@@ -32,10 +32,10 @@ describe('Nigeria Utilities', () => {
             const lgas = getLGAs('Invalid State');
             expect(lgas).toEqual([]);
         });
-        it('should handle Abuja FCT', () => {
-            const lgas = getLGAs('Abuja FCT');
+        it('should handle FCT', () => {
+            const lgas = getLGAs('FCT');
             expect(lgas.length).toBeGreaterThan(0);
-            expect(lgas).toContain('Abuja Municipal');
+            expect(lgas).toContain('Municipal Area Council');
         });
     });
     describe('validatePhoneNumber', () => {

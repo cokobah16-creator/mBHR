@@ -150,7 +150,7 @@ export function SimplePatientForm({ onSuccess, onCancel, className }: SimplePati
       id: 'names',
       title: t('patient.names'),
       audioKey: 'patient.names',
-      isValid: formData.givenName.trim() && formData.familyName.trim(),
+      isValid: !!(formData.givenName.trim() && formData.familyName.trim()),
       component: (
         <div className="space-y-6">
           <div>
@@ -188,7 +188,7 @@ export function SimplePatientForm({ onSuccess, onCancel, className }: SimplePati
       id: 'demographics',
       title: t('patient.demographics'),
       audioKey: 'patient.demographics',
-      isValid: formData.sex && formData.age > 0,
+      isValid: !!(formData.sex && formData.age > 0),
       component: (
         <div className="space-y-8">
           <div>
@@ -234,7 +234,7 @@ export function SimplePatientForm({ onSuccess, onCancel, className }: SimplePati
       id: 'contact',
       title: t('patient.contact'),
       audioKey: 'patient.contact',
-      isValid: formData.phone.trim(),
+      isValid: !!formData.phone.trim(),
       component: (
         <div className="space-y-6">
           <div>
@@ -274,7 +274,7 @@ export function SimplePatientForm({ onSuccess, onCancel, className }: SimplePati
       id: 'location',
       title: t('patient.location'),
       audioKey: 'patient.location',
-      isValid: formData.state && formData.lga,
+      isValid: !!(formData.state && formData.lga),
       component: (
         <div className="space-y-6">
           <div>

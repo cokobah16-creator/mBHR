@@ -88,8 +88,9 @@ export const useQueue = create<QueueState>(() => ({
     const prev = m?.avgServiceSec ?? 240
     const avgServiceSec = Math.max(30, Math.round(ALPHA * secondsSpent + (1 - ALPHA) * prev))
     const updatedAt = new Date().toISOString()
+    const stageValue = stage as 'registration' | 'vitals' | 'consult' | 'pharmacy'
     if (m) await mbhrDb.queue_metrics.update(metricId, { avgServiceSec, updatedAt })
-    else await mbhrDb.queue_metrics.add({ id: metricId, stage, avgServiceSec, updatedAt })
+    else await mbhrDb.queue_metrics.add({ id: metricId, stage: stageValue, avgServiceSec, updatedAt })
   },
 
   estimateTailMinutes: async (stage) => {
