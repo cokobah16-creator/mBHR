@@ -3,7 +3,10 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { db, Patient, Visit, Vital, Consultation, Dispense } from '@/db'
 import { getFlagColor, getFlagLabel } from '@/utils/vitals'
-import { 
+import { AllergyManager } from '@/components/AllergyManager'
+import { PreferenceManager } from '@/components/PreferenceManager'
+import { useAuthStore } from '@/stores/auth'
+import {
   ArrowLeftIcon,
   UserIcon,
   PhoneIcon,
@@ -19,7 +22,8 @@ export function PatientDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { t } = useTranslation()
-  
+  const user = useAuthStore(s => s.currentUser)
+
   const [patient, setPatient] = useState<Patient | null>(null)
   const [visits, setVisits] = useState<Visit[]>([])
   const [vitals, setVitals] = useState<Vital[]>([])
@@ -297,10 +301,20 @@ export function PatientDetail() {
         </div>
       </div>
 
+      {/* Allergies and Preferences */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="card">
+          {patient && user && <AllergyManager patientId={patient.id} userId={user.id} />}
+        </div>
+        <div className="card">
+          {patient && <PreferenceManager patientId={patient.id} />}
+        </div>
+      </div>
+
       {/* Visit History */}
       <div className="card">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Visit History</h3>
-        
+
         {visits.length === 0 ? (
           <p className="text-gray-500">No visits recorded</p>
         ) : (
@@ -313,8 +327,8 @@ export function PatientDetail() {
                       {visit.startedAt.toLocaleDateString()} - {visit.siteName}
                     </span>
                     <span className={`ml-2 px-2 py-1 rounded-full text-xs font-medium ${
-                      visit.status === 'open' 
-                        ? 'bg-green-100 text-green-800' 
+                      visit.status === 'open'
+                        ? 'bg-green-100 text-green-800'
                         : 'bg-gray-100 text-gray-800'
                     }`}>
                       {visit.status}

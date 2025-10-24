@@ -18,7 +18,7 @@ const sb = isValidUrl ? createClient(url, key, { auth: { persistSession: false }
 
 export function isOnlineSyncEnabled() { return !!sb }
 
-type Tbl = 'app_users'|'patients'|'visits'|'vitals'|'consultations'|'dispenses'|'inventory'|'queue'
+type Tbl = 'app_users'|'patients'|'visits'|'vitals'|'consultations'|'dispenses'|'inventory'|'queue'|'patient_allergies'|'patient_preferences'
 
 const mapToDB: Record<Tbl, Record<string,string>> = {
   app_users: {
@@ -57,6 +57,18 @@ const mapToDB: Record<Tbl, Record<string,string>> = {
     id:'id', patientId:'patient_id', stage:'stage', position:'position',
     status:'status', updatedAt:'updated_at'
   },
+  patient_allergies: {
+    id:'id', patientId:'patient_id', allergen:'allergen', allergyType:'allergy_type',
+    reaction:'reaction', severity:'severity', onsetDate:'onset_date', notes:'notes',
+    isActive:'is_active', createdAt:'created_at', updatedAt:'updated_at', createdBy:'created_by'
+  },
+  patient_preferences: {
+    id:'id', patientId:'patient_id', preferredLanguage:'preferred_language',
+    communicationChannel:'communication_channel', bestContactTime:'best_contact_time',
+    dietaryRestrictions:'dietary_restrictions', religiousCultural:'religious_cultural',
+    appointmentReminders:'appointment_reminders', medicationReminders:'medication_reminders',
+    notes:'notes', createdAt:'created_at', updatedAt:'updated_at'
+  },
 }
 
 const mapFromDB: Record<Tbl, Record<string,string>> = Object.fromEntries(
@@ -74,7 +86,21 @@ function fromDB(obj:any, map:Record<string,string>) {
   return out
 }
 
-const tables: Tbl[] = ['app_users','patients','visits','vitals','consultations','dispenses','inventory','queue']
+const tables: Tbl[] = ['app_users','patients','visits','vitals','consultations','dispenses','inventory','queue','patient_allergies','patient_preferences']
+
+// Map remote table names to local Dexie table names
+const localTableMap: Record<Tbl, string> = {
+  app_users: 'users',
+  patients: 'patients',
+  visits: 'visits',
+  vitals: 'vitals',
+  consultations: 'consultations',
+  dispenses: 'dispenses',
+  inventory: 'inventory',
+  queue: 'queue',
+  patient_allergies: 'patientAllergies',
+  patient_preferences: 'patientPreferences'
+}
 
 // --- Cursor helpers (per-table) ---
 const DEFAULT_TS = '1970-01-01T00:00:00.000Z'
@@ -164,7 +190,8 @@ export async function pushChanges() {
   const detectedConflicts: ConflictData[] = []
 
   for (const t of tables) {
-    const dirty = await (db as any)[t].where('_dirty').equals(1).toArray().catch(() => [])
+    const localTable = localTableMap[t]
+    const dirty = await (db as any)[localTable].where('_dirty').equals(1).toArray().catch(() => [])
     if (!dirty?.length) continue
 
     for (const record of dirty) {
@@ -187,7 +214,7 @@ export async function pushChanges() {
       const { error } = await sb.from(t).upsert(payload, { onConflict: 'id' })
 
       if (!error) {
-        await (db as any)[t].update(record.id, {
+        await (db as any)[localTable].update(record.id, {
           _dirty: 0,
           _syncedAt: new Date().toISOString()
         })
@@ -201,6 +228,7 @@ export async function pushChanges() {
 export async function pullChanges() {
   if (!sb) return
   for (const t of tables) {
+    const localTable = localTableMap[t]
     const since = await getCursor(t) // ALWAYS a valid ISO string
     // If it's the default, don't send a gt filter to avoid corner cases
     let q = sb.from(t).select('*').limit(1000)
@@ -212,7 +240,7 @@ export async function pullChanges() {
     let maxTs = since
     for (const row of data ?? []) {
       const mapped = fromDB(row, mapFromDB[t])
-      await (db as any)[t].put({ ...mapped, _dirty: 0, _syncedAt: new Date().toISOString() })
+      await (db as any)[localTable].put({ ...mapped, _dirty: 0, _syncedAt: new Date().toISOString() })
       if (row.updated_at && row.updated_at > maxTs) maxTs = row.updated_at
     }
     await setCursor(t, maxTs)
@@ -229,7 +257,9 @@ export async function processOperationsQueue(): Promise<ConflictData[]> {
                   operation.entity === 'vital' ? 'vitals' :
                   operation.entity === 'consultation' ? 'consultations' :
                   operation.entity === 'dispense' ? 'dispenses' :
-                  operation.entity === 'inventory' ? 'inventory' : null
+                  operation.entity === 'inventory' ? 'inventory' :
+                  operation.entity === 'patient_allergy' ? 'patient_allergies' :
+                  operation.entity === 'patient_preference' ? 'patient_preferences' : null
 
     if (!table) throw new Error(`Unknown entity type: ${operation.entity}`)
 
@@ -254,7 +284,8 @@ export async function processOperationsQueue(): Promise<ConflictData[]> {
       if (error) throw error
 
       // Mark as synced in local DB
-      await (db as any)[table].update(operation.entityId, {
+      const localTable = localTableMap[table as Tbl]
+      await (db as any)[localTable].update(operation.entityId, {
         _dirty: 0,
         _syncedAt: new Date().toISOString()
       })
