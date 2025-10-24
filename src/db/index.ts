@@ -352,6 +352,21 @@ export interface PatientPreference {
   _syncedAt?: string
 }
 
+export interface ClinicalAlert {
+  id: string
+  patientId: string
+  alertType: 'vital_sign' | 'drug_interaction' | 'high_risk' | 'adherence' | 'follow_up'
+  severity: 'low' | 'moderate' | 'high' | 'critical'
+  message: string
+  details: string
+  createdAt: Date
+  acknowledged: boolean
+  acknowledgedBy?: string
+  acknowledgedAt?: Date
+  _dirty?: number
+  _syncedAt?: string
+}
+
 // Helper functions for date handling
 export const epochDay = (d: Date) => Math.floor(d.getTime() / 86400000)
 export const normPhone = (s: string) => s.replace(/\D/g, '')
@@ -391,6 +406,7 @@ export class MBHRDatabase extends Dexie {
   conflictResolutions!: Table<ConflictResolution>
   patientAllergies!: Table<PatientAllergy>
   patientPreferences!: Table<PatientPreference>
+  clinicalAlerts!: Table<ClinicalAlert>
 
   constructor() {
     super(DB_NAME)
@@ -619,6 +635,39 @@ export class MBHRDatabase extends Dexie {
       conflictResolutions: 'id, patientId, conflictType, status, resolvedAt',
       patientAllergies: 'id, patientId, allergen, allergyType, severity, isActive, createdAt, updatedAt, _dirty, _syncedAt',
       patientPreferences: 'id, patientId, createdAt, updatedAt, _dirty, _syncedAt'
+    })
+
+    // v11 — Add clinical alerts table for AI decision support
+    this.version(11).stores({
+      patients:      'id, familyName, phone, state, lga, createdAt, updatedAt, _dirty, _syncedAt, phoneN, nameKey, dobDay, createdDay, updatedDay, mergeInto',
+      vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
+      consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
+      dispenses:     'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt',
+      inventory:     'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+      visits:        'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+      queue:         'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
+      auditLogs:     'id, actorRole, entity, entityId, at',
+      users:         'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
+      sessions:      'id, userId, createdAt, lastSeenAt',
+      settings:      'key',
+      meta:          'key',
+      gameSessions:  'id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt',
+      gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
+      vitalsRanges:  'id, sex, metric, ageMin, ageMax, updatedAt',
+      quizQuestions: 'id, topic, difficulty, updatedAt',
+      triageSamples: 'id, createdAt, createdBy',
+      inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt',
+      outboundMessages: 'id, patientId, status, channel, to, createdAt, scheduledFor, _dirty, _syncedAt',
+      messageTemplates: 'key, locale, channel',
+      stockBatches: 'id, drugId, expiryDate, updatedAt, _dirty, _syncedAt',
+      careTasks: 'id, patientId, status, dueDate, createdAt, _dirty, _syncedAt',
+      triageRecords: 'id, patientId, visitId, priority, createdAt, createdBy, _dirty, _syncedAt',
+      patientMerges: 'id, winnerId, loserId, createdDay',
+      dailyCounts: 'day, registrations, vitals, consultations, dispenses, visits',
+      conflictResolutions: 'id, patientId, conflictType, status, resolvedAt',
+      patientAllergies: 'id, patientId, allergen, allergyType, severity, isActive, createdAt, updatedAt, _dirty, _syncedAt',
+      patientPreferences: 'id, patientId, createdAt, updatedAt, _dirty, _syncedAt',
+      clinicalAlerts: 'id, patientId, alertType, severity, acknowledged, createdAt, acknowledgedAt, _dirty, _syncedAt'
     })
   }
 }
