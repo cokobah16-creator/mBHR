@@ -146,10 +146,10 @@ export function Layout({ children }: LayoutProps) {
   }, [location.pathname])
 
   const baseNavigation = [
-    { name: t('nav.dashboard'), href: '/', icon: HomeIcon },
-    { name: t('nav.patients'), href: '/patients', icon: UserGroupIcon },
-    { name: t('nav.queue'), href: '/queue', icon: QueueListIcon },
-    { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
+    { name: 'Dashboard', href: '/', icon: HomeIcon },
+    { name: 'Patients', href: '/patients', icon: UserGroupIcon },
+    { name: 'Queue', href: '/queue', icon: QueueListIcon },
+    { name: 'Inventory', href: '/inventory', icon: CubeIcon },
     { name: 'Pharmacy', href: '/pharmacy', icon: BeakerIcon },
     { name: 'Game Hub', href: '/games', icon: TrophyIcon },
     { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
@@ -276,17 +276,27 @@ export function Layout({ children }: LayoutProps) {
             <ul className="space-y-1 md:space-y-2">
               {navigation.map((item) => {
                 const isPharmacy = item.name === 'Pharmacy'
-                const isActive = isPharmacy 
-                  ? (location.pathname.startsWith('/rx/') || location.pathname === '/pharmacy' || location.pathname.startsWith('/pharmacy/')) && overlay !== null
-                  : location.pathname === item.href
-                
+
+                // Better active state detection
+                let isActive = false
+                if (isPharmacy) {
+                  isActive = location.pathname.startsWith('/rx/') ||
+                            location.pathname === '/pharmacy' ||
+                            location.pathname.startsWith('/pharmacy/')
+                } else if (item.href === '/') {
+                  isActive = location.pathname === '/'
+                } else {
+                  isActive = location.pathname === item.href ||
+                            location.pathname.startsWith(item.href + '/')
+                }
+
                 const Common = (
                   <>
-                    <item.icon className="h-5 w-5" />
+                    <item.icon className="h-5 w-5 flex-shrink-0" />
                     <span className="font-medium">{item.name}</span>
                   </>
                 )
-                
+
                 return (
                   <li key={item.name}>
                     {isPharmacy ? (
@@ -309,6 +319,7 @@ export function Layout({ children }: LayoutProps) {
                     ) : (
                       <Link
                         to={item.href}
+                        onClick={() => setMobileMenuOpen(false)}
                         className={`flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target ${
                           isActive
                             ? 'bg-primary text-white'

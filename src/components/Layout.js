@@ -61,10 +61,10 @@ export function Layout({ children }) {
         setMobileMenuOpen(false);
     }, [location.pathname]);
     const baseNavigation = [
-        { name: t('nav.dashboard'), href: '/', icon: HomeIcon },
-        { name: t('nav.patients'), href: '/patients', icon: UserGroupIcon },
-        { name: t('nav.queue'), href: '/queue', icon: QueueListIcon },
-        { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
+        { name: 'Dashboard', href: '/', icon: HomeIcon },
+        { name: 'Patients', href: '/patients', icon: UserGroupIcon },
+        { name: 'Queue', href: '/queue', icon: QueueListIcon },
+        { name: 'Inventory', href: '/inventory', icon: CubeIcon },
         { name: 'Pharmacy', href: '/pharmacy', icon: BeakerIcon },
         { name: 'Game Hub', href: '/games', icon: TrophyIcon },
         { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
@@ -90,16 +90,27 @@ export function Layout({ children }) {
           overflow-y-auto md:h-[calc(100vh-73px)] md:self-start
         `, children: _jsxs("div", { className: "p-4", children: [_jsxs("div", { className: "flex items-center justify-between mb-4 md:hidden", children: [_jsxs("div", { children: [_jsx("p", { className: "font-semibold text-gray-900", children: currentUser?.fullName }), _jsx("p", { className: "text-xs text-gray-600 capitalize", children: currentUser?.role })] }), _jsx("button", { onClick: () => setMobileMenuOpen(false), className: "p-2 rounded-lg hover:bg-gray-100 min-h-touch-target min-w-touch-target", "aria-label": "Close menu", children: _jsx(XMarkIcon, { className: "h-5 w-5" }) })] }), _jsxs("div", { className: "mb-4 space-y-2 md:hidden", children: [_jsx(LanguageSelector, {}), _jsx(AccessibilityControls, {})] }), _jsx("ul", { className: "space-y-1 md:space-y-2", children: navigation.map((item) => {
                                         const isPharmacy = item.name === 'Pharmacy';
-                                        const isActive = isPharmacy
-                                            ? (location.pathname.startsWith('/rx/') || location.pathname === '/pharmacy' || location.pathname.startsWith('/pharmacy/')) && overlay !== null
-                                            : location.pathname === item.href;
-                                        const Common = (_jsxs(_Fragment, { children: [_jsx(item.icon, { className: "h-5 w-5" }), _jsx("span", { className: "font-medium", children: item.name })] }));
+                                        // Better active state detection
+                                        let isActive = false;
+                                        if (isPharmacy) {
+                                            isActive = location.pathname.startsWith('/rx/') ||
+                                                location.pathname === '/pharmacy' ||
+                                                location.pathname.startsWith('/pharmacy/');
+                                        }
+                                        else if (item.href === '/') {
+                                            isActive = location.pathname === '/';
+                                        }
+                                        else {
+                                            isActive = location.pathname === item.href ||
+                                                location.pathname.startsWith(item.href + '/');
+                                        }
+                                        const Common = (_jsxs(_Fragment, { children: [_jsx(item.icon, { className: "h-5 w-5 flex-shrink-0" }), _jsx("span", { className: "font-medium", children: item.name })] }));
                                         return (_jsx("li", { children: isPharmacy ? (_jsx("button", { type: "button", onClick: () => {
                                                     setOverlay("pharmacy");
                                                     setMobileMenuOpen(false);
                                                 }, className: `w-full flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target text-left ${isActive
                                                     ? 'bg-primary text-white'
-                                                    : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'}`, "aria-haspopup": "dialog", "aria-controls": "pharmacy-menu", children: Common })) : (_jsx(Link, { to: item.href, className: `flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target ${isActive
+                                                    : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'}`, "aria-haspopup": "dialog", "aria-controls": "pharmacy-menu", children: Common })) : (_jsx(Link, { to: item.href, onClick: () => setMobileMenuOpen(false), className: `flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target ${isActive
                                                     ? 'bg-primary text-white'
                                                     : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'}`, children: Common })) }, item.name));
                                     }) })] }) }), _jsx("main", { className: "flex-1 w-full md:w-auto overflow-x-hidden min-h-full", children: overlay === "pharmacy" ? (_jsx("div", { id: "pharmacy-menu", role: "dialog", "aria-modal": "true", className: "p-4 sm:p-6", children: _jsx(PharmacyOverlay, { onClose: () => setOverlay(null) }) })) : (_jsx("div", { className: "p-4 sm:p-6 max-w-7xl mx-auto min-h-full", children: children })) })] }), _jsx(Toasts, {})] }));
