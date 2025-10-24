@@ -216,5 +216,61 @@
   "accessibility.largeButtons": "Large Buttons",
   
   "error.registrationFailed": "Failed to register patient",
-  "error.dispenseFailed": "Failed to dispense medication"
+  "error.dispenseFailed": "Failed to dispense medication",
+
+  "timeline.visitStarted": "Visit Started",
+  "timeline.vitalsRecorded": "Vitals Recorded",
+  "timeline.consultationCompleted": "Consultation Completed",
+  "timeline.medicationDispensed": "Medication Dispensed",
+  "timeline.medicalHistory": "Medical History",
+  "timeline.consultations": "Consultations",
+  "timeline.medications": "Medications",
+  "timeline.noEvents": "No events recorded",
+  "timeline.viewDetails": "View Details",
+
+  "simple.chooseAction": "Choose an Action",
+  "simple.tapToHear": "Tap to hear",
+  "simple.tapCameraToAddPhoto": "Tap camera to add photo",
+  "simple.enterFirstName": "Enter first name",
+  "simple.enterLastName": "Enter last name",
+  "simple.phoneExample": "e.g., 08012345678",
+  "simple.enterAddress": "Enter address",
+  "simple.selectState": "Select state",
+  "simple.selectLGA": "Select LGA",
+  "simple.registerDescription": "Register a new patient",
+  "simple.selectMedication": "Select medication",
+  "simple.dosageExample": "e.g., 500mg",
+  "simple.directionsExample": "e.g., Take twice daily",
+
+  "action.register": "Register",
+  "action.vitals": "Vitals",
+  "action.consult": "Consult",
+  "action.pharmacy": "Pharmacy",
+  "action.queue": "Queue",
+
+  "patient.names": "Patient Names",
+  "patient.demographics": "Demographics",
+  "patient.contact": "Contact Information",
+  "patient.location": "Location",
+  "patient.age": "Age",
+  "patient.registrationSuccess": "Patient registered successfully",
+
+  "nav.vitals": "Vitals",
+
+  "common.all": "All",
+  "common.years": "years",
+  "common.of": "of",
+  "common.available": "available",
+
+  "stepper.step": "Step",
+
+  "queue.status.open": "Open",
+  "queue.status.closed": "Closed",
+
+  "consultation.assessment": "Assessment",
+  "consultation.plan": "Plan",
+
+  "pharmacy.dispensing": "Dispensing",
+
+  "app.title": "mBHR - Mobile Basic Health Record"
 }

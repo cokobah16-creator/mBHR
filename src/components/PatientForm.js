@@ -49,9 +49,16 @@ export function PatientForm({ onSuccess, onCancel }) {
             const formattedPhone = formatPhoneNG(data.phone);
             console.log('PatientForm: Formatted phone:', formattedPhone);
             const patientData = {
-                ...data,
+                givenName: data.givenName || '',
+                familyName: data.familyName || '',
+                sex: data.sex || 'other',
+                dob: data.dob || '',
                 phone: formattedPhone,
-                photoUrl: photo || undefined
+                address: data.address || '',
+                state: data.state || '',
+                lga: data.lga || '',
+                familyId: data.familyId || '',
+                photoUrl: photo || ''
             };
             const patientId = await addPatient(patientData);
             console.log('PatientForm: Patient created with ID:', patientId);

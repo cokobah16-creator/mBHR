@@ -87,7 +87,10 @@ export function DispenseForm({ patientId, visitId, onSuccess, onCancel }: Dispen
         id: generateId(),
         patientId,
         visitId,
-        ...data,
+        itemName: data.itemName || '',
+        qty: data.qty || 0,
+        dosage: data.dosage || '',
+        directions: data.directions || '',
         dispensedBy: currentUser?.fullName || 'Unknown',
         dispensedAt: new Date()
       }

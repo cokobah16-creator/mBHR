@@ -2,11 +2,12 @@
 export type MsgKey =
   // Navigation
   | 'nav.dashboard' | 'nav.patients' | 'nav.queue' | 'nav.inventory' | 'nav.pharmacy'
-  | 'nav.users' | 'nav.analytics' | 'nav.games'
-  
+  | 'nav.users' | 'nav.analytics' | 'nav.games' | 'nav.vitals'
+
   // Common actions
   | 'action.save' | 'action.cancel' | 'action.delete' | 'action.edit' | 'action.search'
   | 'action.start' | 'action.complete' | 'action.next' | 'action.back' | 'action.submit'
+  | 'action.register' | 'action.vitals' | 'action.consult' | 'action.pharmacy' | 'action.queue'
   
   // Authentication
   | 'auth.login' | 'auth.logout' | 'auth.pin' | 'auth.enterPin' | 'auth.invalidPin'
@@ -16,6 +17,8 @@ export type MsgKey =
   | 'patient.register' | 'patient.givenName' | 'patient.familyName' | 'patient.sex'
   | 'patient.dob' | 'patient.phone' | 'patient.address' | 'patient.state' | 'patient.lga'
   | 'patient.male' | 'patient.female' | 'patient.other' | 'patient.photo'
+  | 'patient.names' | 'patient.demographics' | 'patient.contact' | 'patient.location'
+  | 'patient.age' | 'patient.registrationSuccess'
   
   // Vitals
   | 'vitals.height' | 'vitals.weight' | 'vitals.temperature' | 'vitals.pulse'
@@ -29,11 +32,12 @@ export type MsgKey =
   // Pharmacy
   | 'pharmacy.dispense' | 'pharmacy.medication' | 'pharmacy.dosage' | 'pharmacy.directions'
   | 'pharmacy.quantity' | 'pharmacy.morning' | 'pharmacy.evening' | 'pharmacy.withFood'
-  | 'pharmacy.beforeFood' | 'pharmacy.asNeeded'
-  
+  | 'pharmacy.beforeFood' | 'pharmacy.asNeeded' | 'pharmacy.dispensing'
+
   // Queue stages
   | 'queue.registration' | 'queue.vitals' | 'queue.consultation' | 'queue.pharmacy'
   | 'queue.waiting' | 'queue.inProgress' | 'queue.completed'
+  | 'queue.status.open' | 'queue.status.closed'
   
   // Status messages
   | 'status.loading' | 'status.saving' | 'status.success' | 'status.error'
@@ -46,6 +50,42 @@ export type MsgKey =
   // Medical terms (simplified)
   | 'medical.fever' | 'medical.pain' | 'medical.cough' | 'medical.headache'
   | 'medical.nausea' | 'medical.dizziness' | 'medical.fatigue'
+
+  // Timeline
+  | 'timeline.visitStarted' | 'timeline.vitalsRecorded' | 'timeline.consultationCompleted'
+  | 'timeline.medicationDispensed' | 'timeline.medicalHistory' | 'timeline.consultations'
+  | 'timeline.medications' | 'timeline.noEvents' | 'timeline.viewDetails'
+
+  // Simple mode
+  | 'simple.chooseAction' | 'simple.tapToHear' | 'simple.tapCameraToAddPhoto'
+  | 'simple.enterFirstName' | 'simple.enterLastName' | 'simple.phoneExample'
+  | 'simple.enterAddress' | 'simple.selectState' | 'simple.selectLGA'
+  | 'simple.registerDescription' | 'simple.selectMedication' | 'simple.dosageExample'
+  | 'simple.directionsExample'
+
+  // Common
+  | 'common.all' | 'common.years' | 'common.of' | 'common.available'
+
+  // Stepper
+  | 'stepper.step'
+
+  // Consultation
+  | 'consultation.assessment' | 'consultation.plan'
+
+  // App
+  | 'app.title'
+
+  // Messaging
+  | 'messaging.outbox' | 'messaging.sendQueued' | 'messaging.sending' | 'messaging.queued'
+  | 'messaging.sent' | 'messaging.delivered' | 'messaging.failed' | 'messaging.lastSync'
+  | 'messaging.neverSynced' | 'messaging.offlineQueue' | 'messaging.processComplete'
+  | 'messaging.noMessages' | 'messaging.processError'
+
+  // Accessibility
+  | 'accessibility.playAudio'
+
+  // Errors
+  | 'error.registrationFailed' | 'error.dispenseFailed'
 
 export type LocalePack = Record<MsgKey, string>
 

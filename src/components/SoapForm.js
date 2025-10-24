@@ -42,7 +42,10 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }) {
                 patientId,
                 visitId,
                 providerName: currentUser?.fullName || 'Unknown Provider',
-                ...data,
+                soapSubjective: data.soapSubjective || '',
+                soapObjective: data.soapObjective || '',
+                soapAssessment: data.soapAssessment || '',
+                soapPlan: data.soapPlan || '',
                 provisionalDx: diagnoses.filter(dx => dx.trim()),
                 createdAt: new Date()
             };
