@@ -1,5 +1,4 @@
 import { jsxs as _jsxs, jsx as _jsx } from "react/jsx-runtime";
-// @ts-nocheck
 import { useState } from 'react';
 import { useT } from '@/hooks/useT';
 import { ChevronLeftIcon, ChevronRightIcon, CheckIcon, SpeakerWaveIcon } from '@heroicons/react/24/outline';

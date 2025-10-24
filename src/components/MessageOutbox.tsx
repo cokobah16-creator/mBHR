@@ -1,11 +1,10 @@
-// @ts-nocheck
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useT } from '@/hooks/useT'
 import { getMessageService } from '@/services/messaging'
 import { MessageQueue } from '@/db/outbox'
 import { useAuthStore } from '@/stores/auth'
 import { can } from '@/auth/roles'
-import { 
+import {
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
   ExclamationTriangleIcon,
@@ -13,57 +12,65 @@ import {
   ClockIcon,
   XCircleIcon
 } from '@heroicons/react/24/outline'
+import * as logger from '@/lib/logger'
+
+interface MessageStats {
+  queued: number
+  sent: number
+  failed: number
+  delivered: number
+}
 
 export function MessageOutbox() {
   const { t } = useT()
   const { currentUser } = useAuthStore()
-  const [stats, setStats] = useState({ queued: 0, sent: 0, failed: 0, delivered: 0 })
+  const [stats, setStats] = useState<MessageStats>({ queued: 0, sent: 0, failed: 0, delivered: 0 })
   const [processing, setProcessing] = useState(false)
   const [lastSync, setLastSync] = useState<Date | null>(null)
 
-  // Only admins and nurses can manage messaging
-  if (!currentUser || !can(currentUser.role, 'export')) {
-    return null
-  }
+  const loadStats = useCallback(async () => {
+    try {
+      const messageStats = await MessageQueue.getStats()
+      setStats(messageStats)
+    } catch (error) {
+      logger.error('Error loading message stats:', error)
+    }
+  }, [])
 
   useEffect(() => {
     loadStats()
     const interval = setInterval(loadStats, 30000) // Refresh every 30 seconds
     return () => clearInterval(interval)
-  }, [])
+  }, [loadStats])
 
-  const loadStats = async () => {
-    try {
-      const messageStats = await MessageQueue.getStats()
-      setStats(messageStats)
-    } catch (error) {
-      console.error('Error loading message stats:', error)
-    }
-  }
-
-  const processMessages = async () => {
+  const processMessages = useCallback(async () => {
     setProcessing(true)
     try {
       const messageService = getMessageService()
       const result = await messageService.processOutbox()
-      
+
       setLastSync(new Date())
       await loadStats()
-      
+
       if (result.sent > 0 || result.failed > 0) {
-        alert(t('messaging.processComplete', { 
-          sent: result.sent.toString(), 
-          failed: result.failed.toString() 
+        alert(t('messaging.processComplete', {
+          sent: result.sent.toString(),
+          failed: result.failed.toString()
         }))
       } else {
         alert(t('messaging.noMessages'))
       }
     } catch (error) {
-      console.error('Error processing outbox:', error)
+      logger.error('Error processing outbox:', error)
       alert(t('messaging.processError'))
     } finally {
       setProcessing(false)
     }
+  }, [t, loadStats])
+
+  // Only admins and nurses can manage messaging
+  if (!currentUser || !can(currentUser.role, 'export')) {
+    return null
   }
 
   const getStatusIcon = (status: string) => {

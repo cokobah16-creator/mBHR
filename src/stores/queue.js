@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { create } from 'zustand';
 import { db as mbhrDb, ulid } from '@/db/mbhr';
 const ALPHA = 0.2; // EMA smoothing

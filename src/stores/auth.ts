@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { db, User, Session, generateId } from '@/db'
 import { verifyPin } from '@/utils/pin'
+import * as logger from '@/lib/logger'
 
 interface AuthState {
   currentUser: User | null
@@ -100,7 +101,7 @@ export const useAuthStore = create<AuthState>()(
           return false
           
         } catch (error) {
-          console.error('Login error:', error)
+          logger.error('Login error:', error)
           state.incrementFailedAttempts()
           return false
         }
@@ -119,7 +120,7 @@ export const useAuthStore = create<AuthState>()(
           const { supabaseSync } = await import('@/services/supabaseSync')
 
           if (!supabaseSync.isInitialized()) {
-            console.error('Supabase not configured')
+            logger.error('Supabase not configured')
             return false
           }
 
@@ -129,7 +130,7 @@ export const useAuthStore = create<AuthState>()(
           console.log('Online login not fully implemented yet')
           return false
         } catch (error) {
-          console.error('Online login error:', error)
+          logger.error('Online login error:', error)
           state.incrementFailedAttempts()
           return false
         }

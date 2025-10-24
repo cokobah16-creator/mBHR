@@ -1,5 +1,4 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-// @ts-nocheck
 import { useEffect, useState } from 'react';
 import { useT } from '@/hooks/useT';
 import { db } from '@/db';

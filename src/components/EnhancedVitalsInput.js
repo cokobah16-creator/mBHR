@@ -1,5 +1,4 @@
 import { jsxs as _jsxs, jsx as _jsx } from "react/jsx-runtime";
-// @ts-nocheck
 import { useState, useEffect } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { db } from '@/db';

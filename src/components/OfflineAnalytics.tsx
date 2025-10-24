@@ -1,18 +1,16 @@
-// @ts-nocheck
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { db, epochDay, DailyCount } from '@/db'
 import { useAuthStore } from '@/stores/auth'
 import { can } from '@/auth/roles'
-import { 
+import {
   ChartBarIcon,
   UsersIcon,
   HeartIcon,
   DocumentTextIcon,
   BeakerIcon,
-  ClockIcon,
-  TrendingUpIcon,
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline'
+import * as logger from '@/lib/logger'
 
 interface AnalyticsData {
   today: DailyCount
@@ -33,18 +31,83 @@ export function OfflineAnalytics() {
   const [loading, setLoading] = useState(true)
   const [selectedPeriod, setSelectedPeriod] = useState<'today' | 'week'>('today')
 
-  // Only admins and leads can see analytics
-  if (!currentUser || !can(currentUser.role, 'export')) {
-    return null
-  }
+  const getDailyCount = useCallback(async (day: number): Promise<DailyCount> => {
+    const existing = await db.dailyCounts.where('day').equals(day).first()
+    if (existing) return existing
 
-  useEffect(() => {
-    loadAnalyticsData()
-    const interval = setInterval(loadAnalyticsData, 60000) // Refresh every minute
-    return () => clearInterval(interval)
+    // Calculate from raw data if no pre-aggregated count exists
+    const dayStart = new Date(day * 86400000)
+    const dayEnd = new Date((day + 1) * 86400000)
+
+    const [registrations, vitals, consultations, dispenses, visits] = await Promise.all([
+      db.patients.where('createdAt').between(dayStart, dayEnd, true, false).count(),
+      db.vitals.where('takenAt').between(dayStart, dayEnd, true, false).count(),
+      db.consultations.where('createdAt').between(dayStart, dayEnd, true, false).count(),
+      db.dispenses.where('dispensedAt').between(dayStart, dayEnd, true, false).count(),
+      db.visits.where('startedAt').between(dayStart, dayEnd, true, false).count()
+    ])
+
+    const count: DailyCount = {
+      day,
+      registrations,
+      vitals,
+      consultations,
+      dispenses,
+      visits
+    }
+
+    // Cache for future use
+    await db.dailyCounts.add(count).catch(() => {}) // Ignore if already exists
+
+    return count
   }, [])
 
-  const loadAnalyticsData = async () => {
+  const getWeekTotal = useCallback(async (startDay: number, endDay: number): Promise<DailyCount> => {
+    const weekCounts = await db.dailyCounts
+      .where('day')
+      .between(startDay, endDay, true, true)
+      .toArray()
+
+    return weekCounts.reduce((total, day) => ({
+      day: endDay,
+      registrations: total.registrations + day.registrations,
+      vitals: total.vitals + day.vitals,
+      consultations: total.consultations + day.consultations,
+      dispenses: total.dispenses + day.dispenses,
+      visits: total.visits + day.visits
+    }), {
+      day: endDay,
+      registrations: 0,
+      vitals: 0,
+      consultations: 0,
+      dispenses: 0,
+      visits: 0
+    })
+  }, [])
+
+  const calculateTrend = useCallback((today: number, yesterday: number): number => {
+    if (yesterday === 0) return today > 0 ? 100 : 0
+    return Math.round(((today - yesterday) / yesterday) * 100)
+  }, [])
+
+  const identifyBottlenecks = useCallback((todayData: DailyCount): string[] => {
+    const bottlenecks: string[] = []
+
+    // Check for flow imbalances
+    if (todayData.registrations > todayData.vitals * 1.5) {
+      bottlenecks.push('Vitals station may be a bottleneck')
+    }
+    if (todayData.vitals > todayData.consultations * 1.5) {
+      bottlenecks.push('Consultation may be a bottleneck')
+    }
+    if (todayData.consultations > todayData.dispenses * 1.5) {
+      bottlenecks.push('Pharmacy may be a bottleneck')
+    }
+
+    return bottlenecks
+  }, [])
+
+  const loadAnalyticsData = useCallback(async () => {
     try {
       const now = new Date()
       const today = epochDay(now)
@@ -77,86 +140,21 @@ export function OfflineAnalytics() {
         bottlenecks
       })
     } catch (error) {
-      console.error('Error loading analytics:', error)
+      logger.error('Error loading analytics:', error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [getDailyCount, getWeekTotal, calculateTrend, identifyBottlenecks])
 
-  const getDailyCount = async (day: number): Promise<DailyCount> => {
-    const existing = await db.dailyCounts.where('day').equals(day).first()
-    if (existing) return existing
+  useEffect(() => {
+    loadAnalyticsData()
+    const interval = setInterval(loadAnalyticsData, 60000) // Refresh every minute
+    return () => clearInterval(interval)
+  }, [loadAnalyticsData])
 
-    // Calculate from raw data if no pre-aggregated count exists
-    const dayStart = new Date(day * 86400000)
-    const dayEnd = new Date((day + 1) * 86400000)
-
-    const [registrations, vitals, consultations, dispenses, visits] = await Promise.all([
-      db.patients.where('createdAt').between(dayStart, dayEnd, true, false).count(),
-      db.vitals.where('takenAt').between(dayStart, dayEnd, true, false).count(),
-      db.consultations.where('createdAt').between(dayStart, dayEnd, true, false).count(),
-      db.dispenses.where('dispensedAt').between(dayStart, dayEnd, true, false).count(),
-      db.visits.where('startedAt').between(dayStart, dayEnd, true, false).count()
-    ])
-
-    const count: DailyCount = {
-      day,
-      registrations,
-      vitals,
-      consultations,
-      dispenses,
-      visits
-    }
-
-    // Cache for future use
-    await db.dailyCounts.add(count).catch(() => {}) // Ignore if already exists
-
-    return count
-  }
-
-  const getWeekTotal = async (startDay: number, endDay: number): Promise<DailyCount> => {
-    const weekCounts = await db.dailyCounts
-      .where('day')
-      .between(startDay, endDay, true, true)
-      .toArray()
-
-    return weekCounts.reduce((total, day) => ({
-      day: endDay,
-      registrations: total.registrations + day.registrations,
-      vitals: total.vitals + day.vitals,
-      consultations: total.consultations + day.consultations,
-      dispenses: total.dispenses + day.dispenses,
-      visits: total.visits + day.visits
-    }), {
-      day: endDay,
-      registrations: 0,
-      vitals: 0,
-      consultations: 0,
-      dispenses: 0,
-      visits: 0
-    })
-  }
-
-  const calculateTrend = (today: number, yesterday: number): number => {
-    if (yesterday === 0) return today > 0 ? 100 : 0
-    return Math.round(((today - yesterday) / yesterday) * 100)
-  }
-
-  const identifyBottlenecks = (todayData: DailyCount): string[] => {
-    const bottlenecks: string[] = []
-    
-    // Check for flow imbalances
-    if (todayData.registrations > todayData.vitals * 1.5) {
-      bottlenecks.push('Vitals station may be a bottleneck')
-    }
-    if (todayData.vitals > todayData.consultations * 1.5) {
-      bottlenecks.push('Consultation may be a bottleneck')
-    }
-    if (todayData.consultations > todayData.dispenses * 1.5) {
-      bottlenecks.push('Pharmacy may be a bottleneck')
-    }
-    
-    return bottlenecks
+  // Only admins and leads can see analytics
+  if (!currentUser || !can(currentUser.role, 'export')) {
+    return null
   }
 
   const formatTrend = (trend: number) => {

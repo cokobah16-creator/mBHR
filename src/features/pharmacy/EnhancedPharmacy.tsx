@@ -1,10 +1,10 @@
-// @ts-nocheck
 import React, { useEffect, useState } from 'react'
 import { useT } from '@/hooks/useT'
 import { useAuthStore } from '@/stores/auth'
 import { db, generateId } from '@/db'
 import { getMessageService } from '@/services/messaging'
 import { can } from '@/auth/roles'
+import * as logger from '@/lib/logger'
 import { 
   BeakerIcon, 
   ExclamationTriangleIcon,
@@ -131,7 +131,7 @@ export default function EnhancedPharmacy({ patientId, visitId, onSuccess, onCanc
       // TODO: Load patient allergies from patient record
       setPatientAllergies([]) // Placeholder
     } catch (error) {
-      console.error('Error loading pharmacy data:', error)
+      logger.error('Error loading pharmacy data:', error)
     }
   }
 
@@ -145,7 +145,7 @@ export default function EnhancedPharmacy({ patientId, visitId, onSuccess, onCanc
       
       setBatches(stockBatches)
     } catch (error) {
-      console.error('Error loading batches:', error)
+      logger.error('Error loading batches:', error)
       setBatches([])
     }
   }
@@ -303,12 +303,12 @@ export default function EnhancedPharmacy({ patientId, visitId, onSuccess, onCanc
           reminderDate
         )
       } catch (error) {
-        console.warn('Failed to queue reminder:', error)
+        logger.warn('Failed to queue reminder:', error)
       }
 
       setShowCounseling(true)
     } catch (error) {
-      console.error('Error dispensing medication:', error)
+      logger.error('Error dispensing medication:', error)
       alert(t('error.dispenseFailed'))
     } finally {
       setLoading(false)

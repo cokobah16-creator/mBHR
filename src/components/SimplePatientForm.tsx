@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState } from 'react'
 import { useT } from '@/hooks/useT'
 import { StepperForm } from '@/components/StepperForm'
@@ -17,9 +16,10 @@ import {
 interface SimplePatientFormProps {
   onSuccess?: (patientId: string) => void
   onCancel?: () => void
+  className?: string
 }
 
-export function SimplePatientForm({ onSuccess, onCancel }: SimplePatientFormProps) {
+export function SimplePatientForm({ onSuccess, onCancel, className }: SimplePatientFormProps) {
   const { t, speak } = useT()
   const { addPatient } = usePatientsStore()
   

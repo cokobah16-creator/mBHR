@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { db, generateId } from '@/db';
 import { verifyPin } from '@/utils/pin';
+import * as logger from '@/lib/logger';
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
 export const useAuthStore = create()(persist((set, get) => ({
@@ -68,7 +69,7 @@ export const useAuthStore = create()(persist((set, get) => ({
             return false;
         }
         catch (error) {
-            console.error('Login error:', error);
+            logger.error('Login error:', error);
             state.incrementFailedAttempts();
             return false;
         }
@@ -83,7 +84,7 @@ export const useAuthStore = create()(persist((set, get) => ({
         try {
             const { supabaseSync } = await import('@/services/supabaseSync');
             if (!supabaseSync.isInitialized()) {
-                console.error('Supabase not configured');
+                logger.error('Supabase not configured');
                 return false;
             }
             // TODO: Implement actual Supabase auth login
@@ -93,7 +94,7 @@ export const useAuthStore = create()(persist((set, get) => ({
             return false;
         }
         catch (error) {
-            console.error('Online login error:', error);
+            logger.error('Online login error:', error);
             state.incrementFailedAttempts();
             return false;
         }

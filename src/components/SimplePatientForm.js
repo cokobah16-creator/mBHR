@@ -1,5 +1,4 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-// @ts-nocheck
 import { useState } from 'react';
 import { useT } from '@/hooks/useT';
 import { StepperForm } from '@/components/StepperForm';
@@ -7,7 +6,7 @@ import { VisualNumberInput } from '@/components/VisualNumberInput';
 import { usePatientsStore } from '@/stores/patients';
 import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG } from '@/utils/nigeria';
 import { UserIcon, CameraIcon, PhoneIcon, MapPinIcon, IdentificationIcon } from '@heroicons/react/24/outline';
-export function SimplePatientForm({ onSuccess, onCancel }) {
+export function SimplePatientForm({ onSuccess, onCancel, className }) {
     const { t, speak } = useT();
     const { addPatient } = usePatientsStore();
     const [formData, setFormData] = useState({

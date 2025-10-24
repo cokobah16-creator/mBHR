@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React from 'react'
 import { db } from '@/db'
 import { exportTable } from '@/utils/export'

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Enhanced translation hook with audio support
 import { useState, useEffect } from 'react'
 import { loadLocale, detectLocale, setPreferredLocale } from '@/i18n/load'
