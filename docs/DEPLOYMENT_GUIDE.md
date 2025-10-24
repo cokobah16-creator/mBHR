@@ -158,7 +158,39 @@ cp .env.example .env.production
 ```env
 VITE_SUPABASE_URL=https://xxxxx.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+VITE_SENTRY_DSN=https://xxxxx@xxxxx.ingest.sentry.io/xxxxx
 ```
+
+### 2.1a Optional: Set Up Sentry Error Tracking (15 minutes)
+
+Sentry provides real-time error tracking and monitoring for production applications.
+
+1. **Create Sentry Account:**
+   - Go to https://sentry.io/signup/
+   - Sign up for free account (up to 5,000 errors/month free)
+   - Create a new project
+   - Select "React" as the platform
+
+2. **Get Your DSN:**
+   - After creating the project, copy the DSN
+   - It looks like: `https://xxxxx@xxxxx.ingest.sentry.io/xxxxx`
+
+3. **Add to Environment Variables:**
+   - Add `VITE_SENTRY_DSN=your-dsn-here` to `.env.production`
+   - The application will automatically detect and enable Sentry
+
+4. **Configure Sentry Settings (already done in code):**
+   - Error tracking: Enabled
+   - Performance monitoring: 10% sample rate
+   - Session replay: 10% sample rate (with privacy masking)
+   - Privacy: All text masked, all media blocked
+
+5. **Verify Integration:**
+   - Deploy your application
+   - Trigger a test error (throw new Error('test'))
+   - Check Sentry dashboard for the error
+
+**Note:** Sentry is optional. If you don't provide a DSN, the application will work normally without error tracking.
 
 ### 2.2 Option A: Deploy to Netlify
 
@@ -185,6 +217,7 @@ netlify init
    - Go to Site settings → Environment variables
    - Add `VITE_SUPABASE_URL`
    - Add `VITE_SUPABASE_ANON_KEY`
+   - Add `VITE_SENTRY_DSN` (optional, for error tracking)
 
 6. Deploy:
 ```bash
@@ -212,6 +245,7 @@ vercel --prod
    - Go to Project Settings → Environment Variables
    - Add `VITE_SUPABASE_URL`
    - Add `VITE_SUPABASE_ANON_KEY`
+   - Add `VITE_SENTRY_DSN` (optional, for error tracking)
    - Redeploy to apply changes
 
 ### 2.4 Configure Custom Domain (Optional)

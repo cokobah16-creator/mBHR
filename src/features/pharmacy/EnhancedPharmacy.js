@@ -6,6 +6,7 @@ import { db, generateId } from '@/db';
 import { getMessageService } from '@/services/messaging';
 import { can } from '@/auth/roles';
 import * as logger from '@/lib/logger';
+import { getPatientAllergies } from '@/services/allergies';
 import { BeakerIcon, ExclamationTriangleIcon, ClockIcon, CheckCircleIcon, XCircleIcon, ShieldExclamationIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 export default function EnhancedPharmacy({ patientId, visitId, onSuccess, onCancel }) {
     const { t } = useT();
@@ -79,8 +80,12 @@ export default function EnhancedPharmacy({ patientId, visitId, onSuccess, onCanc
                 .filter(d => d.dispensedAt > thirtyDaysAgo)
                 .map(d => d.itemName);
             setCurrentMedications([...new Set(recentMeds)]);
-            // TODO: Load patient allergies from patient record
-            setPatientAllergies([]); // Placeholder
+            // Load patient allergies
+            const allergies = await getPatientAllergies(patientId);
+            const allergyNames = allergies
+                .filter(a => a.isActive)
+                .map(a => a.allergen);
+            setPatientAllergies(allergyNames);
         }
         catch (error) {
             logger.error('Error loading pharmacy data:', error);

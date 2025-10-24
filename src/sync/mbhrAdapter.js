@@ -2,7 +2,8 @@
 import { db as mbhrDb } from '@/db/mbhr';
 export const isOnlineSyncEnabled = () => localStorage.getItem('mbhr-sync') === 'on';
 export const setOnlineSync = (on) => localStorage.setItem('mbhr-sync', on ? 'on' : 'off');
-// TODO: inject your supabase client here
+// Supabase client for sync operations
+// Set this using setSupabaseClient(supabase) before calling syncNow()
 let supabase = null;
 export const setSupabaseClient = (client) => { supabase = client; };
 export async function syncNow() {

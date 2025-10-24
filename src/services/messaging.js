@@ -1,5 +1,6 @@
 import { outboxDb, MessageQueue } from '@/db/outbox';
 import { db } from '@/db';
+import { getPatientPreference } from './preferences';
 // Termii SMS Gateway (popular in Nigeria)
 export class TermiiGateway {
     constructor(apiKey, senderId = 'MBHR') {
@@ -69,6 +70,8 @@ export class MessageService {
         const patient = await db.patients.get(patientId);
         if (!patient)
             throw new Error('Patient not found');
+        const preferences = await getPatientPreference(patientId);
+        const locale = preferences?.preferredLanguage || 'en';
         return MessageQueue.queueMessage(patientId, patient.phone, 'followup.medication', {
             patientName: `${patient.givenName} ${patient.familyName}`,
             medicationName,
@@ -77,7 +80,7 @@ export class MessageService {
             clinicName: 'MBHR Clinic'
         }, {
             channel: 'sms',
-            locale: 'en', // TODO: Get from patient preferences
+            locale,
             scheduledFor
         });
     }

@@ -1,6 +1,7 @@
 import { outboxDb, MessageQueue, OutboundMessage } from '@/db/outbox'
 import { db } from '@/db'
 import { useT } from '@/hooks/useT'
+import { getPatientPreference } from './preferences'
 
 export interface SMSGateway {
   send(message: OutboundMessage): Promise<{ success: boolean; messageId?: string; error?: string }>
@@ -92,6 +93,9 @@ export class MessageService {
     const patient = await db.patients.get(patientId)
     if (!patient) throw new Error('Patient not found')
 
+    const preferences = await getPatientPreference(patientId)
+    const locale = preferences?.preferredLanguage || 'en'
+
     return MessageQueue.queueMessage(
       patientId,
       patient.phone,
@@ -105,7 +109,7 @@ export class MessageService {
       },
       {
         channel: 'sms',
-        locale: 'en', // TODO: Get from patient preferences
+        locale,
         scheduledFor
       }
     )

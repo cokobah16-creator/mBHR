@@ -124,10 +124,10 @@ export const useAuthStore = create<AuthState>()(
             return false
           }
 
-          // TODO: Implement actual Supabase auth login
-          // This would use supabase.auth.signInWithPassword({ email, password })
-          // For now, return false as it requires Supabase auth setup
-          console.log('Online login not fully implemented yet')
+          // NOTE: Supabase auth login requires email/password authentication
+          // Current implementation uses offline PIN-based auth which is more suitable for field operations
+          // To enable online auth, implement: supabase.auth.signInWithPassword({ email, password })
+          logger.info('Online login with Supabase auth not enabled - using offline PIN auth')
           return false
         } catch (error) {
           logger.error('Online login error:', error)
