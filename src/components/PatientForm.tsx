@@ -275,7 +275,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <select
                 {...register('state', {
                   onChange: (e) => {
-                    setValue('lga', '') // Reset LGA when state changes
+                    setValue('lga', '')
                   }
                 })}
                 className="input-field"
@@ -298,10 +298,16 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               </label>
               <select
                 {...register('lga')}
-                className="input-field"
-                disabled={!watchedState}
+                className={`input-field ${!watchedState ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                disabled={!watchedState || availableLGAs.length === 0}
               >
-                <option value="">Select LGA</option>
+                <option value="">
+                  {!watchedState
+                    ? 'Select state first'
+                    : availableLGAs.length === 0
+                    ? 'No LGAs available for this state'
+                    : 'Select LGA'}
+                </option>
                 {availableLGAs.map((lga) => (
                   <option key={lga} value={lga}>
                     {lga}
@@ -310,6 +316,11 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               </select>
               {errors.lga && (
                 <p className="text-red-600 text-sm mt-1">{errors.lga.message}</p>
+              )}
+              {watchedState && availableLGAs.length > 0 && (
+                <p className="text-gray-500 text-xs mt-1">
+                  {availableLGAs.length} LGAs available
+                </p>
               )}
             </div>
           </div>

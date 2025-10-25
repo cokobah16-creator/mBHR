@@ -296,7 +296,7 @@ export function SimplePatientForm({ onSuccess, onCancel, className }: SimplePati
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="block text-lg font-medium text-gray-700 mb-3">
               {t('patient.lga')} *
@@ -304,16 +304,27 @@ export function SimplePatientForm({ onSuccess, onCancel, className }: SimplePati
             <select
               value={formData.lga}
               onChange={(e) => setFormData(prev => ({ ...prev, lga: e.target.value }))}
-              className="input-field text-xl"
-              disabled={!formData.state}
+              className={`input-field text-xl ${!formData.state ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+              disabled={!formData.state || (LGAS_BY_STATE[formData.state] || []).length === 0}
             >
-              <option value="">{t('simple.selectLGA')}</option>
+              <option value="">
+                {!formData.state
+                  ? t('simple.selectState') + ' first'
+                  : (LGAS_BY_STATE[formData.state] || []).length === 0
+                  ? 'No LGAs available'
+                  : t('simple.selectLGA')}
+              </option>
               {(LGAS_BY_STATE[formData.state] || []).map((lga) => (
                 <option key={lga} value={lga}>
                   {lga}
                 </option>
               ))}
             </select>
+            {formData.state && (LGAS_BY_STATE[formData.state] || []).length > 0 && (
+              <p className="text-gray-500 text-sm mt-2">
+                {(LGAS_BY_STATE[formData.state] || []).length} LGAs available
+              </p>
+            )}
           </div>
         </div>
       )

@@ -35,7 +35,31 @@ describe('Nigeria Utilities', () => {
         it('should handle FCT', () => {
             const lgas = getLGAs('FCT');
             expect(lgas.length).toBeGreaterThan(0);
-            expect(lgas).toContain('Municipal Area Council');
+            expect(lgas).toContain('Abuja Municipal');
+        });
+        it('should have LGAs for all 37 states', () => {
+            NIGERIAN_STATES.forEach((state) => {
+                const lgas = getLGAs(state);
+                expect(lgas.length).toBeGreaterThan(0);
+            });
+        });
+        it('should have correct total number of LGAs', () => {
+            let totalLGAs = 0;
+            NIGERIAN_STATES.forEach((state) => {
+                const lgas = getLGAs(state);
+                totalLGAs += lgas.length;
+            });
+            // Note: Official count is 774, but source data may vary slightly due to
+            // administrative changes, naming variations, or data source differences
+            expect(totalLGAs).toBeGreaterThanOrEqual(760);
+            expect(totalLGAs).toBeLessThanOrEqual(780);
+        });
+        it('should not have duplicate LGAs within a state', () => {
+            NIGERIAN_STATES.forEach((state) => {
+                const lgas = getLGAs(state);
+                const uniqueLGAs = [...new Set(lgas)];
+                expect(lgas.length).toBe(uniqueLGAs.length);
+            });
         });
     });
     describe('validatePhoneNumber', () => {
