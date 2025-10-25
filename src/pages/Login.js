@@ -1,10 +1,11 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth';
 import { isOnlineSyncEnabled } from '@/sync/adapter';
 import { db } from '@/db';
 import { derivePinHash } from '@/utils/pin';
+import { HeartIcon } from '@heroicons/react/24/outline';
 export default function Login() {
     const [mode, setMode] = useState('offline');
     const [pin, setPin] = useState('');
@@ -99,7 +100,7 @@ export default function Login() {
                 console.log('[login] result:', success);
                 if (success) {
                     console.log('[login] success - navigating to dashboard');
-                    navigate('/');
+                    navigate('/dashboard');
                 }
                 else {
                     console.log('[login] failed - invalid PIN');
@@ -125,7 +126,7 @@ export default function Login() {
             setLoading(false);
         }
     };
-    return (_jsx("div", { className: "min-h-screen flex items-center justify-center p-6 bg-white", children: _jsxs("div", { className: "w-full max-w-md", children: [_jsxs("div", { className: "text-center mb-6", children: [_jsx("div", { className: "text-2xl font-semibold", children: "Med Bridge Health Reach" }), _jsx("div", { className: "text-sm text-gray-500", children: "Powered by Dr. Isioma Okobah Foundation" })] }), _jsxs("div", { className: "flex mb-4 gap-2", children: [_jsx("button", { type: "button", className: `flex-1 border rounded p-2 ${mode === 'offline' ? 'bg-emerald-50 border-emerald-600' : 'border-gray-300'}`, onClick: () => {
+    return (_jsx("div", { className: "min-h-screen flex items-center justify-center p-6 bg-white", children: _jsxs("div", { className: "w-full max-w-md", children: [_jsx(Link, { to: "/", className: "block text-center mb-4 text-sm text-gray-600 hover:text-gray-800 underline", children: "\u2190 Back to home" }), _jsxs("div", { className: "text-center mb-6", children: [_jsx("div", { className: "text-2xl font-semibold", children: "Med Bridge Health Reach" }), _jsx("div", { className: "text-sm text-gray-500", children: "Powered by Dr. Isioma Okobah Foundation" })] }), _jsx(Link, { to: "/patient", className: "block mb-6 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg p-4 hover:from-blue-600 hover:to-blue-700 transition-all duration-300 shadow-md hover:shadow-lg", children: _jsxs("div", { className: "flex items-center justify-between", children: [_jsxs("div", { className: "flex items-center space-x-3", children: [_jsx("div", { className: "bg-white bg-opacity-20 rounded-full p-2", children: _jsx(HeartIcon, { className: "h-6 w-6" }) }), _jsxs("div", { className: "text-left", children: [_jsx("div", { className: "font-semibold text-lg", children: "Patient Portal" }), _jsx("div", { className: "text-sm text-blue-100", children: "Access your medical records" })] })] }), _jsx("svg", { className: "w-5 h-5", fill: "none", stroke: "currentColor", viewBox: "0 0 24 24", children: _jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 2, d: "M9 5l7 7-7 7" }) })] }) }), _jsxs("div", { className: "text-center mb-4", children: [_jsx("div", { className: "text-sm font-medium text-gray-700", children: "Staff Login" }), _jsx("div", { className: "text-xs text-gray-500", children: "Healthcare personnel only" })] }), _jsxs("div", { className: "flex mb-4 gap-2", children: [_jsx("button", { type: "button", className: `flex-1 border rounded p-2 ${mode === 'offline' ? 'bg-emerald-50 border-emerald-600' : 'border-gray-300'}`, onClick: () => {
                                 console.log('[login] switching to offline mode');
                                 setMode('offline');
                             }, children: "Offline PIN" }), _jsx("button", { type: "button", className: `flex-1 border rounded p-2 ${mode === 'online' ? 'bg-emerald-50 border-emerald-600' : 'border-gray-300'}`, onClick: () => {

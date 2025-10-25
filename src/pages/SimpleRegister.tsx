@@ -9,7 +9,7 @@ export function SimpleRegister() {
   const navigate = useNavigate()
 
   const handleSuccess = (patientId: string) => {
-    navigate('/', { 
+    navigate('/dashboard', { 
       state: { 
         message: t('patient.registrationSuccess'),
         patientId 
@@ -18,7 +18,7 @@ export function SimpleRegister() {
   }
 
   const handleCancel = () => {
-    navigate('/')
+    navigate('/dashboard')
   }
 
   return (
@@ -27,7 +27,7 @@ export function SimpleRegister() {
         {/* Header */}
         <div className="flex items-center space-x-4 mb-8">
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/dashboard')}
             className="p-3 rounded-lg hover:bg-gray-100 transition-colors touch-target-large"
           >
             <ArrowLeftIcon className="h-6 w-6 text-gray-600" />

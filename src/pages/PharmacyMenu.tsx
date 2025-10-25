@@ -45,7 +45,7 @@ export default function PharmacyMenu() {
     <main className="p-4 sm:p-6 max-w-5xl mx-auto">
       <div className="mb-4">
         <Link
-          to="/"
+          to="/dashboard"
           className="inline-flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900 focus:outline-none focus:ring"
         >
           <ArrowLeftIcon className="h-4 w-4" aria-hidden />

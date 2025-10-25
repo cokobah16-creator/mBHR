@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth'
 import { isOnlineSyncEnabled } from '@/sync/adapter'
 import { db } from '@/db'
 import { seed } from '@/db/seed'
 import { derivePinHash } from '@/utils/pin'
+import { HeartIcon } from '@heroicons/react/24/outline'
 
 export default function Login() {
   const [mode, setMode] = useState<'offline' | 'online'>('offline')
@@ -105,7 +106,7 @@ export default function Login() {
         
         if (success) {
           console.log('[login] success - navigating to dashboard')
-          navigate('/')
+          navigate('/dashboard')
         } else {
           console.log('[login] failed - invalid PIN')
           setErr('Invalid PIN')
@@ -131,9 +132,41 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-white">
       <div className="w-full max-w-md">
+        <Link
+          to="/"
+          className="block text-center mb-4 text-sm text-gray-600 hover:text-gray-800 underline"
+        >
+          ← Back to home
+        </Link>
+
         <div className="text-center mb-6">
           <div className="text-2xl font-semibold">Med Bridge Health Reach</div>
           <div className="text-sm text-gray-500">Powered by Dr. Isioma Okobah Foundation</div>
+        </div>
+
+        <Link
+          to="/patient"
+          className="block mb-6 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg p-4 hover:from-blue-600 hover:to-blue-700 transition-all duration-300 shadow-md hover:shadow-lg"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="bg-white bg-opacity-20 rounded-full p-2">
+                <HeartIcon className="h-6 w-6" />
+              </div>
+              <div className="text-left">
+                <div className="font-semibold text-lg">Patient Portal</div>
+                <div className="text-sm text-blue-100">Access your medical records</div>
+              </div>
+            </div>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </div>
+        </Link>
+
+        <div className="text-center mb-4">
+          <div className="text-sm font-medium text-gray-700">Staff Login</div>
+          <div className="text-xs text-gray-500">Healthcare personnel only</div>
         </div>
 
         <div className="flex mb-4 gap-2">

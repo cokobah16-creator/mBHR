@@ -8,6 +8,7 @@ import Login from '@/pages/Login'
 import { useAuthStore } from '@/stores/auth'
 import { seedDemo } from '@/db/seedMbhr'
 import { PWAInstallPrompt } from '@/components/PWAInstallPrompt'
+import { Home } from '@/pages/Home'
 
 // Core pages - loaded eagerly for initial navigation
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })))
@@ -79,7 +80,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
+    return <Navigate to="/" replace />
   }
 
   return <>{children}</>
@@ -104,6 +105,7 @@ function App() {
     <ErrorBoundary>
       <PWAInstallPrompt />
       <Routes>
+        <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
 
         {/* Patient Portal Routes */}
@@ -149,7 +151,7 @@ function App() {
               }>
                 <Layout>
                   <Routes>
-                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/register" element={<Register />} />
                     <Route path="/patients" element={<Patients />} />
                     <Route path="/patients/:id" element={<PatientDetail />} />

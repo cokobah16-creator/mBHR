@@ -7,7 +7,7 @@ export function SimpleRegister() {
     const { t } = useT();
     const navigate = useNavigate();
     const handleSuccess = (patientId) => {
-        navigate('/', {
+        navigate('/dashboard', {
             state: {
                 message: t('patient.registrationSuccess'),
                 patientId
@@ -15,7 +15,7 @@ export function SimpleRegister() {
         });
     };
     const handleCancel = () => {
-        navigate('/');
+        navigate('/dashboard');
     };
-    return (_jsx("div", { className: "min-h-screen bg-gray-50 py-8", children: _jsxs("div", { className: "max-w-4xl mx-auto px-4", children: [_jsxs("div", { className: "flex items-center space-x-4 mb-8", children: [_jsx("button", { onClick: () => navigate('/'), className: "p-3 rounded-lg hover:bg-gray-100 transition-colors touch-target-large", children: _jsx(ArrowLeftIcon, { className: "h-6 w-6 text-gray-600" }) }), _jsxs("div", { children: [_jsx("h1", { className: "text-3xl font-bold text-gray-900", children: t('patient.register') }), _jsx("p", { className: "text-lg text-gray-600", children: t('simple.registerDescription') })] })] }), _jsx(SimplePatientForm, { onSuccess: handleSuccess, onCancel: handleCancel })] }) }));
+    return (_jsx("div", { className: "min-h-screen bg-gray-50 py-8", children: _jsxs("div", { className: "max-w-4xl mx-auto px-4", children: [_jsxs("div", { className: "flex items-center space-x-4 mb-8", children: [_jsx("button", { onClick: () => navigate('/dashboard'), className: "p-3 rounded-lg hover:bg-gray-100 transition-colors touch-target-large", children: _jsx(ArrowLeftIcon, { className: "h-6 w-6 text-gray-600" }) }), _jsxs("div", { children: [_jsx("h1", { className: "text-3xl font-bold text-gray-900", children: t('patient.register') }), _jsx("p", { className: "text-lg text-gray-600", children: t('simple.registerDescription') })] })] }), _jsx(SimplePatientForm, { onSuccess: handleSuccess, onCancel: handleCancel })] }) }));
 }

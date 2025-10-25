@@ -146,7 +146,7 @@ export function Layout({ children }: LayoutProps) {
   }, [location.pathname])
 
   const baseNavigation = [
-    { name: 'Dashboard', href: '/', icon: HomeIcon },
+    { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
     { name: 'Patients', href: '/patients', icon: UserGroupIcon },
     { name: 'Queue', href: '/queue', icon: QueueListIcon },
     { name: 'Inventory', href: '/inventory', icon: CubeIcon },
