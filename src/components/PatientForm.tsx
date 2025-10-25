@@ -35,7 +35,6 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const [loading, setLoading] = useState(false)
   const [photo, setPhoto] = useState<string | null>(null)
   const [showPhotoCapture, setShowPhotoCapture] = useState(false)
-  const [selectedState, setSelectedState] = useState('')
   const [showDedupeModal, setShowDedupeModal] = useState(false)
   const [dedupeData, setDedupeData] = useState<{ patient: any; candidates: any[] } | null>(null)
 
@@ -274,11 +273,11 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                 {t('patient.state')} *
               </label>
               <select
-                {...register('state')}
-                onChange={(e) => {
-                  setSelectedState(e.target.value)
-                  setValue('lga', '') // Reset LGA when state changes
-                }}
+                {...register('state', {
+                  onChange: (e) => {
+                    setValue('lga', '') // Reset LGA when state changes
+                  }
+                })}
                 className="input-field"
               >
                 <option value="">Select state</option>
