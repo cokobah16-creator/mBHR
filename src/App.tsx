@@ -1,6 +1,6 @@
 import React from 'react'
-import { Suspense, lazy, useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Suspense, lazy, useEffect, startTransition } from 'react'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Layout } from '@/components/Layout'
 import RequireRoles from '@/components/RequireRoles'
@@ -78,19 +78,37 @@ const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      startTransition(() => {
+        navigate('/', { replace: true })
+      })
+    }
+  }, [isAuthenticated, navigate])
 
   if (!isAuthenticated) {
-    return <Navigate to="/" replace />
+    return null
   }
 
   return <>{children}</>
 }
 
 function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate()
   const sessionToken = localStorage.getItem('patient_session_token')
 
+  useEffect(() => {
+    if (!sessionToken) {
+      startTransition(() => {
+        navigate('/patient/login', { replace: true })
+      })
+    }
+  }, [sessionToken, navigate])
+
   if (!sessionToken) {
-    return <Navigate to="/patient/login" replace />
+    return null
   }
 
   return <>{children}</>
@@ -105,6 +123,8 @@ function App() {
     <ErrorBoundary>
       <PWAInstallPrompt />
       <Routes>
+        {/* Public Routes - Must be defined before catch-all */}
+        <Route index element={<Home />} />
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
 
