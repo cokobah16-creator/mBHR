@@ -37,6 +37,14 @@ const LabOrderForm = lazy(() => import('@/features/labs/LabOrderForm').then(m =>
 const LabResultsDashboard = lazy(() => import('@/features/labs/LabResultsDashboard').then(m => ({ default: m.LabResultsDashboard })))
 const AppointmentCalendar = lazy(() => import('@/features/appointments/AppointmentCalendar').then(m => ({ default: m.AppointmentCalendar })))
 
+// Patient Portal components
+const PatientLogin = lazy(() => import('@/features/patient-portal/PatientLogin').then(m => ({ default: m.PatientLogin })))
+const PatientRegister = lazy(() => import('@/features/patient-portal/PatientRegister').then(m => ({ default: m.PatientRegister })))
+const PatientDashboard = lazy(() => import('@/features/patient-portal/PatientDashboard').then(m => ({ default: m.PatientDashboard })))
+const MedicalHistory = lazy(() => import('@/features/patient-portal/MedicalHistory').then(m => ({ default: m.MedicalHistory })))
+const VisitDetail = lazy(() => import('@/features/patient-portal/VisitDetail').then(m => ({ default: m.VisitDetail })))
+const AppointmentRequest = lazy(() => import('@/features/patient-portal/AppointmentRequest').then(m => ({ default: m.AppointmentRequest })))
+
 // Inventory and gamification
 const Inventory = lazy(() => import('@/pages/Inventory').then(m => ({ default: m.Inventory })))
 const RestockGame = lazy(() => import('@/features/inventory/RestockGame'))
@@ -68,11 +76,21 @@ const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
-  
+
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />
   }
-  
+
+  return <>{children}</>
+}
+
+function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
+  const sessionToken = localStorage.getItem('patient_session_token')
+
+  if (!sessionToken) {
+    return <Navigate to="/patient/login" replace />
+  }
+
   return <>{children}</>
 }
 
@@ -86,6 +104,35 @@ function App() {
       <PWAInstallPrompt />
       <Routes>
         <Route path="/login" element={<Login />} />
+
+        {/* Patient Portal Routes */}
+        <Route path="/patient/login" element={<PatientLogin />} />
+        <Route path="/patient/register" element={<PatientRegister />} />
+        <Route
+          path="/patient/*"
+          element={
+            <PatientProtectedRoute>
+              <Suspense fallback={
+                <div className="min-h-screen flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <p className="mt-4 text-gray-600">Loading...</p>
+                  </div>
+                </div>
+              }>
+                <Routes>
+                  <Route path="/dashboard" element={<PatientDashboard />} />
+                  <Route path="/medical-history" element={<MedicalHistory />} />
+                  <Route path="/visit/:visitId" element={<VisitDetail />} />
+                  <Route path="/appointments/request" element={<AppointmentRequest />} />
+                  <Route path="/" element={<Navigate to="/patient/dashboard" replace />} />
+                </Routes>
+              </Suspense>
+            </PatientProtectedRoute>
+          }
+        />
+
+        {/* Staff Routes */}
         <Route
           path="/*"
           element={
