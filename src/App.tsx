@@ -26,11 +26,12 @@ const Consult = lazy(() => import('@/pages/Consult').then(m => ({ default: m.Con
 const Pharmacy = lazy(() => import('@/pages/Pharmacy').then(m => ({ default: m.Pharmacy })))
 const PharmacyMenu = lazy(() => import('@/pages/PharmacyMenu'))
 const PharmacyReports = lazy(() => import('@/pages/PharmacyReports'))
-const PharmacyStock = lazy(() => import('@/features/pharmacy/PharmacyStock'))
-const RxForm = lazy(() => import('@/features/pharmacy/RxForm'))
-const Dispense = lazy(() => import('@/features/pharmacy/Dispense'))
-const EnhancedPharmacy = lazy(() => import('@/features/pharmacy/EnhancedPharmacy'))
-const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'))
+// Temporarily disabled - corrupted files
+// const PharmacyStock = lazy(() => import('@/features/pharmacy/PharmacyStock'))
+// const RxForm = lazy(() => import('@/features/pharmacy/RxForm'))
+// const Dispense = lazy(() => import('@/features/pharmacy/Dispense'))
+// const EnhancedPharmacy = lazy(() => import('@/features/pharmacy/EnhancedPharmacy'))
+// const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'))
 const SMSReminders = lazy(() => import('@/pages/SMSReminders'))
 
 // Labs and appointments (Sprint 5 features)
@@ -214,21 +215,27 @@ function App() {
                         <PrizeShop />
                       </RequireRoles>
                     } />
+                    {/* Temporarily disabled - corrupted file
                     <Route path="/rx/stock" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
                         <PharmacyStock />
                       </RequireRoles>
                     } />
+                    */}
+                    {/* Temporarily disabled - corrupted file
                     <Route path="/rx/new" element={
                       <RequireRoles roles={['doctor', 'nurse', 'admin']}>
                         <RxForm />
                       </RequireRoles>
                     } />
+                    */}
+                    {/* Temporarily disabled - corrupted file
                     <Route path="/rx/dispense" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
                         <Dispense />
                       </RequireRoles>
                     } />
+                    */}
                     <Route path="/tickets/queue" element={
                       <RequireRoles roles={['nurse', 'doctor', 'admin']}>
                         <QueueBoard />
@@ -294,11 +301,13 @@ function App() {
                         <SMSReminders />
                       </RequireRoles>
                     } />
+                    {/* Temporarily disabled - corrupted file
                     <Route path="/pharmacy/enhanced/:visitId" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
                         <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
                       </RequireRoles>
                     } />
+                    */}
                     <Route path="/labs" element={
                       <RequireRoles roles={['doctor', 'nurse', 'admin']}>
                         <LabResultsDashboard userId="" />
