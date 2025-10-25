@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, startTransition } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth'
 import { isOnlineSyncEnabled } from '@/sync/adapter'
 import { db } from '@/db'
-import { seed } from '@/db/seed'
 import { derivePinHash } from '@/utils/pin'
 
 export default function Login() {
@@ -105,7 +104,9 @@ export default function Login() {
         
         if (success) {
           console.log('[login] success - navigating to dashboard')
-          navigate('/')
+          startTransition(() => {
+            navigate('/')
+          })
         } else {
           console.log('[login] failed - invalid PIN')
           setErr('Invalid PIN')
