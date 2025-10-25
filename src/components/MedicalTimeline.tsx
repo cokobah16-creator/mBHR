@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { formatNigerianDate } from '@/utils/dateFormat'
 import { useT } from '@/hooks/useT'
 import { db } from '@/db'
 import { getFlagColor, getFlagLabel } from '@/utils/vitals'
@@ -21,22 +22,17 @@ interface TimelineEvent {
   icon: React.ElementType
   color: string
 }
-
 interface MedicalTimelineProps {
   patientId: string
   className?: string
-}
-
 export function MedicalTimeline({ patientId, className = '' }: MedicalTimelineProps) {
   const { t } = useT()
   const [events, setEvents] = useState<TimelineEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'vitals' | 'consultations' | 'medications'>('all')
-
   useEffect(() => {
     loadTimelineEvents()
   }, [patientId])
-
   const loadTimelineEvents = async () => {
     try {
       const [visits, vitals, consultations, dispenses] = await Promise.all([
@@ -45,9 +41,7 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
         db.consultations.where('patientId').equals(patientId).toArray(),
         db.dispenses.where('patientId').equals(patientId).toArray()
       ])
-
       const timelineEvents: TimelineEvent[] = []
-
       // Add visit events
       visits.forEach(visit => {
         timelineEvents.push({
@@ -60,7 +54,6 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
           color: 'bg-blue-100 text-blue-800'
         })
       })
-
       // Add vitals events
       vitals.forEach(vital => {
         const vitalDetails = []
@@ -69,15 +62,10 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
         }
         if (vital.pulseBpm) {
           vitalDetails.push(`${t('vitals.pulse')}: ${vital.pulseBpm} bpm`)
-        }
         if (vital.tempC) {
           vitalDetails.push(`${t('vitals.temperature')}: ${vital.tempC}°C`)
-        }
         if (vital.bmi) {
           vitalDetails.push(`${t('vitals.bmi')}: ${vital.bmi}`)
-        }
-
-        timelineEvents.push({
           id: `vitals-${vital.id}`,
           type: 'vitals',
           timestamp: vital.takenAt,
@@ -86,12 +74,8 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
           metadata: { flags: vital.flags },
           icon: HeartIcon,
           color: 'bg-green-100 text-green-800'
-        })
-      })
-
       // Add consultation events
       consultations.forEach(consultation => {
-        timelineEvents.push({
           id: `consultation-${consultation.id}`,
           type: 'consultation',
           timestamp: consultation.createdAt,
@@ -103,26 +87,17 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
           },
           icon: DocumentTextIcon,
           color: 'bg-purple-100 text-purple-800'
-        })
-      })
-
       // Add dispense events
       dispenses.forEach(dispense => {
-        timelineEvents.push({
           id: `dispense-${dispense.id}`,
           type: 'dispense',
           timestamp: dispense.dispensedAt,
           title: t('timeline.medicationDispensed'),
           details: `${dispense.itemName} ${dispense.dosage} × ${dispense.qty}`,
-          metadata: { 
             directions: dispense.directions,
             dispensedBy: dispense.dispensedBy 
-          },
           icon: BeakerIcon,
           color: 'bg-orange-100 text-orange-800'
-        })
-      })
-
       // Sort by timestamp (newest first)
       timelineEvents.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
       setEvents(timelineEvents)
@@ -132,7 +107,6 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
       setLoading(false)
     }
   }
-
   const filteredEvents = events.filter(event => {
     if (filter === 'all') return true
     if (filter === 'vitals') return event.type === 'vitals'
@@ -140,7 +114,6 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
     if (filter === 'medications') return event.type === 'dispense'
     return true
   })
-
   if (loading) {
     return (
       <div className={`space-y-4 ${className}`}>
@@ -157,8 +130,6 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
         </div>
       </div>
     )
-  }
-
   return (
     <div className={`space-y-6 ${className}`}>
       {/* Header with Filters */}
@@ -185,10 +156,6 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
             >
               {filterOption.label}
             </button>
-          ))}
-        </div>
-      </div>
-
       {/* Timeline */}
       <div className="relative">
         {filteredEvents.length === 0 ? (
@@ -216,14 +183,13 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
                     </h4>
                     <div className="flex items-center space-x-2 text-sm text-gray-500">
                       <CalendarIcon className="h-4 w-4" />
-                      <span>{event.timestamp.toLocaleDateString()}</span>
+                      <span>{formatNigerianDate(event.timestamp)}</span>
                       <ClockIcon className="h-4 w-4" />
                       <span>{event.timestamp.toLocaleTimeString()}</span>
                     </div>
                   </div>
                   
                   <p className="text-gray-700 mb-3">{event.details}</p>
-                  
                   {/* Event-specific metadata */}
                   {event.metadata?.flags && event.metadata.flags.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
@@ -235,9 +201,7 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
                           {getFlagLabel(flag)}
                         </span>
                       ))}
-                    </div>
                   )}
-                  
                   {event.metadata?.assessment && (
                     <details className="mt-2">
                       <summary className="text-sm text-gray-600 cursor-pointer hover:text-gray-800">
@@ -250,19 +214,10 @@ export function MedicalTimeline({ patientId, className = '' }: MedicalTimelinePr
                         )}
                       </div>
                     </details>
-                  )}
-                  
                   {event.metadata?.directions && (
                     <div className="mt-2 p-3 bg-blue-50 rounded-lg text-sm">
                       <p><strong>{t('pharmacy.directions')}:</strong> {event.metadata.directions}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
             ))}
-          </div>
         )}
-      </div>
     </div>
   )
-}

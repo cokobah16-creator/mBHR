@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { db, Patient, Visit, Vital, Consultation, Dispense } from '@/db'
 import { getFlagColor, getFlagLabel } from '@/utils/vitals'
+import { formatNigerianDate } from '@/utils/dateFormat'
 import { AllergyManager } from '@/components/AllergyManager'
 import { PreferenceManager } from '@/components/PreferenceManager'
 import { useAuthStore } from '@/stores/auth'
@@ -172,7 +173,7 @@ export function PatientDetail() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div className="flex items-center space-x-2 text-gray-600">
                 <CalendarIcon className="h-4 w-4" />
-                <span>Age: {getPatientAge(patient.dob)} ({new Date(patient.dob).toLocaleDateString()})</span>
+                <span>Age: {getPatientAge(patient.dob)} ({formatNigerianDate(patient.dob)})</span>
               </div>
               
               <div className="flex items-center space-x-2 text-gray-600">
@@ -215,7 +216,7 @@ export function PatientDetail() {
               {vitals.slice(0, 3).map((vital) => (
                 <div key={vital.id} className="border-l-4 border-green-500 pl-3">
                   <div className="text-sm text-gray-600">
-                    {vital.takenAt.toLocaleDateString()}
+                    {formatNigerianDate(vital.takenAt)}
                   </div>
                   <div className="text-sm">
                     {vital.systolic && vital.diastolic && (
@@ -256,7 +257,7 @@ export function PatientDetail() {
               {consultations.slice(0, 3).map((consultation) => (
                 <div key={consultation.id} className="border-l-4 border-purple-500 pl-3">
                   <div className="text-sm text-gray-600">
-                    {consultation.createdAt.toLocaleDateString()}
+                    {formatNigerianDate(consultation.createdAt)}
                   </div>
                   <div className="text-sm font-medium">
                     {consultation.providerName}
@@ -286,7 +287,7 @@ export function PatientDetail() {
               {dispenses.slice(0, 3).map((dispense) => (
                 <div key={dispense.id} className="border-l-4 border-orange-500 pl-3">
                   <div className="text-sm text-gray-600">
-                    {dispense.dispensedAt.toLocaleDateString()}
+                    {formatNigerianDate(dispense.dispensedAt)}
                   </div>
                   <div className="text-sm font-medium">
                     {dispense.itemName}
@@ -324,7 +325,7 @@ export function PatientDetail() {
                 <div className="flex items-center justify-between mb-2">
                   <div>
                     <span className="font-medium">
-                      {visit.startedAt.toLocaleDateString()} - {visit.siteName}
+                      {formatNigerianDate(visit.startedAt)} - {visit.siteName}
                     </span>
                     <span className={`ml-2 px-2 py-1 rounded-full text-xs font-medium ${
                       visit.status === 'open'

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { formatNigerianDate } from '@/utils/dateFormat'
 import { db as mbhrDb, ulid } from '@/db/mbhr'
 import { BeakerIcon, ExclamationTriangleIcon, CheckCircleIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
 
@@ -8,11 +9,9 @@ export default function Dispense() {
   const [items, setItems] = useState<any[]>([])
   const [selected, setSelected] = useState<string>('')
   const [loading, setLoading] = useState(false)
-
   useEffect(() => {
     loadData()
   }, [])
-
   const loadData = async () => {
     try {
       const [rxData, batchesData, itemsData] = await Promise.all([
@@ -27,18 +26,15 @@ export default function Dispense() {
       console.error('Error loading dispense data:', error)
     }
   }
-
   const chosen = rx.find(r => r.id === selected)
   const chosenLine = chosen?.lines[0]
   const chosenItem = chosenLine ? items.find(i => i.id === chosenLine.itemId) : null
-
   const availableBatches = useMemo(() => {
     if (!chosenLine) return []
     return batches
       .filter(b => b.itemId === chosenLine.itemId && b.qtyOnHand > 0)
       .sort((a, b) => a.expiryDate.localeCompare(b.expiryDate)) // FEFO - First Expired, First Out
   }, [chosenLine, batches])
-
   async function doDispense() {
     if (!chosen || !chosenLine || !chosenItem) return
     
@@ -46,20 +42,11 @@ export default function Dispense() {
     if (!batch) {
       alert('❌ No available batches for this medication')
       return
-    }
-    
     if (new Date(batch.expiryDate) < new Date()) {
       alert('❌ Selected batch has expired')
-      return
-    }
-
     if (batch.qtyOnHand < chosenLine.qty) {
       alert(`❌ Insufficient stock. Available: ${batch.qtyOnHand}, Required: ${chosenLine.qty}`)
-      return
-    }
-
     setLoading(true)
-    try {
       const now = new Date().toISOString()
       await mbhrDb.transaction('rw', 
         mbhrDb.pharmacy_batches, 
@@ -79,18 +66,14 @@ export default function Dispense() {
             dispensedBy: 'pharmacist-1', // In real app, use current user
             dispensedAt: now
           })
-
           // Update batch quantity
           await mbhrDb.pharmacy_batches.update(batch.id, { 
             qtyOnHand: batch.qtyOnHand - chosenLine.qty 
-          })
           
           // Update item total quantity
           await mbhrDb.pharmacy_items.update(chosenItem.id, { 
             onHandQty: Math.max(0, chosenItem.onHandQty - chosenLine.qty), 
             updatedAt: now 
-          })
-
           // Record stock movement
           await mbhrDb.stock_moves_rx.add({ 
             id: ulid(), 
@@ -99,36 +82,27 @@ export default function Dispense() {
             qtyDelta: -chosenLine.qty, 
             reason: 'dispense', 
             createdAt: now 
-          })
-          
           // Mark prescription as dispensed
           await mbhrDb.prescriptions.update(chosen.id, { status: 'dispensed' })
         }
       )
-
       alert('✅ Medication dispensed successfully!')
       setSelected('')
       await loadData() // Refresh data
-    } catch (error) {
       console.error('Error dispensing medication:', error)
       alert('❌ Failed to dispense medication')
     } finally {
       setLoading(false)
-    }
-  }
-
   return (
     <div className="p-4 space-y-6">
       <div className="flex items-center space-x-3">
         <BeakerIcon className="h-8 w-8 text-primary" />
         <h2 className="text-2xl font-bold text-gray-900">Dispense Medication</h2>
       </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Prescription Selection */}
         <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Open Prescriptions</h3>
-          
           {rx.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <DocumentTextIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -156,10 +130,8 @@ export default function Dispense() {
                         </div>
                         <div className="text-sm text-gray-600">
                           {item?.medName} {item?.strength} × {line?.qty}
-                        </div>
                         <div className="text-xs text-gray-500">
                           {line?.dosage} • {line?.frequency}
-                        </div>
                       </div>
                       {selected === r.id && (
                         <CheckCircleIcon className="h-5 w-5 text-primary" />
@@ -168,38 +140,23 @@ export default function Dispense() {
                   </div>
                 )
               })}
-            </div>
           )}
         </div>
-
         {/* Dispense Details */}
-        <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Dispense Details</h3>
-          
           {!chosen ? (
-            <div className="text-center py-8 text-gray-500">
               <p>Select a prescription to dispense</p>
-            </div>
-          ) : (
             <div className="space-y-4">
               {/* Prescription Info */}
               <div className="bg-gray-50 p-4 rounded-lg">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="font-medium">Patient:</span> {chosen.patientId}
-                  </div>
-                  <div>
                     <span className="font-medium">Prescriber:</span> {chosen.prescriberId}
-                  </div>
-                  <div>
                     <span className="font-medium">Medication:</span> {chosenItem?.medName} {chosenItem?.strength}
-                  </div>
-                  <div>
                     <span className="font-medium">Quantity:</span> {chosenLine?.qty} {chosenItem?.unit}
-                  </div>
                 </div>
               </div>
-
               {/* Batch Information */}
               <div>
                 <h4 className="font-medium text-gray-900 mb-2">Available Batches (FEFO)</h4>
@@ -208,8 +165,6 @@ export default function Dispense() {
                     <div className="flex items-center space-x-2">
                       <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
                       <span className="text-sm text-red-800">No available batches</span>
-                    </div>
-                  </div>
                 ) : (
                   <div className="space-y-2">
                     {availableBatches.slice(0, 3).map((batch, index) => {
@@ -227,9 +182,8 @@ export default function Dispense() {
                                 {index === 0 && <span className="ml-2 text-green-600">(Next to dispense)</span>}
                               </div>
                               <div className="text-xs text-gray-600">
-                                Expires: {new Date(batch.expiryDate).toLocaleDateString()} • 
+                                Expires: {formatNigerianDate(batch.expiryDate)} • 
                                 Available: {batch.qtyOnHand}
-                              </div>
                             </div>
                             <div className="flex flex-col space-y-1">
                               {isExpired && (
@@ -240,17 +194,10 @@ export default function Dispense() {
                               {!isExpired && isExpiringSoon && (
                                 <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">
                                   Expiring Soon
-                                </span>
-                              )}
-                            </div>
                           </div>
-                        </div>
                       )
                     })}
-                  </div>
                 )}
-              </div>
-
               {/* Dispense Action */}
               <div className="pt-4 border-t">
                 <button 
@@ -260,11 +207,6 @@ export default function Dispense() {
                 >
                   {loading ? 'Dispensing...' : 'Dispense Medication'}
                 </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { formatNigerianDate } from '@/utils/dateFormat'
 import { Patient } from '@/db'
 import { mergePatients } from '@/db'
 import { useAuthStore } from '@/stores/auth'
@@ -17,7 +18,6 @@ interface PatientDedupeModalProps {
   onResolve: (action: 'merge' | 'create_new', winnerId?: string) => void
   onCancel: () => void
 }
-
 export function PatientDedupeModal({ 
   newPatient, 
   candidates, 
@@ -27,7 +27,6 @@ export function PatientDedupeModal({
   const { currentUser } = useAuthStore()
   const [selectedWinner, setSelectedWinner] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-
   const handleMerge = async () => {
     if (!selectedWinner || !currentUser) return
     
@@ -42,41 +41,28 @@ export function PatientDedupeModal({
       setLoading(false)
     }
   }
-
   const getMatchScore = (candidate: Patient): number => {
     let score = 0
-    
     // Phone match (highest weight)
     if (candidate.phone && newPatient.phone && 
         candidate.phone.replace(/\D/g, '') === newPatient.phone.replace(/\D/g, '')) {
       score += 50
-    }
-    
     // Name similarity
     if (candidate.givenName.toLowerCase() === newPatient.givenName.toLowerCase()) score += 20
     if (candidate.familyName.toLowerCase() === newPatient.familyName.toLowerCase()) score += 20
-    
     // DOB match
     if (candidate.dob === newPatient.dob) score += 30
-    
     // Sex match
     if (candidate.sex === newPatient.sex) score += 10
-    
     return score
-  }
-
   const getMatchLabel = (score: number): { label: string; color: string } => {
     if (score >= 70) return { label: 'High Match', color: 'bg-red-100 text-red-800' }
     if (score >= 40) return { label: 'Possible Match', color: 'bg-yellow-100 text-yellow-800' }
     return { label: 'Low Match', color: 'bg-gray-100 text-gray-800' }
-  }
-
   const formatField = (value: any): string => {
     if (!value) return '—'
-    if (value instanceof Date) return value.toLocaleDateString()
+    if (value instanceof Date) return formatNigerianDate(value)
     return String(value)
-  }
-
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -97,7 +83,6 @@ export function PatientDedupeModal({
               <XMarkIcon className="h-6 w-6 text-gray-600" />
             </button>
           </div>
-
           {/* New Patient Info */}
           <div className="mb-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-3">New Patient Being Registered</h3>
@@ -107,24 +92,13 @@ export function PatientDedupeModal({
                   <span className="font-medium text-blue-800">Name:</span>
                   <div className="text-blue-700">{newPatient.givenName} {newPatient.familyName}</div>
                 </div>
-                <div>
                   <span className="font-medium text-blue-800">Phone:</span>
                   <div className="text-blue-700">{formatField(newPatient.phone)}</div>
-                </div>
-                <div>
                   <span className="font-medium text-blue-800">DOB:</span>
                   <div className="text-blue-700">{formatField(newPatient.dob)}</div>
-                </div>
-                <div>
                   <span className="font-medium text-blue-800">Sex:</span>
                   <div className="text-blue-700">{formatField(newPatient.sex)}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* Candidate Matches */}
-          <div className="mb-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-3">
               Existing Patients ({candidates.length} found)
             </h3>
@@ -156,7 +130,6 @@ export function PatientDedupeModal({
                           <p className="text-sm text-gray-600">
                             ID: {candidate.id.slice(-8).toUpperCase()}
                           </p>
-                        </div>
                       </div>
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${matchInfo.color}`}>
                         {matchInfo.label} ({matchScore}%)
@@ -169,58 +142,34 @@ export function PatientDedupeModal({
                         <span className={candidate.phone === newPatient.phone ? 'font-medium text-green-700' : 'text-gray-600'}>
                           {formatField(candidate.phone)}
                         </span>
-                      </div>
-                      <div className="flex items-center space-x-2">
                         <CalendarIcon className="h-4 w-4 text-gray-400" />
                         <span className={candidate.dob === newPatient.dob ? 'font-medium text-green-700' : 'text-gray-600'}>
                           {formatField(candidate.dob)}
-                        </span>
-                      </div>
-                      <div className="flex items-center space-x-2">
                         <span className="text-gray-400">Sex:</span>
                         <span className={candidate.sex === newPatient.sex ? 'font-medium text-green-700' : 'text-gray-600'}>
                           {formatField(candidate.sex)}
-                        </span>
-                      </div>
-                      <div className="flex items-center space-x-2">
                         <MapPinIcon className="h-4 w-4 text-gray-400" />
                         <span className="text-gray-600">{candidate.state}</span>
-                      </div>
-                    </div>
-                    
                     <div className="mt-2 text-xs text-gray-500">
-                      Registered: {candidate.createdAt.toLocaleDateString()}
-                    </div>
+                      Registered: {formatNigerianDate(candidate.createdAt)}
                   </div>
                 )
               })}
-            </div>
-          </div>
-
           {/* Action Buttons */}
           <div className="flex space-x-4">
-            <button
               onClick={() => onResolve('create_new')}
               className="btn-secondary flex-1"
-            >
               Create New Patient
-            </button>
-            <button
               onClick={handleMerge}
               disabled={!selectedWinner || loading}
               className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
               {loading ? 'Merging...' : 'Use Selected Patient'}
-            </button>
-          </div>
           
           <div className="mt-4 text-center">
             <p className="text-xs text-gray-500">
               Selecting an existing patient will link this registration to their record.
             </p>
-          </div>
         </div>
       </div>
     </div>
   )
-}

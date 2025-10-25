@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { formatNigerianDate } from '@/utils/dateFormat'
 import { useT } from '@/hooks/useT'
 import { db, generateId } from '@/db'
 import { getMessageService } from '@/services/messaging'
@@ -23,12 +24,8 @@ interface CareTask {
   createdAt: Date
   _dirty?: number
 }
-
 interface CarePlanManagerProps {
-  patientId: string
   className?: string
-}
-
 export function CarePlanManager({ patientId, className = '' }: CarePlanManagerProps) {
   const { t } = useT()
   const [tasks, setTasks] = useState<CareTask[]>([])
@@ -40,11 +37,9 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
     description: '',
     dueDate: new Date().toISOString().split('T')[0]
   })
-
   useEffect(() => {
     loadCareTasks()
   }, [patientId])
-
   const loadCareTasks = async () => {
     try {
       const careTasks = await db.careTasks
@@ -61,7 +56,6 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
         }
         return task
       })
-      
       setTasks(updatedTasks)
     } catch (error) {
       console.error('Error loading care tasks:', error)
@@ -69,11 +63,8 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
       setLoading(false)
     }
   }
-
   const addTask = async () => {
     if (!newTask.title.trim()) return
-
-    try {
       const task: CareTask = {
         id: generateId(),
         patientId,
@@ -85,9 +76,7 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
         createdAt: new Date(),
         _dirty: 1
       }
-
       await db.careTasks.add(task)
-      
       // Queue reminder if it's a medication reminder
       if (task.type === 'medication_reminder') {
         try {
@@ -101,9 +90,6 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
           )
         } catch (error) {
           console.warn('Failed to queue reminder:', error)
-        }
-      }
-
       await loadCareTasks()
       setShowAddTask(false)
       setNewTask({
@@ -111,25 +97,12 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
         title: '',
         description: '',
         dueDate: new Date().toISOString().split('T')[0]
-      })
-    } catch (error) {
       console.error('Error adding care task:', error)
-    }
-  }
-
   const completeTask = async (taskId: string) => {
-    try {
       await db.careTasks.update(taskId, {
         status: 'completed',
         completedAt: new Date(),
-        _dirty: 1
-      })
-      await loadCareTasks()
-    } catch (error) {
       console.error('Error completing task:', error)
-    }
-  }
-
   const getTaskIcon = (type: CareTask['type']) => {
     switch (type) {
       case 'medication_reminder':
@@ -142,9 +115,6 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
         return ClipboardDocumentListIcon
       default:
         return ClockIcon
-    }
-  }
-
   const getTaskColor = (status: CareTask['status']) => {
     switch (status) {
       case 'pending':
@@ -155,26 +125,9 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
         return 'bg-red-100 text-red-800 border-red-200'
       case 'cancelled':
         return 'bg-gray-100 text-gray-800 border-gray-200'
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200'
-    }
-  }
-
   const getStatusIcon = (status: CareTask['status']) => {
-    switch (status) {
-      case 'pending':
-        return ClockIcon
-      case 'completed':
         return CheckCircleIcon
-      case 'overdue':
         return ExclamationTriangleIcon
-      case 'cancelled':
-        return ExclamationTriangleIcon
-      default:
-        return ClockIcon
-    }
-  }
-
   if (loading) {
     return (
       <div className={`space-y-4 ${className}`}>
@@ -185,8 +138,6 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
         </div>
       </div>
     )
-  }
-
   return (
     <div className={`space-y-6 ${className}`}>
       {/* Header */}
@@ -196,7 +147,6 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
           <h3 className="text-lg font-semibold text-gray-900">
             {t('careplan.title')}
           </h3>
-        </div>
         
         <button
           onClick={() => setShowAddTask(true)}
@@ -205,8 +155,6 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
           <PlusIcon className="h-4 w-4" />
           <span>{t('careplan.addTask')}</span>
         </button>
-      </div>
-
       {/* Add Task Form */}
       {showAddTask && (
         <div className="card bg-blue-50 border-blue-200">
@@ -231,45 +179,24 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
               </select>
             </div>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
                 {t('careplan.taskTitle')} *
-              </label>
               <input
                 type="text"
                 value={newTask.title}
                 onChange={(e) => setNewTask(prev => ({ ...prev, title: e.target.value }))}
-                className="input-field"
                 placeholder={t('careplan.titlePlaceholder')}
               />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
                 {t('careplan.description')}
-              </label>
               <textarea
                 value={newTask.description}
                 onChange={(e) => setNewTask(prev => ({ ...prev, description: e.target.value }))}
-                className="input-field"
                 rows={3}
                 placeholder={t('careplan.descriptionPlaceholder')}
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
                 {t('careplan.dueDate')} *
-              </label>
-              <input
                 type="date"
                 value={newTask.dueDate}
                 onChange={(e) => setNewTask(prev => ({ ...prev, dueDate: e.target.value }))}
-                className="input-field"
                 min={new Date().toISOString().split('T')[0]}
-              />
-            </div>
-            
             <div className="flex space-x-4">
               <button onClick={addTask} className="btn-primary">
                 {t('careplan.addTask')}
@@ -277,27 +204,20 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
               <button 
                 onClick={() => setShowAddTask(false)} 
                 className="btn-secondary"
-              >
                 {t('action.cancel')}
-              </button>
-            </div>
           </div>
-        </div>
       )}
-
       {/* Tasks List */}
       <div className="space-y-4">
         {tasks.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
             <ClipboardDocumentListIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p>{t('careplan.noTasks')}</p>
-          </div>
         ) : (
           tasks.map((task) => {
             const TaskIcon = getTaskIcon(task.type)
             const StatusIcon = getStatusIcon(task.status)
             const taskColor = getTaskColor(task.status)
-            
             return (
               <div key={task.id} className={`border rounded-lg p-4 ${taskColor}`}>
                 <div className="flex items-start justify-between">
@@ -308,9 +228,9 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
                       <p className="text-sm text-gray-700 mt-1">{task.description}</p>
                       <div className="flex items-center space-x-4 mt-2 text-sm text-gray-600">
                         <span>{t(`careplan.type.${task.type}`)}</span>
-                        <span>Due: {task.dueDate.toLocaleDateString()}</span>
+                        <span>Due: {formatNigerianDate(task.dueDate)}</span>
                         {task.completedAt && (
-                          <span>Completed: {task.completedAt.toLocaleDateString()}</span>
+                          <span>Completed: {formatNigerianDate(task.completedAt)}</span>
                         )}
                       </div>
                     </div>
@@ -330,13 +250,10 @@ export function CarePlanManager({ patientId, className = '' }: CarePlanManagerPr
                         {t('action.complete')}
                       </button>
                     )}
-                  </div>
                 </div>
               </div>
             )
           })
         )}
-      </div>
     </div>
   )
-}

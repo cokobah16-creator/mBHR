@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { formatNigerianDate } from '@/utils/dateFormat'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -13,22 +14,18 @@ const soapSchema = z.object({
   soapAssessment: z.string().min(1, 'Assessment required'),
   soapPlan: z.string().min(1, 'Plan required')
 })
-
 type SoapFormData = z.infer<typeof soapSchema>
-
 interface SoapFormProps {
   patientId: string
   visitId: string
   onSuccess?: () => void
   onCancel?: () => void
 }
-
 export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormProps) {
   const { t } = useTranslation()
   const { currentUser } = useAuthStore()
   const [loading, setLoading] = useState(false)
   const [diagnoses, setDiagnoses] = useState<string[]>([''])
-
   const {
     register,
     handleSubmit,
@@ -36,23 +33,17 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
   } = useForm<SoapFormData>({
     resolver: zodResolver(soapSchema)
   })
-
   const addDiagnosis = () => {
     setDiagnoses([...diagnoses, ''])
   }
-
   const removeDiagnosis = (index: number) => {
     if (diagnoses.length > 1) {
       setDiagnoses(diagnoses.filter((_, i) => i !== index))
     }
-  }
-
   const updateDiagnosis = (index: number, value: string) => {
     const updated = [...diagnoses]
     updated[index] = value
     setDiagnoses(updated)
-  }
-
   const onSubmit = async (data: SoapFormData) => {
     setLoading(true)
     try {
@@ -68,7 +59,6 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
         provisionalDx: diagnoses.filter(dx => dx.trim()),
         createdAt: new Date()
       }
-
       await db.consultations.add(consultation)
       await createAuditLog(
         currentUser?.role || 'unknown',
@@ -76,15 +66,11 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
         'consultation',
         consultation.id
       )
-
       onSuccess?.()
     } catch (error) {
       console.error('Error saving consultation:', error)
     } finally {
       setLoading(false)
-    }
-  }
-
   return (
     <div className="max-w-4xl mx-auto">
       <div className="card">
@@ -94,7 +80,6 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
             Consultation Notes
           </h2>
         </div>
-
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* Subjective */}
           <div>
@@ -111,57 +96,26 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
               <p className="text-red-600 text-sm mt-1">{errors.soapSubjective.message}</p>
             )}
           </div>
-
           {/* Objective */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
               Objective (Physical Examination) *
-            </label>
-            <textarea
               {...register('soapObjective')}
-              className="input-field"
-              rows={4}
               placeholder="Physical examination findings, vital signs, laboratory results..."
-            />
             {errors.soapObjective && (
               <p className="text-red-600 text-sm mt-1">{errors.soapObjective.message}</p>
-            )}
-          </div>
-
           {/* Assessment */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
               Assessment (Clinical Impression) *
-            </label>
-            <textarea
               {...register('soapAssessment')}
-              className="input-field"
               rows={3}
               placeholder="Clinical reasoning, differential diagnosis, problem list..."
-            />
             {errors.soapAssessment && (
               <p className="text-red-600 text-sm mt-1">{errors.soapAssessment.message}</p>
-            )}
-          </div>
-
           {/* Plan */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
               Plan (Treatment Plan) *
-            </label>
-            <textarea
               {...register('soapPlan')}
-              className="input-field"
-              rows={4}
               placeholder="Treatment plan, medications, follow-up instructions, patient education..."
-            />
             {errors.soapPlan && (
               <p className="text-red-600 text-sm mt-1">{errors.soapPlan.message}</p>
-            )}
-          </div>
-
           {/* Provisional Diagnoses */}
-          <div>
             <div className="flex items-center justify-between mb-3">
               <label className="block text-sm font-medium text-gray-700">
                 Provisional Diagnoses
@@ -200,19 +154,12 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
                   )}
                 </div>
               ))}
-            </div>
-          </div>
-
           {/* Provider Info */}
           <div className="bg-gray-50 p-4 rounded-lg">
             <p className="text-sm text-gray-600">
               <strong>Provider:</strong> {currentUser?.fullName || 'Unknown'}
             </p>
-            <p className="text-sm text-gray-600">
-              <strong>Date:</strong> {new Date().toLocaleDateString()}
-            </p>
-          </div>
-
+              <strong>Date:</strong> {formatNigerianDate(new Date())}
           {/* Action Buttons */}
           <div className="flex space-x-4 pt-6">
             <button
@@ -223,17 +170,10 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
               {loading ? 'Saving...' : 'Save Consultation'}
             </button>
             {onCancel && (
-              <button
-                type="button"
                 onClick={onCancel}
                 className="btn-secondary flex-1"
-              >
                 Cancel
-              </button>
-            )}
-          </div>
         </form>
       </div>
     </div>
   )
-}

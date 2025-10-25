@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react'
+import { formatNigerianDate } from '@/utils/dateFormat'
 import { useT } from '@/hooks/useT'
 import { db } from '@/db'
 import { getMessageService } from '@/services/messaging'
@@ -20,21 +21,14 @@ interface StockBatch {
   qtyOnHand: number
   supplier?: string
 }
-
 interface DispenseAllocation {
   batchId: string
-  lotNumber: string
   qty: number
-  expiryDate: string
-}
-
 interface FEFODispenserProps {
   patientId: string
   visitId: string
   onSuccess?: () => void
   onCancel?: () => void
-}
-
 export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel }: FEFODispenserProps) {
   const { t } = useT()
   const [medications, setMedications] = useState<any[]>([])
@@ -45,34 +39,24 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
   const [dosage, setDosage] = useState('')
   const [directions, setDirections] = useState('')
   const [loading, setLoading] = useState(false)
-
   useEffect(() => {
     loadMedications()
   }, [])
-
-  useEffect(() => {
     if (selectedMedication) {
       loadBatchesForMedication(selectedMedication)
     }
   }, [selectedMedication])
-
-  useEffect(() => {
     if (selectedMedication && requestedQty > 0) {
       calculateFEFOAllocation()
-    }
   }, [selectedMedication, requestedQty, batches])
-
   const loadMedications = async () => {
     try {
       const items = await db.inventory.where('onHandQty').above(0).toArray()
       setMedications(items)
     } catch (error) {
       console.error('Error loading medications:', error)
-    }
   }
-
   const loadBatchesForMedication = async (medicationId: string) => {
-    try {
       const stockBatches = await db.stockBatches
         .where('drugId')
         .equals(medicationId)
@@ -80,29 +64,20 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
         .toArray()
       
       setBatches(stockBatches)
-    } catch (error) {
       console.error('Error loading batches:', error)
       setBatches([])
-    }
-  }
-
   const calculateFEFOAllocation = () => {
     if (!batches.length || requestedQty <= 0) {
       setAllocation([])
       return
-    }
-
     // Sort by expiry date (First Expired, First Out)
     const sortedBatches = [...batches].sort((a, b) => 
       new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime()
     )
-
     const allocations: DispenseAllocation[] = []
     let remaining = requestedQty
-
     for (const batch of sortedBatches) {
       if (remaining <= 0) break
-      
       const allocateQty = Math.min(batch.qtyOnHand, remaining)
       allocations.push({
         batchId: batch.id,
@@ -110,18 +85,12 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
         qty: allocateQty,
         expiryDate: batch.expiryDate
       })
-      
       remaining -= allocateQty
-    }
-
     setAllocation(allocations)
-  }
-
   const getExpiryStatus = (expiryDate: string) => {
     const now = new Date()
     const expiry = new Date(expiryDate)
     const daysUntilExpiry = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-
     if (daysUntilExpiry < 0) {
       return { status: 'expired', color: 'text-red-600 bg-red-50', icon: XCircleIcon }
     } else if (daysUntilExpiry <= 30) {
@@ -130,9 +99,6 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
       return { status: 'warning', color: 'text-orange-600 bg-orange-50', icon: ClockIcon }
     } else {
       return { status: 'good', color: 'text-green-600 bg-green-50', icon: CheckCircleIcon }
-    }
-  }
-
   const canDispense = () => {
     return selectedMedication && 
            requestedQty > 0 && 
@@ -140,16 +106,11 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
            allocation.reduce((sum, a) => sum + a.qty, 0) >= requestedQty &&
            dosage.trim() &&
            directions.trim()
-  }
-
   const handleDispense = async () => {
     if (!canDispense()) return
-
     setLoading(true)
-    try {
       const medication = medications.find(m => m.id === selectedMedication)
       if (!medication) throw new Error('Medication not found')
-
       // Create dispense record
       const dispense = {
         id: crypto.randomUUID(),
@@ -163,9 +124,7 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
         dispensedAt: new Date(),
         _dirty: 1
       }
-
       await db.dispenses.add(dispense)
-
       // Update batch quantities
       for (const alloc of allocation) {
         const batch = batches.find(b => b.id === alloc.batchId)
@@ -174,21 +133,16 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
             qtyOnHand: batch.qtyOnHand - alloc.qty
           })
         }
-      }
-
       // Update total inventory
       await db.inventory.update(selectedMedication, {
         onHandQty: medication.onHandQty - requestedQty,
         updatedAt: new Date()
-      })
-
       // Queue medication reminder for tomorrow
       try {
         const messageService = getMessageService()
         const reminderDate = new Date()
         reminderDate.setDate(reminderDate.getDate() + 1)
         reminderDate.setHours(9, 0, 0, 0) // 9 AM tomorrow
-
         await messageService.queueMedicationReminder(
           patientId,
           medication.itemName,
@@ -198,20 +152,13 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
         )
       } catch (error) {
         console.warn('Failed to queue reminder:', error)
-      }
-
       onSuccess?.()
-    } catch (error) {
       console.error('Error dispensing medication:', error)
       alert('Failed to dispense medication')
     } finally {
       setLoading(false)
-    }
-  }
-
   const totalAvailable = allocation.reduce((sum, a) => sum + a.qty, 0)
   const isShortfall = totalAvailable < requestedQty
-
   return (
     <div className="space-y-6">
       <div className="flex items-center space-x-3">
@@ -225,7 +172,6 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
           </p>
         </div>
       </div>
-
       <div className="card">
         <div className="space-y-6">
           {/* Medication Selection */}
@@ -246,12 +192,8 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
               ))}
             </select>
           </div>
-
           {/* Quantity Selection */}
-          <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3">
               Quantity *
-            </label>
             <div className="flex items-center space-x-4">
               <button
                 type="button"
@@ -270,24 +212,16 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
                   className="w-20 text-2xl font-bold text-center border-2 border-gray-300 rounded-lg py-2"
                 />
               </div>
-              
-              <button
-                type="button"
                 onClick={() => setRequestedQty(requestedQty + 1)}
                 className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 touch-target-large"
-              >
                 <span className="text-xl font-bold">+</span>
-              </button>
             </div>
-          </div>
-
           {/* FEFO Allocation Display */}
           {allocation.length > 0 && (
             <div>
               <h3 className="text-lg font-medium text-gray-700 mb-3">
                 Batch Allocation (FEFO Order)
               </h3>
-              
               {isShortfall && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                   <div className="flex items-center space-x-2">
@@ -298,7 +232,6 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
                   </div>
                 </div>
               )}
-              
               <div className="space-y-3">
                 {allocation.map((alloc, index) => {
                   const expiryStatus = getExpiryStatus(alloc.expiryDate)
@@ -313,8 +246,7 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
                           </div>
                           <div className="text-sm text-gray-600">
                             Quantity: {alloc.qty} • 
-                            Expires: {new Date(alloc.expiryDate).toLocaleDateString()}
-                          </div>
+                            Expires: {formatNigerianDate(alloc.expiryDate)}
                         </div>
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${expiryStatus.color}`}>
                           <StatusIcon className="h-3 w-3 mr-1" />
@@ -324,13 +256,9 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
                     </div>
                   )
                 })}
-              </div>
-            </div>
           )}
-
           {/* Dosage and Directions */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
               <label className="block text-lg font-medium text-gray-700 mb-3">
                 Dosage *
               </label>
@@ -341,42 +269,25 @@ export default function FEFODispenser({ patientId, visitId, onSuccess, onCancel 
                 className="input-field text-lg"
                 placeholder="e.g., 1 tablet, 5ml"
               />
-            </div>
             
-            <div>
-              <label className="block text-lg font-medium text-gray-700 mb-3">
                 Directions *
-              </label>
               <textarea
                 value={directions}
                 onChange={(e) => setDirections(e.target.value)}
-                className="input-field text-lg"
                 rows={3}
                 placeholder="Take twice daily with food"
-              />
-            </div>
-          </div>
-
           {/* Action Buttons */}
           <div className="flex space-x-4 pt-6">
             <button
               onClick={handleDispense}
               disabled={!canDispense() || loading || isShortfall}
               className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
               {loading ? 'Dispensing...' : 'Dispense & Set Reminder'}
             </button>
             {onCancel && (
-              <button
                 onClick={onCancel}
                 className="btn-secondary"
-              >
                 Cancel
-              </button>
             )}
-          </div>
-        </div>
-      </div>
     </div>
   )
-}
