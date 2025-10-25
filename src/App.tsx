@@ -46,6 +46,10 @@ const PatientDashboard = lazy(() => import('@/features/patient-portal/PatientDas
 const MedicalHistory = lazy(() => import('@/features/patient-portal/MedicalHistory').then(m => ({ default: m.MedicalHistory })))
 const VisitDetail = lazy(() => import('@/features/patient-portal/VisitDetail').then(m => ({ default: m.VisitDetail })))
 const AppointmentRequest = lazy(() => import('@/features/patient-portal/AppointmentRequest').then(m => ({ default: m.AppointmentRequest })))
+const BillingPayments = lazy(() => import('@/features/patient-portal/BillingPayments').then(m => ({ default: m.BillingPayments })))
+const PreVisitForms = lazy(() => import('@/features/patient-portal/PreVisitForms').then(m => ({ default: m.PreVisitForms })))
+const PrescriptionRefills = lazy(() => import('@/features/patient-portal/PrescriptionRefills').then(m => ({ default: m.PrescriptionRefills })))
+const Telehealth = lazy(() => import('@/features/patient-portal/Telehealth').then(m => ({ default: m.Telehealth })))
 
 // Inventory and gamification
 const Inventory = lazy(() => import('@/pages/Inventory').then(m => ({ default: m.Inventory })))
@@ -157,7 +161,12 @@ function App() {
                   <Route path="/dashboard" element={<PatientDashboard />} />
                   <Route path="/medical-history" element={<MedicalHistory />} />
                   <Route path="/visit/:visitId" element={<VisitDetail />} />
+                  <Route path="/appointments" element={<AppointmentRequest />} />
                   <Route path="/appointments/request" element={<AppointmentRequest />} />
+                  <Route path="/billing" element={<BillingPayments />} />
+                  <Route path="/forms" element={<PreVisitForms />} />
+                  <Route path="/prescriptions" element={<PrescriptionRefills />} />
+                  <Route path="/telehealth" element={<Telehealth />} />
                   <Route path="/" element={<Navigate to="/patient/dashboard" replace />} />
                 </Routes>
               </Suspense>
