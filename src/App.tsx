@@ -38,6 +38,7 @@ const LabResultsDashboard = lazy(() => import('@/features/labs/LabResultsDashboa
 const AppointmentCalendar = lazy(() => import('@/features/appointments/AppointmentCalendar').then(m => ({ default: m.AppointmentCalendar })))
 
 // Patient Portal components
+const PatientPortalLanding = lazy(() => import('@/features/patient-portal/PatientPortalLanding').then(m => ({ default: m.PatientPortalLanding })))
 const PatientLogin = lazy(() => import('@/features/patient-portal/PatientLogin').then(m => ({ default: m.PatientLogin })))
 const PatientRegister = lazy(() => import('@/features/patient-portal/PatientRegister').then(m => ({ default: m.PatientRegister })))
 const PatientDashboard = lazy(() => import('@/features/patient-portal/PatientDashboard').then(m => ({ default: m.PatientDashboard })))
@@ -106,6 +107,7 @@ function App() {
         <Route path="/login" element={<Login />} />
 
         {/* Patient Portal Routes */}
+        <Route path="/patient" element={<PatientPortalLanding />} />
         <Route path="/patient/login" element={<PatientLogin />} />
         <Route path="/patient/register" element={<PatientRegister />} />
         <Route
