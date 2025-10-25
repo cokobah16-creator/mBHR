@@ -1,5 +1,5 @@
 import React from 'react'
-import { Suspense, lazy, useEffect, startTransition } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Layout } from '@/components/Layout'
@@ -82,14 +82,19 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      startTransition(() => {
-        navigate('/', { replace: true })
-      })
+      navigate('/', { replace: true })
     }
   }, [isAuthenticated, navigate])
 
   if (!isAuthenticated) {
-    return null
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Redirecting...</p>
+        </div>
+      </div>
+    )
   }
 
   return <>{children}</>
@@ -101,14 +106,19 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!sessionToken) {
-      startTransition(() => {
-        navigate('/patient/login', { replace: true })
-      })
+      navigate('/patient/login', { replace: true })
     }
   }, [sessionToken, navigate])
 
   if (!sessionToken) {
-    return null
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Redirecting...</p>
+        </div>
+      </div>
+    )
   }
 
   return <>{children}</>
@@ -124,7 +134,6 @@ function App() {
       <PWAInstallPrompt />
       <Routes>
         {/* Public Routes - Must be defined before catch-all */}
-        <Route index element={<Home />} />
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
 
@@ -156,9 +165,9 @@ function App() {
           }
         />
 
-        {/* Staff Routes */}
+        {/* Staff Routes - catch-all for authenticated routes */}
         <Route
-          path="/*"
+          path="*"
           element={
             <ProtectedRoute>
               <Suspense fallback={
