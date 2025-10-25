@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, FormProvider } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useTranslation } from 'react-i18next'
@@ -37,15 +37,17 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
   const [flags, setFlags] = useState<string[]>([])
   const [patient, setPatient] = useState<any>(null)
 
+  const methods = useForm<VitalsFormData>({
+    resolver: zodResolver(vitalsSchema)
+  })
+
   const {
     register,
     handleSubmit,
     watch,
     control,
     formState: { errors }
-  } = useForm<VitalsFormData>({
-    resolver: zodResolver(vitalsSchema)
-  })
+  } = methods
 
   const watchedValues = watch()
 
@@ -149,9 +151,10 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
           </div>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          {/* Height and Weight */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <FormProvider {...methods}>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+            {/* Height and Weight */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <EnhancedVitalsInput
               name="heightCm"
               label={t('vitals.height')}
@@ -287,6 +290,7 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
             )}
           </div>
         </form>
+      </FormProvider>
       </div>
     </div>
   )
