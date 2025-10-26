@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, startTransition } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/stores/auth';
 import { isOnlineSyncEnabled } from '@/sync/adapter';
@@ -99,7 +99,9 @@ export default function Login() {
                 console.log('[login] result:', success);
                 if (success) {
                     console.log('[login] success - navigating to dashboard');
-                    navigate('/dashboard');
+                    startTransition(() => {
+                        navigate('/dashboard');
+                    });
                 }
                 else {
                     console.log('[login] failed - invalid PIN');

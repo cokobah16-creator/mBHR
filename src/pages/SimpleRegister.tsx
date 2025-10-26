@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { startTransition } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useT } from '@/hooks/useT'
 import { SimplePatientForm } from '@/components/SimplePatientForm'
@@ -9,16 +9,20 @@ export function SimpleRegister() {
   const navigate = useNavigate()
 
   const handleSuccess = (patientId: string) => {
-    navigate('/dashboard', { 
-      state: { 
-        message: t('patient.registrationSuccess'),
-        patientId 
-      }
+    startTransition(() => {
+      navigate('/dashboard', {
+        state: {
+          message: t('patient.registrationSuccess'),
+          patientId
+        }
+      })
     })
   }
 
   const handleCancel = () => {
-    navigate('/dashboard')
+    startTransition(() => {
+      navigate('/dashboard')
+    })
   }
 
   return (
@@ -27,7 +31,7 @@ export function SimpleRegister() {
         {/* Header */}
         <div className="flex items-center space-x-4 mb-8">
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => startTransition(() => navigate('/dashboard'))}
             className="p-3 rounded-lg hover:bg-gray-100 transition-colors touch-target-large"
           >
             <ArrowLeftIcon className="h-6 w-6 text-gray-600" />

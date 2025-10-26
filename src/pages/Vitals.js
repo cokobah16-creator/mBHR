@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useState } from 'react';
+import { useEffect, useState, startTransition } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PatientSearch } from '@/components/PatientSearch';
 import { VitalsForm } from '@/components/VitalsForm';
@@ -57,19 +57,23 @@ export function Vitals() {
     };
     const handleSuccess = () => {
         // Navigate to consultation or back to queue
-        if (visit) {
-            navigate(`/consult/${visit.id}`);
-        }
-        else {
-            navigate('/queue');
-        }
+        startTransition(() => {
+            if (visit) {
+                navigate(`/consult/${visit.id}`);
+            }
+            else {
+                navigate('/queue');
+            }
+        });
     };
     const handleCancel = () => {
-        navigate('/queue');
+        startTransition(() => {
+            navigate('/queue');
+        });
     };
     // If no visitId provided, show patient search
     if (!visitId && !selectedPatient) {
-        return (_jsxs("div", { className: "space-y-6", children: [_jsxs("div", { className: "flex items-center space-x-4", children: [_jsx("button", { onClick: () => navigate('/queue'), className: "p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target", children: _jsx(ArrowLeftIcon, { className: "h-6 w-6 text-gray-600" }) }), _jsxs("div", { children: [_jsx("h1", { className: "text-2xl font-bold text-gray-900", children: "Record Vital Signs" }), _jsx("p", { className: "text-gray-600", children: "Search for a patient to record vitals" })] })] }), _jsxs("div", { className: "card max-w-2xl mx-auto", children: [_jsx("h2", { className: "text-lg font-semibold text-gray-900 mb-4", children: "Select Patient" }), _jsx(PatientSearch, { onPatientSelect: handlePatientSelect, placeholder: "Search patients by name or phone...", className: "w-full" })] })] }));
+        return (_jsxs("div", { className: "space-y-6", children: [_jsxs("div", { className: "flex items-center space-x-4", children: [_jsx("button", { onClick: () => startTransition(() => navigate('/queue')), className: "p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target", children: _jsx(ArrowLeftIcon, { className: "h-6 w-6 text-gray-600" }) }), _jsxs("div", { children: [_jsx("h1", { className: "text-2xl font-bold text-gray-900", children: "Record Vital Signs" }), _jsx("p", { className: "text-gray-600", children: "Search for a patient to record vitals" })] })] }), _jsxs("div", { className: "card max-w-2xl mx-auto", children: [_jsx("h2", { className: "text-lg font-semibold text-gray-900 mb-4", children: "Select Patient" }), _jsx(PatientSearch, { onPatientSelect: handlePatientSelect, placeholder: "Search patients by name or phone...", className: "w-full" })] })] }));
     }
     if (loading) {
         return (_jsx("div", { className: "flex items-center justify-center py-12", children: _jsxs("div", { className: "text-center", children: [_jsx("div", { className: "animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto" }), _jsx("p", { className: "mt-4 text-gray-600", children: "Loading visit..." })] }) }));

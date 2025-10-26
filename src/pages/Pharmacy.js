@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useState } from 'react';
+import { useEffect, useState, startTransition } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PatientSearch } from '@/components/PatientSearch';
 import { DispenseForm } from '@/components/DispenseForm';
@@ -69,14 +69,18 @@ export function Pharmacy() {
     };
     const handleSuccess = () => {
         // Complete the visit and return to queue
-        navigate('/queue', {
-            state: {
-                message: 'Medication dispensed successfully!'
-            }
+        startTransition(() => {
+            navigate('/queue', {
+                state: {
+                    message: 'Medication dispensed successfully!'
+                }
+            });
         });
     };
     const handleCancel = () => {
-        navigate('/queue');
+        startTransition(() => {
+            navigate('/queue');
+        });
     };
     const getPatientAge = (dob) => {
         const birthDate = new Date(dob);

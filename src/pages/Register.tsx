@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { startTransition } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PatientForm } from '@/components/PatientForm'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -8,16 +8,20 @@ export function Register() {
 
   const handleSuccess = (patientId: string) => {
     // Navigate to patient details or back to dashboard
-    navigate('/dashboard', { 
-      state: { 
-        message: 'Patient registered successfully!',
-        patientId 
-      }
+    startTransition(() => {
+      navigate('/dashboard', {
+        state: {
+          message: 'Patient registered successfully!',
+          patientId
+        }
+      })
     })
   }
 
   const handleCancel = () => {
-    navigate('/dashboard')
+    startTransition(() => {
+      navigate('/dashboard')
+    })
   }
 
   return (
@@ -25,7 +29,7 @@ export function Register() {
       {/* Header */}
       <div className="flex items-center space-x-4">
         <button
-          onClick={() => navigate('/dashboard')}
+          onClick={() => startTransition(() => navigate('/dashboard'))}
           className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
         >
           <ArrowLeftIcon className="h-6 w-6 text-gray-600" />

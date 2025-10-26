@@ -1,6 +1,6 @@
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
+import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
 import { Suspense, lazy, useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Layout } from '@/components/Layout';
 import RequireRoles from '@/components/RequireRoles';
@@ -71,27 +71,15 @@ const AnalyticsDashboard = lazy(() => import('@/features/analytics/AnalyticsDash
 const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users })));
 function ProtectedRoute({ children }) {
     const { isAuthenticated } = useAuthStore();
-    const navigate = useNavigate();
-    useEffect(() => {
-        if (!isAuthenticated) {
-            navigate('/', { replace: true });
-        }
-    }, [isAuthenticated, navigate]);
     if (!isAuthenticated) {
-        return (_jsx("div", { className: "min-h-screen flex items-center justify-center", children: _jsxs("div", { className: "text-center", children: [_jsx("div", { className: "animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto" }), _jsx("p", { className: "mt-4 text-gray-600", children: "Redirecting..." })] }) }));
+        return _jsx(Navigate, { to: "/", replace: true });
     }
     return _jsx(_Fragment, { children: children });
 }
 function PatientProtectedRoute({ children }) {
-    const navigate = useNavigate();
     const sessionToken = localStorage.getItem('patient_session_token');
-    useEffect(() => {
-        if (!sessionToken) {
-            navigate('/patient/login', { replace: true });
-        }
-    }, [sessionToken, navigate]);
     if (!sessionToken) {
-        return (_jsx("div", { className: "min-h-screen flex items-center justify-center", children: _jsxs("div", { className: "text-center", children: [_jsx("div", { className: "animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" }), _jsx("p", { className: "mt-4 text-gray-600", children: "Redirecting..." })] }) }));
+        return _jsx(Navigate, { to: "/patient/login", replace: true });
     }
     return _jsx(_Fragment, { children: children });
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, startTransition } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -87,7 +87,9 @@ export function PatientLogin() {
       if (result.success && result.sessionToken) {
         localStorage.setItem('patient_session_token', result.sessionToken)
         localStorage.setItem('patient_portal_user', JSON.stringify(result.portalUser))
-        navigate('/patient/dashboard')
+        startTransition(() => {
+          navigate('/patient/dashboard')
+        })
       } else {
         setError(result.error || 'Invalid verification code')
         setOtp('')

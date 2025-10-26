@@ -1,6 +1,6 @@
-import { jsx as _jsx } from "react/jsx-runtime";
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 // src/main.tsx
-import React from 'react';
+import React, { Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import * as Sentry from '@sentry/react';
@@ -86,5 +86,5 @@ function renderFatal(msg) {
     }
     log('Application fully initialized and rendered.');
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(_jsx(React.StrictMode, { children: _jsx(GlobalErrorBoundary, { children: _jsx(BrowserRouter, { children: _jsx(App, {}) }) }) }));
+    root.render(_jsx(React.StrictMode, { children: _jsx(GlobalErrorBoundary, { children: _jsx(Suspense, { fallback: _jsx("div", { className: "min-h-screen flex items-center justify-center bg-gray-50", children: _jsxs("div", { className: "text-center", children: [_jsx("div", { className: "animate-spin rounded-full h-16 w-16 border-b-2 border-green-600 mx-auto" }), _jsx("p", { className: "mt-4 text-gray-600 text-lg", children: "Loading mBHR..." })] }) }), children: _jsx(BrowserRouter, { children: _jsx(App, {}) }) }) }) }));
 })();

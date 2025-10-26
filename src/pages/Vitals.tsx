@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, startTransition } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { PatientSearch } from '@/components/PatientSearch'
 import { VitalsForm } from '@/components/VitalsForm'
@@ -59,15 +59,19 @@ export function Vitals() {
 
   const handleSuccess = () => {
     // Navigate to consultation or back to queue
-    if (visit) {
-      navigate(`/consult/${visit.id}`)
-    } else {
-      navigate('/queue')
-    }
+    startTransition(() => {
+      if (visit) {
+        navigate(`/consult/${visit.id}`)
+      } else {
+        navigate('/queue')
+      }
+    })
   }
 
   const handleCancel = () => {
-    navigate('/queue')
+    startTransition(() => {
+      navigate('/queue')
+    })
   }
 
   // If no visitId provided, show patient search
@@ -77,7 +81,7 @@ export function Vitals() {
         {/* Header */}
         <div className="flex items-center space-x-4">
           <button
-            onClick={() => navigate('/queue')}
+            onClick={() => startTransition(() => navigate('/queue'))}
             className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
           >
             <ArrowLeftIcon className="h-6 w-6 text-gray-600" />

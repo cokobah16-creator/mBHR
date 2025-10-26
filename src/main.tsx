@@ -1,5 +1,5 @@
 // src/main.tsx
-import React from 'react'
+import React, { Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import * as Sentry from '@sentry/react'
@@ -95,9 +95,18 @@ function renderFatal(msg: string) {
   root.render(
     <React.StrictMode>
       <GlobalErrorBoundary>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <Suspense fallback={
+          <div className="min-h-screen flex items-center justify-center bg-gray-50">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-green-600 mx-auto"></div>
+              <p className="mt-4 text-gray-600 text-lg">Loading mBHR...</p>
+            </div>
+          </div>
+        }>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </Suspense>
       </GlobalErrorBoundary>
     </React.StrictMode>
   )

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, startTransition } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { PatientSearch } from '@/components/PatientSearch'
 import { SoapForm } from '@/components/SoapForm'
@@ -69,15 +69,19 @@ export function Consult() {
 
   const handleSuccess = () => {
     // Navigate to pharmacy or back to queue
-    if (visit) {
-      navigate(`/pharmacy/${visit.id}`)
-    } else {
-      navigate('/queue')
-    }
+    startTransition(() => {
+      if (visit) {
+        navigate(`/pharmacy/${visit.id}`)
+      } else {
+        navigate('/queue')
+      }
+    })
   }
 
   const handleCancel = () => {
-    navigate('/queue')
+    startTransition(() => {
+      navigate('/queue')
+    })
   }
 
   const getPatientAge = (dob: string) => {

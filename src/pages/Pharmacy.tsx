@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, startTransition } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { PatientSearch } from '@/components/PatientSearch'
 import { DispenseForm } from '@/components/DispenseForm'
@@ -72,15 +72,19 @@ export function Pharmacy() {
 
   const handleSuccess = () => {
     // Complete the visit and return to queue
-    navigate('/queue', {
-      state: {
-        message: 'Medication dispensed successfully!'
-      }
+    startTransition(() => {
+      navigate('/queue', {
+        state: {
+          message: 'Medication dispensed successfully!'
+        }
+      })
     })
   }
 
   const handleCancel = () => {
-    navigate('/queue')
+    startTransition(() => {
+      navigate('/queue')
+    })
   }
 
   const getPatientAge = (dob: string) => {

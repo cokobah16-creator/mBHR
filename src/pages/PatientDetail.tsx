@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, startTransition } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { db, Patient, Visit, Vital, Consultation, Dispense } from '@/db'
@@ -121,7 +121,7 @@ export function PatientDetail() {
       {/* Header */}
       <div className="flex items-center space-x-4">
         <button
-          onClick={() => navigate('/patients')}
+          onClick={() => startTransition(() => navigate('/patients'))}
           className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
         >
           <ArrowLeftIcon className="h-6 w-6 text-gray-600" />

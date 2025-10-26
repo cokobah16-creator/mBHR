@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { startTransition } from 'react'
 import { Suspense, lazy, useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -83,47 +83,19 @@ const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
-  const navigate = useNavigate()
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      navigate('/', { replace: true })
-    }
-  }, [isAuthenticated, navigate])
 
   if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Redirecting...</p>
-        </div>
-      </div>
-    )
+    return <Navigate to="/" replace />
   }
 
   return <>{children}</>
 }
 
 function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
-  const navigate = useNavigate()
   const sessionToken = localStorage.getItem('patient_session_token')
 
-  useEffect(() => {
-    if (!sessionToken) {
-      navigate('/patient/login', { replace: true })
-    }
-  }, [sessionToken, navigate])
-
   if (!sessionToken) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Redirecting...</p>
-        </div>
-      </div>
-    )
+    return <Navigate to="/patient/login" replace />
   }
 
   return <>{children}</>

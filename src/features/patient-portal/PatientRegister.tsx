@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, startTransition } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -79,7 +79,7 @@ export function PatientRegister() {
         localStorage.setItem('patient_session_token', result.sessionToken)
         localStorage.setItem('patient_portal_user', JSON.stringify(result.portalUser))
         setStep('success')
-        setTimeout(() => navigate('/patient/dashboard'), 2000)
+        setTimeout(() => startTransition(() => navigate('/patient/dashboard')), 2000)
       } else {
         setError(result.error || 'Registration failed')
         setOtp('')
