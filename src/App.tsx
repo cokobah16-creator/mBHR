@@ -1,6 +1,6 @@
-import React, { startTransition } from 'react'
+import React from 'react'
 import { Suspense, lazy, useEffect } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Layout } from '@/components/Layout'
 import RequireRoles from '@/components/RequireRoles'
@@ -36,7 +36,6 @@ const PharmacyReports = lazy(() => import('@/pages/PharmacyReports'))
 const SMSReminders = lazy(() => import('@/pages/SMSReminders'))
 
 // Labs and appointments (Sprint 5 features)
-const LabOrderForm = lazy(() => import('@/features/labs/LabOrderForm').then(m => ({ default: m.LabOrderForm })))
 const LabResultsDashboard = lazy(() => import('@/features/labs/LabResultsDashboard').then(m => ({ default: m.LabResultsDashboard })))
 const AppointmentCalendar = lazy(() => import('@/features/appointments/AppointmentCalendar').then(m => ({ default: m.AppointmentCalendar })))
 

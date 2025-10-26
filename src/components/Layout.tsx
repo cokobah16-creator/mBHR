@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
@@ -9,7 +9,7 @@ import { LanguageSelector } from '@/components/LanguageSelector'
 import { AccessibilityControls } from '@/components/AccessibilityControls'
 import { SyncButton } from '@/components/SyncButton'
 import { can } from '@/auth/roles'
-import type { ElementType, ReactNode } from 'react'
+import type { ElementType } from 'react'
 import {
   HomeIcon,
   UserGroupIcon,

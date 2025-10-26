@@ -33,7 +33,6 @@ const PharmacyReports = lazy(() => import('@/pages/PharmacyReports'));
 // const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'))
 const SMSReminders = lazy(() => import('@/pages/SMSReminders'));
 // Labs and appointments (Sprint 5 features)
-const LabOrderForm = lazy(() => import('@/features/labs/LabOrderForm').then(m => ({ default: m.LabOrderForm })));
 const LabResultsDashboard = lazy(() => import('@/features/labs/LabResultsDashboard').then(m => ({ default: m.LabResultsDashboard })));
 const AppointmentCalendar = lazy(() => import('@/features/appointments/AppointmentCalendar').then(m => ({ default: m.AppointmentCalendar })));
 // Portal admin pages
