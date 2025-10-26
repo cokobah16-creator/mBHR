@@ -144,26 +144,6 @@ export default function Login() {
           <div className="text-sm text-gray-500">Powered by Dr. Isioma Okobah Foundation</div>
         </div>
 
-        <Link
-          to="/patient"
-          className="block mb-6 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg p-4 hover:from-blue-600 hover:to-blue-700 transition-all duration-300 shadow-md hover:shadow-lg"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="bg-white bg-opacity-20 rounded-full p-2">
-                <HeartIcon className="h-6 w-6" />
-              </div>
-              <div className="text-left">
-                <div className="font-semibold text-lg">Patient Portal</div>
-                <div className="text-sm text-blue-100">Access your medical records</div>
-              </div>
-            </div>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </div>
-        </Link>
-
         <div className="text-center mb-4">
           <div className="text-sm font-medium text-gray-700">Staff Login</div>
           <div className="text-xs text-gray-500">Healthcare personnel only</div>
