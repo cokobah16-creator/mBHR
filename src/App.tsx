@@ -43,6 +43,7 @@ const AppointmentCalendar = lazy(() => import('@/features/appointments/Appointme
 // Portal admin pages
 const PortalDashboard = lazy(() => import('@/pages/admin/PortalDashboard').then(m => ({ default: m.PortalDashboard })))
 const PortalMigration = lazy(() => import('@/pages/admin/PortalMigration').then(m => ({ default: m.PortalMigration })))
+const BulkPortalMigration = lazy(() => import('@/pages/admin/BulkPortalMigration').then(m => ({ default: m.BulkPortalMigration })))
 const EmailDiagnostics = lazy(() => import('@/pages/admin/EmailDiagnostics'))
 
 // Patient Portal components
@@ -278,6 +279,11 @@ function App() {
                     <Route path="/admin/portal-migration" element={
                       <RequireRoles roles={['admin']}>
                         <PortalMigration />
+                      </RequireRoles>
+                    } />
+                    <Route path="/admin/bulk-portal-migration" element={
+                      <RequireRoles roles={['admin']}>
+                        <BulkPortalMigration />
                       </RequireRoles>
                     } />
                     <Route path="/admin/email-diagnostics" element={

@@ -11,7 +11,7 @@ import { NIGERIAN_STATES, LGAS_BY_STATE } from '@/utils/nigeria';
 import { normalizePhone } from '@/utils/phone';
 import { patientSchema } from '@/validation/schemas';
 import { CameraIcon, UserIcon } from '@heroicons/react/24/outline';
-import { enablePortalAccess } from '@/services/portalEnrollment';
+import { enrollPatientInPortal } from '@/services/unifiedPortalEnrollment';
 export function PatientForm({ onSuccess, onCancel }) {
     const { t } = useTranslation();
     const { addPatient } = usePatientsStore();
@@ -61,22 +61,24 @@ export function PatientForm({ onSuccess, onCancel }) {
             };
             const patientId = await addPatient(patientData);
             console.log('PatientForm: Patient created with ID:', patientId);
-            // Handle portal enrollment if enabled
-            if (data.portalEnabled) {
-                const portalResult = await enablePortalAccess(patientId, {
-                    sendInviteNow: data.sendInviteNow,
-                    termsAccepted: data.termsAccepted
+            // Automatically enroll in portal if contact info provided
+            if ((normalizedPhone || data.email) && data.portalEnabled !== false) {
+                const portalResult = await enrollPatientInPortal({
+                    patientId,
+                    givenName: data.givenName || '',
+                    familyName: data.familyName || '',
+                    dob: data.dob || '',
+                    phone: normalizedPhone || undefined,
+                    email: data.email || undefined,
+                    sex: data.sex
                 });
                 if (!portalResult.success) {
                     console.warn('Portal enrollment failed:', portalResult.error);
-                    // Don't block registration, just show warning
                     alert(`Patient registered but portal enrollment failed: ${portalResult.error}. You can enable portal access later from patient details.`);
                 }
-                else if (data.sendInviteNow) {
-                    alert('Patient registered successfully! Portal invitation has been sent.');
-                }
                 else {
-                    alert('Patient registered successfully! Portal access enabled. Send invitation from patient details when ready.');
+                    console.log('Portal account created:', portalResult.portalUserId);
+                    alert('Patient registered successfully! Portal access enabled. Patient can login at /patient/login');
                 }
             }
             onSuccess?.(patientId);
