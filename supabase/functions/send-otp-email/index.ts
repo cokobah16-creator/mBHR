@@ -32,7 +32,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const resendApiKey = Deno.env.get("RESEND_API_KEY") || "re_Y8di3Fe7_Adp3aoj3zeLm62p4YZG6AYSn";
+    const resendApiKey = Deno.env.get("RESEND_API_KEY") || "re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu";
 
     const senderEmail = Deno.env.get("SENDER_EMAIL") || "onboarding@resend.dev";
 
