@@ -1,28 +1,15 @@
 import React, { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
 import { useTranslation } from 'react-i18next'
 import { usePatientsStore } from '@/stores/patients'
 import { PatientDedupeModal } from '@/components/PatientDedupeModal'
 import { AudioButton } from '@/components/AudioButton'
 import { PhotoCapture } from '@/components/PhotoCapture'
-import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG, validatePhoneNG } from '@/utils/nigeria'
+import { NIGERIAN_STATES, LGAS_BY_STATE } from '@/utils/nigeria'
+import { normalizePhone } from '@/utils/phone'
+import { patientSchema, PatientFormData } from '@/validation/schemas'
 import { CameraIcon, UserIcon } from '@heroicons/react/24/outline'
-
-const patientSchema = z.object({
-  givenName: z.string().min(1, 'Given name is required'),
-  familyName: z.string().min(1, 'Family name is required'),
-  sex: z.enum(['male', 'female', 'other']),
-  dob: z.string().min(1, 'Date of birth is required'),
-  phone: z.string().refine(validatePhoneNG, 'Invalid Nigerian phone number'),
-  address: z.string().min(1, 'Address is required'),
-  state: z.string().min(1, 'State is required'),
-  lga: z.string().min(1, 'LGA is required'),
-  familyId: z.string().optional()
-})
-
-type PatientFormData = z.infer<typeof patientSchema>
 
 interface PatientFormProps {
   onSuccess?: (patientId: string) => void
@@ -64,15 +51,16 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     setLoading(true)
     console.log('PatientForm: Submitting patient data:', data)
     try {
-      const formattedPhone = formatPhoneNG(data.phone)
-      console.log('PatientForm: Formatted phone:', formattedPhone)
-      
+      const normalizedPhone = data.phone ? normalizePhone(data.phone) : null
+      console.log('PatientForm: Normalized phone:', normalizedPhone)
+
       const patientData = {
         givenName: data.givenName || '',
         familyName: data.familyName || '',
         sex: data.sex || 'other',
         dob: data.dob || '',
-        phone: formattedPhone,
+        phone: normalizedPhone || undefined,
+        email: data.email || undefined,
         address: data.address || '',
         state: data.state || '',
         lga: data.lga || '',
@@ -81,12 +69,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
       }
 
       const patientId = await addPatient(patientData)
-      
+
       console.log('PatientForm: Patient created with ID:', patientId)
       onSuccess?.(patientId)
     } catch (error) {
       console.error('Error adding patient:', error)
-      
+
       // Check if it's a duplicate error
       if (error.message.startsWith('DUPLICATES_FOUND:')) {
         const duplicateData = JSON.parse(error.message.replace('DUPLICATES_FOUND:', ''))
@@ -234,20 +222,37 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             </div>
           </div>
 
-          {/* Phone */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t('patient.phone')} *
-            </label>
-            <input
-              {...register('phone')}
-              type="tel"
-              className="input-field"
-              placeholder="08012345678 or +2348012345678"
-            />
-            {errors.phone && (
-              <p className="text-red-600 text-sm mt-1">{errors.phone.message}</p>
-            )}
+          {/* Phone and Email */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {t('patient.phone')} (at least one contact required)
+              </label>
+              <input
+                {...register('phone')}
+                type="tel"
+                className="input-field"
+                placeholder="08012345678 or +2348012345678"
+              />
+              {errors.phone && (
+                <p className="text-red-600 text-sm mt-1">{errors.phone.message}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Email (at least one contact required)
+              </label>
+              <input
+                {...register('email')}
+                type="email"
+                className="input-field"
+                placeholder="patient@example.com"
+              />
+              {errors.email && (
+                <p className="text-red-600 text-sm mt-1">{errors.email.message}</p>
+              )}
+            </div>
           </div>
 
           {/* Address */}
