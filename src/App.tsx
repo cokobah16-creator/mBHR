@@ -58,6 +58,13 @@ const BillingPayments = lazy(() => import('@/features/patient-portal/BillingPaym
 const PreVisitForms = lazy(() => import('@/features/patient-portal/PreVisitForms').then(m => ({ default: m.PreVisitForms })))
 const PrescriptionRefills = lazy(() => import('@/features/patient-portal/PrescriptionRefills').then(m => ({ default: m.PrescriptionRefills })))
 const Telehealth = lazy(() => import('@/features/patient-portal/Telehealth').then(m => ({ default: m.Telehealth })))
+const UpdatePHR = lazy(() => import('@/features/patient-portal/UpdatePHR').then(m => ({ default: m.UpdatePHR })))
+const SecureMessaging = lazy(() => import('@/features/patient-portal/SecureMessaging').then(m => ({ default: m.SecureMessaging })))
+const ManageAccount = lazy(() => import('@/features/patient-portal/ManageAccount').then(m => ({ default: m.ManageAccount })))
+const LabResults = lazy(() => import('@/features/patient-portal/LabResults').then(m => ({ default: m.LabResults })))
+const MedicalConditions = lazy(() => import('@/features/patient-portal/MedicalConditions').then(m => ({ default: m.MedicalConditions })))
+const DocumentUpload = lazy(() => import('@/features/patient-portal/DocumentUpload').then(m => ({ default: m.DocumentUpload })))
+const Referrals = lazy(() => import('@/features/patient-portal/Referrals').then(m => ({ default: m.Referrals })))
 
 // Inventory and gamification
 const Inventory = lazy(() => import('@/pages/Inventory').then(m => ({ default: m.Inventory })))
@@ -216,6 +223,13 @@ function App() {
                   <Route path="/forms" element={<PreVisitForms />} />
                   <Route path="/prescriptions" element={<PrescriptionRefills />} />
                   <Route path="/telehealth" element={<Telehealth />} />
+                  <Route path="/update-phr" element={<UpdatePHR />} />
+                  <Route path="/messages" element={<SecureMessaging />} />
+                  <Route path="/account" element={<ManageAccount />} />
+                  <Route path="/lab-results" element={<LabResults />} />
+                  <Route path="/conditions" element={<MedicalConditions />} />
+                  <Route path="/documents" element={<DocumentUpload />} />
+                  <Route path="/referrals" element={<Referrals />} />
                   <Route path="/" element={<Navigate to="/patient/dashboard" replace />} />
                 </Routes>
               </Suspense>
