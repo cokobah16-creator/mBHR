@@ -16,7 +16,7 @@ const MAX_OTP_ATTEMPTS = 5;
 const MAX_FAILED_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MINUTES = 60;
 const SESSION_DURATION_HOURS = 24;
-const MAX_OTP_REQUESTS_PER_HOUR = 3;
+const MAX_OTP_REQUESTS_PER_HOUR = 200;
 /**
  * Generate a random 6-digit OTP code
  */
@@ -34,37 +34,42 @@ async function hashOTP(otp) {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 /**
- * Check rate limiting for OTP requests
+ * Check rate limiting for OTP requests using the database function
+ * Returns an object with allowed status and retry information
  */
 async function checkOTPRateLimit(phone, email) {
     try {
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-        let query = supabase
-            .from('patient_portal_users')
-            .select('last_otp_sent_at')
-            .gte('last_otp_sent_at', oneHourAgo);
-        if (phone) {
-            query = query.eq('phone_number', phone);
+        if (!phone && !email) {
+            return { allowed: true };
         }
-        else if (email) {
-            query = query.eq('email', email);
-        }
-        else {
-            return true;
-        }
-        const { data, error } = await query.maybeSingle();
-        if (error && error.code !== 'PGRST116') {
+        const contactMethod = phone ? 'phone' : 'email';
+        const contactValue = phone || email || '';
+        // Use the database function to check and increment rate limit
+        const { data, error } = await supabase.rpc('check_and_increment_otp_rate_limit', {
+            p_contact_method: contactMethod,
+            p_contact_value: contactValue,
+            p_max_requests: MAX_OTP_REQUESTS_PER_HOUR
+        });
+        if (error) {
             logger.error('Error checking OTP rate limit:', error);
-            return false;
+            // Allow request on error to maintain functionality
+            return { allowed: true };
         }
-        if (!data) {
-            return true;
+        const result = data;
+        if (!result.allowed) {
+            const minutes = Math.ceil(result.retry_after_seconds / 60);
+            return {
+                allowed: false,
+                retryAfter: result.retry_after_seconds,
+                message: `Too many OTP requests. Please try again in ${minutes} minute${minutes !== 1 ? 's' : ''}.`
+            };
         }
-        return false;
+        return { allowed: true };
     }
     catch (error) {
         logger.error('Error in checkOTPRateLimit:', error);
-        return false;
+        // Allow request on error to maintain functionality
+        return { allowed: true };
     }
 }
 /**
@@ -117,10 +122,11 @@ export async function requestOTP(request) {
                 error: 'Phone number or email required'
             };
         }
-        if (!await checkOTPRateLimit(phone, email)) {
+        const rateLimitCheck = await checkOTPRateLimit(phone, email);
+        if (!rateLimitCheck.allowed) {
             return {
                 success: false,
-                error: 'Too many OTP requests. Please try again later.'
+                error: rateLimitCheck.message || 'Too many OTP requests. Please try again later.'
             };
         }
         if (purpose === 'registration') {
