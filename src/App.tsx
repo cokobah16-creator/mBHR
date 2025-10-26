@@ -101,13 +101,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
   const [isValidating, setIsValidating] = React.useState(true)
   const [isValid, setIsValid] = React.useState(false)
-  const navigate = useNavigate()
 
   React.useEffect(() => {
     const validateSession = async () => {
       const sessionToken = localStorage.getItem('patient_session_token')
+      const portalUser = localStorage.getItem('patient_portal_user')
 
-      if (!sessionToken) {
+      console.log('[PatientProtectedRoute] Validating session...', {
+        hasToken: !!sessionToken,
+        hasUser: !!portalUser,
+        token: sessionToken?.substring(0, 8) + '...'
+      })
+
+      if (!sessionToken || !portalUser) {
+        console.log('[PatientProtectedRoute] No session or user found')
         setIsValid(false)
         setIsValidating(false)
         return
@@ -115,6 +122,8 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
 
       try {
         const { supabase } = await import('@/lib/supabase')
+        console.log('[PatientProtectedRoute] Querying session from database...')
+
         const { data, error } = await supabase
           .from('patient_portal_sessions')
           .select('id, expires_at, is_active')
@@ -122,7 +131,19 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
           .eq('is_active', true)
           .maybeSingle()
 
-        if (error || !data) {
+        console.log('[PatientProtectedRoute] Query result:', { data, error })
+
+        if (error) {
+          console.error('[PatientProtectedRoute] Database error:', error)
+          localStorage.removeItem('patient_session_token')
+          localStorage.removeItem('patient_portal_user')
+          setIsValid(false)
+          setIsValidating(false)
+          return
+        }
+
+        if (!data) {
+          console.log('[PatientProtectedRoute] No session found in database')
           localStorage.removeItem('patient_session_token')
           localStorage.removeItem('patient_portal_user')
           setIsValid(false)
@@ -131,7 +152,11 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
         }
 
         const expiresAt = new Date(data.expires_at)
-        if (expiresAt < new Date()) {
+        const now = new Date()
+        console.log('[PatientProtectedRoute] Session expires:', expiresAt, 'Now:', now, 'Valid:', expiresAt > now)
+
+        if (expiresAt < now) {
+          console.log('[PatientProtectedRoute] Session expired')
           localStorage.removeItem('patient_session_token')
           localStorage.removeItem('patient_portal_user')
           setIsValid(false)
@@ -139,10 +164,11 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
           return
         }
 
+        console.log('[PatientProtectedRoute] Session is valid!')
         setIsValid(true)
         setIsValidating(false)
       } catch (err) {
-        console.error('Session validation error:', err)
+        console.error('[PatientProtectedRoute] Exception during validation:', err)
         setIsValid(false)
         setIsValidating(false)
       }
