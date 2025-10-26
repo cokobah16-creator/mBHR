@@ -39,6 +39,10 @@ const LabOrderForm = lazy(() => import('@/features/labs/LabOrderForm').then(m =>
 const LabResultsDashboard = lazy(() => import('@/features/labs/LabResultsDashboard').then(m => ({ default: m.LabResultsDashboard })))
 const AppointmentCalendar = lazy(() => import('@/features/appointments/AppointmentCalendar').then(m => ({ default: m.AppointmentCalendar })))
 
+// Portal admin pages
+const PortalDashboard = lazy(() => import('@/pages/admin/PortalDashboard').then(m => ({ default: m.PortalDashboard })))
+const PortalMigration = lazy(() => import('@/pages/admin/PortalMigration').then(m => ({ default: m.PortalMigration })))
+
 // Patient Portal components
 const PatientPortalLanding = lazy(() => import('@/features/patient-portal/PatientPortalLanding').then(m => ({ default: m.PatientPortalLanding })))
 const PatientLogin = lazy(() => import('@/features/patient-portal/PatientLogin').then(m => ({ default: m.PatientLogin })))
@@ -259,6 +263,16 @@ function App() {
                     <Route path="/admin/approvals" element={
                       <RequireRoles roles={['admin']}>
                         <ApprovalInbox />
+                      </RequireRoles>
+                    } />
+                    <Route path="/admin/portal-dashboard" element={
+                      <RequireRoles roles={['admin']}>
+                        <PortalDashboard />
+                      </RequireRoles>
+                    } />
+                    <Route path="/admin/portal-migration" element={
+                      <RequireRoles roles={['admin']}>
+                        <PortalMigration />
                       </RequireRoles>
                     } />
                     <Route path="/simple/register" element={<SimpleRegister />} />

@@ -8,6 +8,7 @@ import { getFlagColor, getFlagLabel } from '@/utils/vitals'
 import { formatNigerianDate } from '@/utils/dateFormat'
 import { AllergyManager } from '@/components/AllergyManager'
 import { PreferenceManager } from '@/components/PreferenceManager'
+import { PortalStatusCard } from '@/components/PortalStatusCard'
 import { useAuthStore } from '@/stores/auth'
 import { patientSchema, PatientFormData } from '@/validation/schemas'
 import { NIGERIAN_STATES, LGAS_BY_STATE } from '@/utils/nigeria'
@@ -635,6 +636,15 @@ export function PatientDetail() {
           )}
         </div>
       </div>
+
+      {/* Portal Status */}
+      {patient && (
+        <PortalStatusCard
+          patientId={patient.id}
+          patientName={`${patient.givenName} ${patient.familyName}`}
+          onStatusChange={() => loadPatientData(patient.id)}
+        />
+      )}
 
       {/* Allergies and Preferences */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
