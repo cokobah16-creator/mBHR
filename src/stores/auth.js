@@ -5,12 +5,15 @@ import { verifyPin } from '@/utils/pin';
 import * as logger from '@/lib/logger';
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
+const STAFF_SESSION_DURATION = 12 * 60 * 60 * 1000; // 12 hours
 export const useAuthStore = create()(persist((set, get) => ({
     currentUser: null,
     currentSession: null,
     isAuthenticated: false,
     failedAttempts: 0,
     lockoutUntil: null,
+    sessionExpiresAt: null,
+    lastActivityAt: null,
     login: async (pin) => {
         const state = get();
         // Check lockout
@@ -52,12 +55,16 @@ export const useAuthStore = create()(persist((set, get) => ({
                             lastSeenAt: new Date()
                         };
                         await db.sessions.add(session);
+                        const now = Date.now();
+                        const expiresAt = now + STAFF_SESSION_DURATION;
                         set({
                             currentUser: user,
                             currentSession: session,
                             isAuthenticated: true,
                             failedAttempts: 0,
-                            lockoutUntil: null
+                            lockoutUntil: null,
+                            sessionExpiresAt: expiresAt,
+                            lastActivityAt: now
                         });
                         return true;
                     }
@@ -107,7 +114,9 @@ export const useAuthStore = create()(persist((set, get) => ({
         set({
             currentUser: null,
             currentSession: null,
-            isAuthenticated: false
+            isAuthenticated: false,
+            sessionExpiresAt: null,
+            lastActivityAt: null
         });
     },
     setCurrentUser: (user) => {
@@ -144,11 +153,34 @@ export const useAuthStore = create()(persist((set, get) => ({
             });
         }
         return false;
+    },
+    updateActivity: () => {
+        const now = Date.now();
+        set({ lastActivityAt: now });
+    },
+    checkSessionExpiry: () => {
+        const state = get();
+        if (!state.sessionExpiresAt || !state.isAuthenticated) {
+            return false;
+        }
+        const now = Date.now();
+        if (now >= state.sessionExpiresAt) {
+            // Session expired
+            logger.info('[Auth] Session expired');
+            state.logout();
+            return true;
+        }
+        return false;
     }
 }), {
     name: 'mbhr-auth',
     partialize: (state) => ({
         failedAttempts: state.failedAttempts,
-        lockoutUntil: state.lockoutUntil
+        lockoutUntil: state.lockoutUntil,
+        currentUser: state.currentUser,
+        currentSession: state.currentSession,
+        isAuthenticated: state.isAuthenticated,
+        sessionExpiresAt: state.sessionExpiresAt,
+        lastActivityAt: state.lastActivityAt
     })
 }));

@@ -10,7 +10,9 @@ interface AuthState {
   isAuthenticated: boolean
   failedAttempts: number
   lockoutUntil: number | null
-  
+  sessionExpiresAt: number | null
+  lastActivityAt: number | null
+
   // Actions
   login: (pin: string) => Promise<boolean>
   loginOnline: (email: string, password: string) => Promise<boolean>
@@ -19,10 +21,13 @@ interface AuthState {
   incrementFailedAttempts: () => void
   resetFailedAttempts: () => void
   checkLockout: () => boolean
+  updateActivity: () => void
+  checkSessionExpiry: () => boolean
 }
 
 const MAX_FAILED_ATTEMPTS = 5
 const LOCKOUT_DURATION = 15 * 60 * 1000 // 15 minutes
+const STAFF_SESSION_DURATION = 12 * 60 * 60 * 1000 // 12 hours
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -32,6 +37,8 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       failedAttempts: 0,
       lockoutUntil: null,
+      sessionExpiresAt: null,
+      lastActivityAt: null,
 
       login: async (pin: string) => {
         const state = get()
@@ -82,14 +89,19 @@ export const useAuthStore = create<AuthState>()(
                 
                 await db.sessions.add(session)
                 
+                const now = Date.now()
+                const expiresAt = now + STAFF_SESSION_DURATION
+
                 set({
                   currentUser: user,
                   currentSession: session,
                   isAuthenticated: true,
                   failedAttempts: 0,
-                  lockoutUntil: null
+                  lockoutUntil: null,
+                  sessionExpiresAt: expiresAt,
+                  lastActivityAt: now
                 })
-                
+
                 return true
               }
             }
@@ -138,15 +150,17 @@ export const useAuthStore = create<AuthState>()(
 
       logout: async () => {
         const state = get()
-        
+
         if (state.currentSession) {
           await db.sessions.delete(state.currentSession.id)
         }
-        
+
         set({
           currentUser: null,
           currentSession: null,
-          isAuthenticated: false
+          isAuthenticated: false,
+          sessionExpiresAt: null,
+          lastActivityAt: null
         })
       },
 
@@ -181,7 +195,7 @@ export const useAuthStore = create<AuthState>()(
         if (state.lockoutUntil && Date.now() < state.lockoutUntil) {
           return true
         }
-        
+
         if (state.lockoutUntil && Date.now() >= state.lockoutUntil) {
           // Lockout expired, reset
           set({
@@ -189,7 +203,29 @@ export const useAuthStore = create<AuthState>()(
             lockoutUntil: null
           })
         }
-        
+
+        return false
+      },
+
+      updateActivity: () => {
+        const now = Date.now()
+        set({ lastActivityAt: now })
+      },
+
+      checkSessionExpiry: () => {
+        const state = get()
+        if (!state.sessionExpiresAt || !state.isAuthenticated) {
+          return false
+        }
+
+        const now = Date.now()
+        if (now >= state.sessionExpiresAt) {
+          // Session expired
+          logger.info('[Auth] Session expired')
+          state.logout()
+          return true
+        }
+
         return false
       }
     }),
@@ -197,7 +233,12 @@ export const useAuthStore = create<AuthState>()(
       name: 'mbhr-auth',
       partialize: (state) => ({
         failedAttempts: state.failedAttempts,
-        lockoutUntil: state.lockoutUntil
+        lockoutUntil: state.lockoutUntil,
+        currentUser: state.currentUser,
+        currentSession: state.currentSession,
+        isAuthenticated: state.isAuthenticated,
+        sessionExpiresAt: state.sessionExpiresAt,
+        lastActivityAt: state.lastActivityAt
       })
     }
   )

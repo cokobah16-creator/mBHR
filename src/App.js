@@ -102,41 +102,20 @@ function PatientProtectedRoute({ children }) {
                 return;
             }
             try {
-                const { supabase } = await import('@/lib/supabase');
-                console.log('[PatientProtectedRoute] Querying session from database...');
-                const { data, error } = await supabase
-                    .from('patient_portal_sessions')
-                    .select('id, expires_at, is_active')
-                    .eq('session_token', sessionToken)
-                    .eq('is_active', true)
-                    .maybeSingle();
-                console.log('[PatientProtectedRoute] Query result:', { data, error });
-                if (error) {
-                    console.error('[PatientProtectedRoute] Database error:', error);
+                const { validateAndRefreshPatientSession } = await import('@/utils/sessionManager');
+                console.log('[PatientProtectedRoute] Validating and refreshing session...');
+                const result = await validateAndRefreshPatientSession(sessionToken);
+                console.log('[PatientProtectedRoute] Validation result:', result);
+                if (!result.valid) {
+                    console.log('[PatientProtectedRoute] Session invalid or expired');
                     localStorage.removeItem('patient_session_token');
                     localStorage.removeItem('patient_portal_user');
                     setIsValid(false);
                     setIsValidating(false);
                     return;
                 }
-                if (!data) {
-                    console.log('[PatientProtectedRoute] No session found in database');
-                    localStorage.removeItem('patient_session_token');
-                    localStorage.removeItem('patient_portal_user');
-                    setIsValid(false);
-                    setIsValidating(false);
-                    return;
-                }
-                const expiresAt = new Date(data.expires_at);
-                const now = new Date();
-                console.log('[PatientProtectedRoute] Session expires:', expiresAt, 'Now:', now, 'Valid:', expiresAt > now);
-                if (expiresAt < now) {
-                    console.log('[PatientProtectedRoute] Session expired');
-                    localStorage.removeItem('patient_session_token');
-                    localStorage.removeItem('patient_portal_user');
-                    setIsValid(false);
-                    setIsValidating(false);
-                    return;
+                if (result.needsRefresh) {
+                    console.log('[PatientProtectedRoute] Session was refreshed');
                 }
                 console.log('[PatientProtectedRoute] Session is valid!');
                 setIsValid(true);
@@ -144,6 +123,8 @@ function PatientProtectedRoute({ children }) {
             }
             catch (err) {
                 console.error('[PatientProtectedRoute] Exception during validation:', err);
+                localStorage.removeItem('patient_session_token');
+                localStorage.removeItem('patient_portal_user');
                 setIsValid(false);
                 setIsValidating(false);
             }

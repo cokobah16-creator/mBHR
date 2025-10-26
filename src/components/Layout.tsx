@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link, useLocation, Outlet } from 'react-router-dom'
+import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
@@ -9,6 +9,8 @@ import { LanguageSelector } from '@/components/LanguageSelector'
 import { AccessibilityControls } from '@/components/AccessibilityControls'
 import { SyncButton } from '@/components/SyncButton'
 import { can } from '@/auth/roles'
+import { SessionManager, SESSION_CONFIGS } from '@/utils/sessionManager'
+import { SessionWarning, SessionStatus } from '@/components/SessionWarning'
 import type { ElementType, ReactNode } from 'react'
 import {
   HomeIcon,
@@ -133,9 +135,13 @@ interface LayoutProps {
 export function Layout({ children }: LayoutProps) {
   const { t } = useTranslation()
   const location = useLocation()
-  const { currentUser, logout } = useAuthStore()
+  const navigate = useNavigate()
+  const { currentUser, logout, updateActivity, checkSessionExpiry } = useAuthStore()
   const [overlay, setOverlay] = React.useState<null | "pharmacy">(null)
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false)
+  const [showSessionWarning, setShowSessionWarning] = React.useState(false)
+  const [timeRemaining, setTimeRemaining] = React.useState(0)
+  const sessionManagerRef = React.useRef<SessionManager | null>(null)
 
   // Start low stock monitoring
   useLowStockWatcher()
@@ -144,6 +150,63 @@ export function Layout({ children }: LayoutProps) {
   React.useEffect(() => {
     setMobileMenuOpen(false)
   }, [location.pathname])
+
+  // Initialize session manager
+  React.useEffect(() => {
+    if (!currentUser) return
+
+    const sessionManager = new SessionManager(
+      'staff',
+      (remaining) => {
+        setTimeRemaining(remaining)
+        setShowSessionWarning(true)
+      },
+      () => {
+        logout()
+        navigate('/login')
+      }
+    )
+
+    sessionManagerRef.current = sessionManager
+
+    return () => {
+      sessionManager.destroy()
+    }
+  }, [currentUser, logout, navigate])
+
+  // Check session expiry periodically
+  React.useEffect(() => {
+    if (!currentUser) return
+
+    const interval = setInterval(() => {
+      const expired = checkSessionExpiry()
+      if (expired) {
+        navigate('/login')
+      }
+    }, 60 * 1000)
+
+    return () => clearInterval(interval)
+  }, [currentUser, checkSessionExpiry, navigate])
+
+  // Update activity on user interaction
+  React.useEffect(() => {
+    if (!currentUser) return
+
+    const handleActivity = () => {
+      updateActivity()
+    }
+
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart']
+    events.forEach(event => {
+      window.addEventListener(event, handleActivity, { passive: true })
+    })
+
+    return () => {
+      events.forEach(event => {
+        window.removeEventListener(event, handleActivity)
+      })
+    }
+  }, [currentUser, updateActivity])
 
   const baseNavigation = [
     { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
@@ -167,8 +230,22 @@ export function Layout({ children }: LayoutProps) {
   ]
 
   const handleLogout = async () => {
+    if (sessionManagerRef.current) {
+      sessionManagerRef.current.cleanup()
+    }
     await logout()
+    navigate('/login')
   }
+
+  const handleExtendSession = () => {
+    if (sessionManagerRef.current) {
+      sessionManagerRef.current.extendSession()
+    }
+    updateActivity()
+    setShowSessionWarning(false)
+  }
+
+  const sessionInfo = sessionManagerRef.current?.getSessionInfo()
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -195,6 +272,13 @@ export function Layout({ children }: LayoutProps) {
             </div>
 
             <div className="flex items-center gap-2 md:gap-4">
+              {/* Session Status - Show when time is running low */}
+              {sessionInfo && sessionInfo.timeRemaining < 600 && (
+                <div className="hidden sm:block">
+                  <SessionStatus timeRemaining={sessionInfo.timeRemaining} userType="staff" />
+                </div>
+              )}
+
               {/* Online/Offline Badge - Hidden on very small screens */}
               <div className="hidden xs:block">
                 <OfflineBadge />
@@ -352,6 +436,15 @@ export function Layout({ children }: LayoutProps) {
       
       {/* Toast notifications */}
       <Toasts />
+
+      {/* Session Warning Dialog */}
+      <SessionWarning
+        isOpen={showSessionWarning}
+        timeRemaining={timeRemaining}
+        userType="staff"
+        onExtend={handleExtendSession}
+        onLogout={handleLogout}
+      />
     </div>
   )
 }
