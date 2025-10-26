@@ -51,8 +51,11 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Use environment variable for sender email, fallback to Resend's test domain
+    const senderEmail = Deno.env.get("SENDER_EMAIL") || "onboarding@resend.dev";
+
     const emailContent = {
-      from: "mBHR Patient Portal <noreply@mbhr.health>",
+      from: `mBHR Patient Portal <${senderEmail}>`,
       to: [email],
       subject: "Your mBHR Verification Code",
       html: `
