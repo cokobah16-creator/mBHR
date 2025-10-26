@@ -48,16 +48,24 @@ async function hashOTP(otp: string): Promise<string> {
 /**
  * Check rate limiting for OTP requests
  */
-async function checkOTPRateLimit(phone: string): Promise<boolean> {
+async function checkOTPRateLimit(phone?: string, email?: string): Promise<boolean> {
   try {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('patient_portal_users')
       .select('last_otp_sent_at')
-      .eq('phone_number', phone)
       .gte('last_otp_sent_at', oneHourAgo)
-      .single()
+
+    if (phone) {
+      query = query.eq('phone_number', phone)
+    } else if (email) {
+      query = query.eq('email', email)
+    } else {
+      return true
+    }
+
+    const { data, error } = await query.maybeSingle()
 
     if (error && error.code !== 'PGRST116') {
       logger.error('Error checking OTP rate limit:', error)
@@ -131,7 +139,7 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
       }
     }
 
-    if (phone && !checkOTPRateLimit(phone)) {
+    if (!await checkOTPRateLimit(phone, email)) {
       return {
         success: false,
         error: 'Too many OTP requests. Please try again later.'
@@ -139,11 +147,17 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
     }
 
     if (purpose === 'registration') {
-      const { data: existingUser } = await supabase
+      let query = supabase
         .from('patient_portal_users')
         .select('id')
-        .eq('phone_number', phone)
-        .maybeSingle()
+
+      if (phone) {
+        query = query.eq('phone_number', phone)
+      } else if (email) {
+        query = query.eq('email', email)
+      }
+
+      const { data: existingUser } = await query.maybeSingle()
 
       if (existingUser) {
         return {
@@ -154,16 +168,23 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
     }
 
     if (purpose === 'login') {
-      const { data: portalUser, error } = await supabase
+      let query = supabase
         .from('patient_portal_users')
         .select('*')
-        .eq('phone_number', phone)
-        .maybeSingle()
+
+      if (phone) {
+        query = query.eq('phone_number', phone)
+      } else if (email) {
+        query = query.eq('email', email)
+      }
+
+      const { data: portalUser, error } = await query.maybeSingle()
 
       if (error || !portalUser) {
+        const contactMethod = phone ? 'phone number' : 'email address'
         return {
           success: false,
-          error: 'No account found with this phone number.'
+          error: `No account found with this ${contactMethod}.`
         }
       }
 
@@ -190,7 +211,7 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000)
 
     if (purpose === 'login') {
-      const { error } = await supabase
+      let updateQuery = supabase
         .from('patient_portal_users')
         .update({
           otp_secret: otpHash,
@@ -199,7 +220,14 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
           last_otp_sent_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
-        .eq('phone_number', phone)
+
+      if (phone) {
+        updateQuery = updateQuery.eq('phone_number', phone)
+      } else if (email) {
+        updateQuery = updateQuery.eq('email', email)
+      }
+
+      const { error } = await updateQuery
 
       if (error) {
         logger.error('Error updating OTP:', error)
@@ -240,18 +268,30 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
  */
 export async function verifyOTP(verification: OTPVerification): Promise<PatientPortalAuthResponse> {
   try {
-    const { phone, otp, dob } = verification
+    const { phone, email, otp, dob } = verification
 
-    const { data: portalUser, error: fetchError } = await supabase
+    let query = supabase
       .from('patient_portal_users')
       .select('*, patients(*)')
-      .eq('phone_number', phone)
-      .maybeSingle()
 
-    if (fetchError || !portalUser) {
+    if (phone) {
+      query = query.eq('phone_number', phone)
+    } else if (email) {
+      query = query.eq('email', email)
+    } else {
       return {
         success: false,
-        error: 'Invalid phone number or OTP'
+        error: 'Phone number or email required'
+      }
+    }
+
+    const { data: portalUser, error: fetchError } = await query.maybeSingle()
+
+    if (fetchError || !portalUser) {
+      const contactMethod = phone ? 'phone number' : 'email address'
+      return {
+        success: false,
+        error: `Invalid ${contactMethod} or OTP`
       }
     }
 
@@ -389,23 +429,35 @@ export async function verifyOTP(verification: OTPVerification): Promise<PatientP
  * Register new patient portal account and link to existing patient
  */
 export async function registerPatientPortalAccount(
-  phone: string,
+  phone: string | undefined,
   email: string | undefined,
   otp: string,
   dob: string
 ): Promise<PatientPortalAuthResponse> {
   try {
-    const { data: patient, error: patientError } = await supabase
+    let patientQuery = supabase
       .from('patients')
       .select('*')
-      .eq('phone', phone)
       .eq('dob', dob)
-      .maybeSingle()
 
-    if (patientError || !patient) {
+    if (phone) {
+      patientQuery = patientQuery.eq('phone', phone)
+    } else if (email) {
+      patientQuery = patientQuery.eq('email', email)
+    } else {
       return {
         success: false,
-        error: 'No patient record found matching phone and date of birth.'
+        error: 'Phone number or email required'
+      }
+    }
+
+    const { data: patient, error: patientError } = await patientQuery.maybeSingle()
+
+    if (patientError || !patient) {
+      const contactMethod = phone ? 'phone and date of birth' : 'email and date of birth'
+      return {
+        success: false,
+        error: `No patient record found matching ${contactMethod}.`
       }
     }
 
@@ -425,16 +477,17 @@ export async function registerPatientPortalAccount(
     const otpHash = await hashOTP(otp)
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000)
 
-    const { data: newPortalUser, error: createError } = await supabase
+    const { data: newPortalUser, error: createError} = await supabase
       .from('patient_portal_users')
       .insert({
         patient_id: patient.id,
-        phone_number: phone,
+        phone_number: phone || null,
         email: email || null,
         otp_secret: otpHash,
         otp_expires_at: expiresAt.toISOString(),
         account_status: 'active',
-        phone_verified: false
+        phone_verified: false,
+        email_verified: false
       })
       .select()
       .single()
@@ -447,7 +500,7 @@ export async function registerPatientPortalAccount(
       }
     }
 
-    return await verifyOTP({ phone, otp, dob })
+    return await verifyOTP({ phone, email, otp, dob })
   } catch (error) {
     logger.error('Error in registerPatientPortalAccount:', error)
     return {

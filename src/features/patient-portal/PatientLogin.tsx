@@ -8,31 +8,32 @@ import { requestOTP, verifyOTP } from '@/services/patientPortalAuth'
 import { OTPInput } from './OTPInput'
 import { useT } from '@/hooks/useT'
 
-const phoneSchema = z.object({
-  phone: z.string().min(10, 'Phone number must be at least 10 digits').regex(/^\+?[\d\s-]+$/, 'Invalid phone number')
+const contactSchema = z.object({
+  contact: z.string().min(3, 'Please enter your phone number or email address')
 })
 
 const otpSchema = z.object({
   otp: z.string().length(6, 'OTP must be 6 digits')
 })
 
-type PhoneForm = z.infer<typeof phoneSchema>
+type ContactForm = z.infer<typeof contactSchema>
 type OTPForm = z.infer<typeof otpSchema>
 
 export function PatientLogin() {
   const navigate = useNavigate()
   const t = useT()
-  const [step, setStep] = useState<'phone' | 'otp'>('phone')
-  const [phone, setPhone] = useState('')
+  const [step, setStep] = useState<'contact' | 'otp'>('contact')
+  const [contact, setContact] = useState('')
+  const [isEmail, setIsEmail] = useState(false)
   const [otp, setOtp] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [canResend, setCanResend] = useState(false)
 
-  const phoneForm = useForm<PhoneForm>({
-    resolver: zodResolver(phoneSchema),
-    defaultValues: { phone: '' }
+  const contactForm = useForm<ContactForm>({
+    resolver: zodResolver(contactSchema),
+    defaultValues: { contact: '' }
   })
 
   useEffect(() => {
@@ -44,18 +45,23 @@ export function PatientLogin() {
     }
   }, [countdown, step])
 
-  const handleRequestOTP = async (data: PhoneForm) => {
+  const handleRequestOTP = async (data: ContactForm) => {
     setLoading(true)
     setError('')
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    const isEmailAddress = emailRegex.test(data.contact)
+    setIsEmail(isEmailAddress)
+
     try {
       const result = await requestOTP({
-        phone: data.phone,
+        phone: isEmailAddress ? undefined : data.contact,
+        email: isEmailAddress ? data.contact : undefined,
         purpose: 'login'
       })
 
       if (result.success) {
-        setPhone(data.phone)
+        setContact(data.contact)
         setStep('otp')
         setCountdown(600)
         setCanResend(false)
@@ -80,7 +86,8 @@ export function PatientLogin() {
 
     try {
       const result = await verifyOTP({
-        phone,
+        phone: isEmail ? undefined : contact,
+        email: isEmail ? contact : undefined,
         otp
       })
 
@@ -110,7 +117,8 @@ export function PatientLogin() {
 
     try {
       const result = await requestOTP({
-        phone,
+        phone: isEmail ? undefined : contact,
+        email: isEmail ? contact : undefined,
         purpose: 'login'
       })
 
@@ -141,19 +149,19 @@ export function PatientLogin() {
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-              {step === 'phone' ? (
+              {step === 'contact' ? (
                 <PhoneIcon className="w-8 h-8 text-blue-600" />
               ) : (
                 <LockClosedIcon className="w-8 h-8 text-blue-600" />
               )}
             </div>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              {step === 'phone' ? 'Patient Portal Login' : 'Verify Your Identity'}
+              {step === 'contact' ? 'Patient Portal Login' : 'Verify Your Identity'}
             </h1>
             <p className="text-gray-600">
-              {step === 'phone'
-                ? 'Enter your phone number to receive a verification code'
-                : 'Enter the 6-digit code sent to your phone'}
+              {step === 'contact'
+                ? 'Enter your phone number or email address to receive a verification code'
+                : `Enter the 6-digit code sent to your ${isEmail ? 'email' : 'phone'}`}
             </p>
           </div>
 
@@ -163,23 +171,24 @@ export function PatientLogin() {
             </div>
           )}
 
-          {step === 'phone' ? (
-            <form onSubmit={phoneForm.handleSubmit(handleRequestOTP)} className="space-y-6">
+          {step === 'contact' ? (
+            <form onSubmit={contactForm.handleSubmit(handleRequestOTP)} className="space-y-6">
               <div>
-                <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                  Phone Number
+                <label htmlFor="contact" className="block text-sm font-medium text-gray-700 mb-2">
+                  Phone Number or Email Address
                 </label>
                 <input
-                  {...phoneForm.register('phone')}
-                  type="tel"
-                  id="phone"
-                  placeholder="+234 XXX XXX XXXX"
+                  {...contactForm.register('contact')}
+                  type="text"
+                  id="contact"
+                  placeholder="+234 XXX XXX XXXX or email@example.com"
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   disabled={loading}
                 />
-                {phoneForm.formState.errors.phone && (
-                  <p className="mt-2 text-sm text-red-600">{phoneForm.formState.errors.phone.message}</p>
+                {contactForm.formState.errors.contact && (
+                  <p className="mt-2 text-sm text-red-600">{contactForm.formState.errors.contact.message}</p>
                 )}
+                <p className="mt-1 text-xs text-gray-500">Enter the phone number or email you used to register</p>
               </div>
 
               <button
@@ -263,14 +272,14 @@ export function PatientLogin() {
                   <button
                     type="button"
                     onClick={() => {
-                      setStep('phone')
+                      setStep('contact')
                       setOtp('')
                       setError('')
                       setCountdown(0)
                     }}
                     className="text-blue-600 hover:text-blue-700 font-medium"
                   >
-                    Use different number
+                    Use different contact method
                   </button>
                 </p>
               </div>

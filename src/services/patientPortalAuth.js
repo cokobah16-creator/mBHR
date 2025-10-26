@@ -36,15 +36,23 @@ async function hashOTP(otp) {
 /**
  * Check rate limiting for OTP requests
  */
-async function checkOTPRateLimit(phone) {
+async function checkOTPRateLimit(phone, email) {
     try {
         const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-        const { data, error } = await supabase
+        let query = supabase
             .from('patient_portal_users')
             .select('last_otp_sent_at')
-            .eq('phone_number', phone)
-            .gte('last_otp_sent_at', oneHourAgo)
-            .single();
+            .gte('last_otp_sent_at', oneHourAgo);
+        if (phone) {
+            query = query.eq('phone_number', phone);
+        }
+        else if (email) {
+            query = query.eq('email', email);
+        }
+        else {
+            return true;
+        }
+        const { data, error } = await query.maybeSingle();
         if (error && error.code !== 'PGRST116') {
             logger.error('Error checking OTP rate limit:', error);
             return false;
@@ -109,18 +117,23 @@ export async function requestOTP(request) {
                 error: 'Phone number or email required'
             };
         }
-        if (phone && !checkOTPRateLimit(phone)) {
+        if (!await checkOTPRateLimit(phone, email)) {
             return {
                 success: false,
                 error: 'Too many OTP requests. Please try again later.'
             };
         }
         if (purpose === 'registration') {
-            const { data: existingUser } = await supabase
+            let query = supabase
                 .from('patient_portal_users')
-                .select('id')
-                .eq('phone_number', phone)
-                .maybeSingle();
+                .select('id');
+            if (phone) {
+                query = query.eq('phone_number', phone);
+            }
+            else if (email) {
+                query = query.eq('email', email);
+            }
+            const { data: existingUser } = await query.maybeSingle();
             if (existingUser) {
                 return {
                     success: false,
@@ -129,15 +142,21 @@ export async function requestOTP(request) {
             }
         }
         if (purpose === 'login') {
-            const { data: portalUser, error } = await supabase
+            let query = supabase
                 .from('patient_portal_users')
-                .select('*')
-                .eq('phone_number', phone)
-                .maybeSingle();
+                .select('*');
+            if (phone) {
+                query = query.eq('phone_number', phone);
+            }
+            else if (email) {
+                query = query.eq('email', email);
+            }
+            const { data: portalUser, error } = await query.maybeSingle();
             if (error || !portalUser) {
+                const contactMethod = phone ? 'phone number' : 'email address';
                 return {
                     success: false,
-                    error: 'No account found with this phone number.'
+                    error: `No account found with this ${contactMethod}.`
                 };
             }
             if (portalUser.account_status === 'locked' && portalUser.locked_until) {
@@ -160,7 +179,7 @@ export async function requestOTP(request) {
         const otpHash = await hashOTP(otp);
         const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
         if (purpose === 'login') {
-            const { error } = await supabase
+            let updateQuery = supabase
                 .from('patient_portal_users')
                 .update({
                 otp_secret: otpHash,
@@ -168,8 +187,14 @@ export async function requestOTP(request) {
                 otp_attempts: 0,
                 last_otp_sent_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
-            })
-                .eq('phone_number', phone);
+            });
+            if (phone) {
+                updateQuery = updateQuery.eq('phone_number', phone);
+            }
+            else if (email) {
+                updateQuery = updateQuery.eq('email', email);
+            }
+            const { error } = await updateQuery;
             if (error) {
                 logger.error('Error updating OTP:', error);
                 return {
@@ -207,16 +232,28 @@ export async function requestOTP(request) {
  */
 export async function verifyOTP(verification) {
     try {
-        const { phone, otp, dob } = verification;
-        const { data: portalUser, error: fetchError } = await supabase
+        const { phone, email, otp, dob } = verification;
+        let query = supabase
             .from('patient_portal_users')
-            .select('*, patients(*)')
-            .eq('phone_number', phone)
-            .maybeSingle();
-        if (fetchError || !portalUser) {
+            .select('*, patients(*)');
+        if (phone) {
+            query = query.eq('phone_number', phone);
+        }
+        else if (email) {
+            query = query.eq('email', email);
+        }
+        else {
             return {
                 success: false,
-                error: 'Invalid phone number or OTP'
+                error: 'Phone number or email required'
+            };
+        }
+        const { data: portalUser, error: fetchError } = await query.maybeSingle();
+        if (fetchError || !portalUser) {
+            const contactMethod = phone ? 'phone number' : 'email address';
+            return {
+                success: false,
+                error: `Invalid ${contactMethod} or OTP`
             };
         }
         if (!portalUser.otp_secret || !portalUser.otp_expires_at) {
@@ -343,16 +380,28 @@ export async function verifyOTP(verification) {
  */
 export async function registerPatientPortalAccount(phone, email, otp, dob) {
     try {
-        const { data: patient, error: patientError } = await supabase
+        let patientQuery = supabase
             .from('patients')
             .select('*')
-            .eq('phone', phone)
-            .eq('dob', dob)
-            .maybeSingle();
-        if (patientError || !patient) {
+            .eq('dob', dob);
+        if (phone) {
+            patientQuery = patientQuery.eq('phone', phone);
+        }
+        else if (email) {
+            patientQuery = patientQuery.eq('email', email);
+        }
+        else {
             return {
                 success: false,
-                error: 'No patient record found matching phone and date of birth.'
+                error: 'Phone number or email required'
+            };
+        }
+        const { data: patient, error: patientError } = await patientQuery.maybeSingle();
+        if (patientError || !patient) {
+            const contactMethod = phone ? 'phone and date of birth' : 'email and date of birth';
+            return {
+                success: false,
+                error: `No patient record found matching ${contactMethod}.`
             };
         }
         const { data: existingPortalUser } = await supabase
@@ -372,12 +421,13 @@ export async function registerPatientPortalAccount(phone, email, otp, dob) {
             .from('patient_portal_users')
             .insert({
             patient_id: patient.id,
-            phone_number: phone,
+            phone_number: phone || null,
             email: email || null,
             otp_secret: otpHash,
             otp_expires_at: expiresAt.toISOString(),
             account_status: 'active',
-            phone_verified: false
+            phone_verified: false,
+            email_verified: false
         })
             .select()
             .single();
@@ -388,7 +438,7 @@ export async function registerPatientPortalAccount(phone, email, otp, dob) {
                 error: 'Failed to create account. Please try again.'
             };
         }
-        return await verifyOTP({ phone, otp, dob });
+        return await verifyOTP({ phone, email, otp, dob });
     }
     catch (error) {
         logger.error('Error in registerPatientPortalAccount:', error);

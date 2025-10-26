@@ -8,10 +8,13 @@ import { requestOTP, registerPatientPortalAccount } from '@/services/patientPort
 import { OTPInput } from './OTPInput'
 
 const registrationSchema = z.object({
-  phone: z.string().min(10, 'Phone number must be at least 10 digits').regex(/^\+?[\d\s-]+$/, 'Invalid phone number'),
+  phone: z.string().min(10, 'Phone number must be at least 10 digits').regex(/^\+?[\d\s-]+$/, 'Invalid phone number').optional().or(z.literal('')),
   email: z.string().email('Invalid email address').optional().or(z.literal('')),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
   consentGiven: z.boolean().refine(val => val === true, 'You must accept the terms to continue')
+}).refine(data => data.phone || data.email, {
+  message: 'Please provide either a phone number or email address',
+  path: ['phone']
 })
 
 type RegistrationForm = z.infer<typeof registrationSchema>
@@ -38,9 +41,15 @@ export function PatientRegister() {
     setLoading(true)
     setError('')
 
+    if (!data.phone && !data.email) {
+      setError('Please provide either a phone number or email address')
+      setLoading(false)
+      return
+    }
+
     try {
       const result = await requestOTP({
-        phone: data.phone,
+        phone: data.phone || undefined,
         email: data.email || undefined,
         purpose: 'registration'
       })
@@ -69,7 +78,7 @@ export function PatientRegister() {
 
     try {
       const result = await registerPatientPortalAccount(
-        formData.phone,
+        formData.phone || undefined,
         formData.email || undefined,
         otp,
         formData.dob
@@ -115,7 +124,7 @@ export function PatientRegister() {
               <form onSubmit={form.handleSubmit(handleSubmitInfo)} className="space-y-6">
                 <div>
                   <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                    Phone Number *
+                    Phone Number
                   </label>
                   <input
                     {...form.register('phone')}
@@ -128,12 +137,12 @@ export function PatientRegister() {
                   {form.formState.errors.phone && (
                     <p className="mt-2 text-sm text-red-600">{form.formState.errors.phone.message}</p>
                   )}
-                  <p className="mt-1 text-xs text-gray-500">This must match your patient record phone number</p>
+                  <p className="mt-1 text-xs text-gray-500">If provided, this must match your patient record</p>
                 </div>
 
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                    Email Address (Optional)
+                    Email Address
                   </label>
                   <input
                     {...form.register('email')}
@@ -146,6 +155,13 @@ export function PatientRegister() {
                   {form.formState.errors.email && (
                     <p className="mt-2 text-sm text-red-600">{form.formState.errors.email.message}</p>
                   )}
+                  <p className="mt-1 text-xs text-gray-500">If provided, this must match your patient record</p>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-xs text-blue-800">
+                    You must provide at least one contact method (phone number OR email address)
+                  </p>
                 </div>
 
                 <div>
@@ -168,7 +184,7 @@ export function PatientRegister() {
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <h3 className="text-sm font-semibold text-blue-900 mb-2">Identity Verification</h3>
                   <p className="text-xs text-blue-800">
-                    To protect your privacy, we'll verify your identity by matching your phone number and date of birth
+                    To protect your privacy, we'll verify your identity by matching your contact information and date of birth
                     with our patient records.
                   </p>
                 </div>
@@ -237,8 +253,8 @@ export function PatientRegister() {
                 <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
                   <CalendarIcon className="w-8 h-8 text-green-600" />
                 </div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-2">Verify Your Phone</h1>
-                <p className="text-gray-600">Enter the 6-digit code sent to {formData?.phone}</p>
+                <h1 className="text-2xl font-bold text-gray-900 mb-2">Verify Your Identity</h1>
+                <p className="text-gray-600">Enter the 6-digit code sent to {formData?.phone || formData?.email}</p>
               </div>
 
               {error && (

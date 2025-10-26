@@ -8,7 +8,7 @@
 export interface PatientPortalUser {
   id: string
   patientId: string
-  phoneNumber: string
+  phoneNumber?: string
   email?: string
   phoneVerified: boolean
   emailVerified: boolean
@@ -177,13 +177,14 @@ export interface PatientMedicalRecord {
 }
 
 export interface OTPRequest {
-  phone: string
+  phone?: string
   email?: string
   purpose: 'registration' | 'login' | 'verification'
 }
 
 export interface OTPVerification {
-  phone: string
+  phone?: string
+  email?: string
   otp: string
   dob?: string
 }
