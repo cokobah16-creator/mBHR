@@ -118,7 +118,8 @@ The Patient Portal Enrollment System has been successfully implemented, connecti
 **File**: `src/services/portalSyncWorker.ts`
 
 #### Features:
-- Auto-start on page load (5 second delay)
+- **Auto-initialized** in `App.tsx` on application startup
+- Starts automatically 5 seconds after page load
 - Periodic sync every 30 seconds (configurable)
 - Processes invitation queue from outbox
 - Syncs portal activity from Supabase to local DB
@@ -249,7 +250,7 @@ startPortalSyncWorker(intervalSeconds)  // Default: 30
 1. `src/db/index.ts` - Database schema v13
 2. `src/validation/schemas.ts` - Enhanced patient schema
 3. `src/components/PatientForm.tsx` - Portal enrollment UI
-4. `src/App.tsx` - Admin routes
+4. `src/App.tsx` - Admin routes + Auto-start portal sync worker
 
 ## Testing
 
