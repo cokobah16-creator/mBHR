@@ -155,8 +155,28 @@ export const useAuthStore = create()(persist((set, get) => ({
         return false;
     },
     updateActivity: () => {
+        const state = get();
         const now = Date.now();
-        set({ lastActivityAt: now });
+        // Extend session if still valid
+        if (state.sessionExpiresAt && now < state.sessionExpiresAt) {
+            // Calculate time remaining
+            const timeRemaining = state.sessionExpiresAt - now;
+            // If less than 1 hour remaining, extend the session
+            if (timeRemaining < 60 * 60 * 1000) {
+                const newExpiresAt = now + STAFF_SESSION_DURATION;
+                set({
+                    lastActivityAt: now,
+                    sessionExpiresAt: newExpiresAt
+                });
+                logger.info('[Auth] Session extended due to activity');
+            }
+            else {
+                set({ lastActivityAt: now });
+            }
+        }
+        else {
+            set({ lastActivityAt: now });
+        }
     },
     checkSessionExpiry: () => {
         const state = get();
@@ -182,5 +202,27 @@ export const useAuthStore = create()(persist((set, get) => ({
         isAuthenticated: state.isAuthenticated,
         sessionExpiresAt: state.sessionExpiresAt,
         lastActivityAt: state.lastActivityAt
-    })
+    }),
+    onRehydrateStorage: () => (state) => {
+        if (!state)
+            return;
+        // Check if session is expired on rehydration
+        if (state.sessionExpiresAt && state.isAuthenticated) {
+            const now = Date.now();
+            if (now >= state.sessionExpiresAt) {
+                // Session expired - clear auth state
+                logger.info('[Auth] Session expired on rehydration');
+                state.currentUser = null;
+                state.currentSession = null;
+                state.isAuthenticated = false;
+                state.sessionExpiresAt = null;
+                state.lastActivityAt = null;
+            }
+            else {
+                // Session still valid - update last activity
+                state.lastActivityAt = now;
+                logger.info('[Auth] Session restored successfully');
+            }
+        }
+    }
 }));
