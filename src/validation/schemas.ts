@@ -15,14 +15,35 @@ export const patientSchema = z.object({
     },
     { message: 'Date of birth must be in the past' }
   ),
-  phone: z.string().refine(validatePhoneNG, {
-    message: 'Invalid Nigerian phone number. Use format: 08012345678 or +2348012345678'
-  }),
+  phone: z.string().refine(
+    (val) => {
+      // If undefined or empty, it's valid
+      if (val === undefined) return true
+      if (val === '') return true
+      if (val.trim() === '') return true
+      // Otherwise validate it
+      return validatePhoneNG(val)
+    },
+    {
+      message: 'Invalid Nigerian phone number. Use format: 08012345678 or +2348012345678'
+    }
+  ).optional(),
+  email: z.string().email('Invalid email address').or(z.literal('')).optional(),
   address: z.string().min(1, 'Address is required').max(500),
   state: z.string().min(1, 'State is required'),
   lga: z.string().min(1, 'LGA is required'),
   familyId: z.string().optional()
-})
+}).refine(
+  (data) => {
+    const hasPhone = data.phone && data.phone.trim() !== ''
+    const hasEmail = data.email && data.email.trim() !== ''
+    return !!(hasPhone || hasEmail)
+  },
+  {
+    message: 'Provide at least a phone number or an email address',
+    path: ['phone']
+  }
+)
 
 export const vitalsSchema = z.object({
   heightCm: z.number().min(30, 'Height must be at least 30cm').max(250, 'Height must be under 250cm').optional(),

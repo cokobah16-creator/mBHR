@@ -261,6 +261,60 @@ export class MBHRDatabase extends Dexie {
             patientPreferences: 'id, patientId, createdAt, updatedAt, _dirty, _syncedAt',
             clinicalAlerts: 'id, patientId, alertType, severity, acknowledged, createdAt, acknowledgedAt, _dirty, _syncedAt'
         });
+        // v12 — Add email, authUid, and contactVerified fields for patient portal integration
+        this.version(12).stores({
+            patients: 'id, familyName, phone, email, authUid, state, lga, createdAt, updatedAt, _dirty, _syncedAt, phoneN, nameKey, dobDay, createdDay, updatedDay, mergeInto, contactVerified',
+            vitals: 'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
+            consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
+            dispenses: 'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt',
+            inventory: 'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+            visits: 'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+            queue: 'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
+            auditLogs: 'id, actorRole, entity, entityId, at',
+            users: 'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
+            sessions: 'id, userId, createdAt, lastSeenAt',
+            settings: 'key',
+            meta: 'key',
+            gameSessions: 'id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt',
+            gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
+            vitalsRanges: 'id, sex, metric, ageMin, ageMax, updatedAt',
+            quizQuestions: 'id, topic, difficulty, updatedAt',
+            triageSamples: 'id, createdAt, createdBy',
+            inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt',
+            outboundMessages: 'id, patientId, status, channel, to, createdAt, scheduledFor, _dirty, _syncedAt',
+            messageTemplates: 'key, locale, channel',
+            stockBatches: 'id, drugId, expiryDate, updatedAt, _dirty, _syncedAt',
+            careTasks: 'id, patientId, status, dueDate, createdAt, _dirty, _syncedAt',
+            triageRecords: 'id, patientId, visitId, priority, createdAt, createdBy, _dirty, _syncedAt',
+            patientMerges: 'id, winnerId, loserId, createdDay',
+            dailyCounts: 'day, registrations, vitals, consultations, dispenses, visits',
+            conflictResolutions: 'id, patientId, conflictType, status, resolvedAt',
+            patientAllergies: 'id, patientId, allergen, allergyType, severity, isActive, createdAt, updatedAt, _dirty, _syncedAt',
+            patientPreferences: 'id, patientId, createdAt, updatedAt, _dirty, _syncedAt',
+            clinicalAlerts: 'id, patientId, alertType, severity, acknowledged, createdAt, acknowledgedAt, _dirty, _syncedAt'
+        }).upgrade(async (tx) => {
+            // Migrate existing patients to add email, authUid, and contactVerified fields
+            await tx.table('patients').toCollection().modify((patient) => {
+                // Normalize email to lowercase if it exists
+                if (patient.email) {
+                    patient.email = String(patient.email).toLowerCase().trim();
+                }
+                else {
+                    patient.email = null;
+                }
+                // Ensure phone is normalized or null
+                if (!patient.phone || String(patient.phone).trim() === '') {
+                    patient.phone = null;
+                }
+                // Add new fields with default values
+                if (patient.authUid === undefined) {
+                    patient.authUid = null;
+                }
+                if (patient.contactVerified === undefined) {
+                    patient.contactVerified = 0;
+                }
+            });
+        });
     }
 }
 export const db = new MBHRDatabase();
@@ -278,10 +332,13 @@ export const createPatientDraft = async (p) => {
         familyName: p.familyName,
         sex: p.sex,
         dob: p.dob.toISOString().split('T')[0],
-        phone: p.phone || '',
+        phone: p.phone || null,
+        email: p.email ? String(p.email).toLowerCase().trim() : null,
         address: p.address,
         state: p.state,
         lga: p.lga,
+        authUid: null,
+        contactVerified: 0,
         createdAt: now,
         updatedAt: now,
         _dirty: 1
