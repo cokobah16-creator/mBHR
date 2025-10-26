@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
@@ -10,6 +10,7 @@ import { NIGERIAN_STATES, LGAS_BY_STATE } from '@/utils/nigeria'
 import { normalizePhone } from '@/utils/phone'
 import { patientSchema, PatientFormData } from '@/validation/schemas'
 import { CameraIcon, UserIcon } from '@heroicons/react/24/outline'
+import { enablePortalAccess } from '@/services/portalEnrollment'
 
 interface PatientFormProps {
   onSuccess?: (patientId: string) => void
@@ -37,6 +38,15 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
   const watchedState = watch('state')
   const availableLGAs = LGAS_BY_STATE[watchedState] || []
+
+  // Auto-enable portal when contact info is entered
+  useEffect(() => {
+    const { phone, email } = watch()
+    const hasContact = (phone && phone.trim()) || (email && email.trim())
+    if (hasContact && !watch('portalEnabled')) {
+      setValue('portalEnabled', true)
+    }
+  }, [watch('phone'), watch('email')])
 
   const handlePhotoCapture = (photoDataUrl: string) => {
     setPhoto(photoDataUrl)
@@ -71,6 +81,25 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
       const patientId = await addPatient(patientData)
 
       console.log('PatientForm: Patient created with ID:', patientId)
+
+      // Handle portal enrollment if enabled
+      if (data.portalEnabled) {
+        const portalResult = await enablePortalAccess(patientId, {
+          sendInviteNow: data.sendInviteNow,
+          termsAccepted: data.termsAccepted
+        })
+
+        if (!portalResult.success) {
+          console.warn('Portal enrollment failed:', portalResult.error)
+          // Don't block registration, just show warning
+          alert(`Patient registered but portal enrollment failed: ${portalResult.error}. You can enable portal access later from patient details.`)
+        } else if (data.sendInviteNow) {
+          alert('Patient registered successfully! Portal invitation has been sent.')
+        } else {
+          alert('Patient registered successfully! Portal access enabled. Send invitation from patient details when ready.')
+        }
+      }
+
       onSuccess?.(patientId)
     } catch (error) {
       console.error('Error adding patient:', error)
@@ -340,6 +369,76 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               className="input-field"
               placeholder="Link to existing family member"
             />
+          </div>
+
+          {/* Portal Access Section */}
+          <div className="border-t pt-6 mt-6">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <h3 className="text-sm font-semibold text-blue-900 mb-2">Patient Portal Access</h3>
+              <p className="text-sm text-blue-800">
+                Enable secure online access to medical records, appointments, and test results.
+                Patients can view their health information anytime via phone or email.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-start">
+                <input
+                  {...register('portalEnabled')}
+                  type="checkbox"
+                  id="portalEnabled"
+                  className="mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary"
+                  onChange={(e) => {
+                    // Auto-check portalEnabled if email or phone exists
+                    const hasContact = (watch('email') || watch('phone'))
+                    if (!hasContact && e.target.checked) {
+                      alert('Please provide at least an email or phone number for portal access')
+                      e.target.checked = false
+                    }
+                  }}
+                />
+                <label htmlFor="portalEnabled" className="ml-2 text-sm text-gray-700">
+                  <span className="font-medium">Enable patient portal access</span>
+                  <span className="text-gray-600 block mt-1">
+                    Patient will receive login instructions via {watch('email') ? 'email' : 'SMS'}
+                  </span>
+                </label>
+              </div>
+
+              {watch('portalEnabled') && (
+                <>
+                  <div className="flex items-start ml-6">
+                    <input
+                      {...register('termsAccepted')}
+                      type="checkbox"
+                      id="termsAccepted"
+                      className="mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary"
+                    />
+                    <label htmlFor="termsAccepted" className="ml-2 text-sm text-gray-700">
+                      I have explained portal access terms to the patient and they agree
+                    </label>
+                  </div>
+                  {errors.termsAccepted && (
+                    <p className="text-red-600 text-sm ml-6">{errors.termsAccepted.message}</p>
+                  )}
+
+                  <div className="flex items-start ml-6">
+                    <input
+                      {...register('sendInviteNow')}
+                      type="checkbox"
+                      id="sendInviteNow"
+                      className="mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary"
+                    />
+                    <label htmlFor="sendInviteNow" className="ml-2 text-sm text-gray-700">
+                      <span className="font-medium">Send portal invitation now</span>
+                      <span className="text-gray-600 block mt-1">
+                        Uncheck to send invitation later from patient details page
+                      </span>
+                    </label>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Action Buttons */}

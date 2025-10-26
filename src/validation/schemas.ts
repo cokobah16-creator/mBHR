@@ -1,6 +1,12 @@
 import { z } from 'zod'
 import { validatePhoneNG } from '@/utils/nigeria'
 
+export const patientPortalEnrollmentSchema = z.object({
+  portalEnabled: z.boolean().optional().default(false),
+  termsAccepted: z.boolean().optional().default(false),
+  sendInviteNow: z.boolean().optional().default(false),
+})
+
 export const patientSchema = z.object({
   givenName: z.string().min(1, 'Given name is required').max(100),
   familyName: z.string().min(1, 'Family name is required').max(100),
@@ -32,7 +38,10 @@ export const patientSchema = z.object({
   address: z.string().min(1, 'Address is required').max(500),
   state: z.string().min(1, 'State is required'),
   lga: z.string().min(1, 'LGA is required'),
-  familyId: z.string().optional()
+  familyId: z.string().optional(),
+  portalEnabled: z.boolean().optional().default(false),
+  termsAccepted: z.boolean().optional().default(false),
+  sendInviteNow: z.boolean().optional().default(false),
 }).refine(
   (data) => {
     const hasPhone = data.phone && data.phone.trim() !== ''
@@ -42,6 +51,32 @@ export const patientSchema = z.object({
   {
     message: 'Provide at least a phone number or an email address',
     path: ['phone']
+  }
+).refine(
+  (data) => {
+    // If portal is enabled, require terms to be accepted
+    if (data.portalEnabled && !data.termsAccepted) {
+      return false
+    }
+    return true
+  },
+  {
+    message: 'You must accept the terms and conditions to enable portal access',
+    path: ['termsAccepted']
+  }
+).refine(
+  (data) => {
+    // If portal is enabled, require at least one contact method
+    if (data.portalEnabled) {
+      const hasPhone = data.phone && data.phone.trim() !== ''
+      const hasEmail = data.email && data.email.trim() !== ''
+      return !!(hasPhone || hasEmail)
+    }
+    return true
+  },
+  {
+    message: 'Portal access requires at least a phone number or email address',
+    path: ['email']
   }
 )
 

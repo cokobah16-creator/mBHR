@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useTranslation } from 'react-i18next';
@@ -11,6 +11,7 @@ import { NIGERIAN_STATES, LGAS_BY_STATE } from '@/utils/nigeria';
 import { normalizePhone } from '@/utils/phone';
 import { patientSchema } from '@/validation/schemas';
 import { CameraIcon, UserIcon } from '@heroicons/react/24/outline';
+import { enablePortalAccess } from '@/services/portalEnrollment';
 export function PatientForm({ onSuccess, onCancel }) {
     const { t } = useTranslation();
     const { addPatient } = usePatientsStore();
@@ -24,6 +25,14 @@ export function PatientForm({ onSuccess, onCancel }) {
     });
     const watchedState = watch('state');
     const availableLGAs = LGAS_BY_STATE[watchedState] || [];
+    // Auto-enable portal when contact info is entered
+    useEffect(() => {
+        const { phone, email } = watch();
+        const hasContact = (phone && phone.trim()) || (email && email.trim());
+        if (hasContact && !watch('portalEnabled')) {
+            setValue('portalEnabled', true);
+        }
+    }, [watch('phone'), watch('email')]);
     const handlePhotoCapture = (photoDataUrl) => {
         setPhoto(photoDataUrl);
         setShowPhotoCapture(false);
@@ -52,6 +61,24 @@ export function PatientForm({ onSuccess, onCancel }) {
             };
             const patientId = await addPatient(patientData);
             console.log('PatientForm: Patient created with ID:', patientId);
+            // Handle portal enrollment if enabled
+            if (data.portalEnabled) {
+                const portalResult = await enablePortalAccess(patientId, {
+                    sendInviteNow: data.sendInviteNow,
+                    termsAccepted: data.termsAccepted
+                });
+                if (!portalResult.success) {
+                    console.warn('Portal enrollment failed:', portalResult.error);
+                    // Don't block registration, just show warning
+                    alert(`Patient registered but portal enrollment failed: ${portalResult.error}. You can enable portal access later from patient details.`);
+                }
+                else if (data.sendInviteNow) {
+                    alert('Patient registered successfully! Portal invitation has been sent.');
+                }
+                else {
+                    alert('Patient registered successfully! Portal access enabled. Send invitation from patient details when ready.');
+                }
+            }
             onSuccess?.(patientId);
         }
         catch (error) {
@@ -102,7 +129,14 @@ export function PatientForm({ onSuccess, onCancel }) {
                                                                 ? 'Select state first'
                                                                 : availableLGAs.length === 0
                                                                     ? 'No LGAs available for this state'
-                                                                    : 'Select LGA' }), availableLGAs.map((lga) => (_jsx("option", { value: lga, children: lga }, lga)))] }), errors.lga && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.lga.message })), watchedState && availableLGAs.length > 0 && (_jsxs("p", { className: "text-gray-500 text-xs mt-1", children: [availableLGAs.length, " LGAs available"] }))] })] }), _jsxs("div", { children: [_jsx("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: "Family ID (Optional)" }), _jsx("input", { ...register('familyId'), className: "input-field", placeholder: "Link to existing family member" })] }), _jsxs("div", { className: "flex space-x-4 pt-6", children: [_jsx(AudioButton, { audioKey: "action.register", fallbackText: "Register Patient", type: "submit", disabled: loading, className: "btn-primary flex-1", children: loading ? 'Registering...' : 'Register Patient' }), onCancel && (_jsx(AudioButton, { audioKey: "action.cancel", fallbackText: "Cancel", type: "button", onClick: onCancel, className: "btn-secondary flex-1", children: "Cancel" }))] })] })] }) }), showDedupeModal && dedupeData && (_jsx(PatientDedupeModal, { newPatient: dedupeData.patient, candidates: dedupeData.candidates, onResolve: handleDedupeResolve, onCancel: () => {
+                                                                    : 'Select LGA' }), availableLGAs.map((lga) => (_jsx("option", { value: lga, children: lga }, lga)))] }), errors.lga && (_jsx("p", { className: "text-red-600 text-sm mt-1", children: errors.lga.message })), watchedState && availableLGAs.length > 0 && (_jsxs("p", { className: "text-gray-500 text-xs mt-1", children: [availableLGAs.length, " LGAs available"] }))] })] }), _jsxs("div", { children: [_jsx("label", { className: "block text-sm font-medium text-gray-700 mb-2", children: "Family ID (Optional)" }), _jsx("input", { ...register('familyId'), className: "input-field", placeholder: "Link to existing family member" })] }), _jsxs("div", { className: "border-t pt-6 mt-6", children: [_jsxs("div", { className: "bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4", children: [_jsx("h3", { className: "text-sm font-semibold text-blue-900 mb-2", children: "Patient Portal Access" }), _jsx("p", { className: "text-sm text-blue-800", children: "Enable secure online access to medical records, appointments, and test results. Patients can view their health information anytime via phone or email." })] }), _jsxs("div", { className: "space-y-4", children: [_jsxs("div", { className: "flex items-start", children: [_jsx("input", { ...register('portalEnabled'), type: "checkbox", id: "portalEnabled", className: "mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary", onChange: (e) => {
+                                                                // Auto-check portalEnabled if email or phone exists
+                                                                const hasContact = (watch('email') || watch('phone'));
+                                                                if (!hasContact && e.target.checked) {
+                                                                    alert('Please provide at least an email or phone number for portal access');
+                                                                    e.target.checked = false;
+                                                                }
+                                                            } }), _jsxs("label", { htmlFor: "portalEnabled", className: "ml-2 text-sm text-gray-700", children: [_jsx("span", { className: "font-medium", children: "Enable patient portal access" }), _jsxs("span", { className: "text-gray-600 block mt-1", children: ["Patient will receive login instructions via ", watch('email') ? 'email' : 'SMS'] })] })] }), watch('portalEnabled') && (_jsxs(_Fragment, { children: [_jsxs("div", { className: "flex items-start ml-6", children: [_jsx("input", { ...register('termsAccepted'), type: "checkbox", id: "termsAccepted", className: "mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary" }), _jsx("label", { htmlFor: "termsAccepted", className: "ml-2 text-sm text-gray-700", children: "I have explained portal access terms to the patient and they agree" })] }), errors.termsAccepted && (_jsx("p", { className: "text-red-600 text-sm ml-6", children: errors.termsAccepted.message })), _jsxs("div", { className: "flex items-start ml-6", children: [_jsx("input", { ...register('sendInviteNow'), type: "checkbox", id: "sendInviteNow", className: "mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary" }), _jsxs("label", { htmlFor: "sendInviteNow", className: "ml-2 text-sm text-gray-700", children: [_jsx("span", { className: "font-medium", children: "Send portal invitation now" }), _jsx("span", { className: "text-gray-600 block mt-1", children: "Uncheck to send invitation later from patient details page" })] })] })] }))] })] }), _jsxs("div", { className: "flex space-x-4 pt-6", children: [_jsx(AudioButton, { audioKey: "action.register", fallbackText: "Register Patient", type: "submit", disabled: loading, className: "btn-primary flex-1", children: loading ? 'Registering...' : 'Register Patient' }), onCancel && (_jsx(AudioButton, { audioKey: "action.cancel", fallbackText: "Cancel", type: "button", onClick: onCancel, className: "btn-secondary flex-1", children: "Cancel" }))] })] })] }) }), showDedupeModal && dedupeData && (_jsx(PatientDedupeModal, { newPatient: dedupeData.patient, candidates: dedupeData.candidates, onResolve: handleDedupeResolve, onCancel: () => {
                     setShowDedupeModal(false);
                     setDedupeData(null);
                     setLoading(false);

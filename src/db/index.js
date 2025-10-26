@@ -315,6 +315,51 @@ export class MBHRDatabase extends Dexie {
                 }
             });
         });
+        // v13 — Add portal enrollment fields
+        this.version(13).stores({
+            patients: 'id, familyName, phone, email, authUid, state, lga, createdAt, updatedAt, _dirty, _syncedAt, phoneN, nameKey, dobDay, createdDay, updatedDay, mergeInto, contactVerified, portalEnabled, lastPortalActivity',
+            vitals: 'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt',
+            consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt',
+            dispenses: 'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt',
+            inventory: 'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+            visits: 'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+            queue: 'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
+            auditLogs: 'id, actorRole, entity, entityId, at',
+            users: 'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
+            sessions: 'id, userId, createdAt, lastSeenAt',
+            settings: 'key',
+            meta: 'key',
+            gameSessions: 'id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt',
+            gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
+            vitalsRanges: 'id, sex, metric, ageMin, ageMax, updatedAt',
+            quizQuestions: 'id, topic, difficulty, updatedAt',
+            triageSamples: 'id, createdAt, createdBy',
+            inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt',
+            outboundMessages: 'id, patientId, status, channel, to, createdAt, scheduledFor, _dirty, _syncedAt',
+            messageTemplates: 'key, locale, channel',
+            stockBatches: 'id, drugId, expiryDate, updatedAt, _dirty, _syncedAt',
+            careTasks: 'id, patientId, status, dueDate, createdAt, _dirty, _syncedAt',
+            triageRecords: 'id, patientId, visitId, priority, createdAt, createdBy, _dirty, _syncedAt',
+            patientMerges: 'id, winnerId, loserId, createdDay',
+            dailyCounts: 'day, registrations, vitals, consultations, dispenses, visits',
+            conflictResolutions: 'id, patientId, conflictType, status, resolvedAt',
+            patientAllergies: 'id, patientId, allergen, allergyType, severity, isActive, createdAt, updatedAt, _dirty, _syncedAt',
+            patientPreferences: 'id, patientId, createdAt, updatedAt, _dirty, _syncedAt',
+            clinicalAlerts: 'id, patientId, alertType, severity, acknowledged, createdAt, acknowledgedAt, _dirty, _syncedAt'
+        }).upgrade(async (tx) => {
+            // Add portal enrollment fields to existing patients
+            await tx.table('patients').toCollection().modify((patient) => {
+                if (patient.portalEnabled === undefined) {
+                    patient.portalEnabled = 0;
+                }
+                if (patient.portalInvitation === undefined) {
+                    patient.portalInvitation = null;
+                }
+                if (patient.lastPortalActivity === undefined) {
+                    patient.lastPortalActivity = null;
+                }
+            });
+        });
     }
 }
 export const db = new MBHRDatabase();
