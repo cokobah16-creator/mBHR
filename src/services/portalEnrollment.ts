@@ -189,18 +189,41 @@ export async function sendPortalInvitation(
       return { success: true, demoOTP: '(Check Supabase for OTP or use test mode)' }
     }
 
-    // Production: Queue message for actual delivery
+    // Production: Send OTP directly via email
+    if (patient.email) {
+      const otpResult = await requestOTP({
+        email: patient.email,
+        purpose: 'registration'
+      })
+
+      if (otpResult.success) {
+        await db.patients.update(patientId, {
+          portalInvitation: { ...invitation, lastStatus: 'sent' },
+          _dirty: 1
+        })
+        logger.info('Portal invitation email sent to:', patient.email)
+        return { success: true }
+      } else {
+        await db.patients.update(patientId, {
+          portalInvitation: { ...invitation, lastStatus: 'failed', failureReason: otpResult.error },
+          _dirty: 1
+        })
+        return { success: false, error: otpResult.error || 'Failed to send email' }
+      }
+    }
+
+    // Fallback to SMS queue for phone numbers
     const templateKey = 'portal.invitation'
     await MessageQueue.queueMessage(
       patientId,
-      patient.email || patient.phone!,
+      patient.phone!,
       templateKey,
       {
         patientName: `${patient.givenName} ${patient.familyName}`,
         portalUrl: `${window.location.origin}/patient/login`
       },
       {
-        channel: patient.email ? 'sms' : 'sms', // Default to SMS, email can be added later
+        channel: 'sms',
         locale: 'en'
       }
     )
