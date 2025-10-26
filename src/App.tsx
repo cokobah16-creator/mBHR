@@ -99,9 +99,70 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
-  const sessionToken = localStorage.getItem('patient_session_token')
+  const [isValidating, setIsValidating] = React.useState(true)
+  const [isValid, setIsValid] = React.useState(false)
+  const navigate = useNavigate()
 
-  if (!sessionToken) {
+  React.useEffect(() => {
+    const validateSession = async () => {
+      const sessionToken = localStorage.getItem('patient_session_token')
+
+      if (!sessionToken) {
+        setIsValid(false)
+        setIsValidating(false)
+        return
+      }
+
+      try {
+        const { supabase } = await import('@/lib/supabase')
+        const { data, error } = await supabase
+          .from('patient_portal_sessions')
+          .select('id, expires_at, is_active')
+          .eq('session_token', sessionToken)
+          .eq('is_active', true)
+          .maybeSingle()
+
+        if (error || !data) {
+          localStorage.removeItem('patient_session_token')
+          localStorage.removeItem('patient_portal_user')
+          setIsValid(false)
+          setIsValidating(false)
+          return
+        }
+
+        const expiresAt = new Date(data.expires_at)
+        if (expiresAt < new Date()) {
+          localStorage.removeItem('patient_session_token')
+          localStorage.removeItem('patient_portal_user')
+          setIsValid(false)
+          setIsValidating(false)
+          return
+        }
+
+        setIsValid(true)
+        setIsValidating(false)
+      } catch (err) {
+        console.error('Session validation error:', err)
+        setIsValid(false)
+        setIsValidating(false)
+      }
+    }
+
+    validateSession()
+  }, [])
+
+  if (isValidating) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Validating session...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!isValid) {
     return <Navigate to="/patient/login" replace />
   }
 

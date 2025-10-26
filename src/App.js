@@ -1,6 +1,7 @@
 import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
+import React from 'react';
 import { Suspense, lazy, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Layout } from '@/components/Layout';
 import RequireRoles from '@/components/RequireRoles';
@@ -83,8 +84,55 @@ function ProtectedRoute({ children }) {
     return _jsx(_Fragment, { children: children });
 }
 function PatientProtectedRoute({ children }) {
-    const sessionToken = localStorage.getItem('patient_session_token');
-    if (!sessionToken) {
+    const [isValidating, setIsValidating] = React.useState(true);
+    const [isValid, setIsValid] = React.useState(false);
+    const navigate = useNavigate();
+    React.useEffect(() => {
+        const validateSession = async () => {
+            const sessionToken = localStorage.getItem('patient_session_token');
+            if (!sessionToken) {
+                setIsValid(false);
+                setIsValidating(false);
+                return;
+            }
+            try {
+                const { supabase } = await import('@/lib/supabase');
+                const { data, error } = await supabase
+                    .from('patient_portal_sessions')
+                    .select('id, expires_at, is_active')
+                    .eq('session_token', sessionToken)
+                    .eq('is_active', true)
+                    .maybeSingle();
+                if (error || !data) {
+                    localStorage.removeItem('patient_session_token');
+                    localStorage.removeItem('patient_portal_user');
+                    setIsValid(false);
+                    setIsValidating(false);
+                    return;
+                }
+                const expiresAt = new Date(data.expires_at);
+                if (expiresAt < new Date()) {
+                    localStorage.removeItem('patient_session_token');
+                    localStorage.removeItem('patient_portal_user');
+                    setIsValid(false);
+                    setIsValidating(false);
+                    return;
+                }
+                setIsValid(true);
+                setIsValidating(false);
+            }
+            catch (err) {
+                console.error('Session validation error:', err);
+                setIsValid(false);
+                setIsValidating(false);
+            }
+        };
+        validateSession();
+    }, []);
+    if (isValidating) {
+        return (_jsx("div", { className: "min-h-screen flex items-center justify-center", children: _jsxs("div", { className: "text-center", children: [_jsx("div", { className: "animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" }), _jsx("p", { className: "mt-4 text-gray-600", children: "Validating session..." })] }) }));
+    }
+    if (!isValid) {
         return _jsx(Navigate, { to: "/patient/login", replace: true });
     }
     return _jsx(_Fragment, { children: children });
