@@ -181,7 +181,10 @@ describe('Predictive Queue - Wait Time Predictions', () => {
         })),
         filter: vi.fn(() => ({
           toArray: vi.fn().mockResolvedValue(
-            Array(20).fill({ timestamp: new Date().toISOString(), volume: 10 })
+            Array(20).fill(null).map(() => ({
+              createdAt: new Date().toISOString(),
+              currentStage: 'registration'
+            }))
           )
         }))
       }))
@@ -241,8 +244,11 @@ describe('Predictive Queue - Staffing Recommendations', () => {
   it('should identify understaffing situations', async () => {
     ;(db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
-        and: vi.fn(() => ({
-          count: vi.fn().mockResolvedValue(40)
+        and: vi.fn((filterFn: any) => ({
+          count: vi.fn().mockResolvedValue(
+            // Return 40 for waiting status, 0 for in_progress status
+            filterFn({ status: 'waiting' }) ? 40 : 0
+          )
         }))
       }))
     })
@@ -250,7 +256,7 @@ describe('Predictive Queue - Staffing Recommendations', () => {
     ;(mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
-          count: vi.fn().mockResolvedValue(1)
+          count: vi.fn().mockResolvedValue(0)
         }))
       }))
     })
