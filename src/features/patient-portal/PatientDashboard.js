@@ -16,9 +16,18 @@ export function PatientDashboard() {
         setLoading(true);
         setError('');
         try {
-            const portalUser = JSON.parse(localStorage.getItem('patient_portal_user') || '{}');
+            const portalUserStr = localStorage.getItem('patient_portal_user');
+            if (!portalUserStr) {
+                logger.info('No portal user found in localStorage - redirecting to login');
+                window.location.href = '/patient/login';
+                return;
+            }
+            const portalUser = JSON.parse(portalUserStr);
             if (!portalUser.patientId || !portalUser.id) {
-                setError('Session expired. Please login again.');
+                logger.warn('Invalid portal user data - redirecting to login');
+                localStorage.removeItem('patient_portal_user');
+                localStorage.removeItem('patient_session_token');
+                window.location.href = '/patient/login';
                 return;
             }
             const dashboardData = await getPatientDashboard(portalUser.id, portalUser.patientId);

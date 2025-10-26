@@ -18,9 +18,16 @@ export function MedicalHistory() {
         setLoading(true);
         setError('');
         try {
-            const portalUser = JSON.parse(localStorage.getItem('patient_portal_user') || '{}');
+            const portalUserStr = localStorage.getItem('patient_portal_user');
+            if (!portalUserStr) {
+                window.location.href = '/patient/login';
+                return;
+            }
+            const portalUser = JSON.parse(portalUserStr);
             if (!portalUser.patientId || !portalUser.id) {
-                setError('Session expired. Please login again.');
+                localStorage.removeItem('patient_portal_user');
+                localStorage.removeItem('patient_session_token');
+                window.location.href = '/patient/login';
                 return;
             }
             const result = await getPatientMedicalHistory(portalUser.id, portalUser.patientId, pageSize, (page - 1) * pageSize);
