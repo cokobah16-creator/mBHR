@@ -32,26 +32,8 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    const resendApiKey = Deno.env.get("RESEND_API_KEY") || "re_Y8di3Fe7_Adp3aoj3zeLm62p4YZG6AYSn";
 
-    if (!resendApiKey) {
-      console.warn("Resend API key not configured. Running in demo mode.");
-      console.log(`OTP for ${email}: ${otp}`);
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: "Demo mode: OTP logged to console",
-          demo: true
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    // Use environment variable for sender email, fallback to Resend's test domain
     const senderEmail = Deno.env.get("SENDER_EMAIL") || "onboarding@resend.dev";
 
     const emailContent = {
