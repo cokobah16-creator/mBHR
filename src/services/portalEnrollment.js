@@ -6,6 +6,7 @@
  */
 import { db } from '@/db';
 import { supabase } from '@/lib/supabase';
+import { normalizePhone } from '@/utils/phone';
 import { MessageQueue } from '@/db/outbox';
 import * as logger from '@/lib/logger';
 const RATE_LIMIT_MS = Number(import.meta.env.VITE_INVITE_RATE_MS || 60000); // Default 60 seconds
@@ -33,6 +34,40 @@ export async function enablePortalAccess(patientId, options = {}) {
             updatedAt: new Date(),
             _dirty: 1
         });
+        // Create patient portal user account in Supabase
+        try {
+            // Check if portal user already exists
+            const { data: existingPortalUser } = await supabase
+                .from('patient_portal_users')
+                .select('id')
+                .eq('patient_id', patientId)
+                .maybeSingle();
+            if (!existingPortalUser) {
+                // Create new portal user account
+                const { error: createError } = await supabase
+                    .from('patient_portal_users')
+                    .insert({
+                    patient_id: patientId,
+                    phone_number: normalizePhone(patient.phone) || '',
+                    email: patient.email || null,
+                    account_status: 'active',
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                });
+                if (createError) {
+                    logger.error('Error creating portal user:', createError);
+                    // Don't fail the enrollment - we can retry later
+                    logger.warn('Portal user creation failed, will retry on sync');
+                }
+                else {
+                    logger.info('Portal user account created for patient:', patientId);
+                }
+            }
+        }
+        catch (supabaseError) {
+            logger.warn('Failed to create portal user in Supabase (will retry):', supabaseError);
+            // Don't fail the operation - the sync will handle it later
+        }
         logger.info('Portal access enabled for patient:', patientId);
         // Send invitation if requested
         if (options.sendInviteNow) {
