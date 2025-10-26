@@ -210,6 +210,7 @@ export async function requestOTP(request) {
             }
         }
         let otpSent = false;
+        let isDemo = false;
         if (phone) {
             otpSent = await sendOTPSMS(phone, otp);
         }
@@ -219,10 +220,13 @@ export async function requestOTP(request) {
         if (!otpSent) {
             logger.warn('OTP delivery failed, but continuing for demo purposes');
             logger.info('OTP for development:', otp);
+            isDemo = true;
         }
         return {
             success: true,
-            error: undefined
+            error: undefined,
+            demoMode: isDemo,
+            demoOTP: isDemo ? otp : undefined
         };
     }
     catch (error) {

@@ -30,6 +30,8 @@ export function PatientLogin() {
   const [error, setError] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [canResend, setCanResend] = useState(false)
+  const [demoOTP, setDemoOTP] = useState<string | null>(null)
+  const [isDemoMode, setIsDemoMode] = useState(false)
 
   const contactForm = useForm<ContactForm>({
     resolver: zodResolver(contactSchema),
@@ -65,6 +67,14 @@ export function PatientLogin() {
         setStep('otp')
         setCountdown(600)
         setCanResend(false)
+
+        if (result.demoMode && result.demoOTP) {
+          setIsDemoMode(true)
+          setDemoOTP(result.demoOTP)
+        } else {
+          setIsDemoMode(false)
+          setDemoOTP(null)
+        }
       } else {
         setError(result.error || 'Failed to send OTP')
       }
@@ -127,6 +137,14 @@ export function PatientLogin() {
         setCanResend(false)
         setOtp('')
         setError('')
+
+        if (result.demoMode && result.demoOTP) {
+          setIsDemoMode(true)
+          setDemoOTP(result.demoOTP)
+        } else {
+          setIsDemoMode(false)
+          setDemoOTP(null)
+        }
       } else {
         setError(result.error || 'Failed to send OTP')
       }
@@ -164,6 +182,43 @@ export function PatientLogin() {
                 : `Enter the 6-digit code sent to your ${isEmail ? 'email' : 'phone'}`}
             </p>
           </div>
+
+          {isDemoMode && demoOTP && (
+            <div className="mb-6 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0">
+                  <svg className="w-5 h-5 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-yellow-800 mb-1">Development Mode Active</h3>
+                  <p className="text-sm text-yellow-700 mb-2">
+                    Email/SMS delivery is not configured. Use this code for testing:
+                  </p>
+                  <div className="bg-white px-4 py-3 rounded border border-yellow-300">
+                    <div className="flex items-center justify-between">
+                      <span className="text-2xl font-mono font-bold text-gray-900 tracking-widest">{demoOTP}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(demoOTP)
+                          setError('Code copied to clipboard!')
+                          setTimeout(() => setError(''), 2000)
+                        }}
+                        className="text-xs px-3 py-1 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded font-medium transition-colors"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-yellow-600 mt-2">
+                    For production use, configure Resend API key in Supabase Edge Functions.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -276,6 +331,8 @@ export function PatientLogin() {
                       setOtp('')
                       setError('')
                       setCountdown(0)
+                      setDemoOTP(null)
+                      setIsDemoMode(false)
                     }}
                     className="text-blue-600 hover:text-blue-700 font-medium"
                   >
