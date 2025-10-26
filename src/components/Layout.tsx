@@ -9,8 +9,6 @@ import { LanguageSelector } from '@/components/LanguageSelector'
 import { AccessibilityControls } from '@/components/AccessibilityControls'
 import { SyncButton } from '@/components/SyncButton'
 import { can } from '@/auth/roles'
-import { SessionManager, SESSION_CONFIGS } from '@/utils/sessionManager'
-import { SessionWarning, SessionStatus } from '@/components/SessionWarning'
 import type { ElementType, ReactNode } from 'react'
 import {
   HomeIcon,
@@ -139,9 +137,6 @@ export function Layout({ children }: LayoutProps) {
   const { currentUser, logout, updateActivity, checkSessionExpiry } = useAuthStore()
   const [overlay, setOverlay] = React.useState<null | "pharmacy">(null)
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false)
-  const [showSessionWarning, setShowSessionWarning] = React.useState(false)
-  const [timeRemaining, setTimeRemaining] = React.useState(0)
-  const sessionManagerRef = React.useRef<SessionManager | null>(null)
 
   // Start low stock monitoring
   useLowStockWatcher()
@@ -151,39 +146,24 @@ export function Layout({ children }: LayoutProps) {
     setMobileMenuOpen(false)
   }, [location.pathname])
 
-  // Initialize session manager
+  // Simple session check on mount and periodically
   React.useEffect(() => {
     if (!currentUser) return
 
-    const sessionManager = new SessionManager(
-      'staff',
-      (remaining) => {
-        setTimeRemaining(remaining)
-        setShowSessionWarning(true)
-      },
-      () => {
-        logout()
-        navigate('/login')
-      }
-    )
-
-    sessionManagerRef.current = sessionManager
-
-    return () => {
-      sessionManager.destroy()
+    // Check immediately on mount
+    const expired = checkSessionExpiry()
+    if (expired) {
+      navigate('/login')
+      return
     }
-  }, [currentUser, logout, navigate])
 
-  // Check session expiry periodically
-  React.useEffect(() => {
-    if (!currentUser) return
-
+    // Then check every 5 minutes (not every minute to reduce overhead)
     const interval = setInterval(() => {
       const expired = checkSessionExpiry()
       if (expired) {
         navigate('/login')
       }
-    }, 60 * 1000)
+    }, 5 * 60 * 1000)
 
     return () => clearInterval(interval)
   }, [currentUser, checkSessionExpiry, navigate])
@@ -230,22 +210,9 @@ export function Layout({ children }: LayoutProps) {
   ]
 
   const handleLogout = async () => {
-    if (sessionManagerRef.current) {
-      sessionManagerRef.current.cleanup()
-    }
     await logout()
     navigate('/login')
   }
-
-  const handleExtendSession = () => {
-    if (sessionManagerRef.current) {
-      sessionManagerRef.current.extendSession()
-    }
-    updateActivity()
-    setShowSessionWarning(false)
-  }
-
-  const sessionInfo = sessionManagerRef.current?.getSessionInfo()
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -272,12 +239,6 @@ export function Layout({ children }: LayoutProps) {
             </div>
 
             <div className="flex items-center gap-2 md:gap-4">
-              {/* Session Status - Show when time is running low */}
-              {sessionInfo && sessionInfo.timeRemaining < 600 && (
-                <div className="hidden sm:block">
-                  <SessionStatus timeRemaining={sessionInfo.timeRemaining} userType="staff" />
-                </div>
-              )}
 
               {/* Online/Offline Badge - Hidden on very small screens */}
               <div className="hidden xs:block">
@@ -437,14 +398,6 @@ export function Layout({ children }: LayoutProps) {
       {/* Toast notifications */}
       <Toasts />
 
-      {/* Session Warning Dialog */}
-      <SessionWarning
-        isOpen={showSessionWarning}
-        timeRemaining={timeRemaining}
-        userType="staff"
-        onExtend={handleExtendSession}
-        onLogout={handleLogout}
-      />
     </div>
   )
 }

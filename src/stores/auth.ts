@@ -266,18 +266,26 @@ export const useAuthStore = create<AuthState>()(
         // Check if session is expired on rehydration
         if (state.sessionExpiresAt && state.isAuthenticated) {
           const now = Date.now()
-          if (now >= state.sessionExpiresAt) {
+          const timeRemaining = state.sessionExpiresAt - now
+
+          // Only expire if truly expired (not just old timestamp)
+          if (timeRemaining < -300000) {  // 5 minutes grace period
             // Session expired - clear auth state
-            logger.info('[Auth] Session expired on rehydration')
+            logger.info('[Auth] Session expired on rehydration (grace period exceeded)')
             state.currentUser = null
             state.currentSession = null
             state.isAuthenticated = false
             state.sessionExpiresAt = null
             state.lastActivityAt = null
+          } else if (timeRemaining < 0) {
+            // Slightly expired but within grace period - renew it
+            logger.info('[Auth] Session within grace period, extending')
+            state.sessionExpiresAt = now + STAFF_SESSION_DURATION
+            state.lastActivityAt = now
           } else {
             // Session still valid - update last activity
             state.lastActivityAt = now
-            logger.info('[Auth] Session restored successfully')
+            logger.info('[Auth] Session restored successfully', `Time remaining: ${Math.floor(timeRemaining / 60000)} minutes`)
           }
         }
       }
