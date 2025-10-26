@@ -187,18 +187,21 @@ export async function validateAndRefreshPatientSession(sessionToken) {
         }
         const expiresAt = new Date(session.expires_at);
         const now = new Date();
-        if (expiresAt < now) {
-            // Session expired
+        const timeUntilExpiry = expiresAt.getTime() - now.getTime();
+        // Grace period: 5 minutes after expiry
+        const GRACE_PERIOD = 5 * 60 * 1000; // 5 minutes
+        if (timeUntilExpiry < -GRACE_PERIOD) {
+            // Session truly expired (beyond grace period)
+            logger.info('[SessionManager] Patient session expired beyond grace period');
             await supabase
                 .from('patient_portal_sessions')
                 .update({ is_active: false })
                 .eq('id', session.id);
             return { valid: false, needsRefresh: false };
         }
-        // Check if session needs refresh (within 15 minutes of expiry)
-        const timeUntilExpiry = expiresAt.getTime() - now.getTime();
+        // Check if session needs refresh (within 15 minutes of expiry OR within grace period)
         const needsRefresh = timeUntilExpiry < REFRESH_BEFORE_EXPIRY;
-        if (needsRefresh) {
+        if (needsRefresh || timeUntilExpiry < 0) {
             // Extend session
             const newExpiresAt = new Date(now.getTime() + SESSION_CONFIGS.patient.duration * 60 * 60 * 1000);
             await supabase
@@ -208,7 +211,10 @@ export async function validateAndRefreshPatientSession(sessionToken) {
                 last_activity_at: now.toISOString()
             })
                 .eq('id', session.id);
-            logger.info('[SessionManager] Patient session refreshed', { newExpiresAt });
+            logger.info('[SessionManager] Patient session refreshed', {
+                wasExpired: timeUntilExpiry < 0,
+                newExpiresAt
+            });
             return { valid: true, needsRefresh: true, expiresAt: newExpiresAt };
         }
         // Update last activity
