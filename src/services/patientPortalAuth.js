@@ -155,7 +155,7 @@ export async function requestOTP(request) {
                 query = query.eq('phone_number', phone);
             }
             else if (email) {
-                query = query.eq('email', email);
+                query = query.ilike('email', email);
             }
             const { data: portalUser, error } = await query.maybeSingle();
             if (error || !portalUser) {
@@ -198,7 +198,7 @@ export async function requestOTP(request) {
                 updateQuery = updateQuery.eq('phone_number', phone);
             }
             else if (email) {
-                updateQuery = updateQuery.eq('email', email);
+                updateQuery = updateQuery.ilike('email', email);
             }
             const { error } = await updateQuery;
             if (error) {
@@ -250,7 +250,7 @@ export async function verifyOTP(verification) {
             query = query.eq('phone_number', phone);
         }
         else if (email) {
-            query = query.eq('email', email);
+            query = query.ilike('email', email);
         }
         else {
             return {

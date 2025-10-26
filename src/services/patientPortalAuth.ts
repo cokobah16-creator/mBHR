@@ -186,7 +186,7 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
       if (phone) {
         query = query.eq('phone_number', phone)
       } else if (email) {
-        query = query.eq('email', email)
+        query = query.ilike('email', email)
       }
 
       const { data: portalUser, error } = await query.maybeSingle()
@@ -235,7 +235,7 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
       if (phone) {
         updateQuery = updateQuery.eq('phone_number', phone)
       } else if (email) {
-        updateQuery = updateQuery.eq('email', email)
+        updateQuery = updateQuery.ilike('email', email)
       }
 
       const { error } = await updateQuery
@@ -292,7 +292,7 @@ export async function verifyOTP(verification: OTPVerification): Promise<PatientP
     if (phone) {
       query = query.eq('phone_number', phone)
     } else if (email) {
-      query = query.eq('email', email)
+      query = query.ilike('email', email)
     } else {
       return {
         success: false,
