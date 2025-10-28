@@ -3,19 +3,32 @@ import { useNavigate } from 'react-router-dom'
 import { db } from '@/db'
 import type { Patient } from '@/db'
 import { queueManagement } from '@/services/queueManagement'
-import type { QueueStage } from '@/services/queueManagement'
+import type { QueueStage, QueuePriority } from '@/services/queueManagement'
 import { PatientSearch } from '@/components/PatientSearch'
-import { TicketIcon, UserIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { TicketIcon, UserIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { useAuthStore } from '@/stores/auth'
+import { usePatientsStore } from '@/stores/patients'
 
 const stages: QueueStage[] = ['registration', 'vitals', 'consult', 'pharmacy']
 
 export default function TicketIssuer() {
   const navigate = useNavigate()
+  const { currentUser } = useAuthStore()
+  const { loadPatients } = usePatientsStore()
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [stage, setStage] = useState<QueueStage>('vitals')
+  const [priority, setPriority] = useState<QueuePriority>('normal')
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
+  const [queuePosition, setQueuePosition] = useState<number | null>(null)
+
+  useEffect(() => {
+    loadPatients().catch(err => {
+      console.error('Failed to load patients:', err)
+      setError('Failed to load patient data. Please refresh the page.')
+    })
+  }, [loadPatients])
 
   async function handleAddToQueue() {
     if (!selectedPatient) {
@@ -23,37 +36,40 @@ export default function TicketIssuer() {
       return
     }
 
+    if (!currentUser) {
+      setError('User session expired. Please log in again.')
+      return
+    }
+
     setLoading(true)
     setSuccess(false)
     setError('')
+    setQueuePosition(null)
 
     try {
-      // Check if patient is already in queue
-      const existing = await db.queue
-        .where('patientId')
-        .equals(selectedPatient.id)
-        .and(item => item.status !== 'done')
-        .first()
+      const queueItem = await queueManagement.addToQueue(
+        selectedPatient.id,
+        stage,
+        priority,
+        currentUser.id
+      )
 
-      if (existing) {
-        setError(`Patient is already in queue at ${existing.stage} stage`)
-        setLoading(false)
-        return
-      }
-
-      // Add to queue
-      await queueManagement.addToQueue(selectedPatient.id, stage, 'normal')
-
+      setQueuePosition(queueItem.position)
       setSuccess(true)
+
       setTimeout(() => {
         setSuccess(false)
         setSelectedPatient(null)
         setError('')
-      }, 2000)
+        setQueuePosition(null)
+        setPriority('normal')
+        setStage('vitals')
+      }, 3000)
 
     } catch (err) {
       console.error('Error adding to queue:', err)
-      setError('Failed to add patient to queue. Please try again.')
+      const errorMessage = err instanceof Error ? err.message : 'Failed to add patient to queue. Please try again.'
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -86,9 +102,20 @@ export default function TicketIssuer() {
           <h3 className="text-xl font-semibold text-gray-900 mb-2">
             Patient Added to Queue
           </h3>
-          <p className="text-gray-600">
+          <p className="text-gray-600 mb-2">
             {selectedPatient?.givenName} {selectedPatient?.familyName} has been added to the {stage} queue
           </p>
+          {queuePosition !== null && (
+            <p className="text-lg font-semibold text-blue-600">
+              Queue Position: #{queuePosition}
+            </p>
+          )}
+          {priority === 'urgent' && (
+            <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 bg-red-100 text-red-800 rounded-full text-sm font-medium">
+              <ExclamationTriangleIcon className="h-4 w-4" />
+              Marked as Urgent
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow-sm p-6">
@@ -167,6 +194,27 @@ export default function TicketIssuer() {
                   </select>
                   <p className="text-sm text-gray-500 mt-1">
                     Select which stage to add the patient to
+                  </p>
+                </div>
+
+                {/* Priority Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Priority Level *
+                  </label>
+                  <select
+                    value={priority}
+                    onChange={(e) => setPriority(e.target.value as QueuePriority)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="normal">Normal</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="low">Low Priority</option>
+                  </select>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {priority === 'urgent' && 'Urgent patients will be moved to the front of the queue'}
+                    {priority === 'normal' && 'Normal priority - patient will be added to the end of the queue'}
+                    {priority === 'low' && 'Low priority - for non-critical cases'}
                   </p>
                 </div>
 

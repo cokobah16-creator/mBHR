@@ -148,6 +148,9 @@ export interface QueueItem {
   stage: 'registration' | 'vitals' | 'consult' | 'pharmacy'
   position: number
   status: 'waiting' | 'in_progress' | 'done'
+  priority?: 'urgent' | 'normal' | 'low'
+  createdBy?: string
+  queuedAt?: Date
   updatedAt: Date
   _dirty?: number
   _syncedAt?: string

@@ -90,9 +90,12 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
         stage: 'registration',
         position: await db.queue.count() + 1,
         status: 'waiting',
-        updatedAt: new Date()
+        priority: 'normal',
+        queuedAt: new Date(),
+        updatedAt: new Date(),
+        _dirty: 1
       }
-      
+
       await db.queue.add(queueItem)
       console.log('Queue item added:', queueItem)
       

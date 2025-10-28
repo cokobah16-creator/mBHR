@@ -37,9 +37,16 @@ export class QueueManagement {
   async addToQueue(
     patientId: string,
     stage: QueueStage,
-    priority: QueuePriority = 'normal'
+    priority: QueuePriority = 'normal',
+    createdBy?: string
   ): Promise<QueueItem> {
     const now = new Date()
+
+    // Validate patient exists
+    const patient = await db.patients.get(patientId)
+    if (!patient) {
+      throw new Error(`Patient ${patientId} not found`)
+    }
 
     // Check if patient already in queue
     const existing = await db.queue
@@ -49,7 +56,7 @@ export class QueueManagement {
 
     if (existing) {
       logger.warn(`Patient ${patientId} already in queue at stage ${existing.stage}`)
-      return existing
+      throw new Error(`Patient is already in queue at ${existing.stage} stage`)
     }
 
     // Calculate position based on priority
@@ -61,6 +68,9 @@ export class QueueManagement {
       stage,
       position,
       status: 'waiting',
+      priority,
+      createdBy,
+      queuedAt: now,
       updatedAt: now,
       _dirty: 1
     }
@@ -73,7 +83,7 @@ export class QueueManagement {
     // Notify subscribers
     this.notifySubscribers(stage)
 
-    logger.log(`Added patient ${patientId} to ${stage} queue at position ${position}`)
+    logger.log(`Added patient ${patientId} to ${stage} queue at position ${position} with priority ${priority}`)
     return queueItem
   }
 
