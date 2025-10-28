@@ -94,6 +94,9 @@ const AnalyticsDashboard = lazy(() => import('@/features/analytics/AnalyticsDash
 // Admin
 const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users })))
 
+// Doctor features
+const DoctorDashboard = lazy(() => import('@/pages/DoctorDashboard').then(m => ({ default: m.DoctorDashboard })))
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
 
@@ -252,6 +255,11 @@ function App() {
                 <Layout>
                   <Routes>
                     <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/doctor/dashboard" element={
+                      <RequireRoles roles={['doctor', 'admin']}>
+                        <DoctorDashboard />
+                      </RequireRoles>
+                    } />
                     <Route path="/register" element={<Register />} />
                     <Route path="/patients" element={<Patients />} />
                     <Route path="/patients/:id" element={<PatientDetail />} />
