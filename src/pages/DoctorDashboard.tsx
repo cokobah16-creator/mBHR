@@ -3,37 +3,34 @@ import { Link } from 'react-router-dom'
 import { db } from '@/db'
 import type { Patient, Visit, Vital, QueueItem } from '@/db'
 import { useAuthStore } from '@/stores/auth'
-import { doctorService } from '@/services/doctorService'
-import { outreachService } from '@/services/outreachService'
-import type { PatientFlag, OutreachEvent, DoctorAnalytics } from '@/types/multiTenant'
+import { queueManagement } from '@/services/queueManagement'
 import { getFlagColor } from '@/utils/vitals'
 import {
   UserIcon,
   ClockIcon,
-  FlagIcon,
   ChartBarIcon,
+  ExclamationTriangleIcon,
   CheckCircleIcon,
-  ExclamationTriangleIcon
+  HeartIcon
 } from '@heroicons/react/24/outline'
 
 interface PatientInQueue extends QueueItem {
   patient?: Patient
   latestVitals?: Vital
-  flags: PatientFlag[]
+  openVisit?: Visit
 }
 
 export function DoctorDashboard() {
   const { currentUser } = useAuthStore()
   const [queuePatients, setQueuePatients] = useState<PatientInQueue[]>([])
-  const [activeEvent, setActiveEvent] = useState<OutreachEvent | null>(null)
-  const [analytics, setAnalytics] = useState<DoctorAnalytics | null>(null)
+  const [stats, setStats] = useState({ waiting: 0, inProgress: 0, completed: 0 })
   const [loading, setLoading] = useState(true)
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null)
 
   useEffect(() => {
     if (currentUser) {
       loadDashboardData()
-      const interval = setInterval(loadDashboardData, 30000)
+      const interval = setInterval(loadDashboardData, 10000) // Refresh every 10s
       return () => clearInterval(interval)
     }
   }, [currentUser])
@@ -44,15 +41,35 @@ export function DoctorDashboard() {
     try {
       setLoading(true)
 
-      const event = await outreachService.getActiveEventForUser(currentUser.id)
-      setActiveEvent(event)
-
+      // Get all consult stage patients
       const queue = await db.queue
         .where('stage')
         .equals('consult')
-        .and(item => item.status === 'waiting' || item.status === 'in_progress')
+        .and(item => item.status !== 'done')
         .toArray()
 
+      // Get stats for today
+      const allConsultItems = await db.queue
+        .where('stage')
+        .equals('consult')
+        .toArray()
+
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+
+      const todayItems = allConsultItems.filter(item => {
+        const itemDate = new Date(item.updatedAt)
+        itemDate.setHours(0, 0, 0, 0)
+        return itemDate.getTime() === today.getTime()
+      })
+
+      setStats({
+        waiting: queue.filter(i => i.status === 'waiting').length,
+        inProgress: queue.filter(i => i.status === 'in_progress').length,
+        completed: todayItems.filter(i => i.status === 'done').length
+      })
+
+      // Load patient data
       const patientsWithData = await Promise.all(
         queue.map(async (item) => {
           const patient = await db.patients.get(item.patientId)
@@ -63,50 +80,38 @@ export function DoctorDashboard() {
             .reverse()
             .first()
 
-          let flags: PatientFlag[] = []
-          if (event && event.org_id) {
-            flags = await doctorService.getPatientFlags({
-              org_id: event.org_id,
-              event_id: event.id,
-              status: 'open'
-            })
-            flags = flags.filter(f => f.patient_id === item.patientId)
-          }
+          const openVisit = await db.visits
+            .where('patientId')
+            .equals(item.patientId)
+            .and(v => v.status === 'open')
+            .first()
 
           return {
             ...item,
             patient,
             latestVitals: vitals,
-            flags
+            openVisit
           }
         })
       )
 
-      patientsWithData.sort((a, b) => {
-        if (a.flags.length > 0 && b.flags.length === 0) return -1
-        if (a.flags.length === 0 && b.flags.length > 0) return 1
-
-        const hasUrgentA = a.flags.some(f => f.priority === 'urgent')
-        const hasUrgentB = b.flags.some(f => f.priority === 'urgent')
-        if (hasUrgentA && !hasUrgentB) return -1
-        if (!hasUrgentA && hasUrgentB) return 1
-
-        return a.position - b.position
-      })
+      // Sort by position
+      patientsWithData.sort((a, b) => a.position - b.position)
 
       setQueuePatients(patientsWithData)
-
-      if (event && event.id) {
-        const analyticsData = await doctorService.getDoctorAnalytics(
-          event.id,
-          currentUser.id
-        )
-        setAnalytics(analyticsData)
-      }
     } catch (error) {
       console.error('Error loading doctor dashboard:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleStartConsultation = async (item: PatientInQueue) => {
+    try {
+      await queueManagement.startService(item.id)
+      await loadDashboardData()
+    } catch (error) {
+      console.error('Error starting consultation:', error)
     }
   }
 
@@ -149,189 +154,238 @@ export function DoctorDashboard() {
     )
   }
 
+  const waiting = queuePatients.filter(item => item.status === 'waiting')
+  const inProgress = queuePatients.find(item => item.status === 'in_progress')
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Doctor Consultation Station</h1>
           <p className="text-gray-600">
-            {activeEvent ? `${activeEvent.event_name} - ${activeEvent.site_id}` : 'No active event'}
+            {currentUser?.fullName || 'Doctor'} • Consultation Queue
           </p>
         </div>
-        {analytics && (
-          <div className="flex items-center space-x-4 bg-white rounded-lg shadow-sm p-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">{analytics.patients_seen}</div>
-              <div className="text-xs text-gray-600">Patients Seen</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">{analytics.consultations_completed}</div>
-              <div className="text-xs text-gray-600">Completed</div>
-            </div>
-            {analytics.avg_consultation_time_minutes && (
-              <div className="text-center">
-                <div className="text-2xl font-bold text-orange-600">
-                  {analytics.avg_consultation_time_minutes.toFixed(1)}m
+        <div className="flex items-center space-x-4 bg-white rounded-lg shadow-sm p-4">
+          <div className="text-center">
+            <div className="text-2xl font-bold text-blue-600">{stats.waiting}</div>
+            <div className="text-xs text-gray-600">Waiting</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-yellow-600">{stats.inProgress}</div>
+            <div className="text-xs text-gray-600">In Progress</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
+            <div className="text-xs text-gray-600">Completed Today</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Current Patient in Progress */}
+      {inProgress && (
+        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6">
+          <h3 className="text-sm font-semibold text-yellow-800 mb-3 uppercase">Currently Consulting</h3>
+          <div className="flex items-start justify-between">
+            <div className="flex items-start space-x-4 flex-1">
+              {inProgress.patient?.photoUrl ? (
+                <img
+                  src={inProgress.patient.photoUrl}
+                  alt={`${inProgress.patient.givenName} ${inProgress.patient.familyName}`}
+                  className="w-16 h-16 rounded-full object-cover"
+                />
+              ) : (
+                <div className="w-16 h-16 rounded-full bg-yellow-200 flex items-center justify-center">
+                  <UserIcon className="h-8 w-8 text-yellow-700" />
                 </div>
-                <div className="text-xs text-gray-600">Avg Time</div>
+              )}
+
+              <div className="flex-1">
+                <h3 className="text-xl font-semibold text-gray-900">
+                  {inProgress.patient?.givenName} {inProgress.patient?.familyName}
+                </h3>
+                <p className="text-gray-600 mt-1">
+                  {inProgress.patient?.sex} • {inProgress.patient?.dob}
+                </p>
+                <p className="text-gray-600">{inProgress.patient?.phone}</p>
+
+                {inProgress.latestVitals && (
+                  <div className="mt-3 grid grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-600">BP:</span>
+                      <span className="ml-1 font-medium">
+                        {inProgress.latestVitals.systolic}/{inProgress.latestVitals.diastolic}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Temp:</span>
+                      <span className="ml-1 font-medium">{inProgress.latestVitals.tempC}°C</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Pulse:</span>
+                      <span className="ml-1 font-medium">{inProgress.latestVitals.pulseBpm} bpm</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">SpO2:</span>
+                      <span className="ml-1 font-medium">{inProgress.latestVitals.spo2}%</span>
+                    </div>
+                  </div>
+                )}
+
+                {getVitalsFlags(inProgress.latestVitals)}
               </div>
-            )}
+            </div>
+
+            <div className="flex flex-col space-y-2">
+              <Link
+                to={`/consult`}
+                state={{ patientId: inProgress.patientId, visitId: inProgress.openVisit?.id }}
+                className="btn-primary text-sm"
+              >
+                Continue Consultation
+              </Link>
+              <Link
+                to={`/patients/${inProgress.patientId}`}
+                className="btn-secondary text-sm text-center"
+              >
+                View History
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Waiting Queue */}
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+          Waiting Queue ({waiting.length})
+        </h3>
+
+        {waiting.length === 0 && !inProgress ? (
+          <div className="text-center py-12">
+            <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Queue Clear</h3>
+            <p className="text-gray-600">No patients waiting for consultation at this time.</p>
+          </div>
+        ) : waiting.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">
+            <p>No additional patients waiting. Current patient in progress.</p>
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {waiting.map((item) => {
+              if (!item.patient) return null
+
+              const isNext = item.position === 1
+
+              return (
+                <div
+                  key={item.id}
+                  className={`border-2 rounded-lg p-4 transition-all ${
+                    isNext
+                      ? 'border-green-300 bg-green-50'
+                      : 'border-gray-200 bg-white hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start space-x-4 flex-1">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${
+                        isNext ? 'bg-green-600' : 'bg-gray-500'
+                      }`}>
+                        {item.position}
+                      </div>
+
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3">
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            {item.patient.givenName} {item.patient.familyName}
+                          </h3>
+                          <span className="text-sm text-gray-500">
+                            {item.patient.sex} • {item.patient.dob}
+                          </span>
+                        </div>
+
+                        <div className="mt-1 text-sm text-gray-600">
+                          <p>{item.patient.phone}</p>
+                        </div>
+
+                        {item.latestVitals && (
+                          <div className="mt-2 grid grid-cols-4 gap-3 text-sm">
+                            <div>
+                              <span className="text-gray-600">BP:</span>
+                              <span className="ml-1 font-medium">
+                                {item.latestVitals.systolic}/{item.latestVitals.diastolic}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Temp:</span>
+                              <span className="ml-1 font-medium">{item.latestVitals.tempC}°C</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Pulse:</span>
+                              <span className="ml-1 font-medium">{item.latestVitals.pulseBpm} bpm</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">SpO2:</span>
+                              <span className="ml-1 font-medium">{item.latestVitals.spo2}%</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {getVitalsFlags(item.latestVitals)}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-end space-y-2">
+                      <div className="flex items-center text-sm text-gray-500">
+                        <ClockIcon className="h-4 w-4 mr-1" />
+                        {getWaitTime(item.updatedAt)}
+                      </div>
+
+                      {isNext && !inProgress && (
+                        <button
+                          onClick={() => handleStartConsultation(item)}
+                          className="btn-primary text-sm"
+                        >
+                          Start Consultation
+                        </button>
+                      )}
+
+                      <Link
+                        to={`/patients/${item.patientId}`}
+                        className="btn-secondary text-sm"
+                      >
+                        View History
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
 
-      {queuePatients.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm p-12 text-center">
-          <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Queue Clear</h3>
-          <p className="text-gray-600">No patients waiting for consultation at this time.</p>
-        </div>
-      ) : (
-        <div className="grid gap-4">
-          {queuePatients.map((item) => {
-            if (!item.patient) return null
-
-            const isActive = selectedPatient === item.patientId
-            const hasUrgentFlags = item.flags.some(f => f.priority === 'urgent')
-
-            return (
-              <div
-                key={item.id}
-                className={`bg-white rounded-lg shadow-sm p-6 border-2 transition-all ${
-                  isActive
-                    ? 'border-blue-500'
-                    : hasUrgentFlags
-                    ? 'border-red-300'
-                    : 'border-transparent hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start space-x-4 flex-1">
-                    {item.patient.photoUrl ? (
-                      <img
-                        src={item.patient.photoUrl}
-                        alt={`${item.patient.givenName} ${item.patient.familyName}`}
-                        className="w-16 h-16 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center">
-                        <UserIcon className="h-8 w-8 text-gray-400" />
-                      </div>
-                    )}
-
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-3">
-                        <h3 className="text-lg font-semibold text-gray-900">
-                          {item.patient.givenName} {item.patient.familyName}
-                        </h3>
-                        <span className="text-sm text-gray-500">
-                          {item.patient.sex} • {item.patient.dob}
-                        </span>
-                        {item.flags.length > 0 && (
-                          <span className="flex items-center text-sm text-red-600">
-                            <ExclamationTriangleIcon className="h-4 w-4 mr-1" />
-                            {item.flags.length} flag{item.flags.length > 1 ? 's' : ''}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="mt-2 text-sm text-gray-600">
-                        <p>{item.patient.phone}</p>
-                        <p>{item.patient.address}</p>
-                      </div>
-
-                      {item.latestVitals && (
-                        <div className="mt-3 grid grid-cols-4 gap-4 text-sm">
-                          <div>
-                            <span className="text-gray-600">BP:</span>
-                            <span className="ml-1 font-medium">
-                              {item.latestVitals.systolic}/{item.latestVitals.diastolic}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-gray-600">Temp:</span>
-                            <span className="ml-1 font-medium">{item.latestVitals.tempC}°C</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-600">Pulse:</span>
-                            <span className="ml-1 font-medium">{item.latestVitals.pulseBpm} bpm</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-600">SpO2:</span>
-                            <span className="ml-1 font-medium">{item.latestVitals.spo2}%</span>
-                          </div>
-                        </div>
-                      )}
-
-                      {getVitalsFlags(item.latestVitals)}
-
-                      {item.flags.length > 0 && (
-                        <div className="mt-3 space-y-2">
-                          {item.flags.map((flag) => (
-                            <div
-                              key={flag.id}
-                              className="flex items-start space-x-2 text-sm bg-yellow-50 border border-yellow-200 rounded p-2"
-                            >
-                              <FlagIcon className="h-4 w-4 text-yellow-600 mt-0.5" />
-                              <div>
-                                <div className="font-medium text-yellow-900">
-                                  {flag.flag_type.replace(/_/g, ' ')}
-                                </div>
-                                <div className="text-yellow-800">{flag.message}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col items-end space-y-2">
-                    <div className="flex items-center text-sm text-gray-500">
-                      <ClockIcon className="h-4 w-4 mr-1" />
-                      {getWaitTime(item.updatedAt)}
-                    </div>
-
-                    <Link
-                      to={`/consult`}
-                      state={{ patientId: item.patientId }}
-                      className="btn-primary text-sm"
-                      onClick={() => setSelectedPatient(item.patientId)}
-                    >
-                      Start Consultation
-                    </Link>
-
-                    <Link
-                      to={`/patients/${item.patientId}`}
-                      className="btn-secondary text-sm"
-                    >
-                      View History
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
+      {/* Quick Actions */}
       <div className="bg-white rounded-lg shadow-sm p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Link to="/labs" className="btn-secondary flex items-center justify-center">
-            <ChartBarIcon className="h-5 w-5 mr-2" />
-            Lab Orders
+          <Link to="/queue" className="btn-secondary flex flex-col items-center justify-center p-4 h-24">
+            <ChartBarIcon className="h-6 w-6 mb-2" />
+            <span className="text-sm">View All Queues</span>
           </Link>
-          <Link to="/pharmacy" className="btn-secondary flex items-center justify-center">
-            Pharmacy
+          <Link to="/patients" className="btn-secondary flex flex-col items-center justify-center p-4 h-24">
+            <UserIcon className="h-6 w-6 mb-2" />
+            <span className="text-sm">All Patients</span>
           </Link>
-          <Link to="/patients" className="btn-secondary flex items-center justify-center">
-            <UserIcon className="h-5 w-5 mr-2" />
-            All Patients
+          <Link to="/vitals" className="btn-secondary flex flex-col items-center justify-center p-4 h-24">
+            <HeartIcon className="h-6 w-6 mb-2" />
+            <span className="text-sm">Record Vitals</span>
           </Link>
-          <button className="btn-secondary flex items-center justify-center">
-            Protocols
-          </button>
+          <Link to="/pharmacy" className="btn-secondary flex flex-col items-center justify-center p-4 h-24">
+            <span className="text-lg mb-2">💊</span>
+            <span className="text-sm">Pharmacy</span>
+          </Link>
         </div>
       </div>
     </div>
