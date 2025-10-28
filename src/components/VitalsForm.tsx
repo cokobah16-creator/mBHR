@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { db, generateId, createAuditLog, bumpDailyCount, epochDay } from '@/db'
 import { calculateBMI, flagVitals, getFlagColor, getFlagLabel } from '@/utils/vitals'
 import { useAuthStore } from '@/stores/auth'
+import { queueManagement } from '@/services/queueManagement'
 import { EnhancedVitalsInput } from '@/components/EnhancedVitalsInput'
 import { AudioButton } from '@/components/AudioButton'
 import { HeartIcon } from '@heroicons/react/24/outline'
@@ -103,6 +104,13 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
 
       // Bump daily count
       await bumpDailyCount(epochDay(new Date()), 'vitals')
+
+      // Move patient to next stage in queue (consult)
+      try {
+        await queueManagement.moveToNextStage(patientId)
+      } catch (error) {
+        console.warn('Failed to move patient to next queue stage:', error)
+      }
 
       onSuccess?.()
     } catch (error) {

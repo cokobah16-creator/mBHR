@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { useTranslation } from 'react-i18next'
 import { db, generateId, createAuditLog } from '@/db'
 import { useAuthStore } from '@/stores/auth'
+import { queueManagement } from '@/services/queueManagement'
 import { DocumentTextIcon, PlusIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
 const soapSchema = z.object({
@@ -78,6 +79,13 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
         'consultation',
         consultation.id
       )
+
+      // Move patient to next stage in queue (pharmacy)
+      try {
+        await queueManagement.moveToNextStage(patientId)
+      } catch (error) {
+        console.warn('Failed to move patient to next queue stage:', error)
+      }
 
       onSuccess?.()
     } catch (error) {
