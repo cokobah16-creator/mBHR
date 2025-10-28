@@ -108,9 +108,14 @@ export function Layout({ children }) {
         { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
         { name: 'Restock Game', href: '/inv/game', icon: GiftIcon }
     ];
-    // Add admin-only navigation items
+    // Add role-specific navigation items
     const navigation = [
         ...baseNavigation,
+        // Doctor-specific items
+        ...(currentUser && can(currentUser.role, 'consult') ? [
+            { name: 'Doctor Station', href: '/doctor/dashboard', icon: ClipboardDocumentListIcon }
+        ] : []),
+        // Admin-only items
         ...(currentUser && can(currentUser.role, 'users') ? [
             { name: 'User Management', href: '/users', icon: UsersIcon },
             { name: 'Approve Games', href: '/admin/approvals', icon: CheckCircleIcon }

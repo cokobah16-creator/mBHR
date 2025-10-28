@@ -13,7 +13,7 @@ import { AudioButton } from '@/components/AudioButton';
 import { MessageOutbox } from '@/components/MessageOutbox';
 import { SyncDashboard } from '@/components/SyncDashboard';
 import { AppointmentCalendar } from '@/features/appointments/AppointmentCalendar';
-import { UserPlusIcon, UsersIcon, HeartIcon, BeakerIcon, CubeIcon, Cog6ToothIcon, QueueListIcon, CalendarIcon, EnvelopeIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { UserPlusIcon, UsersIcon, HeartIcon, DocumentTextIcon, BeakerIcon, CubeIcon, Cog6ToothIcon, QueueListIcon, CalendarIcon, EnvelopeIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 // Memoized stat card component
 const StatCard = memo(({ icon: Icon, label, value, colorClass }) => (_jsx("div", { className: "bg-white rounded-lg shadow-sm p-6", children: _jsxs("div", { className: "flex items-center", children: [_jsx("div", { className: `flex-shrink-0 p-2 rounded-lg ${colorClass}`, children: _jsx(Icon, { className: "h-6 w-6" }) }), _jsxs("div", { className: "ml-4", children: [_jsx("p", { className: "text-sm font-medium text-gray-500", children: label }), _jsx("p", { className: "text-2xl font-bold text-gray-900", children: value })] })] }) })));
 StatCard.displayName = 'StatCard';
@@ -95,8 +95,15 @@ export function Dashboard() {
         ];
         // Add role-specific actions
         if (currentUser) {
-            // Lab results for doctors and nurses
+            // Doctor Station for doctors
             if (can(currentUser.role, 'consult')) {
+                actions.unshift({
+                    name: 'Doctor Station',
+                    href: '/doctor/dashboard',
+                    icon: DocumentTextIcon,
+                    color: 'bg-blue-600 hover:bg-blue-700',
+                    description: 'Consultation queue & tools'
+                });
                 actions.push({
                     name: 'Lab Results',
                     href: '/labs',

@@ -133,8 +133,16 @@ export function Dashboard() {
 
     // Add role-specific actions
     if (currentUser) {
-      // Lab results for doctors and nurses
+      // Doctor Station for doctors
       if (can(currentUser.role, 'consult')) {
+        actions.unshift({
+          name: 'Doctor Station',
+          href: '/doctor/dashboard',
+          icon: DocumentTextIcon,
+          color: 'bg-blue-600 hover:bg-blue-700',
+          description: 'Consultation queue & tools'
+        })
+
         actions.push({
           name: 'Lab Results',
           href: '/labs',
