@@ -1,17 +1,19 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '@/db'
 import type { Patient, Visit, Vital, QueueItem } from '@/db'
 import { useAuthStore } from '@/stores/auth'
 import { queueManagement } from '@/services/queueManagement'
 import { getFlagColor } from '@/utils/vitals'
+import { palaverRoom } from '@/services/palaverRoom'
+import { PalaverRoom } from '@/features/doctor/PalaverRoom'
 import {
   UserIcon,
   ClockIcon,
   ChartBarIcon,
-  ExclamationTriangleIcon,
   CheckCircleIcon,
-  HeartIcon
+  HeartIcon,
+  ChatBubbleLeftRightIcon
 } from '@heroicons/react/24/outline'
 
 interface PatientInQueue extends QueueItem {
@@ -25,15 +27,27 @@ export function DoctorDashboard() {
   const [queuePatients, setQueuePatients] = useState<PatientInQueue[]>([])
   const [stats, setStats] = useState({ waiting: 0, inProgress: 0, completed: 0 })
   const [loading, setLoading] = useState(true)
-  const [selectedPatient, setSelectedPatient] = useState<string | null>(null)
+  const [showPalaverRoom, setShowPalaverRoom] = useState(false)
+  const [unreadMessages, setUnreadMessages] = useState(0)
+
+  const loadUnreadCount = useCallback(async () => {
+    if (!currentUser) return
+    const count = await palaverRoom.getUnreadCount(currentUser.id)
+    setUnreadMessages(count)
+  }, [currentUser])
 
   useEffect(() => {
     if (currentUser) {
       loadDashboardData()
-      const interval = setInterval(loadDashboardData, 10000) // Refresh every 10s
-      return () => clearInterval(interval)
+      loadUnreadCount()
+      const interval = setInterval(loadDashboardData, 10000)
+      const messageInterval = setInterval(loadUnreadCount, 30000)
+      return () => {
+        clearInterval(interval)
+        clearInterval(messageInterval)
+      }
     }
-  }, [currentUser])
+  }, [currentUser, loadUnreadCount])
 
   const loadDashboardData = async () => {
     if (!currentUser) return
@@ -163,24 +177,60 @@ export function DoctorDashboard() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Doctor Consultation Station</h1>
           <p className="text-gray-600">
-            {currentUser?.fullName || 'Doctor'} • Consultation Queue
+            {currentUser?.fullName || 'Doctor'} - Consultation Queue
           </p>
         </div>
-        <div className="flex items-center space-x-4 bg-white rounded-lg shadow-sm p-4">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{stats.waiting}</div>
-            <div className="text-xs text-gray-600">Waiting</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-yellow-600">{stats.inProgress}</div>
-            <div className="text-xs text-gray-600">In Progress</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
-            <div className="text-xs text-gray-600">Completed Today</div>
+        <div className="flex items-center gap-4">
+          {/* Palaver Room Button */}
+          <button
+            onClick={() => setShowPalaverRoom(true)}
+            className="relative flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+          >
+            <ChatBubbleLeftRightIcon className="h-5 w-5" />
+            <span className="font-medium">Palaver Room</span>
+            {unreadMessages > 0 && (
+              <span className="absolute -top-2 -right-2 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] text-center">
+                {unreadMessages}
+              </span>
+            )}
+          </button>
+
+          {/* Stats */}
+          <div className="flex items-center space-x-4 bg-white rounded-lg shadow-sm p-4">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-600">{stats.waiting}</div>
+              <div className="text-xs text-gray-600">Waiting</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-yellow-600">{stats.inProgress}</div>
+              <div className="text-xs text-gray-600">In Progress</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
+              <div className="text-xs text-gray-600">Completed Today</div>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Palaver Room Sliding Panel */}
+      {showPalaverRoom && (
+        <>
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-40"
+            onClick={() => setShowPalaverRoom(false)}
+          />
+          <div className="fixed right-0 top-0 bottom-0 w-full max-w-md z-50 shadow-2xl">
+            <PalaverRoom
+              onClose={() => {
+                setShowPalaverRoom(false)
+                loadUnreadCount()
+              }}
+              isPanel={true}
+            />
+          </div>
+        </>
+      )}
 
       {/* Current Patient in Progress */}
       {inProgress && (
@@ -369,7 +419,19 @@ export function DoctorDashboard() {
       {/* Quick Actions */}
       <div className="bg-white rounded-lg shadow-sm p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <button
+            onClick={() => setShowPalaverRoom(true)}
+            className="relative btn-secondary flex flex-col items-center justify-center p-4 h-24 bg-emerald-50 border-emerald-200 hover:bg-emerald-100"
+          >
+            <ChatBubbleLeftRightIcon className="h-6 w-6 mb-2 text-emerald-600" />
+            <span className="text-sm text-emerald-800">Palaver Room</span>
+            {unreadMessages > 0 && (
+              <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full">
+                {unreadMessages}
+              </span>
+            )}
+          </button>
           <Link to="/queue" className="btn-secondary flex flex-col items-center justify-center p-4 h-24">
             <ChartBarIcon className="h-6 w-6 mb-2" />
             <span className="text-sm">View All Queues</span>
@@ -383,7 +445,7 @@ export function DoctorDashboard() {
             <span className="text-sm">Record Vitals</span>
           </Link>
           <Link to="/pharmacy" className="btn-secondary flex flex-col items-center justify-center p-4 h-24">
-            <span className="text-lg mb-2">💊</span>
+            <span className="text-lg mb-2">Rx</span>
             <span className="text-sm">Pharmacy</span>
           </Link>
         </div>
