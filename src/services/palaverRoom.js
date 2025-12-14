@@ -53,8 +53,10 @@ class PalaverRoomService {
         return data;
     }
     async getInboxMessages(userId) {
-        if (!supabase)
-            return [];
+        if (!supabase) {
+            logger.warn('Supabase not configured - cannot fetch inbox');
+            throw new Error('Messaging service not available. Please check your connection.');
+        }
         const { data, error } = await supabase
             .from('palaver_messages')
             .select('*')
@@ -63,7 +65,7 @@ class PalaverRoomService {
             .order('created_at', { ascending: false });
         if (error) {
             logger.error('Failed to fetch inbox:', error);
-            return [];
+            throw new Error(`Failed to load messages: ${error.message}`);
         }
         return data || [];
     }
@@ -96,6 +98,9 @@ class PalaverRoomService {
         }
         return count || 0;
     }
+    isAvailable() {
+        return supabase !== null;
+    }
     async markAsRead(messageId) {
         if (!supabase)
             return;
@@ -122,8 +127,10 @@ class PalaverRoomService {
         }
     }
     async getBroadcasts(userRole) {
-        if (!supabase)
+        if (!supabase) {
+            logger.warn('Supabase not configured - cannot fetch broadcasts');
             return [];
+        }
         const roleTargets = this.getRoleTargets(userRole);
         const { data, error } = await supabase
             .from('palaver_broadcasts')
