@@ -250,35 +250,69 @@ class PalaverRoomService {
   async getConversation(userId: string, otherUserId: string): Promise<PalaverMessage[]> {
     if (!supabase) return []
 
-    const { data, error } = await supabase
-      .from('palaver_messages')
-      .select('*')
-      .or(`and(sender_id.eq.${userId},recipient_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},recipient_id.eq.${userId})`)
-      .order('created_at', { ascending: true })
+    try {
+      const { data: sent, error: sentError } = await supabase
+        .from('palaver_messages')
+        .select('*')
+        .eq('sender_id', userId)
+        .eq('recipient_id', otherUserId)
 
-    if (error) {
-      logger.error('Failed to fetch conversation:', error)
+      const { data: received, error: receivedError } = await supabase
+        .from('palaver_messages')
+        .select('*')
+        .eq('sender_id', otherUserId)
+        .eq('recipient_id', userId)
+
+      if (sentError) {
+        logger.error('Failed to fetch sent messages:', sentError)
+        return []
+      }
+      if (receivedError) {
+        logger.error('Failed to fetch received messages:', receivedError)
+        return []
+      }
+
+      const allMessages = [...(sent || []), ...(received || [])]
+      allMessages.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
+      return allMessages
+    } catch (err) {
+      logger.error('Failed to fetch conversation:', err)
       return []
     }
-
-    return data || []
   }
 
   async getMessageThread(parentId: string): Promise<PalaverMessage[]> {
     if (!supabase) return []
 
-    const { data, error } = await supabase
-      .from('palaver_messages')
-      .select('*')
-      .or(`id.eq.${parentId},parent_id.eq.${parentId}`)
-      .order('created_at', { ascending: true })
+    try {
+      const { data: parent, error: parentError } = await supabase
+        .from('palaver_messages')
+        .select('*')
+        .eq('id', parentId)
 
-    if (error) {
-      logger.error('Failed to fetch thread:', error)
+      const { data: replies, error: repliesError } = await supabase
+        .from('palaver_messages')
+        .select('*')
+        .eq('parent_id', parentId)
+
+      if (parentError) {
+        logger.error('Failed to fetch parent message:', parentError)
+        return []
+      }
+      if (repliesError) {
+        logger.error('Failed to fetch replies:', repliesError)
+        return []
+      }
+
+      const allMessages = [...(parent || []), ...(replies || [])]
+      allMessages.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
+      return allMessages
+    } catch (err) {
+      logger.error('Failed to fetch thread:', err)
       return []
     }
-
-    return data || []
   }
 
   private getRoleTargets(role: string): TargetRole[] {

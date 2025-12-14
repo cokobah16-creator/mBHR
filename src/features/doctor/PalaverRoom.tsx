@@ -160,19 +160,24 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
   }
 
   const handleOpenMessage = async (message: PalaverMessage) => {
+    if (!currentUser) return
+
     setSelectedMessage(message)
 
-    if (!message.is_read && currentUser) {
-      await palaverRoom.markAsRead(message.id)
-      loadData()
-    }
+    try {
+      if (!message.is_read) {
+        await palaverRoom.markAsRead(message.id)
+        loadData()
+      }
 
-    const conversation = await palaverRoom.getConversation(
-      currentUser!.id,
-      message.sender_id === currentUser!.id ? message.recipient_id : message.sender_id
-    )
-    setConversationMessages(conversation)
-    setViewMode('conversation')
+      const otherUserId = message.sender_id === currentUser.id ? message.recipient_id : message.sender_id
+      const conversation = await palaverRoom.getConversation(currentUser.id, otherUserId)
+      setConversationMessages(conversation)
+      setViewMode('conversation')
+    } catch (err) {
+      console.error('Failed to open message:', err)
+      setError('Failed to load conversation. Please try again.')
+    }
   }
 
   const handleReply = () => {
