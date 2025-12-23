@@ -58,17 +58,30 @@ class PalaverRoomService {
             throw new Error('Messaging service not available. Please check your connection.');
         }
         try {
-            const { data, error } = await supabase
+            const { data: received, error: receivedError } = await supabase
                 .from('palaver_messages')
                 .select('*')
-                .or(`recipient_id.eq.${userId},sender_id.eq.${userId}`)
+                .eq('recipient_id', userId)
                 .eq('is_archived', false)
                 .order('created_at', { ascending: false });
-            if (error) {
-                logger.error('Failed to fetch inbox:', error);
-                throw new Error(`Failed to load messages: ${error.message}`);
+            if (receivedError) {
+                logger.error('Failed to fetch received messages:', receivedError);
+                throw new Error(`Failed to load messages: ${receivedError.message}`);
             }
-            return data || [];
+            const { data: sent, error: sentError } = await supabase
+                .from('palaver_messages')
+                .select('*')
+                .eq('sender_id', userId)
+                .eq('is_archived', false)
+                .order('created_at', { ascending: false });
+            if (sentError) {
+                logger.error('Failed to fetch sent messages:', sentError);
+                throw new Error(`Failed to load messages: ${sentError.message}`);
+            }
+            const allMessages = [...(received || []), ...(sent || [])];
+            const uniqueMessages = allMessages.filter((msg, index, self) => self.findIndex(m => m.id === msg.id) === index);
+            uniqueMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            return uniqueMessages;
         }
         catch (err) {
             logger.error('Inbox fetch error:', err);

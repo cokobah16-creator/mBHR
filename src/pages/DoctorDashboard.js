@@ -15,14 +15,20 @@ export function DoctorDashboard() {
     const [loading, setLoading] = useState(true);
     const [showPalaverRoom, setShowPalaverRoom] = useState(false);
     const [unreadMessages, setUnreadMessages] = useState(0);
+    const userId = currentUser?.id;
     const loadUnreadCount = useCallback(async () => {
-        if (!currentUser)
+        if (!userId)
             return;
-        const count = await palaverRoom.getUnreadCount(currentUser.id);
-        setUnreadMessages(count);
-    }, [currentUser]);
+        try {
+            const count = await palaverRoom.getUnreadCount(userId);
+            setUnreadMessages(count);
+        }
+        catch (err) {
+            console.error('Failed to load unread count:', err);
+        }
+    }, [userId]);
     useEffect(() => {
-        if (currentUser) {
+        if (userId) {
             loadDashboardData();
             loadUnreadCount();
             const interval = setInterval(loadDashboardData, 10000);
@@ -32,7 +38,7 @@ export function DoctorDashboard() {
                 clearInterval(messageInterval);
             };
         }
-    }, [currentUser, loadUnreadCount]);
+    }, [userId, loadUnreadCount]);
     const loadDashboardData = async () => {
         if (!currentUser)
             return;

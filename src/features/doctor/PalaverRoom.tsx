@@ -55,8 +55,11 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
   const [success, setSuccess] = useState('')
   const [loadError, setLoadError] = useState('')
 
+  const userId = currentUser?.id
+  const userRole = currentUser?.role
+
   const loadData = useCallback(async () => {
-    if (!currentUser) return
+    if (!userId || !userRole) return
     setLoading(true)
     setLoadError('')
 
@@ -68,29 +71,30 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
 
     try {
       const [inbox, unread, broadcastList, staffList] = await Promise.all([
-        palaverRoom.getInboxMessages(currentUser.id),
-        palaverRoom.getUnreadCount(currentUser.id),
-        palaverRoom.getBroadcasts(currentUser.role),
+        palaverRoom.getInboxMessages(userId),
+        palaverRoom.getUnreadCount(userId),
+        palaverRoom.getBroadcasts(userRole),
         db.users.where('role').anyOf(['doctor', 'nurse', 'admin']).and(u => u.isActive === 1).toArray()
       ])
 
       setMessages(inbox)
       setUnreadCount(unread)
       setBroadcasts(broadcastList)
-      setDoctors(staffList.filter(u => u.id !== currentUser.id))
+      setDoctors(staffList.filter(u => u.id !== userId))
     } catch (err) {
       console.error('Failed to load Palaver Room data:', err)
       setLoadError(err instanceof Error ? err.message : 'Failed to load messages. Please try again.')
     } finally {
       setLoading(false)
     }
-  }, [currentUser])
+  }, [userId, userRole])
 
   useEffect(() => {
+    if (!userId || !userRole) return
     loadData()
     const interval = setInterval(loadData, 30000)
     return () => clearInterval(interval)
-  }, [loadData])
+  }, [loadData, userId, userRole])
 
   const handleSendMessage = async () => {
     if (!currentUser || !composeData.recipientId || !composeData.subject || !composeData.body) {
