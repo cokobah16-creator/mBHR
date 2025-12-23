@@ -15,11 +15,14 @@ export function DoctorDashboard() {
     const [loading, setLoading] = useState(true);
     const [showPalaverRoom, setShowPalaverRoom] = useState(false);
     const [unreadMessages, setUnreadMessages] = useState(0);
+    const [initialLoadDone, setInitialLoadDone] = useState(false);
     const userId = currentUser?.id;
     const loadUnreadCount = useCallback(async () => {
         if (!userId)
             return;
         try {
+            if (!palaverRoom.isAvailable())
+                return;
             const count = await palaverRoom.getUnreadCount(userId);
             setUnreadMessages(count);
         }
@@ -27,30 +30,18 @@ export function DoctorDashboard() {
             console.error('Failed to load unread count:', err);
         }
     }, [userId]);
-    useEffect(() => {
-        if (userId) {
-            loadDashboardData();
-            loadUnreadCount();
-            const interval = setInterval(loadDashboardData, 10000);
-            const messageInterval = setInterval(loadUnreadCount, 30000);
-            return () => {
-                clearInterval(interval);
-                clearInterval(messageInterval);
-            };
-        }
-    }, [userId, loadUnreadCount]);
-    const loadDashboardData = async () => {
-        if (!currentUser)
+    const loadDashboardData = useCallback(async (isInitial = false) => {
+        if (!userId)
             return;
         try {
-            setLoading(true);
-            // Get all consult stage patients
+            if (isInitial) {
+                setLoading(true);
+            }
             const queue = await db.queue
                 .where('stage')
                 .equals('consult')
                 .and(item => item.status !== 'done')
                 .toArray();
-            // Get stats for today
             const allConsultItems = await db.queue
                 .where('stage')
                 .equals('consult')
@@ -67,7 +58,6 @@ export function DoctorDashboard() {
                 inProgress: queue.filter(i => i.status === 'in_progress').length,
                 completed: todayItems.filter(i => i.status === 'done').length
             });
-            // Load patient data
             const patientsWithData = await Promise.all(queue.map(async (item) => {
                 const patient = await db.patients.get(item.patientId);
                 const vitals = await db.vitals
@@ -87,7 +77,6 @@ export function DoctorDashboard() {
                     openVisit
                 };
             }));
-            // Sort by position
             patientsWithData.sort((a, b) => a.position - b.position);
             setQueuePatients(patientsWithData);
         }
@@ -95,9 +84,24 @@ export function DoctorDashboard() {
             console.error('Error loading doctor dashboard:', error);
         }
         finally {
-            setLoading(false);
+            if (isInitial) {
+                setLoading(false);
+                setInitialLoadDone(true);
+            }
         }
-    };
+    }, [userId]);
+    useEffect(() => {
+        if (!userId)
+            return;
+        loadDashboardData(true);
+        loadUnreadCount();
+        const interval = setInterval(() => loadDashboardData(false), 10000);
+        const messageInterval = setInterval(loadUnreadCount, 30000);
+        return () => {
+            clearInterval(interval);
+            clearInterval(messageInterval);
+        };
+    }, [userId, loadDashboardData, loadUnreadCount]);
     const handleStartConsultation = async (item) => {
         try {
             await queueManagement.startService(item.id);
