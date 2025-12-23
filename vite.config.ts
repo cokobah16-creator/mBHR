@@ -49,6 +49,24 @@ export default defineConfig({
           if (id.includes('/features/pharmacy/')) {
             return 'pharmacy';
           }
+          if (id.includes('/features/patient-portal/')) {
+            return 'patient-portal';
+          }
+          if (id.includes('/features/tickets/')) {
+            return 'tickets';
+          }
+          if (id.includes('/features/labs/')) {
+            return 'labs';
+          }
+          if (id.includes('/features/triage/')) {
+            return 'triage';
+          }
+          if (id.includes('/features/vitals/')) {
+            return 'vitals';
+          }
+          if (id.includes('/pages/admin/')) {
+            return 'admin';
+          }
           if (id.includes('/i18n/locales/')) {
             const lang = id.match(/locales\/(\w+)\.json/)?.[1];
             if (lang) return lang;

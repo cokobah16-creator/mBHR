@@ -221,8 +221,13 @@ export function Layout({ children }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-primary text-white shadow-lg sticky top-0 z-30">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-primary focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:outline-none focus:ring-2 focus:ring-white"
+      >
+        Skip to main content
+      </a>
+      <header role="banner" className="bg-primary text-white shadow-lg sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-3 md:py-4">
             {/* Mobile Menu Button */}
@@ -294,7 +299,10 @@ export function Layout({ children }: LayoutProps) {
         )}
 
         {/* Sidebar */}
-        <nav className={`
+        <nav
+          role="navigation"
+          aria-label="Main navigation"
+          className={`
           fixed md:sticky md:top-0 inset-y-0 left-0 z-50
           w-64 bg-white shadow-lg md:shadow-sm
           transform transition-transform duration-300 ease-in-out
@@ -363,6 +371,7 @@ export function Layout({ children }: LayoutProps) {
                         }`}
                         aria-haspopup="dialog"
                         aria-controls="pharmacy-menu"
+                        aria-current={isActive ? 'page' : undefined}
                       >
                         {Common}
                       </button>
@@ -370,6 +379,7 @@ export function Layout({ children }: LayoutProps) {
                       <Link
                         to={item.href}
                         onClick={() => setMobileMenuOpen(false)}
+                        aria-current={isActive ? 'page' : undefined}
                         className={`flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target ${
                           isActive
                             ? 'bg-primary text-white'
@@ -387,7 +397,12 @@ export function Layout({ children }: LayoutProps) {
         </nav>
 
         {/* Main Content */}
-        <main className="flex-1 w-full md:w-auto overflow-x-hidden min-h-full">
+        <main
+          id="main-content"
+          role="main"
+          aria-label="Main content"
+          className="flex-1 w-full md:w-auto overflow-x-hidden min-h-full"
+        >
           {overlay === "pharmacy" ? (
             <div id="pharmacy-menu" role="dialog" aria-modal="true" className="p-4 sm:p-6">
               <PharmacyOverlay onClose={() => setOverlay(null)} />

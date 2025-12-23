@@ -193,30 +193,38 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
           {/* Name Fields */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="givenName" className="block text-sm font-medium text-gray-700 mb-2">
                 {t('patient.givenName')} *
               </label>
               <input
                 {...register('givenName')}
+                id="givenName"
                 className="input-field"
                 placeholder="Enter given name"
+                aria-required="true"
+                aria-invalid={errors.givenName ? 'true' : 'false'}
+                aria-describedby={errors.givenName ? 'givenName-error' : undefined}
               />
               {errors.givenName && (
-                <p className="text-red-600 text-sm mt-1">{errors.givenName.message}</p>
+                <p id="givenName-error" role="alert" className="text-red-600 text-sm mt-1">{errors.givenName.message}</p>
               )}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="familyName" className="block text-sm font-medium text-gray-700 mb-2">
                 {t('patient.familyName')} *
               </label>
               <input
                 {...register('familyName')}
+                id="familyName"
                 className="input-field"
                 placeholder="Enter family name"
+                aria-required="true"
+                aria-invalid={errors.familyName ? 'true' : 'false'}
+                aria-describedby={errors.familyName ? 'familyName-error' : undefined}
               />
               {errors.familyName && (
-                <p className="text-red-600 text-sm mt-1">{errors.familyName.message}</p>
+                <p id="familyName-error" role="alert" className="text-red-600 text-sm mt-1">{errors.familyName.message}</p>
               )}
             </div>
           </div>
@@ -224,32 +232,43 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
           {/* Sex and DOB */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="sex" className="block text-sm font-medium text-gray-700 mb-2">
                 Sex *
               </label>
-              <select {...register('sex')} className="input-field">
+              <select
+                {...register('sex')}
+                id="sex"
+                className="input-field"
+                aria-required="true"
+                aria-invalid={errors.sex ? 'true' : 'false'}
+                aria-describedby={errors.sex ? 'sex-error' : undefined}
+              >
                 <option value="">Select sex</option>
                 <option value="male">Male</option>
                 <option value="female">Female</option>
                 <option value="other">Other</option>
               </select>
               {errors.sex && (
-                <p className="text-red-600 text-sm mt-1">{errors.sex.message}</p>
+                <p id="sex-error" role="alert" className="text-red-600 text-sm mt-1">{errors.sex.message}</p>
               )}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="dob" className="block text-sm font-medium text-gray-700 mb-2">
                 Date of Birth *
               </label>
               <input
                 {...register('dob')}
+                id="dob"
                 type="date"
                 className="input-field"
                 max={new Date().toISOString().split('T')[0]}
+                aria-required="true"
+                aria-invalid={errors.dob ? 'true' : 'false'}
+                aria-describedby={errors.dob ? 'dob-error' : undefined}
               />
               {errors.dob && (
-                <p className="text-red-600 text-sm mt-1">{errors.dob.message}</p>
+                <p id="dob-error" role="alert" className="text-red-600 text-sm mt-1">{errors.dob.message}</p>
               )}
             </div>
           </div>
@@ -257,65 +276,79 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
           {/* Phone and Email */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
                 {t('patient.phone')} (at least one contact required)
               </label>
               <input
                 {...register('phone')}
+                id="phone"
                 type="tel"
                 className="input-field"
                 placeholder="08012345678 or +2348012345678"
+                aria-invalid={errors.phone ? 'true' : 'false'}
+                aria-describedby={errors.phone ? 'phone-error' : undefined}
               />
               {errors.phone && (
-                <p className="text-red-600 text-sm mt-1">{errors.phone.message}</p>
+                <p id="phone-error" role="alert" className="text-red-600 text-sm mt-1">{errors.phone.message}</p>
               )}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
                 Email (at least one contact required)
               </label>
               <input
                 {...register('email')}
+                id="email"
                 type="email"
                 className="input-field"
                 placeholder="patient@example.com"
+                aria-invalid={errors.email ? 'true' : 'false'}
+                aria-describedby={errors.email ? 'email-error' : undefined}
               />
               {errors.email && (
-                <p className="text-red-600 text-sm mt-1">{errors.email.message}</p>
+                <p id="email-error" role="alert" className="text-red-600 text-sm mt-1">{errors.email.message}</p>
               )}
             </div>
           </div>
 
           {/* Address */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
               {t('patient.address')} *
             </label>
             <textarea
               {...register('address')}
+              id="address"
               className="input-field"
               rows={3}
               placeholder="Enter full address"
+              aria-required="true"
+              aria-invalid={errors.address ? 'true' : 'false'}
+              aria-describedby={errors.address ? 'address-error' : undefined}
             />
             {errors.address && (
-              <p className="text-red-600 text-sm mt-1">{errors.address.message}</p>
+              <p id="address-error" role="alert" className="text-red-600 text-sm mt-1">{errors.address.message}</p>
             )}
           </div>
 
           {/* State and LGA */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="state" className="block text-sm font-medium text-gray-700 mb-2">
                 {t('patient.state')} *
               </label>
               <select
                 {...register('state', {
-                  onChange: (e) => {
+                  onChange: () => {
                     setValue('lga', '')
                   }
                 })}
+                id="state"
                 className="input-field"
+                aria-required="true"
+                aria-invalid={errors.state ? 'true' : 'false'}
+                aria-describedby={errors.state ? 'state-error' : undefined}
               >
                 <option value="">Select state</option>
                 {NIGERIAN_STATES.map((state) => (
@@ -325,18 +358,22 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                 ))}
               </select>
               {errors.state && (
-                <p className="text-red-600 text-sm mt-1">{errors.state.message}</p>
+                <p id="state-error" role="alert" className="text-red-600 text-sm mt-1">{errors.state.message}</p>
               )}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="lga" className="block text-sm font-medium text-gray-700 mb-2">
                 {t('patient.lga')} *
               </label>
               <select
                 {...register('lga')}
+                id="lga"
                 className={`input-field ${!watchedState ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                 disabled={!watchedState || availableLGAs.length === 0}
+                aria-required="true"
+                aria-invalid={errors.lga ? 'true' : 'false'}
+                aria-describedby={errors.lga ? 'lga-error' : 'lga-hint'}
               >
                 <option value="">
                   {!watchedState
@@ -352,10 +389,10 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                 ))}
               </select>
               {errors.lga && (
-                <p className="text-red-600 text-sm mt-1">{errors.lga.message}</p>
+                <p id="lga-error" role="alert" className="text-red-600 text-sm mt-1">{errors.lga.message}</p>
               )}
               {watchedState && availableLGAs.length > 0 && (
-                <p className="text-gray-500 text-xs mt-1">
+                <p id="lga-hint" className="text-gray-500 text-xs mt-1">
                   {availableLGAs.length} LGAs available
                 </p>
               )}
@@ -364,11 +401,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
           {/* Family ID (Optional) */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="familyId" className="block text-sm font-medium text-gray-700 mb-2">
               Family ID (Optional)
             </label>
             <input
               {...register('familyId')}
+              id="familyId"
               className="input-field"
               placeholder="Link to existing family member"
             />
