@@ -16,21 +16,36 @@ vi.mock('@/lib/supabase', () => ({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
           maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null })),
-          single: vi.fn(() => Promise.resolve({ data: null, error: null }))
+          single: vi.fn(() => Promise.resolve({ data: null, error: null })),
+          eq: vi.fn(() => Promise.resolve({ data: null, error: null }))
         })),
         order: vi.fn(() => ({
           limit: vi.fn(() => Promise.resolve({ data: [], error: null }))
         })),
         range: vi.fn(() => Promise.resolve({ data: [], error: null })),
-        limit: vi.fn(() => Promise.resolve({ data: [], error: null }))
+        limit: vi.fn(() => Promise.resolve({ data: [], error: null })),
+        in: vi.fn(() => ({
+          gte: vi.fn(() => ({
+            order: vi.fn(() => ({
+              limit: vi.fn(() => Promise.resolve({ data: [], error: null }))
+            }))
+          }))
+        })),
+        gte: vi.fn(() => ({
+          order: vi.fn(() => ({
+            limit: vi.fn(() => Promise.resolve({ data: [], error: null }))
+          }))
+        }))
       })),
       insert: vi.fn(() => ({
         select: vi.fn(() => ({
-          single: vi.fn(() => Promise.resolve({ data: {}, error: null }))
+          single: vi.fn(() => Promise.resolve({ data: null, error: null }))
         }))
       })),
       update: vi.fn(() => ({
-        eq: vi.fn(() => Promise.resolve({ error: null }))
+        eq: vi.fn(() => ({
+          eq: vi.fn(() => Promise.resolve({ error: null }))
+        }))
       }))
     }))
   }

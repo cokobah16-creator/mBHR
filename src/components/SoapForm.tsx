@@ -108,110 +108,130 @@ export function SoapForm({ patientId, visitId, onSuccess, onCancel }: SoapFormPr
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* Subjective */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="soapSubjective" className="block text-sm font-medium text-gray-700 mb-2">
               Subjective (Patient's History) *
             </label>
             <textarea
               {...register('soapSubjective')}
+              id="soapSubjective"
               className="input-field"
               rows={4}
               placeholder="Patient reports... Chief complaint, history of present illness, review of systems..."
+              aria-required="true"
+              aria-invalid={errors.soapSubjective ? 'true' : 'false'}
+              aria-describedby={errors.soapSubjective ? 'soapSubjective-error' : undefined}
             />
             {errors.soapSubjective && (
-              <p className="text-red-600 text-sm mt-1">{errors.soapSubjective.message}</p>
+              <p id="soapSubjective-error" role="alert" className="text-red-600 text-sm mt-1">{errors.soapSubjective.message}</p>
             )}
           </div>
 
           {/* Objective */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="soapObjective" className="block text-sm font-medium text-gray-700 mb-2">
               Objective (Physical Examination) *
             </label>
             <textarea
               {...register('soapObjective')}
+              id="soapObjective"
               className="input-field"
               rows={4}
               placeholder="Physical examination findings, vital signs, laboratory results..."
+              aria-required="true"
+              aria-invalid={errors.soapObjective ? 'true' : 'false'}
+              aria-describedby={errors.soapObjective ? 'soapObjective-error' : undefined}
             />
             {errors.soapObjective && (
-              <p className="text-red-600 text-sm mt-1">{errors.soapObjective.message}</p>
+              <p id="soapObjective-error" role="alert" className="text-red-600 text-sm mt-1">{errors.soapObjective.message}</p>
             )}
           </div>
 
           {/* Assessment */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="soapAssessment" className="block text-sm font-medium text-gray-700 mb-2">
               Assessment (Clinical Impression) *
             </label>
             <textarea
               {...register('soapAssessment')}
+              id="soapAssessment"
               className="input-field"
               rows={3}
               placeholder="Clinical reasoning, differential diagnosis, problem list..."
+              aria-required="true"
+              aria-invalid={errors.soapAssessment ? 'true' : 'false'}
+              aria-describedby={errors.soapAssessment ? 'soapAssessment-error' : undefined}
             />
             {errors.soapAssessment && (
-              <p className="text-red-600 text-sm mt-1">{errors.soapAssessment.message}</p>
+              <p id="soapAssessment-error" role="alert" className="text-red-600 text-sm mt-1">{errors.soapAssessment.message}</p>
             )}
           </div>
 
           {/* Plan */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="soapPlan" className="block text-sm font-medium text-gray-700 mb-2">
               Plan (Treatment Plan) *
             </label>
             <textarea
               {...register('soapPlan')}
+              id="soapPlan"
               className="input-field"
               rows={4}
               placeholder="Treatment plan, medications, follow-up instructions, patient education..."
+              aria-required="true"
+              aria-invalid={errors.soapPlan ? 'true' : 'false'}
+              aria-describedby={errors.soapPlan ? 'soapPlan-error' : undefined}
             />
             {errors.soapPlan && (
-              <p className="text-red-600 text-sm mt-1">{errors.soapPlan.message}</p>
+              <p id="soapPlan-error" role="alert" className="text-red-600 text-sm mt-1">{errors.soapPlan.message}</p>
             )}
           </div>
 
           {/* Provisional Diagnoses */}
-          <div>
+          <fieldset>
             <div className="flex items-center justify-between mb-3">
-              <label className="block text-sm font-medium text-gray-700">
+              <legend className="block text-sm font-medium text-gray-700">
                 Provisional Diagnoses
-              </label>
+              </legend>
               <button
                 type="button"
                 onClick={addDiagnosis}
                 className="flex items-center space-x-1 text-primary hover:text-primary/80 text-sm font-medium"
+                aria-label="Add another diagnosis"
               >
-                <PlusIcon className="h-4 w-4" />
+                <PlusIcon className="h-4 w-4" aria-hidden="true" />
                 <span>Add Diagnosis</span>
               </button>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3" role="list" aria-label="List of diagnoses">
               {diagnoses.map((diagnosis, index) => (
-                <div key={index} className="flex items-center space-x-2">
-                  <span className="text-sm font-medium text-gray-500 w-8">
+                <div key={index} className="flex items-center space-x-2" role="listitem">
+                  <label htmlFor={`diagnosis-${index}`} className="text-sm font-medium text-gray-500 w-8">
                     {index + 1}.
-                  </span>
+                  </label>
                   <input
                     type="text"
+                    id={`diagnosis-${index}`}
                     value={diagnosis}
                     onChange={(e) => updateDiagnosis(index, e.target.value)}
                     className="input-field flex-1"
                     placeholder="Enter diagnosis (e.g., Hypertension, Type 2 Diabetes)"
+                    aria-label={`Diagnosis ${index + 1}`}
                   />
                   {diagnoses.length > 1 && (
                     <button
                       type="button"
                       onClick={() => removeDiagnosis(index)}
                       className="text-red-600 hover:text-red-800 p-1 touch-target"
+                      aria-label={`Remove diagnosis ${index + 1}`}
                     >
-                      <XMarkIcon className="h-5 w-5" />
+                      <XMarkIcon className="h-5 w-5" aria-hidden="true" />
                     </button>
                   )}
                 </div>
               ))}
             </div>
-          </div>
+          </fieldset>
 
           {/* Provider Info */}
           <div className="bg-gray-50 p-4 rounded-lg">

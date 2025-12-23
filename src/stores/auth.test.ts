@@ -1,16 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useAuthStore } from './auth'
 
-const mockDbUsers = {
-  filter: vi.fn().mockReturnValue({
-    toArray: vi.fn().mockResolvedValue([])
-  })
-}
-
-const mockDbSessions = {
-  add: vi.fn().mockResolvedValue(undefined),
-  delete: vi.fn().mockResolvedValue(undefined)
-}
+const { mockDbUsers, mockDbSessions } = vi.hoisted(() => ({
+  mockDbUsers: {
+    filter: vi.fn().mockReturnValue({
+      toArray: vi.fn().mockResolvedValue([])
+    })
+  },
+  mockDbSessions: {
+    add: vi.fn().mockResolvedValue(undefined),
+    delete: vi.fn().mockResolvedValue(undefined)
+  }
+}))
 
 vi.mock('@/db', () => ({
   db: {

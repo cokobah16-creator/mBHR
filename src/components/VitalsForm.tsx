@@ -135,9 +135,9 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
 
   if (!patient) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className="flex items-center justify-center py-12" role="status" aria-live="polite">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto" aria-hidden="true"></div>
           <p className="mt-4 text-gray-600">Loading patient...</p>
         </div>
       </div>
@@ -187,7 +187,7 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
 
           {/* BMI Display */}
           {bmi && (
-            <div className="bg-blue-50 p-4 rounded-lg">
+            <div className="bg-blue-50 p-4 rounded-lg" role="status" aria-live="polite">
               <p className="text-sm font-medium text-blue-800">
                 BMI: <span className="text-lg">{bmi}</span>
               </p>
@@ -218,10 +218,10 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
           </div>
 
           {/* Blood Pressure */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+          <fieldset>
+            <legend className="block text-sm font-medium text-gray-700 mb-2">
               {t('vitals.bloodPressure')}
-            </label>
+            </legend>
             <div className="grid grid-cols-2 gap-4">
               <EnhancedVitalsInput
                 name="systolic"
@@ -242,7 +242,7 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
                 placeholder="80"
               />
             </div>
-          </div>
+          </fieldset>
 
           {/* SpO2 */}
           <EnhancedVitalsInput
@@ -257,20 +257,24 @@ export function VitalsForm({ patientId, visitId, onSuccess, onCancel }: VitalsFo
 
           {/* Flags Display */}
           {flags.length > 0 && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div
+              className="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
+              role="alert"
+              aria-live="polite"
+            >
               <h3 className="text-sm font-medium text-yellow-800 mb-2">
-                ⚠️ Abnormal Values Detected
+                <span aria-hidden="true">Warning: </span>Abnormal Values Detected
               </h3>
-              <div className="flex flex-wrap gap-2">
+              <ul className="flex flex-wrap gap-2" aria-label="List of abnormal vital signs">
                 {flags.map((flag) => (
-                  <span
+                  <li
                     key={flag}
                     className={`px-2 py-1 rounded-full text-xs font-medium ${getFlagColor(flag)}`}
                   >
                     {getFlagLabel(flag)}
-                  </span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           )}
 

@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth'
 import { OfflineBadge } from '@/components/OfflineBadge'
+import { OfflineBanner } from '@/components/OfflineBanner'
 import Toasts from '@/components/Toasts'
 import useLowStockWatcher from '@/features/inventory/useLowStockWatcher'
 import { LanguageSelector } from '@/components/LanguageSelector'
@@ -227,6 +228,7 @@ export function Layout({ children }: LayoutProps) {
       >
         Skip to main content
       </a>
+      <OfflineBanner />
       <header role="banner" className="bg-primary text-white shadow-lg sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-3 md:py-4">

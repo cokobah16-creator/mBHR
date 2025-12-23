@@ -122,9 +122,15 @@ export function EnhancedVitalsInput({
 
   const statusDisplay = getStatusDisplay()
 
+  const inputId = `vitals-${name}`
+  const errorId = `${name}-error`
+  const statusId = `${name}-status`
+  const rangeId = `${name}-range`
+  const hasError = !!errors[name]
+
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-700">
+      <label htmlFor={inputId} className="block text-sm font-medium text-gray-700">
         {label}
         {range && !loading && (
           <span className="ml-2 text-xs text-gray-500">
@@ -132,13 +138,14 @@ export function EnhancedVitalsInput({
           </span>
         )}
       </label>
-      
+
       <div className="relative">
         <input
-          {...register(name, { 
+          {...register(name, {
             valueAsNumber: true,
             required: `${label} is required`
           })}
+          id={inputId}
           type="number"
           step={step}
           className={`input-field ${
@@ -148,7 +155,12 @@ export function EnhancedVitalsInput({
             'border-gray-300'
           }`}
           placeholder={placeholder}
-          aria-describedby={`${name}-status ${name}-range`}
+          aria-invalid={hasError ? 'true' : 'false'}
+          aria-describedby={[
+            hasError ? errorId : null,
+            statusDisplay ? statusId : null,
+            range ? rangeId : null
+          ].filter(Boolean).join(' ') || undefined}
         />
         
         {statusDisplay && (
@@ -164,14 +176,14 @@ export function EnhancedVitalsInput({
 
       {/* Status Message */}
       {statusDisplay && (
-        <div 
-          id={`${name}-status`}
+        <div
+          id={statusId}
           className={`p-2 rounded-lg border text-sm ${statusDisplay.color}`}
           role={statusDisplay.priority === 'high' ? 'alert' : 'status'}
           aria-live={statusDisplay.priority === 'high' ? 'assertive' : 'polite'}
         >
           <div className="flex items-center space-x-2">
-            <statusDisplay.icon className="h-4 w-4" />
+            <statusDisplay.icon className="h-4 w-4" aria-hidden="true" />
             <span>{statusDisplay.message}</span>
           </div>
         </div>
@@ -179,15 +191,15 @@ export function EnhancedVitalsInput({
 
       {/* Range Info */}
       {range && !loading && (
-        <p id={`${name}-range`} className="text-xs text-gray-500">
-          Age {patientAge}, {patientSex === 'M' ? 'Male' : patientSex === 'F' ? 'Female' : 'Unknown'} • 
+        <p id={rangeId} className="text-xs text-gray-500">
+          Age {patientAge}, {patientSex === 'M' ? 'Male' : patientSex === 'F' ? 'Female' : 'Unknown'} •
           Source: {range.source}
         </p>
       )}
 
       {/* Validation Error */}
-      {errors[name] && (
-        <p className="text-red-600 text-sm" role="alert">
+      {hasError && (
+        <p id={errorId} className="text-red-600 text-sm" role="alert">
           {String(errors[name]?.message || '')}
         </p>
       )}
