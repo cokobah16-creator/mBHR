@@ -11,7 +11,7 @@ export function useT() {
   }
 
   const speak = async (key: string) => {
-    const currentLocale = i18n.language as SupportedLocale
+    const currentLocale = (i18n.language?.split('-')[0] || 'en') as SupportedLocale
     try {
       const audioUrl = `/audio/${currentLocale}/${key.replace('.', '_')}.mp3`
       const audio = new Audio(audioUrl)
@@ -37,14 +37,18 @@ export function useT() {
   }
 
   const changeLocale = async (locale: SupportedLocale) => {
+    console.log(`[useT] Changing language to: ${locale}`)
     await i18n.changeLanguage(locale)
+    console.log(`[useT] Language changed. Current language: ${i18n.language}`)
   }
+
+  const currentLanguage = (i18n.language?.split('-')[0] || 'en') as SupportedLocale
 
   return {
     t,
     speak,
     changeLocale,
-    locale: i18n.language as SupportedLocale,
+    locale: currentLanguage,
     loading: !i18n.isInitialized,
     error: null
   }

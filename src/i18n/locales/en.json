@@ -1,12 +1,17 @@
 {
   "nav.dashboard": "Dashboard",
-  "nav.patients": "Patients", 
+  "nav.patients": "Patients",
   "nav.queue": "Queue",
   "nav.inventory": "Inventory",
   "nav.pharmacy": "Pharmacy",
   "nav.users": "Users",
   "nav.analytics": "Analytics",
   "nav.games": "Games",
+  "nav.issue_tickets": "Issue Tickets",
+  "nav.restock_game": "Restock Game",
+  "nav.doctor_station": "Doctor Station",
+  "nav.user_management": "User Management",
+  "nav.approve_games": "Approve Games",
   
   "action.save": "Save",
   "action.cancel": "Cancel",
@@ -272,5 +277,8 @@
 
   "pharmacy.dispensing": "Dispensing",
 
-  "app.title": "mBHR - Mobile Basic Health Record"
+  "app.title": "mBHR - Mobile Basic Health Record",
+  "app.subtitle": "Powered by Dr. Isioma Okobah Foundation",
+  "app.offline": "Offline",
+  "app.online": "Online"
 }

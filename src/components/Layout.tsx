@@ -190,15 +190,15 @@ export function Layout({ children }: LayoutProps) {
   }, [currentUser, updateActivity])
 
   const baseNavigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
-    { name: 'Patients', href: '/patients', icon: UserGroupIcon },
-    { name: 'Queue', href: '/queue', icon: QueueListIcon },
-    { name: 'Inventory', href: '/inventory', icon: CubeIcon },
-    { name: 'Pharmacy', href: '/pharmacy', icon: BeakerIcon },
-    { name: 'Game Hub', href: '/games', icon: TrophyIcon },
-    { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
-    { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
-    { name: 'Restock Game', href: '/inv/game', icon: GiftIcon }
+    { name: t('nav.dashboard'), href: '/dashboard', icon: HomeIcon },
+    { name: t('nav.patients'), href: '/patients', icon: UserGroupIcon },
+    { name: t('nav.queue'), href: '/queue', icon: QueueListIcon },
+    { name: t('nav.inventory'), href: '/inventory', icon: CubeIcon },
+    { name: t('nav.pharmacy'), href: '/pharmacy', icon: BeakerIcon },
+    { name: t('nav.games'), href: '/games', icon: TrophyIcon },
+    { name: t('nav.analytics'), href: '/analytics', icon: ChartBarIcon },
+    { name: t('nav.issue_tickets'), href: '/tickets/issue', icon: TicketIcon },
+    { name: t('nav.restock_game'), href: '/inv/game', icon: GiftIcon }
   ]
 
   // Add role-specific navigation items
@@ -206,12 +206,12 @@ export function Layout({ children }: LayoutProps) {
     ...baseNavigation,
     // Doctor-specific items
     ...(currentUser && can(currentUser.role, 'consult') ? [
-      { name: 'Doctor Station', href: '/doctor/dashboard', icon: ClipboardDocumentListIcon }
+      { name: t('nav.doctor_station'), href: '/doctor/dashboard', icon: ClipboardDocumentListIcon }
     ] : []),
     // Admin-only items
     ...(currentUser && can(currentUser.role, 'users') ? [
-      { name: 'User Management', href: '/users', icon: UsersIcon },
-      { name: 'Approve Games', href: '/admin/approvals', icon: CheckCircleIcon }
+      { name: t('nav.user_management'), href: '/users', icon: UsersIcon },
+      { name: t('nav.approve_games'), href: '/admin/approvals', icon: CheckCircleIcon }
     ] : [])
   ]
 

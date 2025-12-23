@@ -2,11 +2,12 @@
 import React, { Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
+import { I18nextProvider } from 'react-i18next'
 import * as Sentry from '@sentry/react'
 import App from './App'
 import { GlobalErrorBoundary } from './components/GlobalErrorBoundary'
+import i18n from './i18n'
 import './index.css'
-import './i18n'
 
 import { seed } from './db/seed'
 import { seedDemo } from './db/seedMbhr'
@@ -94,20 +95,22 @@ function renderFatal(msg: string) {
   const root = ReactDOM.createRoot(document.getElementById('root')!)
   root.render(
     <React.StrictMode>
-      <GlobalErrorBoundary>
-        <Suspense fallback={
-          <div className="min-h-screen flex items-center justify-center bg-gray-50">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-green-600 mx-auto"></div>
-              <p className="mt-4 text-gray-600 text-lg">Loading mBHR...</p>
+      <I18nextProvider i18n={i18n}>
+        <GlobalErrorBoundary>
+          <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-green-600 mx-auto"></div>
+                <p className="mt-4 text-gray-600 text-lg">Loading mBHR...</p>
+              </div>
             </div>
-          </div>
-        }>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </Suspense>
-      </GlobalErrorBoundary>
+          }>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </Suspense>
+        </GlobalErrorBoundary>
+      </I18nextProvider>
     </React.StrictMode>
   )
 })()

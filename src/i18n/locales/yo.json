@@ -220,5 +220,14 @@
     "viewDetails": "[EN] View details",
     "visitStarted": "[EN] Visit Started",
     "vitalsRecorded": "[EN] Vitals Recorded"
-  }
+  },
+  "nav.issue_tickets": "Fi Tikẹ́ẹ̀tì Sílẹ̀",
+  "nav.restock_game": "Eré Ìkójọpọ̀ Ohun Èlò",
+  "nav.doctor_station": "Ibi Dókítà",
+  "nav.user_management": "Ìṣàkóso Òǹlò",
+  "nav.approve_games": "Fọwọ́sí Eré",
+  "app.title": "mBHR",
+  "app.subtitle": "Látara Dr. Isioma Okobah Foundation",
+  "app.offline": "Kò sí Ìsopọ̀",
+  "app.online": "Ó wà Lórí Ìsopọ̀"
 }
