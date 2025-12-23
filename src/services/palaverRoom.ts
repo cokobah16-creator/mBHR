@@ -122,19 +122,24 @@ class PalaverRoomService {
       throw new Error('Messaging service not available. Please check your connection.')
     }
 
-    const { data, error } = await supabase
-      .from('palaver_messages')
-      .select('*')
-      .eq('recipient_id', userId)
-      .eq('is_archived', false)
-      .order('created_at', { ascending: false })
+    try {
+      const { data, error } = await supabase
+        .from('palaver_messages')
+        .select('*')
+        .or(`recipient_id.eq.${userId},sender_id.eq.${userId}`)
+        .eq('is_archived', false)
+        .order('created_at', { ascending: false })
 
-    if (error) {
-      logger.error('Failed to fetch inbox:', error)
-      throw new Error(`Failed to load messages: ${error.message}`)
+      if (error) {
+        logger.error('Failed to fetch inbox:', error)
+        throw new Error(`Failed to load messages: ${error.message}`)
+      }
+
+      return data || []
+    } catch (err) {
+      logger.error('Inbox fetch error:', err)
+      throw err
     }
-
-    return data || []
   }
 
   async getSentMessages(userId: string): Promise<PalaverMessage[]> {
@@ -213,20 +218,27 @@ class PalaverRoomService {
 
     const roleTargets = this.getRoleTargets(userRole)
 
-    const { data, error } = await supabase
-      .from('palaver_broadcasts')
-      .select('*')
-      .eq('is_active', true)
-      .in('target_role', roleTargets)
-      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
-      .order('created_at', { ascending: false })
+    try {
+      const { data, error } = await supabase
+        .from('palaver_broadcasts')
+        .select('*')
+        .eq('is_active', true)
+        .in('target_role', roleTargets)
+        .order('created_at', { ascending: false })
 
-    if (error) {
-      logger.error('Failed to fetch broadcasts:', error)
+      if (error) {
+        logger.error('Failed to fetch broadcasts:', error)
+        return []
+      }
+
+      const now = new Date()
+      const filtered = (data || []).filter(b => !b.expires_at || new Date(b.expires_at) > now)
+
+      return filtered
+    } catch (err) {
+      logger.error('Broadcasts fetch error:', err)
       return []
     }
-
-    return data || []
   }
 
   async markBroadcastRead(broadcastId: string, userId: string): Promise<void> {

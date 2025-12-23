@@ -1,13 +1,21 @@
 import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-let supabaseClient = null;
-if (supabaseUrl && supabaseAnonKey && supabaseUrl !== 'your_supabase_project_url_here') {
+function initSupabase() {
+    if (!supabaseUrl || !supabaseAnonKey) {
+        console.warn('Supabase credentials not configured');
+        return null;
+    }
+    if (supabaseUrl === 'your_supabase_project_url_here') {
+        console.warn('Supabase URL is placeholder value');
+        return null;
+    }
     try {
-        supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+        return createClient(supabaseUrl, supabaseAnonKey);
     }
     catch (error) {
-        console.warn('Failed to initialize Supabase client:', error);
+        console.error('Failed to initialize Supabase client:', error);
+        return null;
     }
 }
-export const supabase = supabaseClient;
+export const supabase = initSupabase();
