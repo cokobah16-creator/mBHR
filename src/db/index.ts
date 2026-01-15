@@ -88,6 +88,10 @@ export interface Vital {
   bmi?: number
   flags: string[]
   takenAt: Date
+  portalVisible?: boolean
+  visibilityReason?: string
+  hiddenBy?: string
+  hiddenAt?: Date
   _dirty?: number
   _syncedAt?: string
 }
@@ -103,6 +107,10 @@ export interface Consultation {
   soapPlan: string
   provisionalDx: string[]
   createdAt: Date
+  portalVisible?: boolean
+  visibilityReason?: string
+  hiddenBy?: string
+  hiddenAt?: Date
   _dirty?: number
   _syncedAt?: string
 }
@@ -117,6 +125,10 @@ export interface Dispense {
   directions: string
   dispensedBy: string
   dispensedAt: Date
+  portalVisible?: boolean
+  visibilityReason?: string
+  hiddenBy?: string
+  hiddenAt?: Date
   _dirty?: number
   _syncedAt?: string
 }
@@ -383,6 +395,78 @@ export interface ClinicalAlert {
   _syncedAt?: string
 }
 
+export interface PortalMessage {
+  id: string
+  patientId: string
+  senderType: 'patient' | 'staff'
+  senderId: string
+  subject?: string
+  messageBody: string
+  parentMessageId?: string
+  read: boolean
+  readAt?: Date
+  attachments?: string[]
+  priority: 'normal' | 'high'
+  createdAt: Date
+  updatedAt: Date
+  _dirty?: number
+  _syncedAt?: string
+}
+
+export interface PortalNotification {
+  id: string
+  patientId: string
+  notificationType: string
+  title: string
+  message: string
+  priority: 'low' | 'normal' | 'high' | 'urgent'
+  read: boolean
+  readAt?: Date
+  actionUrl?: string
+  actionLabel?: string
+  metadata?: Record<string, unknown>
+  expiresAt?: Date
+  createdAt: Date
+  _dirty?: number
+  _syncedAt?: string
+}
+
+export interface PatientSubmittedData {
+  id: string
+  patientId: string
+  portalUserId?: string
+  submissionType: 'symptoms' | 'medications' | 'allergies' | 'lifestyle' | 'vitals' | 'other'
+  data: Record<string, unknown>
+  notes?: string
+  status: 'pending' | 'approved' | 'rejected' | 'merged'
+  reviewedBy?: string
+  reviewedAt?: Date
+  reviewNotes?: string
+  mergedToRecordId?: string
+  createdAt: Date
+  updatedAt: Date
+  _dirty?: number
+  _syncedAt?: string
+}
+
+export interface Appointment {
+  id: string
+  patientId: string
+  providerId?: string
+  appointmentType: string
+  scheduledAt: Date
+  durationMinutes: number
+  status: 'scheduled' | 'confirmed' | 'arrived' | 'in-progress' | 'completed' | 'no-show' | 'cancelled'
+  reason?: string
+  notes?: string
+  reminderSent?: boolean
+  createdBy?: string
+  createdAt: Date
+  updatedAt: Date
+  _dirty?: number
+  _syncedAt?: string
+}
+
 // Helper functions for date handling
 export const epochDay = (d: Date) => Math.floor(d.getTime() / 86400000)
 export const normPhone = (s: string) => s.replace(/\D/g, '')
@@ -423,6 +507,10 @@ export class MBHRDatabase extends Dexie {
   patientAllergies!: Table<PatientAllergy>
   patientPreferences!: Table<PatientPreference>
   clinicalAlerts!: Table<ClinicalAlert>
+  portalMessages!: Table<PortalMessage>
+  portalNotifications!: Table<PortalNotification>
+  patientSubmittedData!: Table<PatientSubmittedData>
+  appointments!: Table<Appointment>
 
   constructor() {
     super(DB_NAME)
@@ -784,6 +872,60 @@ export class MBHRDatabase extends Dexie {
         }
         if (patient.lastPortalActivity === undefined) {
           patient.lastPortalActivity = null
+        }
+      })
+    })
+
+    // v14 — Add offline portal support: messages, notifications, submissions, appointments
+    this.version(14).stores({
+      patients:      'id, familyName, phone, email, authUid, state, lga, createdAt, updatedAt, _dirty, _syncedAt, phoneN, nameKey, dobDay, createdDay, updatedDay, mergeInto, contactVerified, portalEnabled, lastPortalActivity',
+      vitals:        'id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt, portalVisible',
+      consultations: 'id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt, portalVisible',
+      dispenses:     'id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt, portalVisible',
+      inventory:     'id, itemName, updatedAt, onHandQty, _dirty, _syncedAt',
+      visits:        'id, patientId, startedAt, status, siteName, _dirty, _syncedAt',
+      queue:         'id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt',
+      auditLogs:     'id, actorRole, entity, entityId, at',
+      users:         'id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt',
+      sessions:      'id, userId, createdAt, lastSeenAt',
+      settings:      'key',
+      meta:          'key',
+      gameSessions:  'id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt',
+      gamificationWallets: 'volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt',
+      vitalsRanges:  'id, sex, metric, ageMin, ageMax, updatedAt',
+      quizQuestions: 'id, topic, difficulty, updatedAt',
+      triageSamples: 'id, createdAt, createdBy',
+      inventoryDiscrepancies: 'id, itemId, createdAt, resolvedAt, _dirty, _syncedAt',
+      outboundMessages: 'id, patientId, status, channel, to, createdAt, scheduledFor, _dirty, _syncedAt',
+      messageTemplates: 'key, locale, channel',
+      stockBatches: 'id, drugId, expiryDate, updatedAt, _dirty, _syncedAt',
+      careTasks: 'id, patientId, status, dueDate, createdAt, _dirty, _syncedAt',
+      triageRecords: 'id, patientId, visitId, priority, createdAt, createdBy, _dirty, _syncedAt',
+      patientMerges: 'id, winnerId, loserId, createdDay',
+      dailyCounts: 'day, registrations, vitals, consultations, dispenses, visits',
+      conflictResolutions: 'id, patientId, conflictType, status, resolvedAt',
+      patientAllergies: 'id, patientId, allergen, allergyType, severity, isActive, createdAt, updatedAt, _dirty, _syncedAt',
+      patientPreferences: 'id, patientId, createdAt, updatedAt, _dirty, _syncedAt',
+      clinicalAlerts: 'id, patientId, alertType, severity, acknowledged, createdAt, acknowledgedAt, _dirty, _syncedAt',
+      portalMessages: 'id, patientId, senderType, read, createdAt, _dirty, _syncedAt',
+      portalNotifications: 'id, patientId, read, createdAt, _dirty, _syncedAt',
+      patientSubmittedData: 'id, patientId, submissionType, status, createdAt, _dirty, _syncedAt',
+      appointments: 'id, patientId, scheduledAt, status, _dirty, _syncedAt'
+    }).upgrade(async tx => {
+      // Add portalVisible field to existing vitals, consultations, dispenses
+      await tx.table('vitals').toCollection().modify((vital: any) => {
+        if (vital.portalVisible === undefined) {
+          vital.portalVisible = true
+        }
+      })
+      await tx.table('consultations').toCollection().modify((consult: any) => {
+        if (consult.portalVisible === undefined) {
+          consult.portalVisible = true
+        }
+      })
+      await tx.table('dispenses').toCollection().modify((dispense: any) => {
+        if (dispense.portalVisible === undefined) {
+          dispense.portalVisible = true
         }
       })
     })

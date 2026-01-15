@@ -2,8 +2,8 @@
  * Patient Portal Data Service
  *
  * Handles fetching and managing patient medical data for the portal including:
- * - Dashboard summary data
- * - Medical history and visit details
+ * - Dashboard summary data (optimized with batched queries)
+ * - Medical history and visit details (with pagination)
  * - Medications and prescriptions
  * - Lab results
  * - Vitals history
@@ -20,80 +20,90 @@ import type {
   PatientMessage
 } from '@/types/patientPortal'
 
+interface DashboardCounts {
+  unread_messages: number
+  unread_notifications: number
+  upcoming_appointments: number
+  pending_submissions: number
+}
+
 /**
- * Get patient dashboard summary data
+ * Get patient dashboard summary data with optimized batched queries
  */
 export async function getPatientDashboard(
   portalUserId: string,
   patientId: string
 ): Promise<PatientDashboardData | null> {
+  if (!supabase) {
+    logger.warn('Supabase not initialized')
+    return null
+  }
+
   try {
     await logAccess(portalUserId, patientId, 'view', 'dashboard')
 
-    const { data: patient, error: patientError } = await supabase
-      .from('patients')
-      .select('*')
-      .eq('id', patientId)
-      .single()
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const nowIso = new Date().toISOString()
 
-    if (patientError || !patient) {
-      logger.error('Error fetching patient:', patientError)
+    const [
+      patientResult,
+      appointmentsResult,
+      vitalsResult,
+      medicationsResult,
+      countsResult
+    ] = await Promise.all([
+      supabase
+        .from('patients')
+        .select('id, given_name, family_name, dob, sex, phone, email')
+        .eq('id', patientId)
+        .single(),
+
+      supabase
+        .from('appointments')
+        .select('id, appointment_type, scheduled_at, status')
+        .eq('patient_id', patientId)
+        .in('status', ['scheduled', 'confirmed'])
+        .gte('scheduled_at', nowIso)
+        .order('scheduled_at', { ascending: true })
+        .limit(3),
+
+      supabase
+        .from('vitals')
+        .select('taken_at, height_cm, weight_kg, bmi, temp_c, pulse_bpm, systolic, diastolic, spo2')
+        .eq('patient_id', patientId)
+        .eq('portal_visible', true)
+        .order('taken_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+
+      supabase
+        .from('dispenses')
+        .select('item_name, dosage, directions, dispensed_at')
+        .eq('patient_id', patientId)
+        .eq('portal_visible', true)
+        .gte('dispensed_at', thirtyDaysAgo)
+        .order('dispensed_at', { ascending: false })
+        .limit(10),
+
+      supabase.rpc('get_patient_dashboard_counts', { p_patient_id: patientId })
+    ])
+
+    const patient = patientResult.data
+    if (patientResult.error || !patient) {
+      logger.error('Error fetching patient:', patientResult.error)
       return null
     }
 
-    const { data: upcomingAppointments } = await supabase
-      .from('appointments')
-      .select('*')
-      .eq('patient_id', patientId)
-      .in('status', ['scheduled', 'confirmed'])
-      .gte('scheduled_at', new Date().toISOString())
-      .order('scheduled_at', { ascending: true })
-      .limit(3)
+    const counts: DashboardCounts = countsResult.data || {
+      unread_messages: 0,
+      unread_notifications: 0,
+      upcoming_appointments: 0,
+      pending_submissions: 0
+    }
 
-    const { data: recentVitalsData } = await supabase
-      .from('vitals')
-      .select('*')
-      .eq('patient_id', patientId)
-      .order('taken_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-    const { data: activeMedicationsData } = await supabase
-      .from('dispenses')
-      .select('*')
-      .eq('patient_id', patientId)
-      .gte('dispensed_at', thirtyDaysAgo)
-      .order('dispensed_at', { ascending: false })
-      .limit(10)
-
-    const { count: unreadMessagesCount } = await supabase
-      .from('patient_messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('patient_id', patientId)
-      .eq('read', false)
-      .eq('sender_type', 'staff')
-
-    const { count: unreadNotificationsCount } = await supabase
-      .from('patient_notifications')
-      .select('*', { count: 'exact', head: true })
-      .eq('patient_id', patientId)
-      .eq('read', false)
-
-    const { data: recentLabResultsData } = await supabase
-      .from('lab_results')
-      .select(`
-        *,
-        lab_orders!inner (
-          patient_id,
-          test_name,
-          status
-        )
-      `)
-      .eq('lab_orders.patient_id', patientId)
-      .eq('lab_orders.status', 'completed')
-      .order('result_date', { ascending: false })
-      .limit(5)
+    const upcomingAppointments = appointmentsResult.data || []
+    const recentVitalsData = vitalsResult.data
+    const activeMedicationsData = medicationsResult.data || []
 
     return {
       patient: {
@@ -105,7 +115,7 @@ export async function getPatientDashboard(
         phone: patient.phone,
         email: patient.email
       },
-      upcomingAppointments: (upcomingAppointments || []).map(appt => ({
+      upcomingAppointments: upcomingAppointments.map(appt => ({
         id: appt.id,
         appointmentType: appt.appointment_type,
         scheduledAt: new Date(appt.scheduled_at),
@@ -123,19 +133,15 @@ export async function getPatientDashboard(
         diastolic: recentVitalsData.diastolic,
         spo2: recentVitalsData.spo2
       } : undefined,
-      activeMedications: (activeMedicationsData || []).map(med => ({
+      activeMedications: activeMedicationsData.map(med => ({
         medicationName: med.item_name,
         dosage: med.dosage,
         directions: med.directions,
         dispensedAt: new Date(med.dispensed_at)
       })),
-      unreadMessages: unreadMessagesCount || 0,
-      unreadNotifications: unreadNotificationsCount || 0,
-      recentLabResults: (recentLabResultsData || []).map(result => ({
-        testName: result.lab_orders.test_name,
-        resultDate: new Date(result.result_date),
-        interpretation: result.interpretation
-      }))
+      unreadMessages: counts.unread_messages,
+      unreadNotifications: counts.unread_notifications,
+      recentLabResults: []
     }
   } catch (error) {
     logger.error('Error in getPatientDashboard:', error)
@@ -146,6 +152,7 @@ export async function getPatientDashboard(
 
 /**
  * Get patient medical history with visits, vitals, consultations
+ * Optimized with batched queries and filters by portal_visible
  */
 export async function getPatientMedicalHistory(
   portalUserId: string,
@@ -153,43 +160,56 @@ export async function getPatientMedicalHistory(
   limit: number = 20,
   offset: number = 0
 ): Promise<{ records: PatientMedicalRecord[], total: number }> {
+  if (!supabase) {
+    return { records: [], total: 0 }
+  }
+
   try {
     await logAccess(portalUserId, patientId, 'view', 'medical_history')
 
     const { data: visits, error: visitsError, count } = await supabase
       .from('visits')
-      .select('*', { count: 'exact' })
+      .select('id, started_at, site_name, status', { count: 'exact' })
       .eq('patient_id', patientId)
       .eq('status', 'closed')
       .order('started_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
-    if (visitsError) {
-      logger.error('Error fetching visits:', visitsError)
-      return { records: [], total: 0 }
+    if (visitsError || !visits?.length) {
+      if (visitsError) logger.error('Error fetching visits:', visitsError)
+      return { records: [], total: count || 0 }
     }
 
     const visitIds = visits.map(v => v.id)
 
-    const { data: vitals } = await supabase
-      .from('vitals')
-      .select('*')
-      .in('visit_id', visitIds)
+    const [vitalsResult, consultationsResult, dispensesResult] = await Promise.all([
+      supabase
+        .from('vitals')
+        .select('visit_id, height_cm, weight_kg, bmi, temp_c, pulse_bpm, systolic, diastolic, spo2')
+        .in('visit_id', visitIds)
+        .eq('portal_visible', true),
 
-    const { data: consultations } = await supabase
-      .from('consultations')
-      .select('*')
-      .in('visit_id', visitIds)
+      supabase
+        .from('consultations')
+        .select('visit_id, soap_subjective, soap_objective, soap_assessment, soap_plan, provisional_dx, provider_name')
+        .in('visit_id', visitIds)
+        .eq('portal_visible', true),
 
-    const { data: dispenses } = await supabase
-      .from('dispenses')
-      .select('*')
-      .in('visit_id', visitIds)
+      supabase
+        .from('dispenses')
+        .select('visit_id, item_name, dosage, directions, dispensed_at')
+        .in('visit_id', visitIds)
+        .eq('portal_visible', true)
+    ])
+
+    const vitals = vitalsResult.data || []
+    const consultations = consultationsResult.data || []
+    const dispenses = dispensesResult.data || []
 
     const records: PatientMedicalRecord[] = visits.map(visit => {
-      const visitVitals = vitals?.find(v => v.visit_id === visit.id)
-      const visitConsultation = consultations?.find(c => c.visit_id === visit.id)
-      const visitDispenses = dispenses?.filter(d => d.visit_id === visit.id) || []
+      const visitVitals = vitals.find(v => v.visit_id === visit.id)
+      const visitConsultation = consultations.find(c => c.visit_id === visit.id)
+      const visitDispenses = dispenses.filter(d => d.visit_id === visit.id)
 
       return {
         visitId: visit.id,
@@ -233,44 +253,58 @@ export async function getPatientMedicalHistory(
 }
 
 /**
- * Get detailed visit information
+ * Get detailed visit information with portal visibility filtering
  */
 export async function getVisitDetails(
   portalUserId: string,
   patientId: string,
   visitId: string
 ): Promise<PatientMedicalRecord | null> {
+  if (!supabase) {
+    return null
+  }
+
   try {
     await logAccess(portalUserId, patientId, 'view', 'visit', visitId)
 
-    const { data: visit, error: visitError } = await supabase
-      .from('visits')
-      .select('*')
-      .eq('id', visitId)
-      .eq('patient_id', patientId)
-      .single()
+    const [visitResult, vitalsResult, consultationResult, dispensesResult] = await Promise.all([
+      supabase
+        .from('visits')
+        .select('id, started_at, site_name, status')
+        .eq('id', visitId)
+        .eq('patient_id', patientId)
+        .single(),
 
-    if (visitError || !visit) {
-      logger.error('Error fetching visit:', visitError)
+      supabase
+        .from('vitals')
+        .select('height_cm, weight_kg, bmi, temp_c, pulse_bpm, systolic, diastolic, spo2')
+        .eq('visit_id', visitId)
+        .eq('portal_visible', true)
+        .maybeSingle(),
+
+      supabase
+        .from('consultations')
+        .select('soap_subjective, soap_objective, soap_assessment, soap_plan, provisional_dx, provider_name')
+        .eq('visit_id', visitId)
+        .eq('portal_visible', true)
+        .maybeSingle(),
+
+      supabase
+        .from('dispenses')
+        .select('item_name, dosage, directions, dispensed_at')
+        .eq('visit_id', visitId)
+        .eq('portal_visible', true)
+    ])
+
+    const visit = visitResult.data
+    if (visitResult.error || !visit) {
+      logger.error('Error fetching visit:', visitResult.error)
       return null
     }
 
-    const { data: vitals } = await supabase
-      .from('vitals')
-      .select('*')
-      .eq('visit_id', visitId)
-      .maybeSingle()
-
-    const { data: consultation } = await supabase
-      .from('consultations')
-      .select('*')
-      .eq('visit_id', visitId)
-      .maybeSingle()
-
-    const { data: dispenses } = await supabase
-      .from('dispenses')
-      .select('*')
-      .eq('visit_id', visitId)
+    const vitals = vitalsResult.data
+    const consultation = consultationResult.data
+    const dispenses = dispensesResult.data || []
 
     return {
       visitId: visit.id,
@@ -293,7 +327,7 @@ export async function getVisitDetails(
         diagnoses: consultation.provisional_dx,
         providerName: consultation.provider_name
       } : undefined,
-      prescriptions: (dispenses || []).map(d => ({
+      prescriptions: dispenses.map(d => ({
         medicationName: d.item_name,
         dosage: d.dosage,
         directions: d.directions,
