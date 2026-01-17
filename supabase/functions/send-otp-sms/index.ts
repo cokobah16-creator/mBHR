@@ -37,17 +37,18 @@ Deno.serve(async (req: Request) => {
     const twilioPhoneNumber = Deno.env.get("TWILIO_PHONE_NUMBER");
 
     if (!twilioAccountSid || !twilioAuthToken || !twilioPhoneNumber) {
-      console.warn("Twilio credentials not configured. Running in demo mode.");
-      console.log(`OTP for ${phone}: ${otp}`);
+      const missing = [];
+      if (!twilioAccountSid) missing.push("TWILIO_ACCOUNT_SID");
+      if (!twilioAuthToken) missing.push("TWILIO_AUTH_TOKEN");
+      if (!twilioPhoneNumber) missing.push("TWILIO_PHONE_NUMBER");
 
       return new Response(
         JSON.stringify({
-          success: true,
-          message: "Demo mode: OTP logged to console",
-          demo: true
+          success: false,
+          error: `Missing Twilio secrets: ${missing.join(", ")}. Set these in Supabase Dashboard > Project Settings > Edge Functions > Secrets`
         }),
         {
-          status: 200,
+          status: 500,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
@@ -73,31 +74,30 @@ Deno.serve(async (req: Request) => {
       body: formData.toString(),
     });
 
+    const responseData = await response.json();
+
     if (!response.ok) {
-      const errorData = await response.text();
-      console.error("Twilio API error:", errorData);
-      console.warn("Falling back to demo mode due to Twilio error");
-      console.log(`Demo Mode - SMS OTP for ${phone}: ${otp}`);
+      console.error("Twilio API error:", JSON.stringify(responseData));
       return new Response(
         JSON.stringify({
-          success: true,
-          demo: true,
-          message: "Demo mode: OTP logged to console (Twilio error)"
+          success: false,
+          error: responseData.message || "Twilio API error",
+          code: responseData.code,
+          details: responseData
         }),
         {
-          status: 200,
+          status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
     }
 
-    const data = await response.json();
-    console.log("SMS sent successfully:", data.sid);
+    console.log("SMS sent successfully:", responseData.sid);
 
     return new Response(
       JSON.stringify({
         success: true,
-        messageId: data.sid
+        messageId: responseData.sid
       }),
       {
         status: 200,
@@ -106,16 +106,13 @@ Deno.serve(async (req: Request) => {
     );
   } catch (error) {
     console.error("Error in send-otp-sms:", error);
-    const { phone, otp } = await req.json().catch(() => ({ phone: 'unknown', otp: 'unknown' }));
-    console.log(`Demo Mode (error fallback) - OTP for ${phone}: ${otp}`);
     return new Response(
       JSON.stringify({
-        success: true,
-        demo: true,
-        message: "Demo mode: OTP logged to console (error fallback)"
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
       }),
       {
-        status: 200,
+        status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
