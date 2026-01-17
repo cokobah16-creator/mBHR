@@ -26,7 +26,7 @@ async function sendViaTwilio(to: string, message: string): Promise<SMSResponse> 
   const phoneNumber = Deno.env.get("TWILIO_PHONE_NUMBER");
 
   if (!accountSid || !authToken || !phoneNumber) {
-    return { success: false, error: "Twilio credentials not configured" };
+    return { success: false, error: "not configured" };
   }
 
   const auth = btoa(`${accountSid}:${authToken}`);
@@ -63,7 +63,7 @@ async function sendViaAfricasTalking(to: string, message: string): Promise<SMSRe
   const senderId = Deno.env.get("AT_SENDER_ID") || "mBHR";
 
   if (!apiKey || !username) {
-    return { success: false, error: "Africa's Talking credentials not configured" };
+    return { success: false, error: "not configured" };
   }
 
   const url = username === "sandbox"

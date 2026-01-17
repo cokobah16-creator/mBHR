@@ -32,12 +32,31 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const resendApiKey = Deno.env.get("RESEND_API_KEY") || "re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu";
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    const senderEmail = Deno.env.get("SENDER_EMAIL");
 
-    const senderEmail = Deno.env.get("SENDER_EMAIL") || "onboarding@resend.dev";
+    if (!resendApiKey) {
+      console.warn("RESEND_API_KEY not configured. Running in demo mode.");
+      console.log(`Demo Mode - Email OTP for ${email}: ${otp}`);
+      console.log("To enable real email delivery, add RESEND_API_KEY to Edge Function secrets");
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          demo: true,
+          message: "Demo mode: Check server logs for OTP"
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const fromEmail = senderEmail || "onboarding@resend.dev";
 
     const emailContent = {
-      from: `mBHR Patient Portal <${senderEmail}>`,
+      from: `mBHR Patient Portal <${fromEmail}>`,
       to: [email],
       subject: "Your mBHR Verification Code",
       html: `
