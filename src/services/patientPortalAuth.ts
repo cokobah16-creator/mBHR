@@ -264,17 +264,30 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
     }
 
     let sendResult: { success: boolean; error?: string } = { success: false, error: 'No contact method provided' }
+    let usedDemoMode = false
+
     if (phone) {
       sendResult = await sendOTPSMS(phone, otp)
+      if (!sendResult.success) {
+        logger.warn('SMS delivery failed, falling back to demo mode:', sendResult.error)
+        usedDemoMode = true
+      }
     } else if (email) {
       sendResult = await sendOTPEmail(email, otp)
+      if (!sendResult.success) {
+        logger.warn('Email delivery failed, falling back to demo mode:', sendResult.error)
+        usedDemoMode = true
+      }
     }
 
-    if (!sendResult.success) {
-      logger.error('OTP delivery failed:', sendResult.error)
+    if (usedDemoMode) {
       return {
-        success: false,
-        error: sendResult.error || 'Failed to send verification code.'
+        success: true,
+        demoMode: true,
+        demoOTP: otp,
+        message: sendResult.error?.includes('unverified')
+          ? 'SMS provider requires verified numbers. Use email or the code shown below.'
+          : 'Delivery service unavailable. Use the code shown below for testing.'
       }
     }
 

@@ -201,6 +201,7 @@ export interface PatientPortalAuthResponse {
     sex: string
   }
   error?: string
+  message?: string
   demoMode?: boolean
   demoOTP?: string
 }
