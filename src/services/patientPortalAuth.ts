@@ -107,7 +107,13 @@ async function sendOTPSMS(phone: string, otp: string): Promise<boolean> {
       return false
     }
 
-    return data?.success === true
+    if (!data?.success) {
+      logger.error('SMS send failed:', data?.error || 'Unknown error')
+      return false
+    }
+
+    logger.info('SMS sent successfully:', data.messageId)
+    return true
   } catch (error) {
     logger.error('Error in sendOTPSMS:', error)
     return false
@@ -250,7 +256,6 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
     }
 
     let otpSent = false
-    let isDemo = false
     if (phone) {
       otpSent = await sendOTPSMS(phone, otp)
     } else if (email) {
@@ -258,16 +263,15 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
     }
 
     if (!otpSent) {
-      logger.warn('OTP delivery failed, but continuing for demo purposes')
-      logger.info('OTP for development:', otp)
-      isDemo = true
+      logger.error('OTP delivery failed')
+      return {
+        success: false,
+        error: 'Failed to send verification code. Please check your phone number and try again.'
+      }
     }
 
     return {
-      success: true,
-      error: undefined,
-      demoMode: isDemo,
-      demoOTP: isDemo ? otp : undefined
+      success: true
     }
   } catch (error) {
     logger.error('Error in requestOTP:', error)
