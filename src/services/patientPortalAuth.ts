@@ -104,7 +104,8 @@ async function sendOTPSMS(phone: string, otp: string): Promise<{ success: boolea
 
     if (error) {
       logger.error('Error sending OTP SMS:', error)
-      return { success: false, error: error.message || 'Failed to connect to SMS service' }
+      const errorMsg = data?.error || error.message || 'Failed to connect to SMS service'
+      return { success: false, error: errorMsg }
     }
 
     if (!data?.success) {
