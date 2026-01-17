@@ -45,10 +45,10 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Missing Twilio secrets: ${missing.join(", ")}. Set these in Supabase Dashboard > Project Settings > Edge Functions > Secrets`
+          error: `Missing Twilio secrets: ${missing.join(", ")}`
         }),
         {
-          status: 500,
+          status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
@@ -82,11 +82,10 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({
           success: false,
           error: responseData.message || "Twilio API error",
-          code: responseData.code,
-          details: responseData
+          code: responseData.code
         }),
         {
-          status: 400,
+          status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
@@ -112,7 +111,7 @@ Deno.serve(async (req: Request) => {
         error: error instanceof Error ? error.message : "Unknown error"
       }),
       {
-        status: 500,
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
