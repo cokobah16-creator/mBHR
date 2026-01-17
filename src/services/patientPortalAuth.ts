@@ -96,7 +96,7 @@ async function checkOTPRateLimit(
 /**
  * Send OTP via SMS using Supabase Edge Function
  */
-async function sendOTPSMS(phone: string, otp: string): Promise<boolean> {
+async function sendOTPSMS(phone: string, otp: string): Promise<{ success: boolean; error?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke('send-otp-sms', {
       body: { phone, otp }
@@ -104,26 +104,27 @@ async function sendOTPSMS(phone: string, otp: string): Promise<boolean> {
 
     if (error) {
       logger.error('Error sending OTP SMS:', error)
-      return false
+      return { success: false, error: error.message || 'Failed to connect to SMS service' }
     }
 
     if (!data?.success) {
-      logger.error('SMS send failed:', data?.error || 'Unknown error')
-      return false
+      const errorMsg = data?.error || 'Unknown error'
+      logger.error('SMS send failed:', errorMsg)
+      return { success: false, error: errorMsg }
     }
 
     logger.info('SMS sent successfully:', data.messageId)
-    return true
+    return { success: true }
   } catch (error) {
     logger.error('Error in sendOTPSMS:', error)
-    return false
+    return { success: false, error: 'Failed to send SMS' }
   }
 }
 
 /**
  * Send OTP via Email using Supabase Edge Function
  */
-async function sendOTPEmail(email: string, otp: string): Promise<boolean> {
+async function sendOTPEmail(email: string, otp: string): Promise<{ success: boolean; error?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke('send-otp-email', {
       body: { email, otp }
@@ -131,13 +132,19 @@ async function sendOTPEmail(email: string, otp: string): Promise<boolean> {
 
     if (error) {
       logger.error('Error sending OTP email:', error)
-      return false
+      return { success: false, error: error.message || 'Failed to connect to email service' }
     }
 
-    return data?.success === true
+    if (!data?.success) {
+      const errorMsg = data?.error || 'Unknown error'
+      logger.error('Email send failed:', errorMsg)
+      return { success: false, error: errorMsg }
+    }
+
+    return { success: true }
   } catch (error) {
     logger.error('Error in sendOTPEmail:', error)
-    return false
+    return { success: false, error: 'Failed to send email' }
   }
 }
 
@@ -255,18 +262,18 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
       }
     }
 
-    let otpSent = false
+    let sendResult: { success: boolean; error?: string } = { success: false, error: 'No contact method provided' }
     if (phone) {
-      otpSent = await sendOTPSMS(phone, otp)
+      sendResult = await sendOTPSMS(phone, otp)
     } else if (email) {
-      otpSent = await sendOTPEmail(email, otp)
+      sendResult = await sendOTPEmail(email, otp)
     }
 
-    if (!otpSent) {
-      logger.error('OTP delivery failed')
+    if (!sendResult.success) {
+      logger.error('OTP delivery failed:', sendResult.error)
       return {
         success: false,
-        error: 'Failed to send verification code. Please check your phone number and try again.'
+        error: sendResult.error || 'Failed to send verification code.'
       }
     }
 
