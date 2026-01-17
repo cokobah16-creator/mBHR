@@ -178,7 +178,7 @@ export function PatientLogin() {
             </h1>
             <p className="text-gray-600">
               {step === 'contact'
-                ? 'Enter your phone number or email address to receive a verification code'
+                ? 'Enter your email address or phone number to receive a verification code'
                 : `Enter the 6-digit code sent to your ${isEmail ? 'email' : 'phone'}`}
             </p>
           </div>
@@ -230,20 +230,22 @@ export function PatientLogin() {
             <form onSubmit={contactForm.handleSubmit(handleRequestOTP)} className="space-y-6">
               <div>
                 <label htmlFor="contact" className="block text-sm font-medium text-gray-700 mb-2">
-                  Phone Number or Email Address
+                  Email Address or Phone Number
                 </label>
                 <input
                   {...contactForm.register('contact')}
                   type="text"
                   id="contact"
-                  placeholder="+234 XXX XXX XXXX or email@example.com"
+                  placeholder="email@example.com (recommended)"
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   disabled={loading}
                 />
                 {contactForm.formState.errors.contact && (
                   <p className="mt-2 text-sm text-red-600">{contactForm.formState.errors.contact.message}</p>
                 )}
-                <p className="mt-1 text-xs text-gray-500">Enter the phone number or email you used to register</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  <span className="font-medium text-blue-600">Email recommended</span> - Enter the email or phone you used to register
+                </p>
               </div>
 
               <button

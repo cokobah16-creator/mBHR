@@ -133,8 +133,28 @@ export function PatientRegister() {
 
               <form onSubmit={form.handleSubmit(handleSubmitInfo)} className="space-y-6">
                 <div>
+                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                    Email Address
+                  </label>
+                  <input
+                    {...form.register('email')}
+                    type="email"
+                    id="email"
+                    placeholder="your.email@example.com (recommended)"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    disabled={loading}
+                  />
+                  {form.formState.errors.email && (
+                    <p className="mt-2 text-sm text-red-600">{form.formState.errors.email.message}</p>
+                  )}
+                  <p className="mt-1 text-xs text-gray-500">
+                    <span className="font-medium text-green-600">Recommended</span> - Must match your patient record
+                  </p>
+                </div>
+
+                <div>
                   <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                    Phone Number
+                    Phone Number (Optional)
                   </label>
                   <input
                     {...form.register('phone')}
@@ -147,30 +167,12 @@ export function PatientRegister() {
                   {form.formState.errors.phone && (
                     <p className="mt-2 text-sm text-red-600">{form.formState.errors.phone.message}</p>
                   )}
-                  <p className="mt-1 text-xs text-gray-500">If provided, this must match your patient record</p>
-                </div>
-
-                <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                    Email Address
-                  </label>
-                  <input
-                    {...form.register('email')}
-                    type="email"
-                    id="email"
-                    placeholder="your.email@example.com"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    disabled={loading}
-                  />
-                  {form.formState.errors.email && (
-                    <p className="mt-2 text-sm text-red-600">{form.formState.errors.email.message}</p>
-                  )}
-                  <p className="mt-1 text-xs text-gray-500">If provided, this must match your patient record</p>
+                  <p className="mt-1 text-xs text-gray-500">If provided, must match your patient record</p>
                 </div>
 
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                   <p className="text-xs text-blue-800">
-                    You must provide at least one contact method (phone number OR email address)
+                    <span className="font-medium">Email recommended:</span> You must provide at least one contact method
                   </p>
                 </div>
 
