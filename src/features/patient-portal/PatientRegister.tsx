@@ -8,6 +8,8 @@ import { requestOTP, registerPatientPortalAccount } from '@/services/patientPort
 import { OTPInput } from './OTPInput'
 
 const registrationSchema = z.object({
+  givenName: z.string().min(1, 'First name is required'),
+  familyName: z.string().min(1, 'Last name is required'),
   phone: z.string().min(10, 'Phone number must be at least 10 digits').regex(/^\+?[\d\s-]+$/, 'Invalid phone number').optional().or(z.literal('')),
   email: z.string().email('Invalid email address').optional().or(z.literal('')),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
@@ -32,6 +34,8 @@ export function PatientRegister() {
   const form = useForm<RegistrationForm>({
     resolver: zodResolver(registrationSchema),
     defaultValues: {
+      givenName: '',
+      familyName: '',
       phone: '',
       email: '',
       dob: '',
@@ -91,7 +95,9 @@ export function PatientRegister() {
         formData.phone || undefined,
         formData.email || undefined,
         otp,
-        formData.dob
+        formData.dob,
+        formData.givenName,
+        formData.familyName
       )
 
       if (result.success && result.sessionToken) {
@@ -132,24 +138,56 @@ export function PatientRegister() {
               )}
 
               <form onSubmit={form.handleSubmit(handleSubmitInfo)} className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="givenName" className="block text-sm font-medium text-gray-700 mb-2">
+                      First Name *
+                    </label>
+                    <input
+                      {...form.register('givenName')}
+                      type="text"
+                      id="givenName"
+                      placeholder="First name"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      disabled={loading}
+                    />
+                    {form.formState.errors.givenName && (
+                      <p className="mt-2 text-sm text-red-600">{form.formState.errors.givenName.message}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label htmlFor="familyName" className="block text-sm font-medium text-gray-700 mb-2">
+                      Last Name *
+                    </label>
+                    <input
+                      {...form.register('familyName')}
+                      type="text"
+                      id="familyName"
+                      placeholder="Last name"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      disabled={loading}
+                    />
+                    {form.formState.errors.familyName && (
+                      <p className="mt-2 text-sm text-red-600">{form.formState.errors.familyName.message}</p>
+                    )}
+                  </div>
+                </div>
+
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                    Email Address
+                    Email Address *
                   </label>
                   <input
                     {...form.register('email')}
                     type="email"
                     id="email"
-                    placeholder="your.email@example.com (recommended)"
+                    placeholder="your.email@example.com"
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                     disabled={loading}
                   />
                   {form.formState.errors.email && (
                     <p className="mt-2 text-sm text-red-600">{form.formState.errors.email.message}</p>
                   )}
-                  <p className="mt-1 text-xs text-gray-500">
-                    <span className="font-medium text-green-600">Recommended</span> - Must match your patient record
-                  </p>
                 </div>
 
                 <div>
@@ -167,13 +205,6 @@ export function PatientRegister() {
                   {form.formState.errors.phone && (
                     <p className="mt-2 text-sm text-red-600">{form.formState.errors.phone.message}</p>
                   )}
-                  <p className="mt-1 text-xs text-gray-500">If provided, must match your patient record</p>
-                </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <p className="text-xs text-blue-800">
-                    <span className="font-medium">Email recommended:</span> You must provide at least one contact method
-                  </p>
                 </div>
 
                 <div>
@@ -190,15 +221,6 @@ export function PatientRegister() {
                   {form.formState.errors.dob && (
                     <p className="mt-2 text-sm text-red-600">{form.formState.errors.dob.message}</p>
                   )}
-                  <p className="mt-1 text-xs text-gray-500">This must match your patient record date of birth</p>
-                </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h3 className="text-sm font-semibold text-blue-900 mb-2">Identity Verification</h3>
-                  <p className="text-xs text-blue-800">
-                    To protect your privacy, we'll verify your identity by matching your contact information and date of birth
-                    with our patient records.
-                  </p>
                 </div>
 
                 <div className="flex items-start gap-3">
@@ -270,37 +292,20 @@ export function PatientRegister() {
               </div>
 
               {isDemoMode && demoOTP && (
-                <div className="mb-6 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-shrink-0">
-                      <svg className="w-5 h-5 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="text-sm font-semibold text-yellow-800 mb-1">Development Mode Active</h3>
-                      <p className="text-sm text-yellow-700 mb-2">
-                        Email/SMS delivery is not configured. Use this code for testing:
-                      </p>
-                      <div className="bg-white px-4 py-3 rounded border border-yellow-300">
-                        <div className="flex items-center justify-between">
-                          <span className="text-2xl font-mono font-bold text-gray-900 tracking-widest">{demoOTP}</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(demoOTP)
-                              setError('Code copied to clipboard!')
-                              setTimeout(() => setError(''), 2000)
-                            }}
-                            className="text-xs px-3 py-1 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded font-medium transition-colors"
-                          >
-                            Copy
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-xs text-yellow-600 mt-2">
-                        For production use, configure Resend API key in Supabase Edge Functions.
-                      </p>
+                <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <p className="text-sm text-green-800 mb-2">Your verification code:</p>
+                  <div className="bg-white px-4 py-3 rounded border border-green-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-2xl font-mono font-bold text-gray-900 tracking-widest">{demoOTP}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(demoOTP)
+                        }}
+                        className="text-xs px-3 py-1 bg-green-100 hover:bg-green-200 text-green-800 rounded font-medium transition-colors"
+                      >
+                        Copy
+                      </button>
                     </div>
                   </div>
                 </div>

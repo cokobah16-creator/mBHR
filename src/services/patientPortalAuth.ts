@@ -466,39 +466,62 @@ export async function verifyOTP(verification: OTPVerification): Promise<PatientP
 }
 
 /**
- * Register new patient portal account and link to existing patient
+ * Register new patient portal account - creates patient record if needed
  */
 export async function registerPatientPortalAccount(
   phone: string | undefined,
   email: string | undefined,
   otp: string,
-  dob: string
+  dob: string,
+  givenName?: string,
+  familyName?: string
 ): Promise<PatientPortalAuthResponse> {
   try {
-    let patientQuery = supabase
-      .from('patients')
-      .select('*')
-      .eq('dob', dob)
-
-    if (phone) {
-      patientQuery = patientQuery.eq('phone', phone)
-    } else if (email) {
-      patientQuery = patientQuery.eq('email', email)
-    } else {
+    if (!phone && !email) {
       return {
         success: false,
         error: 'Phone number or email required'
       }
     }
 
-    const { data: patient, error: patientError } = await patientQuery.maybeSingle()
+    let patientQuery = supabase
+      .from('patients')
+      .select('*')
+      .eq('dob', dob)
 
-    if (patientError || !patient) {
-      const contactMethod = phone ? 'phone and date of birth' : 'email and date of birth'
-      return {
-        success: false,
-        error: `No patient record found matching ${contactMethod}.`
+    if (email) {
+      patientQuery = patientQuery.ilike('email', email)
+    } else if (phone) {
+      patientQuery = patientQuery.eq('phone', phone)
+    }
+
+    let { data: patient } = await patientQuery.maybeSingle()
+
+    if (!patient) {
+      const { data: newPatient, error: createPatientError } = await supabase
+        .from('patients')
+        .insert({
+          given_name: givenName || 'Portal',
+          family_name: familyName || 'User',
+          dob: dob,
+          sex: 'unknown',
+          phone: phone || null,
+          email: email || null,
+          portal_enabled: true,
+          registered_at: new Date().toISOString()
+        })
+        .select()
+        .single()
+
+      if (createPatientError || !newPatient) {
+        logger.error('Error creating patient:', createPatientError)
+        return {
+          success: false,
+          error: 'Failed to create account. Please try again.'
+        }
       }
+
+      patient = newPatient
     }
 
     const { data: existingPortalUser } = await supabase
