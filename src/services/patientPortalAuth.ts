@@ -125,7 +125,7 @@ async function sendOTPSMS(phone: string, otp: string): Promise<{ success: boolea
 /**
  * Send OTP via Email using Supabase Edge Function
  */
-async function sendOTPEmail(email: string, otp: string): Promise<{ success: boolean; error?: string }> {
+async function sendOTPEmail(email: string, otp: string): Promise<{ success: boolean; error?: string; demoMode?: boolean }> {
   try {
     const { data, error } = await supabase.functions.invoke('send-otp-email', {
       body: { email, otp }
@@ -140,6 +140,10 @@ async function sendOTPEmail(email: string, otp: string): Promise<{ success: bool
       const errorMsg = data?.error || 'Unknown error'
       logger.error('Email send failed:', errorMsg)
       return { success: false, error: errorMsg }
+    }
+
+    if (data?.demo) {
+      return { success: true, demoMode: true }
     }
 
     return { success: true }
@@ -263,7 +267,7 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
       }
     }
 
-    let sendResult: { success: boolean; error?: string } = { success: false, error: 'No contact method provided' }
+    let sendResult: { success: boolean; error?: string; demoMode?: boolean } = { success: false, error: 'No contact method provided' }
     let usedDemoMode = false
 
     if (phone) {
@@ -276,6 +280,9 @@ export async function requestOTP(request: OTPRequest): Promise<PatientPortalAuth
       sendResult = await sendOTPEmail(email, otp)
       if (!sendResult.success) {
         logger.warn('Email delivery failed, falling back to demo mode:', sendResult.error)
+        usedDemoMode = true
+      } else if (sendResult.demoMode) {
+        logger.warn('Email service in demo mode - API key not configured')
         usedDemoMode = true
       }
     }
