@@ -33,7 +33,8 @@ Deno.serve(async (req: Request) => {
     }
 
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
-    const senderEmail = Deno.env.get("SENDER_EMAIL");
+    const testMode = Deno.env.get("EMAIL_TEST_MODE") === "true";
+    const testRecipient = "cokobah16@gmail.com";
 
     if (!resendApiKey) {
       console.warn("RESEND_API_KEY not configured. Running in demo mode.");
@@ -53,11 +54,14 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const fromEmail = senderEmail || "onboarding@resend.dev";
+    const fromEmail = "onboarding@resend.dev";
+    const actualRecipient = testMode ? testRecipient : email;
+
+    console.log(`Sending OTP email from ${fromEmail} to ${actualRecipient}${testMode ? ` (test mode, original: ${email})` : ""}`);
 
     const emailContent = {
       from: `mBHR Patient Portal <${fromEmail}>`,
-      to: [email],
+      to: [actualRecipient],
       subject: "Your mBHR Verification Code",
       html: `
         <!DOCTYPE html>
