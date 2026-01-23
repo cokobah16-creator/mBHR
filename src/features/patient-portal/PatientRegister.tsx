@@ -378,9 +378,18 @@ export function PatientRegister() {
           )}
         </div>
 
-        <div className="mt-6 text-center text-sm text-gray-600">
-          <p>Med Bridge Health Reach</p>
-          <p className="mt-1">Secure patient portal powered by mBHR</p>
+        <div className="mt-6 text-center space-y-3">
+          <button
+            type="button"
+            onClick={() => navigate('/patient')}
+            className="text-sm text-green-600 hover:text-green-700 font-medium"
+          >
+            Back to Home
+          </button>
+          <div className="text-sm text-gray-600">
+            <p>Med Bridge Health Reach</p>
+            <p className="mt-1">Secure patient portal powered by mBHR</p>
+          </div>
         </div>
       </div>
     </div>

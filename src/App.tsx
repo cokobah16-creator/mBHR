@@ -49,6 +49,7 @@ const EmailDiagnostics = lazy(() => import('@/pages/admin/EmailDiagnostics'))
 const PatientPortalLanding = lazy(() => import('@/features/patient-portal/PatientPortalLanding').then(m => ({ default: m.PatientPortalLanding })))
 const PatientLogin = lazy(() => import('@/features/patient-portal/PatientLogin').then(m => ({ default: m.PatientLogin })))
 const PatientRegister = lazy(() => import('@/features/patient-portal/PatientRegister').then(m => ({ default: m.PatientRegister })))
+const PatientPortalLayout = lazy(() => import('@/features/patient-portal/PatientPortalLayout').then(m => ({ default: m.PatientPortalLayout })))
 const PatientDashboard = lazy(() => import('@/features/patient-portal/PatientDashboard').then(m => ({ default: m.PatientDashboard })))
 const MedicalHistory = lazy(() => import('@/features/patient-portal/MedicalHistory').then(m => ({ default: m.MedicalHistory })))
 const VisitDetail = lazy(() => import('@/features/patient-portal/VisitDetail').then(m => ({ default: m.VisitDetail })))
@@ -215,25 +216,27 @@ function App() {
                   </div>
                 </div>
               }>
-                <Routes>
-                  <Route path="/dashboard" element={<PatientDashboard />} />
-                  <Route path="/medical-history" element={<MedicalHistory />} />
-                  <Route path="/visit/:visitId" element={<VisitDetail />} />
-                  <Route path="/appointments" element={<AppointmentRequest />} />
-                  <Route path="/appointments/request" element={<AppointmentRequest />} />
-                  <Route path="/billing" element={<BillingPayments />} />
-                  <Route path="/forms" element={<PreVisitForms />} />
-                  <Route path="/prescriptions" element={<PrescriptionRefills />} />
-                  <Route path="/telehealth" element={<Telehealth />} />
-                  <Route path="/update-phr" element={<UpdatePHR />} />
-                  <Route path="/messages" element={<SecureMessaging />} />
-                  <Route path="/account" element={<ManageAccount />} />
-                  <Route path="/lab-results" element={<LabResults />} />
-                  <Route path="/conditions" element={<MedicalConditions />} />
-                  <Route path="/documents" element={<DocumentUpload />} />
-                  <Route path="/referrals" element={<Referrals />} />
-                  <Route path="/" element={<Navigate to="/patient/dashboard" replace />} />
-                </Routes>
+                <PatientPortalLayout>
+                  <Routes>
+                    <Route path="/dashboard" element={<PatientDashboard />} />
+                    <Route path="/medical-history" element={<MedicalHistory />} />
+                    <Route path="/visit/:visitId" element={<VisitDetail />} />
+                    <Route path="/appointments" element={<AppointmentRequest />} />
+                    <Route path="/appointments/request" element={<AppointmentRequest />} />
+                    <Route path="/billing" element={<BillingPayments />} />
+                    <Route path="/forms" element={<PreVisitForms />} />
+                    <Route path="/prescriptions" element={<PrescriptionRefills />} />
+                    <Route path="/telehealth" element={<Telehealth />} />
+                    <Route path="/update-phr" element={<UpdatePHR />} />
+                    <Route path="/messages" element={<SecureMessaging />} />
+                    <Route path="/account" element={<ManageAccount />} />
+                    <Route path="/lab-results" element={<LabResults />} />
+                    <Route path="/conditions" element={<MedicalConditions />} />
+                    <Route path="/documents" element={<DocumentUpload />} />
+                    <Route path="/referrals" element={<Referrals />} />
+                    <Route path="/" element={<Navigate to="/patient/dashboard" replace />} />
+                  </Routes>
+                </PatientPortalLayout>
               </Suspense>
             </PatientProtectedRoute>
           }
