@@ -1,5 +1,5 @@
 [TTS_PLACEHOLDER]
-Key: action.register
+Key: action.vitals
 Locale: ha
-Text: Rubuta Majiyyaci
+Text: Rubuta Alamun Lafiya
 Generate audio using: speechSynthesis or cloud TTS

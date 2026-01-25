@@ -1,5 +1,5 @@
 [TTS_PLACEHOLDER]
-Key: action.register
+Key: vitals.height
 Locale: ha
-Text: Rubuta Majiyyaci
+Text: Tsawo
 Generate audio using: speechSynthesis or cloud TTS

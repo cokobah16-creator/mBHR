@@ -1,5 +1,5 @@
 [TTS_PLACEHOLDER]
-Key: action.register
+Key: status.success
 Locale: ha
-Text: Rubuta Majiyyaci
+Text: Nasara
 Generate audio using: speechSynthesis or cloud TTS

@@ -1,5 +1,5 @@
 [TTS_PLACEHOLDER]
-Key: action.register
+Key: pharmacy.dispense
 Locale: ha
-Text: Rubuta Majiyyaci
+Text: Raba Magani
 Generate audio using: speechSynthesis or cloud TTS

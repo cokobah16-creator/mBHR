@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { SupportedLocale } from '@/i18n/types'
+import { getAudioPromptText, getAudioFilePath } from '@/config/audioPrompts'
 
 export function useT() {
   const { t: i18nT, i18n } = useTranslation()
@@ -12,34 +13,25 @@ export function useT() {
 
   const speak = async (key: string) => {
     const currentLocale = (i18n.language?.split('-')[0] || 'en') as SupportedLocale
+
+    const promptText = getAudioPromptText(key, currentLocale) || t(key)
+    const audioPath = getAudioFilePath(key, currentLocale)
+
     try {
-      const audioUrl = `/audio/${currentLocale}/${key.replace('.', '_')}.mp3`
-      const audio = new Audio(audioUrl)
+      const audio = new Audio(audioPath)
 
       audio.onerror = () => {
-        if ('speechSynthesis' in window) {
-          const utterance = new SpeechSynthesisUtterance(t(key))
-          utterance.lang = getLanguageCode(currentLocale)
-          speechSynthesis.speak(utterance)
-        }
+        speakWithTTS(promptText, currentLocale)
       }
 
       await audio.play()
-    } catch (error) {
-      console.warn('Audio playback failed:', error)
-
-      if ('speechSynthesis' in window) {
-        const utterance = new SpeechSynthesisUtterance(t(key))
-        utterance.lang = getLanguageCode(currentLocale)
-        speechSynthesis.speak(utterance)
-      }
+    } catch {
+      speakWithTTS(promptText, currentLocale)
     }
   }
 
   const changeLocale = async (locale: SupportedLocale) => {
-    console.log(`[useT] Changing language to: ${locale}`)
     await i18n.changeLanguage(locale)
-    console.log(`[useT] Language changed. Current language: ${i18n.language}`)
   }
 
   const currentLanguage = (i18n.language?.split('-')[0] || 'en') as SupportedLocale
@@ -54,14 +46,33 @@ export function useT() {
   }
 }
 
-// Helper to get proper language codes for speech synthesis
+function speakWithTTS(text: string, locale: SupportedLocale): void {
+  if (!('speechSynthesis' in window)) return
+
+  speechSynthesis.cancel()
+
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = getLanguageCode(locale)
+  utterance.rate = 0.9
+  utterance.volume = 0.8
+
+  const voices = speechSynthesis.getVoices()
+  const langPrefix = locale === 'pcm' ? 'en' : locale
+  const matchingVoice = voices.find(v => v.lang.startsWith(langPrefix))
+  if (matchingVoice) {
+    utterance.voice = matchingVoice
+  }
+
+  speechSynthesis.speak(utterance)
+}
+
 function getLanguageCode(locale: SupportedLocale): string {
   const codes = {
     en: 'en-US',
     ha: 'ha-NG',
-    yo: 'yo-NG', 
+    yo: 'yo-NG',
     ig: 'ig-NG',
-    pcm: 'en-NG' // Fallback to Nigerian English for Pidgin
+    pcm: 'en-NG'
   }
   return codes[locale] || 'en-US'
 }

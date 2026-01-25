@@ -1,5 +1,5 @@
 [TTS_PLACEHOLDER]
-Key: action.register
+Key: patient.familyName
 Locale: ha
-Text: Rubuta Majiyyaci
+Text: Sunan Iyali
 Generate audio using: speechSynthesis or cloud TTS

@@ -1,5 +1,5 @@
 [TTS_PLACEHOLDER]
-Key: action.register
+Key: vitals.temperature
 Locale: ha
-Text: Rubuta Majiyyaci
+Text: Zafin Jiki
 Generate audio using: speechSynthesis or cloud TTS

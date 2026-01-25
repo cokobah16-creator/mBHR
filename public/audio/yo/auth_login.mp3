@@ -1,5 +1,5 @@
 [TTS_PLACEHOLDER]
-Key: action.register
-Locale: ha
-Text: Rubuta Majiyyaci
+Key: auth.login
+Locale: yo
+Text: Wole
 Generate audio using: speechSynthesis or cloud TTS

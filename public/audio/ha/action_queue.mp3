@@ -1,5 +1,5 @@
 [TTS_PLACEHOLDER]
-Key: action.register
+Key: action.queue
 Locale: ha
-Text: Rubuta Majiyyaci
+Text: Duba Layi
 Generate audio using: speechSynthesis or cloud TTS
