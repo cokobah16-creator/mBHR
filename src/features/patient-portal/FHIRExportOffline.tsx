@@ -1,48 +1,37 @@
 import { useState, useEffect } from 'react';
 import {
   ArrowDownTrayIcon,
-  DocumentTextIcon,
   ShieldCheckIcon,
-  ClockIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   CloudIcon,
   ServerIcon,
+  ClockIcon,
   DocumentCheckIcon,
 } from '@heroicons/react/24/outline';
-import { supabase } from '../../lib/supabase';
-import { getFHIRBaseUrl, TEFCA_ROADMAP } from '../../config/tefca';
 import {
   exportPatientEHI,
   getExportPreview,
   downloadBundle,
+  downloadNDJSON,
+  type ExportOptions,
   type ExportResult,
 } from '../../services/fhir/dexieExporter';
 import type { BundleValidationResult } from '../../services/fhir/uscore-validator';
-
-interface ExportOptions {
-  includePatient: boolean;
-  includeVitals: boolean;
-  includeMedications: boolean;
-  includeEncounters: boolean;
-  includeConsultations: boolean;
-  includeAllergies: boolean;
-  dateRange: 'all' | '1year' | '2years' | '5years';
-  format: 'fhir-json' | 'fhir-bundle';
-  validate: boolean;
-}
 
 interface Props {
   patientId: string;
 }
 
-export function HealthDataExport({ patientId }: Props) {
+type DateRange = 'all' | '1year' | '2years' | '5years';
+
+export function FHIRExportOffline({ patientId }: Props) {
   const [exporting, setExporting] = useState(false);
   const [exportComplete, setExportComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [dataSource, setDataSource] = useState<'cloud' | 'local'>('cloud');
   const [validation, setValidation] = useState<BundleValidationResult | null>(null);
+
   const [preview, setPreview] = useState<{
     resourceCounts: Record<string, number>;
     totalResources: number;
@@ -57,10 +46,12 @@ export function HealthDataExport({ patientId }: Props) {
     includeEncounters: true,
     includeConsultations: true,
     includeAllergies: true,
-    dateRange: 'all',
-    format: 'fhir-bundle',
+    dateRange: 'all' as DateRange,
     validate: true,
+    format: 'fhir-bundle',
   });
+
+  const [useIncremental, setUseIncremental] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -84,7 +75,7 @@ export function HealthDataExport({ patientId }: Props) {
       const previewData = await getExportPreview(patientId);
       setPreview(previewData);
     } catch (err) {
-      console.error('Failed to load preview:', err);
+      console.error('Failed to load export preview:', err);
     }
   }
 
@@ -94,20 +85,10 @@ export function HealthDataExport({ patientId }: Props) {
     setExportComplete(false);
     setValidation(null);
 
-    const useOfflineExport = !isOnline || dataSource === 'local';
-
-    if (useOfflineExport) {
-      await handleOfflineExport();
-    } else {
-      await handleCloudExport();
-    }
-  };
-
-  const handleOfflineExport = async () => {
     try {
       const result: ExportResult = await exportPatientEHI(patientId, {
         ...options,
-        format: 'fhir-bundle',
+        since: useIncremental ? preview?.lastExport : undefined,
       });
 
       if (!result.success) {
@@ -118,9 +99,13 @@ export function HealthDataExport({ patientId }: Props) {
         setValidation(result.validation);
       }
 
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `health-data-${patientId}-${dateStr}`;
+
       if (result.bundle) {
-        const dateStr = new Date().toISOString().split('T')[0];
-        downloadBundle(result.bundle, `health-data-${patientId}-${dateStr}.json`);
+        downloadBundle(result.bundle, `${filename}.json`);
+      } else if (result.ndjson) {
+        downloadNDJSON(result.ndjson, `${filename}.ndjson`);
       }
 
       setExportComplete(true);
@@ -132,45 +117,15 @@ export function HealthDataExport({ patientId }: Props) {
     }
   };
 
-  const handleCloudExport = async () => {
-    try {
-      const baseUrl = getFHIRBaseUrl();
-      const response = await fetch(`${baseUrl}/Patient/${patientId}/$everything`, {
-        headers: {
-          'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
-          'X-Exchange-Purpose': 'individual-access',
-          'X-QHIN-ID': 'patient-portal',
-          'Accept': 'application/fhir+json',
-        },
-      });
-
-      if (!response.ok) {
-        setDataSource('local');
-        await handleOfflineExport();
-        return;
-      }
-
-      const data = await response.json();
-
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: 'application/json',
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `health-data-${patientId}-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      setExportComplete(true);
-    } catch (err) {
-      setDataSource('local');
-      await handleOfflineExport();
-    } finally {
-      setExporting(false);
-    }
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return 'Never';
+    return new Date(dateStr).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   return (
@@ -182,13 +137,15 @@ export function HealthDataExport({ patientId }: Props) {
               <ArrowDownTrayIcon className="w-6 h-6 text-blue-600" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-900">Export Your Health Data</h2>
+              <h2 className="text-xl font-semibold text-gray-900">Export Health Data</h2>
               <p className="text-gray-600">Download your medical records in FHIR format</p>
             </div>
           </div>
 
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${
-            isOnline ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+            isOnline
+              ? 'bg-green-100 text-green-700'
+              : 'bg-amber-100 text-amber-700'
           }`}>
             {isOnline ? (
               <>
@@ -198,7 +155,7 @@ export function HealthDataExport({ patientId }: Props) {
             ) : (
               <>
                 <ServerIcon className="w-4 h-4" />
-                Offline
+                Offline Mode
               </>
             )}
           </div>
@@ -211,8 +168,7 @@ export function HealthDataExport({ patientId }: Props) {
               <h3 className="font-medium text-blue-900">US Core 6.1.0 Compliant Export</h3>
               <p className="text-sm text-blue-700 mt-1">
                 Your health data is exported in FHIR R4 format validated against US Core 6.1.0 profiles.
-                This standard format allows you to share your records with any healthcare provider
-                or health app that supports TEFCA Individual Access Services.
+                This format is accepted by healthcare providers and apps that support TEFCA Individual Access Services.
               </p>
             </div>
           </div>
@@ -220,45 +176,24 @@ export function HealthDataExport({ patientId }: Props) {
 
         {preview && (
           <div className="bg-gray-50 rounded-lg p-4 mb-6">
-            <h3 className="font-medium text-gray-900 mb-3">Available Records</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+            <h3 className="font-medium text-gray-900 mb-3">Export Preview</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {Object.entries(preview.resourceCounts).map(([type, count]) => (
-                <div key={type} className="flex justify-between px-2 py-1 bg-white rounded border border-gray-200">
-                  <span className="text-gray-600">{type}</span>
-                  <span className="font-medium text-gray-900">{count}</span>
+                <div key={type} className="bg-white rounded-lg p-3 border border-gray-200">
+                  <div className="text-2xl font-bold text-gray-900">{count}</div>
+                  <div className="text-sm text-gray-600">{type}</div>
                 </div>
               ))}
             </div>
-            <p className="mt-2 text-xs text-gray-500">
-              Estimated size: {preview.estimatedSize}
-            </p>
-          </div>
-        )}
-
-        {isOnline && (
-          <div className="mb-6">
-            <h3 className="font-medium text-gray-900 mb-3">Data Source:</h3>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="dataSource"
-                  checked={dataSource === 'cloud'}
-                  onChange={() => setDataSource('cloud')}
-                  className="w-4 h-4 text-blue-600 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">Cloud (most current)</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="dataSource"
-                  checked={dataSource === 'local'}
-                  onChange={() => setDataSource('local')}
-                  className="w-4 h-4 text-blue-600 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">Local device</span>
-              </label>
+            <div className="mt-4 flex items-center justify-between text-sm text-gray-600">
+              <div className="flex items-center gap-4">
+                <span>Total: {preview.totalResources} resources</span>
+                <span>Size: ~{preview.estimatedSize}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <ClockIcon className="w-4 h-4" />
+                <span>Last export: {formatDate(preview.lastExport)}</span>
+              </div>
             </div>
           </div>
         )}
@@ -352,7 +287,7 @@ export function HealthDataExport({ patientId }: Props) {
             <h3 className="font-medium text-gray-900 mb-3">Time range:</h3>
             <select
               value={options.dateRange}
-              onChange={(e) => setOptions({ ...options, dateRange: e.target.value as ExportOptions['dateRange'] })}
+              onChange={(e) => setOptions({ ...options, dateRange: e.target.value as DateRange })}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="all">All available records</option>
@@ -363,17 +298,42 @@ export function HealthDataExport({ patientId }: Props) {
           </div>
 
           <div>
-            <h3 className="font-medium text-gray-900 mb-3">Options:</h3>
-            <label className="flex items-center gap-2 cursor-pointer p-3 bg-gray-50 rounded-lg">
+            <h3 className="font-medium text-gray-900 mb-3">Export format:</h3>
+            <select
+              value={options.format}
+              onChange={(e) => setOptions({ ...options, format: e.target.value as 'fhir-bundle' | 'ndjson' })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="fhir-bundle">FHIR Bundle (JSON)</option>
+              <option value="ndjson">NDJSON (for bulk import)</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-4 mb-6">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={options.validate}
+              onChange={(e) => setOptions({ ...options, validate: e.target.checked })}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm text-gray-700">Validate against US Core 6.1.0</span>
+          </label>
+
+          {preview?.lastExport && (
+            <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
-                checked={options.validate}
-                onChange={(e) => setOptions({ ...options, validate: e.target.checked })}
+                checked={useIncremental}
+                onChange={(e) => setUseIncremental(e.target.checked)}
                 className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
-              <span className="text-sm text-gray-700">Validate against US Core 6.1.0</span>
+              <span className="text-sm text-gray-700">
+                Incremental export (only changes since {formatDate(preview.lastExport)})
+              </span>
             </label>
-          </div>
+          )}
         </div>
 
         {error && (
@@ -387,18 +347,18 @@ export function HealthDataExport({ patientId }: Props) {
           <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="flex items-center gap-3">
               <CheckCircleIcon className="w-5 h-5 text-green-600" />
-              <p className="text-green-700 font-medium">Your health data has been downloaded successfully!</p>
+              <p className="text-green-700 font-medium">Your health data has been exported successfully!</p>
             </div>
             {validation && (
               <div className="mt-3 text-sm">
                 <div className="flex items-center gap-2">
                   <DocumentCheckIcon className="w-4 h-4 text-green-600" />
                   <span className="text-green-700">
-                    US Core 6.1.0: {validation.validResources}/{validation.totalResources} resources passed
+                    Validation: {validation.validResources}/{validation.totalResources} resources passed US Core 6.1.0
                   </span>
                 </div>
                 {validation.summary.warnings > 0 && (
-                  <p className="text-amber-600 mt-1 ml-6">
+                  <p className="text-amber-600 mt-1">
                     {validation.summary.warnings} warnings (non-blocking)
                   </p>
                 )}
@@ -415,7 +375,7 @@ export function HealthDataExport({ patientId }: Props) {
           {exporting ? (
             <>
               <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Exporting from {dataSource === 'cloud' ? 'Cloud' : 'Local Device'}...
+              Exporting from {isOnline ? 'Cloud' : 'Local Device'}...
             </>
           ) : (
             <>
@@ -433,65 +393,25 @@ export function HealthDataExport({ patientId }: Props) {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <DocumentTextIcon className="w-6 h-6 text-gray-600" />
-          <h3 className="font-semibold text-gray-900">About FHIR Format</h3>
-        </div>
-        <p className="text-gray-600 mb-4">
-          FHIR (Fast Healthcare Interoperability Resources) is an international standard for
-          exchanging healthcare information electronically. Your exported data can be:
-        </p>
-        <ul className="space-y-2 text-gray-600">
-          <li className="flex items-center gap-2">
-            <CheckCircleIcon className="w-4 h-4 text-green-600" />
-            Shared with other healthcare providers
+        <h3 className="font-semibold text-gray-900 mb-4">What can you do with your FHIR export?</h3>
+        <ul className="space-y-3">
+          <li className="flex items-start gap-3">
+            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <span className="text-gray-700">Share with other healthcare providers for continuity of care</span>
           </li>
-          <li className="flex items-center gap-2">
-            <CheckCircleIcon className="w-4 h-4 text-green-600" />
-            Imported into personal health apps
+          <li className="flex items-start gap-3">
+            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <span className="text-gray-700">Import into personal health apps (Apple Health, CommonHealth)</span>
           </li>
-          <li className="flex items-center gap-2">
-            <CheckCircleIcon className="w-4 h-4 text-green-600" />
-            Used for insurance or benefits applications
+          <li className="flex items-start gap-3">
+            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <span className="text-gray-700">Use for insurance claims or benefits applications</span>
           </li>
-          <li className="flex items-center gap-2">
-            <CheckCircleIcon className="w-4 h-4 text-green-600" />
-            Kept as a personal backup of your records
+          <li className="flex items-start gap-3">
+            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <span className="text-gray-700">Keep as a personal backup of your medical records</span>
           </li>
         </ul>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <ClockIcon className="w-6 h-6 text-gray-600" />
-          <h3 className="font-semibold text-gray-900">Interoperability Roadmap</h3>
-        </div>
-        <div className="space-y-4">
-          {Object.entries(TEFCA_ROADMAP).map(([key, phase]) => (
-            <div key={key} className="border-l-2 border-gray-200 pl-4">
-              <div className="flex items-center gap-2">
-                <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                  phase.status === 'complete' ? 'bg-green-100 text-green-700' :
-                  phase.status === 'planned' ? 'bg-blue-100 text-blue-700' :
-                  'bg-gray-100 text-gray-700'
-                }`}>
-                  {phase.status === 'complete' ? 'Complete' : phase.status === 'planned' ? 'Planned' : 'Future'}
-                </span>
-                <h4 className="font-medium text-gray-900">{phase.name}</h4>
-              </div>
-              <ul className="mt-2 space-y-1">
-                {phase.features.slice(0, 3).map((feature, idx) => (
-                  <li key={idx} className="text-sm text-gray-600">
-                    {phase.status === 'complete' ? (
-                      <CheckCircleIcon className="w-4 h-4 text-green-500 inline mr-1" />
-                    ) : null}
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );
