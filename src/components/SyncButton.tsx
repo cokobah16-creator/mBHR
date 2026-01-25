@@ -1,16 +1,43 @@
-import React, { useState, useEffect, memo } from 'react'
+import { useState, useEffect, memo, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { syncNow, isOnlineSyncEnabled } from '@/sync/adapter'
 import { useSyncStore } from '@/stores/syncStore'
 import { useOperationsQueue } from '@/stores/operationsQueue'
 import { resolveConflict } from '@/sync/conflictResolver'
-import { ArrowPathIcon, CheckCircleIcon, ExclamationCircleIcon, QueueListIcon } from '@heroicons/react/24/outline'
+import { conflictQueueService } from '@/services/conflictQueue'
+import {
+  ArrowPathIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+  QueueListIcon,
+  DocumentDuplicateIcon
+} from '@heroicons/react/24/outline'
 import { ConflictResolutionModal, ConflictData } from './ConflictResolutionModal'
 
 export const SyncButton = memo(() => {
+  const navigate = useNavigate()
   const syncStore = useSyncStore()
   const queueStore = useOperationsQueue()
   const [conflicts, setConflicts] = useState<ConflictData[]>([])
   const [currentConflict, setCurrentConflict] = useState<ConflictData | null>(null)
+  const [pendingConflictCount, setPendingConflictCount] = useState(0)
+
+  const loadPendingConflicts = useCallback(async () => {
+    if (!isOnlineSyncEnabled()) return
+
+    try {
+      const stats = await conflictQueueService.getConflictStats()
+      setPendingConflictCount(stats.pending + stats.needsApproval)
+    } catch {
+      // Silently fail - conflict service may not be available
+    }
+  }, [])
+
+  useEffect(() => {
+    loadPendingConflicts()
+    const interval = setInterval(loadPendingConflicts, 60000)
+    return () => clearInterval(interval)
+  }, [loadPendingConflicts])
 
   if (!isOnlineSyncEnabled()) return null
 
@@ -21,15 +48,32 @@ export const SyncButton = memo(() => {
       const result = await syncNow()
 
       if (result.conflicts && result.conflicts.length > 0) {
+        for (const conflict of result.conflicts) {
+          await conflictQueueService.createConflict({
+            conflictType: 'sync_conflict',
+            entityType: conflict.entityType,
+            entityId: conflict.entityId,
+            conflictDetails: {
+              fields: conflict.conflicts.map(c => ({
+                ...c,
+                phiSensitivity: 'low' as const
+              })),
+              localTimestamp: conflict.localTimestamp,
+              remoteTimestamp: conflict.remoteTimestamp
+            }
+          })
+        }
+
         setConflicts(result.conflicts)
         setCurrentConflict(result.conflicts[0])
+        await loadPendingConflicts()
       }
     } catch (error) {
       console.error('Manual sync failed:', error)
     }
   }
 
-  const handleConflictResolve = async (strategy: 'keep-local' | 'keep-remote' | 'manual', resolution?: any) => {
+  const handleConflictResolve = async (strategy: 'keep-local' | 'keep-remote' | 'manual', resolution?: Record<string, 'local' | 'remote'>) => {
     if (!currentConflict) return
 
     try {
@@ -46,6 +90,8 @@ export const SyncButton = memo(() => {
       if (remaining.length === 0) {
         await handleSync()
       }
+
+      await loadPendingConflicts()
     } catch (error) {
       console.error('Failed to resolve conflict:', error)
     }
@@ -54,6 +100,10 @@ export const SyncButton = memo(() => {
   const handleConflictCancel = () => {
     setCurrentConflict(null)
     setConflicts([])
+  }
+
+  const handleOpenConflictDashboard = () => {
+    navigate('/admin/conflicts')
   }
 
   const pendingCount = queueStore.getPendingCount()
@@ -98,10 +148,21 @@ export const SyncButton = memo(() => {
           </div>
         )}
 
+        {pendingConflictCount > 0 && (
+          <button
+            onClick={handleOpenConflictDashboard}
+            className="flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 rounded-full text-xs hover:bg-amber-200 transition-colors"
+            title={`${pendingConflictCount} conflict${pendingConflictCount !== 1 ? 's' : ''} need review`}
+          >
+            <DocumentDuplicateIcon className="h-4 w-4" />
+            <span>{pendingConflictCount}</span>
+          </button>
+        )}
+
         <button
           onClick={handleSync}
           disabled={isSyncing}
-          className="p-2 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
+          className="p-2 rounded-lg hover:bg-gray-100 hover:bg-opacity-20 transition-colors disabled:opacity-50"
           title={isSyncing ? 'Syncing...' : 'Sync with cloud'}
         >
           <ArrowPathIcon

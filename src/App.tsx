@@ -44,6 +44,7 @@ const PortalDashboard = lazy(() => import('@/pages/admin/PortalDashboard').then(
 const PortalMigration = lazy(() => import('@/pages/admin/PortalMigration').then(m => ({ default: m.PortalMigration })))
 const BulkPortalMigration = lazy(() => import('@/pages/admin/BulkPortalMigration').then(m => ({ default: m.BulkPortalMigration })))
 const EmailDiagnostics = lazy(() => import('@/pages/admin/EmailDiagnostics'))
+const ConflictDashboard = lazy(() => import('@/pages/admin/ConflictDashboard'))
 
 // Patient Portal components
 const PatientPortalLanding = lazy(() => import('@/features/patient-portal/PatientPortalLanding').then(m => ({ default: m.PatientPortalLanding })))
@@ -397,6 +398,11 @@ function App() {
                     <Route path="/admin/email-diagnostics" element={
                       <RequireRoles roles={['admin']}>
                         <EmailDiagnostics />
+                      </RequireRoles>
+                    } />
+                    <Route path="/admin/conflicts" element={
+                      <RequireRoles roles={['admin', 'doctor', 'nurse']}>
+                        <ConflictDashboard />
                       </RequireRoles>
                     } />
                     <Route path="/simple/register" element={<SimpleRegister />} />

@@ -27,7 +27,8 @@ import {
   CheckCircleIcon,
   ArrowLeftIcon,
   XMarkIcon,
-  Bars3Icon
+  Bars3Icon,
+  DocumentDuplicateIcon
 } from '@heroicons/react/24/outline'
 
 // Pharmacy Overlay Component
@@ -211,7 +212,8 @@ export function Layout({ children }: LayoutProps) {
     // Admin-only items
     ...(currentUser && can(currentUser.role, 'users') ? [
       { name: t('nav.user_management'), href: '/users', icon: UsersIcon },
-      { name: t('nav.approve_games'), href: '/admin/approvals', icon: CheckCircleIcon }
+      { name: t('nav.approve_games'), href: '/admin/approvals', icon: CheckCircleIcon },
+      { name: 'Conflicts', href: '/admin/conflicts', icon: DocumentDuplicateIcon }
     ] : [])
   ]
 
