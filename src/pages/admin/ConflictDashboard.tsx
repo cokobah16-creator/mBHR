@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   ExclamationTriangleIcon,
   ShieldExclamationIcon,
@@ -13,7 +12,9 @@ import {
   DocumentDuplicateIcon,
   ArrowsRightLeftIcon,
   SparklesIcon,
-  UserGroupIcon
+  UserGroupIcon,
+  ClipboardDocumentListIcon,
+  UserCircleIcon
 } from '@heroicons/react/24/outline'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -21,10 +22,11 @@ import {
   type ConflictResolution,
   type ConflictType,
   type ConflictPriority,
-  type PHISensitivity
+  type FieldChangeDelta
 } from '@/services/conflictQueue'
 import { ConflictComparisonCard, ConflictResolutionActions } from '@/components/ConflictComparisonCard'
 import { db } from '@/db'
+import { getRoleDisplayName, type Role } from '@/auth/roles'
 
 type TabType = 'pending' | 'needs_approval' | 'resolved'
 
@@ -51,8 +53,15 @@ interface ConflictStats {
   byType: Record<ConflictType, number>
 }
 
+type DetailTab = 'comparison' | 'audit_history'
+
+const REQUIRED_ROLE_LABELS: Record<string, { label: string; color: string }> = {
+  lead_clinician: { label: 'Lead Clinician', color: 'bg-teal-100 text-teal-800' },
+  auditor: { label: 'Auditor', color: 'bg-amber-100 text-amber-800' },
+  admin: { label: 'Admin', color: 'bg-slate-100 text-slate-800' }
+}
+
 export default function ConflictDashboard() {
-  const navigate = useNavigate()
   const { currentUser } = useAuthStore()
   const [activeTab, setActiveTab] = useState<TabType>('pending')
   const [conflicts, setConflicts] = useState<ConflictResolution[]>([])
@@ -74,6 +83,25 @@ export default function ConflictDashboard() {
 
   const [selectedResolutions, setSelectedResolutions] = useState<Record<string, 'local' | 'remote'>>({})
   const [justification, setJustification] = useState('')
+  const [detailTab, setDetailTab] = useState<DetailTab>('comparison')
+  const [auditHistory, setAuditHistory] = useState<Array<{
+    id: string
+    action: string
+    actorId?: string
+    actorRole?: string
+    fieldChanges: Record<string, unknown>
+    justification?: string
+    createdAt: string
+  }>>([])
+  const [fieldDeltas, setFieldDeltas] = useState<FieldChangeDelta[]>([])
+  const [approvalEligibility, setApprovalEligibility] = useState<{
+    canApprove: boolean
+    requiredRole: string | null
+    needsSecondApproval: boolean
+    hasFirstApproval: boolean
+    reason?: string
+  } | null>(null)
+  const [approvalError, setApprovalError] = useState<string | null>(null)
 
   const loadConflicts = useCallback(async () => {
     setIsLoading(true)
@@ -129,6 +157,25 @@ export default function ConflictDashboard() {
     setSelectedConflict(conflict)
     setSelectedResolutions({})
     setJustification('')
+    setDetailTab('comparison')
+    setApprovalError(null)
+
+    const [history, deltas] = await Promise.all([
+      conflictQueueService.getAuditHistory(conflict.id),
+      conflictQueueService.getFieldDeltas(conflict.id)
+    ])
+    setAuditHistory(history)
+    setFieldDeltas(deltas)
+
+    if (currentUser && conflict.status === 'needs_approval') {
+      const eligibility = await conflictQueueService.checkApprovalEligibility(
+        conflict.id,
+        currentUser.role as Role
+      )
+      setApprovalEligibility(eligibility)
+    } else {
+      setApprovalEligibility(null)
+    }
   }
 
   const handleFieldSelect = (field: string, choice: 'local' | 'remote') => {
@@ -139,6 +186,7 @@ export default function ConflictDashboard() {
     if (!selectedConflict || !currentUser) return
 
     setIsResolving(true)
+    setApprovalError(null)
     try {
       const resolutionDetails: Record<string, unknown> = strategy === 'manual'
         ? { fieldResolutions: selectedResolutions }
@@ -149,6 +197,7 @@ export default function ConflictDashboard() {
         strategy,
         resolutionDetails,
         resolvedBy: currentUser.id,
+        resolverRole: currentUser.role as Role,
         justification: justification || undefined
       })
 
@@ -213,20 +262,38 @@ export default function ConflictDashboard() {
     }
   }
 
-  const handleApprove = async (conflictId: string) => {
+  const handleApprove = async (conflictId: string, isSecondApproval = false) => {
     if (!currentUser) return
 
     setIsResolving(true)
+    setApprovalError(null)
     try {
-      await conflictQueueService.approveResolution({
+      const result = await conflictQueueService.approveResolution({
         conflictId,
         approvedBy: currentUser.id,
-        justification
+        approverRole: currentUser.role as Role,
+        justification,
+        isSecondApproval
       })
+
+      if (!result.success) {
+        setApprovalError(result.error || 'Approval failed')
+        return
+      }
+
+      if (result.needsSecondApproval) {
+        setApprovalError(null)
+        alert('First approval recorded. A second approver is required to complete this resolution.')
+        setSelectedConflict(null)
+      } else {
+        setSelectedConflict(null)
+      }
+
       await loadConflicts()
       await loadStats()
     } catch (error) {
       console.error('Approval failed:', error)
+      setApprovalError('An unexpected error occurred')
     } finally {
       setIsResolving(false)
     }
@@ -576,14 +643,28 @@ export default function ConflictDashboard() {
         {selectedConflict && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+              <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
                 <div>
-                  <h2 className="text-lg font-bold text-gray-900">
-                    Resolve {CONFLICT_TYPE_LABELS[selectedConflict.conflictType].label}
-                  </h2>
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-lg font-bold text-gray-900">
+                      Resolve {CONFLICT_TYPE_LABELS[selectedConflict.conflictType].label}
+                    </h2>
+                    {selectedConflict.requiredApproverRole && (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${REQUIRED_ROLE_LABELS[selectedConflict.requiredApproverRole]?.color || 'bg-gray-100 text-gray-700'}`}>
+                        <UserCircleIcon className="h-3.5 w-3.5" />
+                        Requires {REQUIRED_ROLE_LABELS[selectedConflict.requiredApproverRole]?.label || selectedConflict.requiredApproverRole}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm text-gray-600">
                     {ENTITY_TYPE_LABELS[selectedConflict.entityType]} - ID: {selectedConflict.entityId.slice(0, 12)}...
                   </p>
+                  {selectedConflict.escalationReason && (
+                    <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
+                      <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+                      {selectedConflict.escalationReason}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => setSelectedConflict(null)}
@@ -593,18 +674,126 @@ export default function ConflictDashboard() {
                 </button>
               </div>
 
+              <div className="border-b px-6">
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => setDetailTab('comparison')}
+                    className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      detailTab === 'comparison'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Field Comparison
+                  </button>
+                  <button
+                    onClick={() => setDetailTab('audit_history')}
+                    className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+                      detailTab === 'audit_history'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <ClipboardDocumentListIcon className="h-4 w-4" />
+                    Audit History ({auditHistory.length})
+                  </button>
+                </div>
+              </div>
+
               <div className="p-6 space-y-6">
-                <ConflictComparisonCard
-                  fields={selectedConflict.conflictDetails.fields}
-                  localTimestamp={selectedConflict.conflictDetails.localTimestamp}
-                  remoteTimestamp={selectedConflict.conflictDetails.remoteTimestamp}
-                  matchScore={selectedConflict.conflictDetails.matchScore}
-                  matchReasons={selectedConflict.conflictDetails.matchReasons}
-                  priority={selectedConflict.priority}
-                  phiSensitivity={selectedConflict.phiSensitivity}
-                  selectedResolutions={selectedResolutions}
-                  onFieldSelect={handleFieldSelect}
-                />
+                {detailTab === 'comparison' ? (
+                  <>
+                    <ConflictComparisonCard
+                      fields={selectedConflict.conflictDetails.fields}
+                      localTimestamp={selectedConflict.conflictDetails.localTimestamp}
+                      remoteTimestamp={selectedConflict.conflictDetails.remoteTimestamp}
+                      matchScore={selectedConflict.conflictDetails.matchScore}
+                      matchReasons={selectedConflict.conflictDetails.matchReasons}
+                      priority={selectedConflict.priority}
+                      phiSensitivity={selectedConflict.phiSensitivity}
+                      selectedResolutions={selectedResolutions}
+                      onFieldSelect={handleFieldSelect}
+                    />
+
+                    {fieldDeltas.length > 0 && (
+                      <div className="border rounded-lg p-4">
+                        <h4 className="text-sm font-medium text-gray-900 mb-3">Previous Field Changes</h4>
+                        <div className="space-y-2">
+                          {fieldDeltas.map((delta) => (
+                            <div key={delta.id} className="flex items-start gap-3 text-sm">
+                              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                                delta.changeType === 'merge' ? 'bg-blue-100 text-blue-700' :
+                                delta.changeType === 'override' ? 'bg-amber-100 text-amber-700' :
+                                delta.changeType === 'correction' ? 'bg-green-100 text-green-700' :
+                                'bg-gray-100 text-gray-700'
+                              }`}>
+                                {delta.changeType}
+                              </span>
+                              <div className="flex-1">
+                                <span className="font-medium">{delta.fieldName}</span>
+                                {delta.phiField && (
+                                  <ShieldExclamationIcon className="h-3.5 w-3.5 inline ml-1 text-red-500" />
+                                )}
+                                <span className="text-gray-500 mx-1">:</span>
+                                <span className="text-gray-600">
+                                  {String(delta.oldValue || '-')} → {String(delta.newValue || '-')}
+                                </span>
+                              </div>
+                              <span className="text-xs text-gray-400">
+                                {new Date(delta.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="space-y-4">
+                    {auditHistory.length === 0 ? (
+                      <p className="text-center text-gray-500 py-8">No audit history available</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {auditHistory.map((entry) => (
+                          <div key={entry.id} className="border rounded-lg p-4">
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                                  entry.action === 'created' ? 'bg-blue-100 text-blue-800' :
+                                  entry.action === 'resolved' ? 'bg-green-100 text-green-800' :
+                                  entry.action === 'approved' ? 'bg-teal-100 text-teal-800' :
+                                  entry.action === 'rejected' ? 'bg-red-100 text-red-800' :
+                                  entry.action === 'auto_resolved' ? 'bg-amber-100 text-amber-800' :
+                                  'bg-gray-100 text-gray-700'
+                                }`}>
+                                  {entry.action.replace('_', ' ')}
+                                </span>
+                                {entry.actorRole && (
+                                  <span className="ml-2 text-sm text-gray-600">
+                                    by {getRoleDisplayName(entry.actorRole as Role)}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs text-gray-500">
+                                {new Date(entry.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+                            {entry.justification && (
+                              <p className="mt-2 text-sm text-gray-700 italic">
+                                "{entry.justification}"
+                              </p>
+                            )}
+                            {Object.keys(entry.fieldChanges).length > 0 && entry.action !== 'viewed' && (
+                              <div className="mt-2 text-xs text-gray-500">
+                                Details: {JSON.stringify(entry.fieldChanges).slice(0, 100)}...
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {selectedConflict.phiSensitivity === 'high' && (
                   <div>
@@ -621,22 +810,42 @@ export default function ConflictDashboard() {
                   </div>
                 )}
 
+                {approvalError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                    {approvalError}
+                  </div>
+                )}
+
                 {selectedConflict.status === 'needs_approval' ? (
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => handleApprove(selectedConflict.id)}
-                      disabled={isResolving}
-                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
-                    >
-                      Approve Resolution
-                    </button>
-                    <button
-                      onClick={() => handleReject(selectedConflict.id, justification || 'No reason provided')}
-                      disabled={isResolving}
-                      className="flex-1 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50 font-medium"
-                    >
-                      Reject
-                    </button>
+                  <div className="space-y-3">
+                    {approvalEligibility && !approvalEligibility.canApprove && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                        <strong>Cannot Approve:</strong> {approvalEligibility.reason}
+                      </div>
+                    )}
+
+                    {approvalEligibility?.needsSecondApproval && approvalEligibility.hasFirstApproval && (
+                      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                        <strong>Dual Approval Required:</strong> First approval has been recorded. You are providing the second approval.
+                      </div>
+                    )}
+
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => handleApprove(selectedConflict.id, approvalEligibility?.hasFirstApproval)}
+                        disabled={isResolving || (approvalEligibility && !approvalEligibility.canApprove)}
+                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+                      >
+                        {approvalEligibility?.hasFirstApproval ? 'Provide Second Approval' : 'Approve Resolution'}
+                      </button>
+                      <button
+                        onClick={() => handleReject(selectedConflict.id, justification || 'No reason provided')}
+                        disabled={isResolving}
+                        className="flex-1 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50 font-medium"
+                      >
+                        Reject
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <ConflictResolutionActions
@@ -646,7 +855,7 @@ export default function ConflictDashboard() {
                     onIgnore={() => handleResolve('ignore')}
                     isResolving={isResolving}
                     hasManualSelections={Object.keys(selectedResolutions).length > 0}
-                    requiresApproval={selectedConflict.phiSensitivity === 'high'}
+                    requiresApproval={selectedConflict.requiredApproverRole !== null && selectedConflict.requiredApproverRole !== undefined}
                   />
                 )}
               </div>

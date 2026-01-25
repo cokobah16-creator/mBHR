@@ -2,12 +2,14 @@ import { supabase } from '@/lib/supabase'
 import { db, Patient } from '@/db'
 import { patientDeduplication } from './patientDeduplication'
 import logger from '@/lib/logger'
+import { getRequiredApproverRole, type Role } from '@/auth/roles'
 
 export type ConflictType = 'sync_conflict' | 'duplicate' | 'data_quality'
 export type ConflictStatus = 'pending' | 'resolved' | 'ignored' | 'auto_resolved' | 'needs_approval'
 export type ConflictPriority = 'low' | 'medium' | 'high' | 'critical'
 export type PHISensitivity = 'none' | 'low' | 'medium' | 'high'
 export type ResolutionStrategy = 'keep_local' | 'keep_remote' | 'manual' | 'merge' | 'ignore'
+export type RequiredApproverRole = 'admin' | 'auditor' | 'lead_clinician' | null
 
 export interface ConflictField {
   field: string
@@ -41,8 +43,43 @@ export interface ConflictResolution {
   approvedBy?: string
   approvedAt?: string
   autoRuleId?: string
+  requiredApproverRole?: RequiredApproverRole
+  escalationReason?: string
+  secondApproverId?: string
+  secondApprovedAt?: string
+  siteId?: string
+  resolutionPolicyReference?: string
   createdAt: string
   updatedAt: string
+}
+
+export interface SiteConflictSettings {
+  id: string
+  siteId: string
+  siteName?: string
+  nameMatchThreshold: number
+  phoneMatchWeight: number
+  dobMatchWeight: number
+  autoResolutionEnabled: boolean
+  highPhiApprovalRequired: boolean
+  approvedAutoRules: string[]
+  linguisticRegion: string
+  requireDualApprovalForPatientMerge: boolean
+  updatedAt: string
+  updatedBy?: string
+}
+
+export interface FieldChangeDelta {
+  id: string
+  conflictId: string
+  fieldName: string
+  oldValue: unknown
+  newValue: unknown
+  changeType: 'merge' | 'override' | 'correction' | 'auto_resolve'
+  changedBy?: string
+  changedByRole?: string
+  phiField: boolean
+  createdAt: string
 }
 
 export interface AutoResolutionRule {
@@ -115,6 +152,7 @@ export class ConflictQueueService {
     entityId: string
     candidateIds?: string[]
     conflictDetails: ConflictResolution['conflictDetails']
+    siteId?: string
   }): Promise<string | null> {
     const fieldsWithPHI = params.conflictDetails.fields.map(f => ({
       ...f,
@@ -123,7 +161,17 @@ export class ConflictQueueService {
 
     const phiSensitivity = calculateOverallPHISensitivity(fieldsWithPHI)
     const priority = calculatePriority(params.conflictType, phiSensitivity, params.entityType)
-    const needsApproval = phiSensitivity === 'high' && params.entityType === 'patients'
+    const requiredApproverRole = getRequiredApproverRole(params.entityType, phiSensitivity, params.conflictType)
+    const needsApproval = requiredApproverRole !== null
+
+    let escalationReason: string | null = null
+    if (requiredApproverRole === 'lead_clinician') {
+      escalationReason = 'High-PHI patient record merge requires Lead Clinician approval'
+    } else if (requiredApproverRole === 'auditor') {
+      escalationReason = 'Data quality issue with high-PHI content requires Auditor review'
+    } else if (requiredApproverRole === 'admin') {
+      escalationReason = 'High-sensitivity conflict requires Admin approval'
+    }
 
     const { data, error } = await supabase
       .from('conflict_resolutions')
@@ -138,7 +186,10 @@ export class ConflictQueueService {
         conflict_details: {
           ...params.conflictDetails,
           fields: fieldsWithPHI
-        }
+        },
+        required_approver_role: requiredApproverRole,
+        escalation_reason: escalationReason,
+        site_id: params.siteId || null
       })
       .select('id')
       .single()
@@ -150,16 +201,97 @@ export class ConflictQueueService {
 
     await this.logAuditEvent(data.id, 'created', {
       conflict_type: params.conflictType,
-      entity_type: params.entityType
+      entity_type: params.entityType,
+      required_approver_role: requiredApproverRole
     })
 
     return data.id
+  }
+
+  async getSiteSettings(siteId: string): Promise<SiteConflictSettings | null> {
+    const { data, error } = await supabase
+      .from('site_conflict_settings')
+      .select('*')
+      .eq('site_id', siteId)
+      .maybeSingle()
+
+    if (error || !data) {
+      const { data: globalData } = await supabase
+        .from('site_conflict_settings')
+        .select('*')
+        .eq('site_id', 'global')
+        .maybeSingle()
+
+      if (!globalData) return null
+      return this.mapSiteSettingsFromDB(globalData)
+    }
+
+    return this.mapSiteSettingsFromDB(data)
+  }
+
+  async updateSiteSettings(siteId: string, settings: Partial<SiteConflictSettings>, updatedBy: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('site_conflict_settings')
+      .upsert({
+        site_id: siteId,
+        site_name: settings.siteName,
+        name_match_threshold: settings.nameMatchThreshold,
+        phone_match_weight: settings.phoneMatchWeight,
+        dob_match_weight: settings.dobMatchWeight,
+        auto_resolution_enabled: settings.autoResolutionEnabled,
+        high_phi_approval_required: settings.highPhiApprovalRequired,
+        approved_auto_rules: settings.approvedAutoRules,
+        linguistic_region: settings.linguisticRegion,
+        require_dual_approval_for_patient_merge: settings.requireDualApprovalForPatientMerge,
+        updated_by: updatedBy,
+        updated_at: new Date().toISOString()
+      })
+
+    if (error) {
+      logger.error('Failed to update site settings', error)
+      return false
+    }
+    return true
+  }
+
+  async getAllSiteSettings(): Promise<SiteConflictSettings[]> {
+    const { data, error } = await supabase
+      .from('site_conflict_settings')
+      .select('*')
+      .order('site_name')
+
+    if (error) {
+      logger.error('Failed to fetch site settings', error)
+      return []
+    }
+
+    return (data || []).map(this.mapSiteSettingsFromDB)
+  }
+
+  private mapSiteSettingsFromDB(row: Record<string, unknown>): SiteConflictSettings {
+    return {
+      id: row.id as string,
+      siteId: row.site_id as string,
+      siteName: row.site_name as string | undefined,
+      nameMatchThreshold: (row.name_match_threshold as number) || 0.8,
+      phoneMatchWeight: (row.phone_match_weight as number) || 0.9,
+      dobMatchWeight: (row.dob_match_weight as number) || 0.95,
+      autoResolutionEnabled: (row.auto_resolution_enabled as boolean) ?? true,
+      highPhiApprovalRequired: (row.high_phi_approval_required as boolean) ?? true,
+      approvedAutoRules: (row.approved_auto_rules as string[]) || [],
+      linguisticRegion: (row.linguistic_region as string) || 'default',
+      requireDualApprovalForPatientMerge: (row.require_dual_approval_for_patient_merge as boolean) ?? false,
+      updatedAt: row.updated_at as string,
+      updatedBy: row.updated_by as string | undefined
+    }
   }
 
   async getPendingConflicts(filters?: {
     entityType?: string
     conflictType?: ConflictType
     priority?: ConflictPriority
+    siteId?: string
+    requiredApproverRole?: RequiredApproverRole
     limit?: number
     offset?: number
   }): Promise<{ conflicts: ConflictResolution[], total: number }> {
@@ -178,6 +310,12 @@ export class ConflictQueueService {
     }
     if (filters?.priority) {
       query = query.eq('priority', filters.priority)
+    }
+    if (filters?.siteId) {
+      query = query.eq('site_id', filters.siteId)
+    }
+    if (filters?.requiredApproverRole) {
+      query = query.eq('required_approver_role', filters.requiredApproverRole)
     }
     if (filters?.limit) {
       query = query.limit(filters.limit)
@@ -218,13 +356,14 @@ export class ConflictQueueService {
     strategy: ResolutionStrategy
     resolutionDetails: Record<string, unknown>
     resolvedBy: string
+    resolverRole?: Role
     justification?: string
+    policyReference?: string
   }): Promise<boolean> {
     const conflict = await this.getConflictById(params.conflictId)
     if (!conflict) return false
 
-    const needsApproval = conflict.phiSensitivity === 'high' &&
-      conflict.entityType === 'patients' &&
+    const needsApproval = conflict.requiredApproverRole !== null &&
       params.strategy !== 'ignore'
 
     const { error } = await supabase
@@ -234,7 +373,8 @@ export class ConflictQueueService {
         resolution_strategy: params.strategy,
         resolution_details: params.resolutionDetails,
         resolved_by: params.resolvedBy,
-        resolved_at: new Date().toISOString()
+        resolved_at: new Date().toISOString(),
+        resolution_policy_reference: params.policyReference || null
       })
       .eq('id', params.conflictId)
 
@@ -243,40 +383,248 @@ export class ConflictQueueService {
       return false
     }
 
+    await this.recordFieldDeltas({
+      conflictId: params.conflictId,
+      conflict,
+      resolutionDetails: params.resolutionDetails,
+      strategy: params.strategy,
+      changedBy: params.resolvedBy,
+      changedByRole: params.resolverRole
+    })
+
     await this.logAuditEvent(params.conflictId, 'resolved', {
       strategy: params.strategy,
       justification: params.justification,
-      field_changes: params.resolutionDetails
-    })
+      field_changes: params.resolutionDetails,
+      resolver_role: params.resolverRole
+    }, params.resolvedBy, params.resolverRole)
 
     return true
+  }
+
+  private async recordFieldDeltas(params: {
+    conflictId: string
+    conflict: ConflictResolution
+    resolutionDetails: Record<string, unknown>
+    strategy: ResolutionStrategy
+    changedBy?: string
+    changedByRole?: Role
+  }): Promise<void> {
+    const deltas: Array<{
+      conflict_id: string
+      field_name: string
+      old_value: unknown
+      new_value: unknown
+      change_type: string
+      changed_by: string | null
+      changed_by_role: string | null
+      phi_field: boolean
+    }> = []
+
+    const fieldResolutions = params.resolutionDetails.fieldResolutions as Record<string, 'local' | 'remote'> | undefined
+
+    for (const field of params.conflict.conflictDetails.fields) {
+      let changeType: string = 'override'
+      let newValue: unknown = field.localValue
+
+      if (params.strategy === 'keep_local') {
+        newValue = field.localValue
+        changeType = 'override'
+      } else if (params.strategy === 'keep_remote') {
+        newValue = field.remoteValue
+        changeType = 'override'
+      } else if (params.strategy === 'manual' && fieldResolutions) {
+        const choice = fieldResolutions[field.field]
+        newValue = choice === 'local' ? field.localValue : field.remoteValue
+        changeType = 'merge'
+      } else if (params.strategy === 'ignore') {
+        continue
+      }
+
+      if (field.localValue !== field.remoteValue) {
+        deltas.push({
+          conflict_id: params.conflictId,
+          field_name: field.field,
+          old_value: field.localValue,
+          new_value: newValue,
+          change_type: changeType,
+          changed_by: params.changedBy || null,
+          changed_by_role: params.changedByRole || null,
+          phi_field: field.phiSensitivity === 'high' || field.phiSensitivity === 'medium'
+        })
+      }
+    }
+
+    if (deltas.length > 0) {
+      const { error } = await supabase
+        .from('conflict_change_deltas')
+        .insert(deltas)
+
+      if (error) {
+        logger.error('Failed to record field deltas', error)
+      }
+    }
+  }
+
+  async getFieldDeltas(conflictId: string): Promise<FieldChangeDelta[]> {
+    const { data, error } = await supabase
+      .from('conflict_change_deltas')
+      .select('*')
+      .eq('conflict_id', conflictId)
+      .order('created_at', { ascending: true })
+
+    if (error) {
+      logger.error('Failed to fetch field deltas', error)
+      return []
+    }
+
+    return (data || []).map(row => ({
+      id: row.id,
+      conflictId: row.conflict_id,
+      fieldName: row.field_name,
+      oldValue: row.old_value,
+      newValue: row.new_value,
+      changeType: row.change_type,
+      changedBy: row.changed_by,
+      changedByRole: row.changed_by_role,
+      phiField: row.phi_field,
+      createdAt: row.created_at
+    }))
   }
 
   async approveResolution(params: {
     conflictId: string
     approvedBy: string
+    approverRole: Role
     justification?: string
-  }): Promise<boolean> {
+    isSecondApproval?: boolean
+  }): Promise<{ success: boolean; needsSecondApproval?: boolean; error?: string }> {
+    const conflict = await this.getConflictById(params.conflictId)
+    if (!conflict) {
+      return { success: false, error: 'Conflict not found' }
+    }
+
+    const requiredRole = conflict.requiredApproverRole
+    const canApprove = this.roleCanApprove(params.approverRole, requiredRole)
+
+    if (!canApprove) {
+      return {
+        success: false,
+        error: `This conflict requires approval by a ${requiredRole}. Your role (${params.approverRole}) cannot approve this.`
+      }
+    }
+
+    const siteSettings = conflict.siteId
+      ? await this.getSiteSettings(conflict.siteId)
+      : await this.getSiteSettings('global')
+
+    const needsDualApproval = siteSettings?.requireDualApprovalForPatientMerge &&
+      conflict.entityType === 'patients' &&
+      conflict.phiSensitivity === 'high' &&
+      conflict.conflictType === 'duplicate'
+
+    if (needsDualApproval && !conflict.approvedBy && !params.isSecondApproval) {
+      const { error } = await supabase
+        .from('conflict_resolutions')
+        .update({
+          approved_by: params.approvedBy,
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', params.conflictId)
+        .eq('status', 'needs_approval')
+
+      if (error) {
+        logger.error('Failed to record first approval', error)
+        return { success: false, error: 'Failed to record approval' }
+      }
+
+      await this.logAuditEvent(params.conflictId, 'approved', {
+        justification: params.justification,
+        approval_type: 'first_approval',
+        requires_second_approval: true
+      }, params.approvedBy, params.approverRole)
+
+      return { success: true, needsSecondApproval: true }
+    }
+
+    const updateData: Record<string, unknown> = {
+      status: 'resolved',
+      approved_at: new Date().toISOString()
+    }
+
+    if (needsDualApproval && params.isSecondApproval) {
+      updateData.second_approver_id = params.approvedBy
+      updateData.second_approved_at = new Date().toISOString()
+    } else {
+      updateData.approved_by = params.approvedBy
+    }
+
     const { error } = await supabase
       .from('conflict_resolutions')
-      .update({
-        status: 'resolved',
-        approved_by: params.approvedBy,
-        approved_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', params.conflictId)
       .eq('status', 'needs_approval')
 
     if (error) {
       logger.error('Failed to approve resolution', error)
-      return false
+      return { success: false, error: 'Failed to approve resolution' }
     }
 
     await this.logAuditEvent(params.conflictId, 'approved', {
-      justification: params.justification
-    })
+      justification: params.justification,
+      approval_type: params.isSecondApproval ? 'second_approval' : 'single_approval'
+    }, params.approvedBy, params.approverRole)
 
-    return true
+    return { success: true }
+  }
+
+  private roleCanApprove(approverRole: Role, requiredRole: RequiredApproverRole): boolean {
+    if (!requiredRole) return true
+    if (approverRole === 'admin') return true
+    if (requiredRole === 'lead_clinician' && (approverRole === 'lead_clinician' || approverRole === 'auditor')) return true
+    if (requiredRole === 'auditor' && approverRole === 'auditor') return true
+    if (requiredRole === 'admin') return false
+    return false
+  }
+
+  async checkApprovalEligibility(conflictId: string, userRole: Role): Promise<{
+    canApprove: boolean
+    requiredRole: RequiredApproverRole
+    needsSecondApproval: boolean
+    hasFirstApproval: boolean
+    reason?: string
+  }> {
+    const conflict = await this.getConflictById(conflictId)
+    if (!conflict) {
+      return { canApprove: false, requiredRole: null, needsSecondApproval: false, hasFirstApproval: false, reason: 'Conflict not found' }
+    }
+
+    const requiredRole = conflict.requiredApproverRole
+    const canApprove = this.roleCanApprove(userRole, requiredRole)
+
+    const siteSettings = conflict.siteId
+      ? await this.getSiteSettings(conflict.siteId)
+      : await this.getSiteSettings('global')
+
+    const needsDualApproval = siteSettings?.requireDualApprovalForPatientMerge &&
+      conflict.entityType === 'patients' &&
+      conflict.phiSensitivity === 'high' &&
+      conflict.conflictType === 'duplicate'
+
+    const hasFirstApproval = !!conflict.approvedBy && conflict.status === 'needs_approval'
+
+    let reason: string | undefined
+    if (!canApprove) {
+      reason = `Requires ${requiredRole} approval`
+    }
+
+    return {
+      canApprove,
+      requiredRole,
+      needsSecondApproval: needsDualApproval || false,
+      hasFirstApproval,
+      reason
+    }
   }
 
   async rejectResolution(params: {
@@ -571,7 +919,9 @@ export class ConflictQueueService {
   private async logAuditEvent(
     conflictId: string,
     action: string,
-    details: Record<string, unknown>
+    details: Record<string, unknown>,
+    actorId?: string,
+    actorRole?: Role
   ): Promise<void> {
     const { error } = await supabase
       .from('conflict_audit_logs')
@@ -579,7 +929,9 @@ export class ConflictQueueService {
         conflict_id: conflictId,
         action,
         field_changes: details,
-        justification: details.justification as string | undefined
+        justification: details.justification as string | undefined,
+        actor_id: actorId || null,
+        actor_role: actorRole || null
       })
 
     if (error) {
@@ -605,6 +957,12 @@ export class ConflictQueueService {
       approvedBy: row.approved_by as string | undefined,
       approvedAt: row.approved_at as string | undefined,
       autoRuleId: row.auto_rule_id as string | undefined,
+      requiredApproverRole: row.required_approver_role as RequiredApproverRole | undefined,
+      escalationReason: row.escalation_reason as string | undefined,
+      secondApproverId: row.second_approver_id as string | undefined,
+      secondApprovedAt: row.second_approved_at as string | undefined,
+      siteId: row.site_id as string | undefined,
+      resolutionPolicyReference: row.resolution_policy_reference as string | undefined,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string
     }
