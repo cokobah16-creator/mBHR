@@ -8,7 +8,9 @@ import {
   EnvelopeIcon,
   BellIcon,
   ClipboardDocumentListIcon,
-  PlusIcon
+  PlusIcon,
+  ArrowDownTrayIcon,
+  ShieldCheckIcon
 } from '@heroicons/react/24/outline'
 import { getPatientDashboard } from '@/services/patientPortalData'
 import type { PatientDashboardData } from '@/types/patientPortal'
@@ -271,6 +273,36 @@ export function PatientDashboard() {
           ) : (
             <p className="text-gray-500 text-center py-8">No recent lab results</p>
           )}
+        </div>
+      </div>
+
+      <div className="bg-gradient-to-r from-teal-600 to-teal-700 rounded-xl shadow-sm p-6 text-white">
+        <div className="flex items-center gap-3 mb-4">
+          <ArrowDownTrayIcon className="w-8 h-8" />
+          <div>
+            <h2 className="text-xl font-bold">Download My Health Record</h2>
+            <p className="text-teal-100 text-sm">Export your complete medical history in FHIR format</p>
+          </div>
+        </div>
+        <p className="text-teal-100 mb-4">
+          Access your health data in a standardized format that you can share with any healthcare provider,
+          import into health apps, or keep as a personal backup. Compliant with TEFCA Individual Access Services.
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            to="/patient/export"
+            className="inline-flex items-center gap-2 bg-white text-teal-700 font-semibold px-6 py-3 rounded-lg hover:bg-teal-50 transition-colors"
+          >
+            <ArrowDownTrayIcon className="w-5 h-5" />
+            Download Health Record
+          </Link>
+          <Link
+            to="/patient/data-sharing"
+            className="inline-flex items-center gap-2 bg-teal-500 text-white font-medium px-6 py-3 rounded-lg hover:bg-teal-400 transition-colors"
+          >
+            <ShieldCheckIcon className="w-5 h-5" />
+            Manage Data Sharing
+          </Link>
         </div>
       </div>
 

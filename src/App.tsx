@@ -65,6 +65,8 @@ const LabResults = lazy(() => import('@/features/patient-portal/LabResults').the
 const MedicalConditions = lazy(() => import('@/features/patient-portal/MedicalConditions').then(m => ({ default: m.MedicalConditions })))
 const DocumentUpload = lazy(() => import('@/features/patient-portal/DocumentUpload').then(m => ({ default: m.DocumentUpload })))
 const Referrals = lazy(() => import('@/features/patient-portal/Referrals').then(m => ({ default: m.Referrals })))
+const HealthDataExport = lazy(() => import('@/features/patient-portal/HealthDataExport').then(m => ({ default: m.HealthDataExport })))
+const DataSharingPreferences = lazy(() => import('@/features/patient-portal/DataSharingPreferences').then(m => ({ default: m.DataSharingPreferences })))
 
 // Inventory and gamification
 const Inventory = lazy(() => import('@/pages/Inventory').then(m => ({ default: m.Inventory })))
@@ -106,6 +108,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   return <>{children}</>
+}
+
+function HealthDataExportWrapper() {
+  const portalUserStr = localStorage.getItem('patient_portal_user')
+  const portalUser = portalUserStr ? JSON.parse(portalUserStr) : null
+  const patientId = portalUser?.patientId || ''
+  return <HealthDataExport patientId={patientId} />
+}
+
+function DataSharingWrapper() {
+  const portalUserStr = localStorage.getItem('patient_portal_user')
+  const portalUser = portalUserStr ? JSON.parse(portalUserStr) : null
+  const patientId = portalUser?.patientId || ''
+  return <DataSharingPreferences patientId={patientId} />
 }
 
 function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -234,6 +250,8 @@ function App() {
                     <Route path="/conditions" element={<MedicalConditions />} />
                     <Route path="/documents" element={<DocumentUpload />} />
                     <Route path="/referrals" element={<Referrals />} />
+                    <Route path="/export" element={<HealthDataExportWrapper />} />
+                    <Route path="/data-sharing" element={<DataSharingWrapper />} />
                     <Route path="/" element={<Navigate to="/patient/dashboard" replace />} />
                   </Routes>
                 </PatientPortalLayout>
