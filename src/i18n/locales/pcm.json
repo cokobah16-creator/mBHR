@@ -204,5 +204,14 @@
   "app.title": "mBHR",
   "app.subtitle": "From Dr. Isioma Okobah Foundation",
   "app.offline": "No Internet",
-  "app.online": "Internet dey"
+  "app.online": "Internet dey",
+  "nav": {
+    "vitals": "[EN] Vitals"
+  },
+  "queue": {
+    "status": {
+      "closed": "[EN] Closed",
+      "open": "[EN] Open"
+    }
+  }
 }

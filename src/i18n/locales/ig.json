@@ -229,5 +229,14 @@
   "app.title": "mBHR",
   "app.subtitle": "Site n'aka Dr. Isioma Okobah Foundation",
   "app.offline": "Ọ nweghị Ịntanetị",
-  "app.online": "Ịntanetị dị"
+  "app.online": "Ịntanetị dị",
+  "nav": {
+    "vitals": "[EN] Vitals"
+  },
+  "queue": {
+    "status": {
+      "closed": "[EN] Closed",
+      "open": "[EN] Open"
+    }
+  }
 }
