@@ -11,6 +11,7 @@ The mBHR application has been comprehensively optimized for mobile devices with 
 #### TouchButton Component (`src/components/TouchButton.tsx`)
 
 A fully touch-optimized button with:
+
 - **Minimum 44x44px touch targets** (Apple/Google guidelines)
 - **Haptic feedback** on interactions
 - **Active state animations** (scale-95 on press)
@@ -19,8 +20,9 @@ A fully touch-optimized button with:
 - **Size options**: sm, md, lg
 
 **Usage:**
+
 ```tsx
-import { TouchButton } from '@/components/TouchButton'
+import { TouchButton } from "@/components/TouchButton";
 
 <TouchButton
   variant="primary"
@@ -31,12 +33,13 @@ import { TouchButton } from '@/components/TouchButton'
   icon={<PlusIcon />}
 >
   Register Patient
-</TouchButton>
+</TouchButton>;
 ```
 
 #### BottomSheet Component (`src/components/BottomSheet.tsx`)
 
 Mobile-first modal alternative with:
+
 - **Swipe to dismiss** gesture support
 - **Multiple snap points** (90%, 50%, etc.)
 - **Drag handle** for intuitive interaction
@@ -45,8 +48,9 @@ Mobile-first modal alternative with:
 - **Auto-scroll locking** when open
 
 **Usage:**
+
 ```tsx
-import { BottomSheet } from '@/components/BottomSheet'
+import { BottomSheet } from "@/components/BottomSheet";
 
 <BottomSheet
   isOpen={showSheet}
@@ -55,7 +59,7 @@ import { BottomSheet } from '@/components/BottomSheet'
   snapPoints={[0.9, 0.5]}
 >
   <PatientForm />
-</BottomSheet>
+</BottomSheet>;
 ```
 
 ### 2. Mobile Gestures & Interactions
@@ -63,12 +67,14 @@ import { BottomSheet } from '@/components/BottomSheet'
 #### Swipe Gestures Hook (`src/hooks/useMobile.ts`)
 
 Support for all swipe directions:
+
 - Swipe left/right for navigation
 - Swipe up/down for actions
 - Configurable minimum distance threshold
 - Touch event handling
 
 **Usage:**
+
 ```tsx
 import { useSwipe } from '@/hooks/useMobile'
 
@@ -87,6 +93,7 @@ const swipeHandlers = useSwipe(
 #### Pull-to-Refresh Component (`src/components/PullToRefresh.tsx`)
 
 Native-like refresh experience:
+
 - **Visual pull indicator** with rotation
 - **Haptic feedback** at threshold
 - **Dampened pull physics**
@@ -94,17 +101,18 @@ Native-like refresh experience:
 - **Async refresh support**
 
 **Usage:**
+
 ```tsx
-import { PullToRefresh } from '@/components/PullToRefresh'
+import { PullToRefresh } from "@/components/PullToRefresh";
 
 <PullToRefresh
   onRefresh={async () => {
-    await fetchData()
+    await fetchData();
   }}
   threshold={80}
 >
   <PatientList />
-</PullToRefresh>
+</PullToRefresh>;
 ```
 
 ### 3. Haptic Feedback System
@@ -112,6 +120,7 @@ import { PullToRefresh } from '@/components/PullToRefresh'
 #### useHaptic Hook
 
 Vibration API wrapper for tactile feedback:
+
 - `light()` - 10ms vibration
 - `medium()` - 20ms vibration
 - `heavy()` - 30ms vibration
@@ -120,15 +129,16 @@ Vibration API wrapper for tactile feedback:
 - `warning()` - Pattern: [10, 30, 10, 30, 10]
 
 **Usage:**
-```tsx
-import { useHaptic } from '@/hooks/useMobile'
 
-const haptic = useHaptic()
+```tsx
+import { useHaptic } from "@/hooks/useMobile";
+
+const haptic = useHaptic();
 
 const handleSuccess = () => {
-  haptic.success()
+  haptic.success();
   // Show success message
-}
+};
 ```
 
 ### 4. PWA Features
@@ -136,6 +146,7 @@ const handleSuccess = () => {
 #### Install Prompt (`src/components/PWAInstallPrompt.tsx`)
 
 Smart app installation prompt:
+
 - **Delayed display** (30 seconds after load)
 - **Dismissal tracking** (7-day cooldown)
 - **Feature highlights** (offline, faster, home screen)
@@ -143,6 +154,7 @@ Smart app installation prompt:
 - **Beautiful animations**
 
 Features highlighted:
+
 - ✅ Works offline
 - ✅ Faster loading
 - ✅ Home screen access
@@ -150,6 +162,7 @@ Features highlighted:
 #### iOS PWA Support
 
 Full iOS PWA configuration in `index.html`:
+
 - Apple touch icons
 - Status bar styling
 - App title customization
@@ -187,6 +200,7 @@ Enhanced with mobile-first utilities:
 #### Safe Area Insets
 
 Support for notched devices (iPhone X+):
+
 - Automatic padding for safe areas
 - iOS-specific viewport handling
 - `viewport-fit=cover` support
@@ -194,14 +208,18 @@ Support for notched devices (iPhone X+):
 ### 6. Mobile-Specific CSS Optimizations
 
 #### Input Behavior
+
 ```css
 /* Prevents zoom on input focus */
-input, select, textarea {
+input,
+select,
+textarea {
   font-size: 16px; /* iOS won't zoom if >= 16px */
 }
 ```
 
 #### Touch Interactions
+
 ```css
 body {
   -webkit-tap-highlight-color: transparent; /* No blue flash */
@@ -211,6 +229,7 @@ body {
 ```
 
 #### Smooth Scrolling
+
 ```css
 * {
   -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
@@ -218,6 +237,7 @@ body {
 ```
 
 #### Font Smoothing
+
 ```css
 html {
   -webkit-font-smoothing: antialiased;
@@ -230,8 +250,9 @@ html {
 #### useMobile Hook
 
 Comprehensive mobile detection:
+
 ```tsx
-const { isMobile, isTouch, screenSize } = useMobile()
+const { isMobile, isTouch, screenSize } = useMobile();
 
 // isMobile: true if width < 768px
 // isTouch: true if touch-capable device
@@ -241,15 +262,17 @@ const { isMobile, isTouch, screenSize } = useMobile()
 #### useOrientation Hook
 
 Orientation detection:
+
 ```tsx
-const orientation = useOrientation() // 'portrait' | 'landscape'
+const orientation = useOrientation(); // 'portrait' | 'landscape'
 ```
 
 #### useScrollLock Hook
 
 Lock scrolling when needed (modals, sheets):
+
 ```tsx
-useScrollLock() // Auto-cleanup on unmount
+useScrollLock(); // Auto-cleanup on unmount
 ```
 
 ### 8. Performance Optimizations
@@ -257,12 +280,14 @@ useScrollLock() // Auto-cleanup on unmount
 #### Viewport Configuration
 
 ```html
-<meta name="viewport"
+<meta
+  name="viewport"
   content="width=device-width,
            initial-scale=1.0,
            maximum-scale=5.0,
            user-scalable=yes,
-           viewport-fit=cover" />
+           viewport-fit=cover"
+/>
 ```
 
 - Allows pinch zoom (accessibility)
@@ -272,6 +297,7 @@ useScrollLock() // Auto-cleanup on unmount
 #### Format Detection
 
 Prevents unwanted phone/email parsing:
+
 ```html
 <meta name="format-detection" content="telephone=no" />
 <meta name="format-detection" content="email=no" />
@@ -280,6 +306,7 @@ Prevents unwanted phone/email parsing:
 #### DNS Prefetch
 
 Pre-resolve Supabase domain:
+
 ```html
 <link rel="preconnect" href="https://dlogqxzejroeyivfmgcv.supabase.co" />
 <link rel="dns-prefetch" href="https://dlogqxzejroeyivfmgcv.supabase.co" />
@@ -290,6 +317,7 @@ Pre-resolve Supabase domain:
 #### Touch Target Sizes
 
 All interactive elements meet WCAG 2.1 AAA standards:
+
 - **Minimum 44x44px** for all buttons
 - **Larger targets** for critical actions
 - **Adequate spacing** between touch targets
@@ -312,36 +340,42 @@ All interactive elements meet WCAG 2.1 AAA standards:
 ### 10. Mobile Best Practices Implemented
 
 #### ✅ Touch Interactions
+
 - Minimum 44x44px touch targets
 - Haptic feedback on interactions
 - Active state animations
 - No hover states (touch devices)
 
 #### ✅ Performance
+
 - Lazy loading for routes
 - Code splitting by feature
 - Optimized bundle sizes
 - Service worker caching
 
 #### ✅ Offline Support
+
 - Full offline functionality
 - Smart caching strategies
 - Sync queue for offline changes
 - Clear offline indicators
 
 #### ✅ UX Patterns
+
 - Bottom sheets instead of modals
 - Pull-to-refresh for lists
 - Swipe gestures for navigation
 - Loading states for all async operations
 
 #### ✅ Forms & Input
+
 - Large, touch-friendly inputs
 - No zoom on focus (16px fonts)
 - Clear validation messages
 - Visual number inputs
 
 #### ✅ PWA Features
+
 - Installable app
 - Splash screens
 - App icons (all sizes)
@@ -365,11 +399,13 @@ All interactive elements meet WCAG 2.1 AAA standards:
 ### Real Device Testing
 
 **iOS (Safari):**
+
 ```
 Settings > Safari > Advanced > Web Inspector
 ```
 
 **Android (Chrome):**
+
 ```
 chrome://inspect#devices
 ```
@@ -383,6 +419,7 @@ npm run preview
 ```
 
 **Target Scores:**
+
 - Performance: 90+
 - Accessibility: 95+
 - Best Practices: 95+
@@ -419,6 +456,7 @@ npm run preview
 ### Converting to Touch Components
 
 **Before:**
+
 ```tsx
 <button onClick={handleClick} className="btn-primary">
   Register
@@ -426,12 +464,9 @@ npm run preview
 ```
 
 **After:**
+
 ```tsx
-<TouchButton
-  variant="primary"
-  onClick={handleClick}
-  hapticFeedback
->
+<TouchButton variant="primary" onClick={handleClick} hapticFeedback>
   Register
 </TouchButton>
 ```
@@ -439,21 +474,21 @@ npm run preview
 ### Using Bottom Sheets
 
 **Before:**
+
 ```tsx
-{showModal && (
-  <Modal onClose={handleClose}>
-    <Content />
-  </Modal>
-)}
+{
+  showModal && (
+    <Modal onClose={handleClose}>
+      <Content />
+    </Modal>
+  );
+}
 ```
 
 **After:**
+
 ```tsx
-<BottomSheet
-  isOpen={showModal}
-  onClose={handleClose}
-  title="Title"
->
+<BottomSheet isOpen={showModal} onClose={handleClose} title="Title">
   <Content />
 </BottomSheet>
 ```
@@ -463,11 +498,13 @@ npm run preview
 ### Mobile Load Times
 
 **3G Connection (750 Kbps):**
+
 - Initial load: ~3.2 seconds
 - Time to Interactive: ~4.5 seconds
 - First Contentful Paint: ~2.1 seconds
 
 **4G Connection (10 Mbps):**
+
 - Initial load: ~0.25 seconds
 - Time to Interactive: ~0.8 seconds
 - First Contentful Paint: ~0.15 seconds
@@ -509,5 +546,5 @@ npm run preview
 
 ---
 
-*Last Updated: October 23, 2025*
-*Version: 0.1.0 (Mobile-Optimized)*
+_Last Updated: October 23, 2025_
+_Version: 0.1.0 (Mobile-Optimized)_
