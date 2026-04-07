@@ -7,6 +7,7 @@
   "nav.users": "Masu Amfani",
   "nav.analytics": "Bincike",
   "nav.games": "Wasanni",
+  "nav.vitals": "Alamun Lafiya",
   "action.save": "Ajiye",
   "action.cancel": "Soke",
   "action.delete": "Share",
@@ -17,6 +18,16 @@
   "action.next": "Na gaba",
   "action.back": "Koma baya",
   "action.submit": "Aika",
+  "action.register": "Rubuta",
+  "action.register.description": "Saka sabon majiyyaci",
+  "action.vitals": "Alamun Lafiya",
+  "action.vitals.description": "Karanta ma'aunin jiki",
+  "action.consult": "Shawarwari",
+  "action.consult.description": "Rubuto lissafi na likita",
+  "action.pharmacy": "Kantin Magani",
+  "action.pharmacy.description": "Bai magani",
+  "action.queue": "Duba Layi",
+  "action.queue.description": "Ga marasa da ke jira",
   "auth.login": "Shiga",
   "auth.logout": "Fita",
   "auth.pin": "Lambar Sirri",
@@ -73,6 +84,8 @@
   "queue.waiting": "Jira",
   "queue.inProgress": "Ana aiki",
   "queue.completed": "An gama",
+  "queue.status.open": "Bubuwa",
+  "queue.status.closed": "Rufe",
   "status.loading": "Ana lodawa...",
   "status.saving": "Ana ajiyewa...",
   "status.success": "Nasara",
@@ -220,5 +233,8 @@
     "viewDetails": "[EN] View details",
     "visitStarted": "[EN] Visit Started",
     "vitalsRecorded": "[EN] Vitals Recorded"
+  },
+  "app": {
+    "title": "mBHR - Bayar Lafiya Runduwar Gida"
   }
 }

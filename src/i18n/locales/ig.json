@@ -7,6 +7,7 @@
   "nav.users": "Ndị Ọrụ",
   "nav.analytics": "Nyocha",
   "nav.games": "Egwuregwu",
+  "nav.vitals": "Nlele ahụ ike",
   "action.save": "Chekwaa",
   "action.cancel": "Kagbuo",
   "action.delete": "Hichapụ",
@@ -17,6 +18,16 @@
   "action.next": "Osote",
   "action.back": "Laghachi azụ",
   "action.submit": "Ziga",
+  "action.register": "Debanye Aha",
+  "action.register.description": "Tinye onye ọrịa ọhụrụ",
+  "action.vitals": "Nlele Ahụ Ike",
+  "action.vitals.description": "Were ihe ise",
+  "action.consult": "Mkparịta ụka",
+  "action.consult.description": "Edemede nke dike",
+  "action.pharmacy": "Ụlọ Ọgwụ",
+  "action.pharmacy.description": "Kenye ọgwụ",
+  "action.queue": "Hụ Ahịrị",
+  "action.queue.description": "Hụ ndị ọrịa na-eche",
   "auth.login": "Banye",
   "auth.logout": "Pụọ",
   "auth.pin": "Nọmba Nzuzo",
@@ -73,6 +84,8 @@
   "queue.waiting": "Na-eche",
   "queue.inProgress": "Na-aga n'ihu",
   "queue.completed": "Emechara",
+  "queue.status.open": "Mepụta",
+  "queue.status.closed": "Mechie",
   "status.loading": "Na-ebu...",
   "status.saving": "Na-echekwa...",
   "status.success": "Ihe ịga nke ọma",
@@ -220,5 +233,8 @@
     "viewDetails": "[EN] View details",
     "visitStarted": "[EN] Visit Started",
     "vitalsRecorded": "[EN] Vitals Recorded"
+  },
+  "app": {
+    "title": "mBHR - Ndekọ Ọrịa Mma Mkpakọ"
   }
 }

@@ -7,7 +7,7 @@
   "nav.users": "Workers",
   "nav.analytics": "Check Numbers",
   "nav.games": "Play Games",
-  
+  "nav.vitals": "Check Body",
   "action.save": "Keep Am",
   "action.cancel": "No Do Am",
   "action.delete": "Comot Am",
@@ -18,7 +18,6 @@
   "action.next": "Next One",
   "action.back": "Go Back",
   "action.submit": "Send Am",
-  
   "auth.login": "Enter",
   "auth.logout": "Comot",
   "auth.pin": "Secret Number",
@@ -26,7 +25,6 @@
   "auth.invalidPin": "Wrong secret number",
   "auth.lockedOut": "Too many wrong try. Wait small",
   "auth.welcome": "Welcome",
-  
   "patient.register": "Write Sick Person Name",
   "patient.givenName": "First Name",
   "patient.familyName": "Family Name",
@@ -40,7 +38,6 @@
   "patient.female": "Woman",
   "patient.other": "Other",
   "patient.photo": "Picture",
-  
   "vitals.height": "How Tall (cm)",
   "vitals.weight": "How Heavy (kg)",
   "vitals.temperature": "Body Hot (°C)",
@@ -54,14 +51,12 @@
   "vitals.abnormal": "Not Normal",
   "vitals.high": "Too High",
   "vitals.low": "Too Low",
-  
   "triage.priority.urgent": "Very Important",
   "triage.priority.normal": "Normal",
   "triage.priority.low": "Can Wait",
   "triage.category.adult": "Big Person",
   "triage.category.child": "Pikin",
   "triage.category.antenatal": "Pregnant Woman",
-  
   "pharmacy.dispense": "Give Medicine",
   "pharmacy.medication": "Medicine",
   "pharmacy.dosage": "How Much",
@@ -72,15 +67,15 @@
   "pharmacy.withFood": "With Food",
   "pharmacy.beforeFood": "Before You Chop",
   "pharmacy.asNeeded": "When You Need Am",
-  
   "queue.registration": "Write Name",
   "queue.vitals": "Check Body",
   "queue.consultation": "See Doctor",
   "queue.pharmacy": "Collect Medicine",
   "queue.waiting": "Dey Wait",
+  "queue.status.open": "Open",
+  "queue.status.closed": "Closed",
   "queue.inProgress": "Dey Work",
   "queue.completed": "Don Finish",
-  
   "status.loading": "Dey Load...",
   "status.saving": "Dey Save...",
   "status.success": "E Work",
@@ -88,7 +83,6 @@
   "status.offline": "No Internet",
   "status.online": "Get Internet",
   "status.syncing": "Dey Update...",
-  
   "number.one": "One",
   "number.two": "Two",
   "number.three": "Three",
@@ -98,7 +92,6 @@
   "number.afternoon": "Afternoon",
   "number.evening": "Evening",
   "number.night": "Night",
-  
   "medical.fever": "Hot Body",
   "medical.pain": "Pain",
   "medical.cough": "Cough",
@@ -106,7 +99,6 @@
   "medical.nausea": "Want To Vomit",
   "medical.dizziness": "Head Dey Turn",
   "medical.fatigue": "Tire",
-  
   "simple.chooseAction": "Wetin you wan do?",
   "simple.tapToHear": "Touch any button make e talk",
   "simple.tapCameraToAddPhoto": "Touch camera add picture (no must)",
@@ -120,7 +112,6 @@
   "simple.dosageExample": "Like: 1 tablet, 5ml",
   "simple.directionsExample": "Drink am two times for day with food",
   "simple.registerDescription": "Add new sick person small small",
-  
   "action.register": "Write Person Name",
   "action.register.description": "Add new person",
   "action.vitals": "Check Body",
@@ -131,20 +122,17 @@
   "action.pharmacy.description": "Get your medicine",
   "action.queue": "Check Line",
   "action.queue.description": "See who dey wait",
-  
   "patient.names": "Person Names",
   "patient.demographics": "Age and Man/Woman",
   "patient.contact": "Phone and Address",
   "patient.location": "State and LGA",
   "patient.age": "How Old",
   "patient.registrationSuccess": "Person name don write finish!",
-  
   "stepper.step": "Step",
   "common.of": "of",
   "common.years": "years old",
   "common.available": "get",
   "common.all": "All",
-  
   "pharmacy.fefoDispense": "Give Medicine (Old First)",
   "pharmacy.fefoDescription": "We give old medicine first so e no go spoil",
   "pharmacy.fefoAllocation": "Which Medicine We Go Give (Old First)",
@@ -157,7 +145,6 @@
   "pharmacy.expiry.expiring": "Go Spoil Soon",
   "pharmacy.expiry.warning": "Go Spoil Soon",
   "pharmacy.expiry.good": "Still Good",
-  
   "timeline.medicalHistory": "Wetin Don Happen Before",
   "timeline.visitStarted": "Come Hospital",
   "timeline.vitalsRecorded": "Check Body",
@@ -167,10 +154,8 @@
   "timeline.viewDetails": "See more",
   "timeline.consultations": "Doctor Talk",
   "timeline.medications": "Medicine",
-  
   "consultation.assessment": "Wetin Doctor Think",
   "consultation.plan": "Wetin We Go Do",
-  
   "careplan.title": "Care Plan",
   "careplan.addTask": "Add Work",
   "careplan.newTask": "New Work To Do",
@@ -193,7 +178,6 @@
   "careplan.status.completed": "Don Finish",
   "careplan.status.overdue": "Don Late",
   "careplan.status.cancelled": "Cancel Am",
-  
   "messaging.outbox": "Message Box",
   "messaging.sendQueued": "Send All Message",
   "messaging.sending": "Dey send...",
@@ -207,14 +191,15 @@
   "messaging.processComplete": "Send {{sent}} message, {{failed}} no work",
   "messaging.noMessages": "No message to send",
   "messaging.processError": "Message no send",
-  
   "accessibility.playAudio": "Make am talk",
   "accessibility.fontSize": "Letter Size",
   "accessibility.highContrast": "Strong Color",
   "accessibility.reduceMotion": "Less Movement",
   "accessibility.audioPrompts": "Voice Help",
   "accessibility.largeButtons": "Big Button",
-  
   "error.registrationFailed": "Person name no save",
-  "error.dispenseFailed": "Medicine no give"
+  "error.dispenseFailed": "Medicine no give",
+  "app": {
+    "title": "mBHR - Health Record for Phone"
+  }
 }
