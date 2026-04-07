@@ -1,15 +1,16 @@
-import React from 'react'
-import { Link, useLocation, Outlet } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
-import { useAuthStore } from '@/stores/auth'
-import { OfflineBadge } from '@/components/OfflineBadge'
-import Toasts from '@/components/Toasts'
-import useLowStockWatcher from '@/features/inventory/useLowStockWatcher'
-import { LanguageSelector } from '@/components/LanguageSelector'
-import { AccessibilityControls } from '@/components/AccessibilityControls'
-import { SyncButton } from '@/components/SyncButton'
-import { can } from '@/auth/roles'
-import type { ElementType, ReactNode } from 'react'
+import React from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { useAuthStore } from "@/stores/auth";
+import { OfflineBadge } from "@/components/OfflineBadge";
+import { OfflineBanner } from "@/components/OfflineBanner";
+import Toasts from "@/components/Toasts";
+import useLowStockWatcher from "@/features/inventory/useLowStockWatcher";
+import { LanguageSelector } from "@/components/LanguageSelector";
+import { AccessibilityControls } from "@/components/AccessibilityControls";
+import { SyncButton } from "@/components/SyncButton";
+import { can } from "@/auth/roles";
+import type { ElementType } from "react";
 import {
   HomeIcon,
   UserGroupIcon,
@@ -26,16 +27,17 @@ import {
   CheckCircleIcon,
   ArrowLeftIcon,
   XMarkIcon,
-  Bars3Icon
-} from '@heroicons/react/24/outline'
+  Bars3Icon,
+  DocumentDuplicateIcon,
+} from "@heroicons/react/24/outline";
 
 // Pharmacy Overlay Component
 function PharmacyOverlay({ onClose }: { onClose: () => void }) {
   React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose()
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose])
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const cards = [
     {
@@ -45,24 +47,24 @@ function PharmacyOverlay({ onClose }: { onClose: () => void }) {
       Icon: BeakerIcon,
     },
     {
-      to: "/rx/stock", 
+      to: "/rx/stock",
       title: "Inventory",
       desc: "Stock counts, restock & FEFO tracking",
       Icon: CubeIcon,
     },
     {
       to: "/rx/new",
-      title: "New Stock", 
+      title: "New Stock",
       desc: "Receive deliveries / add new items",
       Icon: ClipboardDocumentListIcon,
     },
     {
       to: "/pharmacy/reports",
       title: "Reports",
-      desc: "Daily summary & controlled log", 
+      desc: "Daily summary & controlled log",
       Icon: ClipboardDocumentListIcon,
     },
-  ]
+  ];
 
   return (
     <main className="p-4 sm:p-6 max-w-5xl mx-auto">
@@ -110,7 +112,7 @@ function PharmacyOverlay({ onClose }: { onClose: () => void }) {
         ))}
       </section>
     </main>
-  )
+  );
 }
 
 // Fallback icon for nav items missing icons
@@ -118,62 +120,141 @@ const FallbackIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" fill="none" {...props}>
     <circle cx="12" cy="12" r="9" stroke="currentColor" />
   </svg>
-)
+);
 
 type NavItem = {
-  name: string
-  href: string
-  icon: ElementType
-}
+  name: string;
+  href: string;
+  icon: ElementType;
+};
 
 interface LayoutProps {
-  children: React.ReactNode
+  children: React.ReactNode;
 }
 
 export function Layout({ children }: LayoutProps) {
-  const { t } = useTranslation()
-  const location = useLocation()
-  const { currentUser, logout } = useAuthStore()
-  const [overlay, setOverlay] = React.useState<null | "pharmacy">(null)
-  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false)
+  const { t } = useTranslation();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { currentUser, logout, updateActivity, checkSessionExpiry } =
+    useAuthStore();
+  const [overlay, setOverlay] = React.useState<null | "pharmacy">(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   // Start low stock monitoring
-  useLowStockWatcher()
+  useLowStockWatcher();
 
   // Close mobile menu on route change
   React.useEffect(() => {
-    setMobileMenuOpen(false)
-  }, [location.pathname])
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Simple session check on mount and periodically
+  React.useEffect(() => {
+    if (!currentUser) return;
+
+    // Check immediately on mount
+    const expired = checkSessionExpiry();
+    if (expired) {
+      navigate("/login");
+      return;
+    }
+
+    // Then check every 5 minutes (not every minute to reduce overhead)
+    const interval = setInterval(
+      () => {
+        const expired = checkSessionExpiry();
+        if (expired) {
+          navigate("/login");
+        }
+      },
+      5 * 60 * 1000,
+    );
+
+    return () => clearInterval(interval);
+  }, [currentUser, checkSessionExpiry, navigate]);
+
+  // Update activity on user interaction
+  React.useEffect(() => {
+    if (!currentUser) return;
+
+    const handleActivity = () => {
+      updateActivity();
+    };
+
+    const events = ["mousedown", "keydown", "scroll", "touchstart"];
+    events.forEach((event) => {
+      window.addEventListener(event, handleActivity, { passive: true });
+    });
+
+    return () => {
+      events.forEach((event) => {
+        window.removeEventListener(event, handleActivity);
+      });
+    };
+  }, [currentUser, updateActivity]);
 
   const baseNavigation = [
-    { name: 'Dashboard', href: '/', icon: HomeIcon },
-    { name: 'Patients', href: '/patients', icon: UserGroupIcon },
-    { name: 'Queue', href: '/queue', icon: QueueListIcon },
-    { name: 'Inventory', href: '/inventory', icon: CubeIcon },
-    { name: 'Pharmacy', href: '/pharmacy', icon: BeakerIcon },
-    { name: 'Game Hub', href: '/games', icon: TrophyIcon },
-    { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
-    { name: 'Issue Tickets', href: '/tickets/issue', icon: TicketIcon },
-    { name: 'Restock Game', href: '/inv/game', icon: GiftIcon }
-  ]
+    { name: t("nav.dashboard"), href: "/dashboard", icon: HomeIcon },
+    { name: t("nav.patients"), href: "/patients", icon: UserGroupIcon },
+    { name: t("nav.queue"), href: "/queue", icon: QueueListIcon },
+    { name: t("nav.inventory"), href: "/inventory", icon: CubeIcon },
+    { name: t("nav.pharmacy"), href: "/pharmacy", icon: BeakerIcon },
+    { name: t("nav.games"), href: "/games", icon: TrophyIcon },
+    { name: t("nav.analytics"), href: "/analytics", icon: ChartBarIcon },
+    { name: t("nav.issue_tickets"), href: "/tickets/issue", icon: TicketIcon },
+    { name: t("nav.restock_game"), href: "/inv/game", icon: GiftIcon },
+  ];
 
-  // Add admin-only navigation items
+  // Add role-specific navigation items
   const navigation = [
     ...baseNavigation,
-    ...(currentUser && can(currentUser.role, 'users') ? [
-      { name: 'User Management', href: '/users', icon: UsersIcon },
-      { name: 'Approve Games', href: '/admin/approvals', icon: CheckCircleIcon }
-    ] : [])
-  ]
+    // Doctor-specific items
+    ...(currentUser && can(currentUser.role, "consult")
+      ? [
+          {
+            name: t("nav.doctor_station"),
+            href: "/doctor/dashboard",
+            icon: ClipboardDocumentListIcon,
+          },
+        ]
+      : []),
+    // Admin-only items
+    ...(currentUser && can(currentUser.role, "users")
+      ? [
+          { name: t("nav.user_management"), href: "/users", icon: UsersIcon },
+          {
+            name: t("nav.approve_games"),
+            href: "/admin/approvals",
+            icon: CheckCircleIcon,
+          },
+          {
+            name: "Conflicts",
+            href: "/admin/conflicts",
+            icon: DocumentDuplicateIcon,
+          },
+        ]
+      : []),
+  ];
 
   const handleLogout = async () => {
-    await logout()
-  }
+    await logout();
+    navigate("/login");
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-primary text-white shadow-lg sticky top-0 z-30">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-primary focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:outline-none focus:ring-2 focus:ring-white"
+      >
+        Skip to main content
+      </a>
+      <OfflineBanner />
+      <header
+        role="banner"
+        className="bg-primary text-white shadow-lg sticky top-0 z-30"
+      >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-3 md:py-4">
             {/* Mobile Menu Button */}
@@ -187,10 +268,10 @@ export function Layout({ children }: LayoutProps) {
 
             <div className="flex-1 md:flex-initial">
               <h1 className="text-lg md:text-xl font-bold text-shadow">
-                {t('app.title')}
+                {t("app.title")}
               </h1>
               <p className="text-xs md:text-sm opacity-90 hidden sm:block">
-                {t('app.subtitle')}
+                {t("app.subtitle")}
               </p>
             </div>
 
@@ -217,13 +298,17 @@ export function Layout({ children }: LayoutProps) {
               {currentUser && (
                 <div className="flex items-center gap-2">
                   <div className="text-right hidden md:block">
-                    <p className="text-sm font-medium">{currentUser.fullName}</p>
-                    <p className="text-xs opacity-75 capitalize">{currentUser.role}</p>
+                    <p className="text-sm font-medium">
+                      {currentUser.fullName}
+                    </p>
+                    <p className="text-xs opacity-75 capitalize">
+                      {currentUser.role}
+                    </p>
                   </div>
                   <button
                     onClick={handleLogout}
                     className="p-2 rounded-lg hover:bg-primary/80 transition-colors min-h-touch-target min-w-touch-target"
-                    title={t('auth.logout')}
+                    title={t("auth.logout")}
                   >
                     <ArrowRightOnRectangleIcon className="h-5 w-5" />
                   </button>
@@ -244,19 +329,27 @@ export function Layout({ children }: LayoutProps) {
         )}
 
         {/* Sidebar */}
-        <nav className={`
+        <nav
+          role="navigation"
+          aria-label="Main navigation"
+          className={`
           fixed md:sticky md:top-0 inset-y-0 left-0 z-50
           w-64 bg-white shadow-lg md:shadow-sm
           transform transition-transform duration-300 ease-in-out
-          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
           overflow-y-auto md:h-[calc(100vh-73px)] md:self-start
-        `}>
+        `}
+        >
           <div className="p-4">
             {/* Mobile Menu Header */}
             <div className="flex items-center justify-between mb-4 md:hidden">
               <div>
-                <p className="font-semibold text-gray-900">{currentUser?.fullName}</p>
-                <p className="text-xs text-gray-600 capitalize">{currentUser?.role}</p>
+                <p className="font-semibold text-gray-900">
+                  {currentUser?.fullName}
+                </p>
+                <p className="text-xs text-gray-600 capitalize">
+                  {currentUser?.role}
+                </p>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
@@ -275,19 +368,21 @@ export function Layout({ children }: LayoutProps) {
 
             <ul className="space-y-1 md:space-y-2">
               {navigation.map((item) => {
-                const isPharmacy = item.name === 'Pharmacy'
+                const isPharmacy = item.name === "Pharmacy";
 
                 // Better active state detection
-                let isActive = false
+                let isActive = false;
                 if (isPharmacy) {
-                  isActive = location.pathname.startsWith('/rx/') ||
-                            location.pathname === '/pharmacy' ||
-                            location.pathname.startsWith('/pharmacy/')
-                } else if (item.href === '/') {
-                  isActive = location.pathname === '/'
+                  isActive =
+                    location.pathname.startsWith("/rx/") ||
+                    location.pathname === "/pharmacy" ||
+                    location.pathname.startsWith("/pharmacy/");
+                } else if (item.href === "/") {
+                  isActive = location.pathname === "/";
                 } else {
-                  isActive = location.pathname === item.href ||
-                            location.pathname.startsWith(item.href + '/')
+                  isActive =
+                    location.pathname === item.href ||
+                    location.pathname.startsWith(item.href + "/");
                 }
 
                 const Common = (
@@ -295,7 +390,7 @@ export function Layout({ children }: LayoutProps) {
                     <item.icon className="h-5 w-5 flex-shrink-0" />
                     <span className="font-medium">{item.name}</span>
                   </>
-                )
+                );
 
                 return (
                   <li key={item.name}>
@@ -303,16 +398,17 @@ export function Layout({ children }: LayoutProps) {
                       <button
                         type="button"
                         onClick={() => {
-                          setOverlay("pharmacy")
-                          setMobileMenuOpen(false)
+                          setOverlay("pharmacy");
+                          setMobileMenuOpen(false);
                         }}
                         className={`w-full flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target text-left ${
                           isActive
-                            ? 'bg-primary text-white'
-                            : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'
+                            ? "bg-primary text-white"
+                            : "text-gray-700 hover:bg-gray-100 active:bg-gray-200"
                         }`}
                         aria-haspopup="dialog"
                         aria-controls="pharmacy-menu"
+                        aria-current={isActive ? "page" : undefined}
                       >
                         {Common}
                       </button>
@@ -320,26 +416,37 @@ export function Layout({ children }: LayoutProps) {
                       <Link
                         to={item.href}
                         onClick={() => setMobileMenuOpen(false)}
+                        aria-current={isActive ? "page" : undefined}
                         className={`flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target ${
                           isActive
-                            ? 'bg-primary text-white'
-                            : 'text-gray-700 hover:bg-gray-100 active:bg-gray-200'
+                            ? "bg-primary text-white"
+                            : "text-gray-700 hover:bg-gray-100 active:bg-gray-200"
                         }`}
                       >
                         {Common}
                       </Link>
                     )}
                   </li>
-                )
+                );
               })}
             </ul>
           </div>
         </nav>
 
         {/* Main Content */}
-        <main className="flex-1 w-full md:w-auto overflow-x-hidden min-h-full">
+        <main
+          id="main-content"
+          role="main"
+          aria-label="Main content"
+          className="flex-1 w-full md:w-auto overflow-x-hidden min-h-full"
+        >
           {overlay === "pharmacy" ? (
-            <div id="pharmacy-menu" role="dialog" aria-modal="true" className="p-4 sm:p-6">
+            <div
+              id="pharmacy-menu"
+              role="dialog"
+              aria-modal="true"
+              className="p-4 sm:p-6"
+            >
               <PharmacyOverlay onClose={() => setOverlay(null)} />
             </div>
           ) : (
@@ -349,9 +456,9 @@ export function Layout({ children }: LayoutProps) {
           )}
         </main>
       </div>
-      
+
       {/* Toast notifications */}
       <Toasts />
     </div>
-  )
+  );
 }

@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: vitals.height
+Locale: yo
+Text: Giga
+Generate audio using: speechSynthesis or cloud TTS

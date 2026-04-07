@@ -8,6 +8,8 @@ import Login from "@/pages/Login";
 import { useAuthStore } from "@/stores/auth";
 import { seedDemo } from "@/db/seedMbhr";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
+import { Home } from "@/pages/Home";
+import { startPortalSyncWorker } from "@/services/portalSyncWorker";
 
 // Core pages - loaded eagerly for initial navigation
 const Dashboard = lazy(() =>
@@ -43,12 +45,12 @@ const Pharmacy = lazy(() =>
 );
 const PharmacyMenu = lazy(() => import("@/pages/PharmacyMenu"));
 const PharmacyReports = lazy(() => import("@/pages/PharmacyReports"));
-const PharmacyStock = lazy(() => import("@/features/pharmacy/PharmacyStock"));
-const RxForm = lazy(() => import("@/features/pharmacy/RxForm"));
-const Dispense = lazy(() => import("@/features/pharmacy/Dispense"));
-const EnhancedPharmacy = lazy(
-  () => import("@/features/pharmacy/EnhancedPharmacy"),
-);
+// Temporarily disabled - corrupted files
+// const PharmacyStock = lazy(() => import('@/features/pharmacy/PharmacyStock'))
+// const RxForm = lazy(() => import('@/features/pharmacy/RxForm'))
+// const Dispense = lazy(() => import('@/features/pharmacy/Dispense'))
+// const EnhancedPharmacy = lazy(() => import('@/features/pharmacy/EnhancedPharmacy'))
+// const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'))
 const SMSReminders = lazy(() => import("@/pages/SMSReminders"));
 
 // Labs and appointments (Sprint 5 features)
@@ -60,6 +62,132 @@ const LabResultsDashboard = lazy(() =>
 const AppointmentCalendar = lazy(() =>
   import("@/features/appointments/AppointmentCalendar").then((m) => ({
     default: m.AppointmentCalendar,
+  })),
+);
+
+// Portal admin pages
+const PortalDashboard = lazy(() =>
+  import("@/pages/admin/PortalDashboard").then((m) => ({
+    default: m.PortalDashboard,
+  })),
+);
+const PortalMigration = lazy(() =>
+  import("@/pages/admin/PortalMigration").then((m) => ({
+    default: m.PortalMigration,
+  })),
+);
+const BulkPortalMigration = lazy(() =>
+  import("@/pages/admin/BulkPortalMigration").then((m) => ({
+    default: m.BulkPortalMigration,
+  })),
+);
+const EmailDiagnostics = lazy(() => import("@/pages/admin/EmailDiagnostics"));
+const ConflictDashboard = lazy(() => import("@/pages/admin/ConflictDashboard"));
+
+// Patient Portal components
+const PatientPortalLanding = lazy(() =>
+  import("@/features/patient-portal/PatientPortalLanding").then((m) => ({
+    default: m.PatientPortalLanding,
+  })),
+);
+const PatientLogin = lazy(() =>
+  import("@/features/patient-portal/PatientLogin").then((m) => ({
+    default: m.PatientLogin,
+  })),
+);
+const PatientRegister = lazy(() =>
+  import("@/features/patient-portal/PatientRegister").then((m) => ({
+    default: m.PatientRegister,
+  })),
+);
+const PatientPortalLayout = lazy(() =>
+  import("@/features/patient-portal/PatientPortalLayout").then((m) => ({
+    default: m.PatientPortalLayout,
+  })),
+);
+const PatientDashboard = lazy(() =>
+  import("@/features/patient-portal/PatientDashboard").then((m) => ({
+    default: m.PatientDashboard,
+  })),
+);
+const MedicalHistory = lazy(() =>
+  import("@/features/patient-portal/MedicalHistory").then((m) => ({
+    default: m.MedicalHistory,
+  })),
+);
+const VisitDetail = lazy(() =>
+  import("@/features/patient-portal/VisitDetail").then((m) => ({
+    default: m.VisitDetail,
+  })),
+);
+const AppointmentRequest = lazy(() =>
+  import("@/features/patient-portal/AppointmentRequest").then((m) => ({
+    default: m.AppointmentRequest,
+  })),
+);
+const BillingPayments = lazy(() =>
+  import("@/features/patient-portal/BillingPayments").then((m) => ({
+    default: m.BillingPayments,
+  })),
+);
+const PreVisitForms = lazy(() =>
+  import("@/features/patient-portal/PreVisitForms").then((m) => ({
+    default: m.PreVisitForms,
+  })),
+);
+const PrescriptionRefills = lazy(() =>
+  import("@/features/patient-portal/PrescriptionRefills").then((m) => ({
+    default: m.PrescriptionRefills,
+  })),
+);
+const Telehealth = lazy(() =>
+  import("@/features/patient-portal/Telehealth").then((m) => ({
+    default: m.Telehealth,
+  })),
+);
+const UpdatePHR = lazy(() =>
+  import("@/features/patient-portal/UpdatePHR").then((m) => ({
+    default: m.UpdatePHR,
+  })),
+);
+const SecureMessaging = lazy(() =>
+  import("@/features/patient-portal/SecureMessaging").then((m) => ({
+    default: m.SecureMessaging,
+  })),
+);
+const ManageAccount = lazy(() =>
+  import("@/features/patient-portal/ManageAccount").then((m) => ({
+    default: m.ManageAccount,
+  })),
+);
+const LabResults = lazy(() =>
+  import("@/features/patient-portal/LabResults").then((m) => ({
+    default: m.LabResults,
+  })),
+);
+const MedicalConditions = lazy(() =>
+  import("@/features/patient-portal/MedicalConditions").then((m) => ({
+    default: m.MedicalConditions,
+  })),
+);
+const DocumentUpload = lazy(() =>
+  import("@/features/patient-portal/DocumentUpload").then((m) => ({
+    default: m.DocumentUpload,
+  })),
+);
+const Referrals = lazy(() =>
+  import("@/features/patient-portal/Referrals").then((m) => ({
+    default: m.Referrals,
+  })),
+);
+const HealthDataExport = lazy(() =>
+  import("@/features/patient-portal/HealthDataExport").then((m) => ({
+    default: m.HealthDataExport,
+  })),
+);
+const DataSharingPreferences = lazy(() =>
+  import("@/features/patient-portal/DataSharingPreferences").then((m) => ({
+    default: m.DataSharingPreferences,
   })),
 );
 
@@ -103,38 +231,119 @@ const AnalyticsDashboard = lazy(
   () => import("@/features/analytics/AnalyticsDashboard"),
 );
 
-// Patient Portal
-const PatientPortalLanding = lazy(() =>
-  import("@/features/patient-portal/PatientPortalLanding").then((m) => ({
-    default: m.PatientPortalLanding,
-  })),
-);
-const PatientRegister = lazy(() =>
-  import("@/features/patient-portal/PatientRegister").then((m) => ({
-    default: m.PatientRegister,
-  })),
-);
-const PatientLogin = lazy(() =>
-  import("@/features/patient-portal/PatientLogin").then((m) => ({
-    default: m.PatientLogin,
-  })),
-);
-const PatientDashboard = lazy(() =>
-  import("@/features/patient-portal/PatientDashboard").then((m) => ({
-    default: m.PatientDashboard,
-  })),
-);
-
 // Admin
 const Users = lazy(() =>
   import("@/pages/Users").then((m) => ({ default: m.Users })),
+);
+
+// Doctor features
+const DoctorDashboard = lazy(() =>
+  import("@/pages/DoctorDashboard").then((m) => ({
+    default: m.DoctorDashboard,
+  })),
 );
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function HealthDataExportWrapper() {
+  const portalUserStr = localStorage.getItem("patient_portal_user");
+  const portalUser = portalUserStr ? JSON.parse(portalUserStr) : null;
+  const patientId = portalUser?.patientId || "";
+  return <HealthDataExport patientId={patientId} />;
+}
+
+function DataSharingWrapper() {
+  const portalUserStr = localStorage.getItem("patient_portal_user");
+  const portalUser = portalUserStr ? JSON.parse(portalUserStr) : null;
+  const patientId = portalUser?.patientId || "";
+  return <DataSharingPreferences patientId={patientId} />;
+}
+
+function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
+  const [isValidating, setIsValidating] = React.useState(true);
+  const [isValid, setIsValid] = React.useState(false);
+
+  React.useEffect(() => {
+    const validateSession = async () => {
+      const sessionToken = localStorage.getItem("patient_session_token");
+      const portalUser = localStorage.getItem("patient_portal_user");
+
+      console.log("[PatientProtectedRoute] Validating session...", {
+        hasToken: !!sessionToken,
+        hasUser: !!portalUser,
+        token: sessionToken?.substring(0, 8) + "...",
+      });
+
+      if (!sessionToken || !portalUser) {
+        console.log("[PatientProtectedRoute] No session or user found");
+        setIsValid(false);
+        setIsValidating(false);
+        return;
+      }
+
+      try {
+        const { validateAndRefreshPatientSession } =
+          await import("@/utils/sessionManager");
+        console.log(
+          "[PatientProtectedRoute] Validating and refreshing session...",
+        );
+
+        const result = await validateAndRefreshPatientSession(sessionToken);
+
+        console.log("[PatientProtectedRoute] Validation result:", result);
+
+        if (!result.valid) {
+          console.log("[PatientProtectedRoute] Session invalid or expired");
+          localStorage.removeItem("patient_session_token");
+          localStorage.removeItem("patient_portal_user");
+          setIsValid(false);
+          setIsValidating(false);
+          return;
+        }
+
+        if (result.needsRefresh) {
+          console.log("[PatientProtectedRoute] Session was refreshed");
+        }
+
+        console.log("[PatientProtectedRoute] Session is valid!");
+        setIsValid(true);
+        setIsValidating(false);
+      } catch (err) {
+        console.error(
+          "[PatientProtectedRoute] Exception during validation:",
+          err,
+        );
+        localStorage.removeItem("patient_session_token");
+        localStorage.removeItem("patient_portal_user");
+        setIsValid(false);
+        setIsValidating(false);
+      }
+    };
+
+    validateSession();
+  }, []);
+
+  if (isValidating) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Validating session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isValid) {
+    return <Navigate to="/patient/login" replace />;
   }
 
   return <>{children}</>;
@@ -143,72 +352,89 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function App() {
   useEffect(() => {
     seedDemo().catch(console.error);
+
+    // Start background portal sync worker
+    startPortalSyncWorker();
   }, []);
 
   return (
     <ErrorBoundary>
       <PWAInstallPrompt />
       <Routes>
+        {/* Public Routes - Must be defined before catch-all */}
+        <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
-        {/* Patient Portal (public, no staff login required) */}
+
+        {/* Patient Portal Routes */}
+        <Route path="/patient" element={<PatientPortalLanding />} />
+        <Route path="/patient/login" element={<PatientLogin />} />
+        <Route path="/patient/register" element={<PatientRegister />} />
         <Route
-          path="/patient"
+          path="/patient/*"
           element={
-            <Suspense
-              fallback={
-                <div className="min-h-screen flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-                </div>
-              }
-            >
-              <PatientPortalLanding />
-            </Suspense>
+            <PatientProtectedRoute>
+              <Suspense
+                fallback={
+                  <div className="min-h-screen flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                      <p className="mt-4 text-gray-600">Loading...</p>
+                    </div>
+                  </div>
+                }
+              >
+                <PatientPortalLayout>
+                  <Routes>
+                    <Route path="/dashboard" element={<PatientDashboard />} />
+                    <Route
+                      path="/medical-history"
+                      element={<MedicalHistory />}
+                    />
+                    <Route path="/visit/:visitId" element={<VisitDetail />} />
+                    <Route
+                      path="/appointments"
+                      element={<AppointmentRequest />}
+                    />
+                    <Route
+                      path="/appointments/request"
+                      element={<AppointmentRequest />}
+                    />
+                    <Route path="/billing" element={<BillingPayments />} />
+                    <Route path="/forms" element={<PreVisitForms />} />
+                    <Route
+                      path="/prescriptions"
+                      element={<PrescriptionRefills />}
+                    />
+                    <Route path="/telehealth" element={<Telehealth />} />
+                    <Route path="/update-phr" element={<UpdatePHR />} />
+                    <Route path="/messages" element={<SecureMessaging />} />
+                    <Route path="/account" element={<ManageAccount />} />
+                    <Route path="/lab-results" element={<LabResults />} />
+                    <Route path="/conditions" element={<MedicalConditions />} />
+                    <Route path="/documents" element={<DocumentUpload />} />
+                    <Route path="/referrals" element={<Referrals />} />
+                    <Route
+                      path="/export"
+                      element={<HealthDataExportWrapper />}
+                    />
+                    <Route
+                      path="/data-sharing"
+                      element={<DataSharingWrapper />}
+                    />
+                    <Route
+                      path="/"
+                      element={<Navigate to="/patient/dashboard" replace />}
+                    />
+                  </Routes>
+                </PatientPortalLayout>
+              </Suspense>
+            </PatientProtectedRoute>
           }
         />
+
+        {/* Staff Routes - catch-all for authenticated routes */}
         <Route
-          path="/patient/register"
-          element={
-            <Suspense
-              fallback={
-                <div className="min-h-screen flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-                </div>
-              }
-            >
-              <PatientRegister />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/patient/login"
-          element={
-            <Suspense
-              fallback={
-                <div className="min-h-screen flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-                </div>
-              }
-            >
-              <PatientLogin />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/patient/dashboard"
-          element={
-            <Suspense
-              fallback={
-                <div className="min-h-screen flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-                </div>
-              }
-            >
-              <PatientDashboard />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/*"
+          path="*"
           element={
             <ProtectedRoute>
               <Suspense
@@ -223,7 +449,15 @@ function App() {
               >
                 <Layout>
                   <Routes>
-                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route
+                      path="/doctor/dashboard"
+                      element={
+                        <RequireRoles roles={["doctor", "admin"]}>
+                          <DoctorDashboard />
+                        </RequireRoles>
+                      }
+                    />
                     <Route path="/register" element={<Register />} />
                     <Route path="/patients" element={<Patients />} />
                     <Route path="/patients/:id" element={<PatientDetail />} />
@@ -254,30 +488,27 @@ function App() {
                         </RequireRoles>
                       }
                     />
-                    <Route
-                      path="/rx/stock"
-                      element={
-                        <RequireRoles roles={["pharmacist", "admin"]}>
-                          <PharmacyStock />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/rx/new"
-                      element={
-                        <RequireRoles roles={["doctor", "nurse", "admin"]}>
-                          <RxForm />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/rx/dispense"
-                      element={
-                        <RequireRoles roles={["pharmacist", "admin"]}>
-                          <Dispense />
-                        </RequireRoles>
-                      }
-                    />
+                    {/* Temporarily disabled - corrupted file
+                    <Route path="/rx/stock" element={
+                      <RequireRoles roles={['pharmacist', 'admin']}>
+                        <PharmacyStock />
+                      </RequireRoles>
+                    } />
+                    */}
+                    {/* Temporarily disabled - corrupted file
+                    <Route path="/rx/new" element={
+                      <RequireRoles roles={['doctor', 'nurse', 'admin']}>
+                        <RxForm />
+                      </RequireRoles>
+                    } />
+                    */}
+                    {/* Temporarily disabled - corrupted file
+                    <Route path="/rx/dispense" element={
+                      <RequireRoles roles={['pharmacist', 'admin']}>
+                        <Dispense />
+                      </RequireRoles>
+                    } />
+                    */}
                     <Route
                       path="/tickets/queue"
                       element={
@@ -364,6 +595,46 @@ function App() {
                       }
                     />
                     <Route
+                      path="/admin/portal-dashboard"
+                      element={
+                        <RequireRoles roles={["admin"]}>
+                          <PortalDashboard />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/portal-migration"
+                      element={
+                        <RequireRoles roles={["admin"]}>
+                          <PortalMigration />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/bulk-portal-migration"
+                      element={
+                        <RequireRoles roles={["admin"]}>
+                          <BulkPortalMigration />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/email-diagnostics"
+                      element={
+                        <RequireRoles roles={["admin"]}>
+                          <EmailDiagnostics />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/conflicts"
+                      element={
+                        <RequireRoles roles={["admin", "doctor", "nurse"]}>
+                          <ConflictDashboard />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
                       path="/simple/register"
                       element={<SimpleRegister />}
                     />
@@ -384,18 +655,13 @@ function App() {
                         </RequireRoles>
                       }
                     />
-                    <Route
-                      path="/pharmacy/enhanced/:visitId"
-                      element={
-                        <RequireRoles roles={["pharmacist", "admin"]}>
-                          <EnhancedPharmacy
-                            patientId=""
-                            visitId=""
-                            onSuccess={() => {}}
-                          />
-                        </RequireRoles>
-                      }
-                    />
+                    {/* Temporarily disabled - corrupted file
+                    <Route path="/pharmacy/enhanced/:visitId" element={
+                      <RequireRoles roles={['pharmacist', 'admin']}>
+                        <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
+                      </RequireRoles>
+                    } />
+                    */}
                     <Route
                       path="/labs"
                       element={

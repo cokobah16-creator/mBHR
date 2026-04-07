@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: action.queue
+Locale: ha
+Text: Duba Layi
+Generate audio using: speechSynthesis or cloud TTS

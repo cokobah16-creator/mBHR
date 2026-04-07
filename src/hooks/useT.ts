@@ -1,128 +1,80 @@
-// Enhanced translation hook with audio support
-import { useState, useEffect } from 'react'
-import { loadLocale, detectLocale, setPreferredLocale } from '@/i18n/load'
-import type { MsgKey, SupportedLocale, LocalePack } from '@/i18n/types'
+import { useTranslation } from "react-i18next";
+import type { SupportedLocale } from "@/i18n/types";
+import { getAudioPromptText, getAudioFilePath } from "@/config/audioPrompts";
 
-interface TranslationState {
-  locale: SupportedLocale
-  pack: LocalePack
-  loading: boolean
-  error: string | null
-}
-
-// Global state for translations
-let globalState: TranslationState = {
-  locale: 'en',
-  pack: {} as LocalePack,
-  loading: true,
-  error: null
-}
-
-const listeners = new Set<() => void>()
-
-// Notify all hooks of state changes
-function notifyListeners() {
-  listeners.forEach(listener => listener())
-}
-
-// Load locale and update global state
-async function loadAndSetLocale(locale: SupportedLocale) {
-  try {
-    globalState.loading = true
-    globalState.error = null
-    notifyListeners()
-
-    const pack = await loadLocale(locale)
-    globalState = {
-      locale,
-      pack,
-      loading: false,
-      error: null
-    }
-    
-    setPreferredLocale(locale)
-    notifyListeners()
-  } catch (error) {
-    globalState.loading = false
-    globalState.error = error instanceof Error ? error.message : 'Failed to load locale'
-    notifyListeners()
-  }
-}
-
-// Initialize with detected locale
-loadAndSetLocale(detectLocale())
-
-// Translation hook
 export function useT() {
-  const [, forceUpdate] = useState({})
+  const { t: i18nT, i18n } = useTranslation();
 
-  useEffect(() => {
-    const listener = () => forceUpdate({})
-    listeners.add(listener)
-    return () => { listeners.delete(listener) }
-  }, [])
+  const t = (key: string, fallback?: string): string => {
+    const translation = i18nT(key);
+    if (translation && translation !== key) return translation;
+    return fallback || key.split(".").pop() || key;
+  };
 
-  // Translation function
-  const t = (key: MsgKey, fallback?: string): string => {
-    const translation = globalState.pack[key]
-    if (translation) return translation
-    
-    // Fallback to key or provided fallback
-    return fallback || key.split('.').pop() || key
-  }
+  const speak = async (key: string) => {
+    const currentLocale = (i18n.language?.split("-")[0] ||
+      "en") as SupportedLocale;
 
-  // Audio playback function
-  const speak = async (key: MsgKey) => {
+    const promptText = getAudioPromptText(key, currentLocale) || t(key);
+    const audioPath = getAudioFilePath(key, currentLocale);
+
     try {
-      // Try to play audio file first
-      const audioUrl = `/audio/${globalState.locale}/${key.replace('.', '_')}.mp3`
-      const audio = new Audio(audioUrl)
-      
-      audio.onerror = () => {
-        // Fallback to text-to-speech
-        if ('speechSynthesis' in window) {
-          const utterance = new SpeechSynthesisUtterance(t(key))
-          utterance.lang = getLanguageCode(globalState.locale)
-          speechSynthesis.speak(utterance)
-        }
-      }
-      
-      await audio.play()
-    } catch (error) {
-      console.warn('Audio playback failed:', error)
-      
-      // Fallback to text-to-speech
-      if ('speechSynthesis' in window) {
-        const utterance = new SpeechSynthesisUtterance(t(key))
-        utterance.lang = getLanguageCode(globalState.locale)
-        speechSynthesis.speak(utterance)
-      }
-    }
-  }
+      const audio = new Audio(audioPath);
 
-  // Change locale function
-  const changeLocale = (locale: SupportedLocale) => {
-    loadAndSetLocale(locale)
-  }
+      audio.onerror = () => {
+        speakWithTTS(promptText, currentLocale);
+      };
+
+      await audio.play();
+    } catch {
+      speakWithTTS(promptText, currentLocale);
+    }
+  };
+
+  const changeLocale = async (locale: SupportedLocale) => {
+    await i18n.changeLanguage(locale);
+  };
+
+  const currentLanguage = (i18n.language?.split("-")[0] ||
+    "en") as SupportedLocale;
 
   return {
     t,
     speak,
     changeLocale,
-    locale: globalState.locale,
-    loading: globalState.loading,
-    error: globalState.error
-  }
+    locale: currentLanguage,
+    loading: !i18n.isInitialized,
+    error: null,
+  };
 }
 
-// Helper to get proper language codes for speech synthesis
+function speakWithTTS(text: string, locale: SupportedLocale): void {
+  if (!("speechSynthesis" in window)) return;
+
+  speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = getLanguageCode(locale);
+  utterance.rate = 0.9;
+  utterance.volume = 0.8;
+
+  const voices = speechSynthesis.getVoices();
+  const langPrefix = locale === "pcm" ? "en" : locale;
+  const matchingVoice = voices.find((v) => v.lang.startsWith(langPrefix));
+  if (matchingVoice) {
+    utterance.voice = matchingVoice;
+  }
+
+  speechSynthesis.speak(utterance);
+}
+
 function getLanguageCode(locale: SupportedLocale): string {
   const codes = {
-    en: 'en-US',
-    ha: 'ha-NG',
-    yo: 'yo-NG', 
-    ig: 'ig-NG',
-    pcm: 'en-NG' // Fallback to Nigerian English for Pidgin
-  }
-  return codes[locale] || 'en-US'
+    en: "en-US",
+    ha: "ha-NG",
+    yo: "yo-NG",
+    ig: "ig-NG",
+    pcm: "en-NG",
+  };
+  return codes[locale] || "en-US";
 }

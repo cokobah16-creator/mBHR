@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: auth.enterPin
+Locale: ha
+Text: Shigar da lambar sirri
+Generate audio using: speechSynthesis or cloud TTS

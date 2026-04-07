@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: patient.address
+Locale: yo
+Text: Adiresi
+Generate audio using: speechSynthesis or cloud TTS

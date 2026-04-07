@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: pharmacy.medication
+Locale: ha
+Text: Magani
+Generate audio using: speechSynthesis or cloud TTS

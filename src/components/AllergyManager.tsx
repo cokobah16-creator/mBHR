@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import { useState, useEffect } from "react";
+import { formatNigerianDate } from "@/utils/dateFormat";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import {
   createAllergy,
   updateAllergy,
@@ -9,48 +10,61 @@ import {
   reactivateAllergy,
   getPatientAllergies,
   type CreateAllergyInput,
-  type UpdateAllergyInput
-} from '../services/allergies'
-import type { PatientAllergy } from '../db'
-import { ExclamationTriangleIcon, XMarkIcon, PencilIcon } from '@heroicons/react/24/outline'
+  type UpdateAllergyInput,
+} from "../services/allergies";
+import type { PatientAllergy } from "../db";
+import {
+  ExclamationTriangleIcon,
+  XMarkIcon,
+  PencilIcon,
+} from "@heroicons/react/24/outline";
 
 const allergySchema = z.object({
-  allergen: z.string().min(1, 'Allergen name is required'),
-  allergyType: z.enum(['medication', 'food', 'environmental', 'other']),
+  allergen: z.string().min(1, "Allergen name is required"),
+  allergyType: z.enum(["medication", "food", "environmental", "other"]),
   reaction: z.string().optional(),
-  severity: z.enum(['mild', 'moderate', 'severe', 'life-threatening']),
+  severity: z.enum(["mild", "moderate", "severe", "life-threatening"]),
   onsetDate: z.string().optional(),
-  notes: z.string().optional()
-})
+  notes: z.string().optional(),
+});
 
-type AllergyFormData = z.infer<typeof allergySchema>
+type AllergyFormData = z.infer<typeof allergySchema>;
 
 interface AllergyManagerProps {
-  patientId: string
-  userId: string
-  showInactive?: boolean
+  patientId: string;
+  userId: string;
+  showInactive?: boolean;
 }
 
-export function AllergyManager({ patientId, userId, showInactive = false }: AllergyManagerProps) {
-  const [allergies, setAllergies] = useState<PatientAllergy[]>([])
-  const [isAdding, setIsAdding] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+export function AllergyManager({
+  patientId,
+  userId,
+  showInactive = false,
+}: AllergyManagerProps) {
+  const [allergies, setAllergies] = useState<PatientAllergy[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<AllergyFormData>({
-    resolver: zodResolver(allergySchema)
-  })
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<AllergyFormData>({
+    resolver: zodResolver(allergySchema),
+  });
 
   useEffect(() => {
-    loadAllergies()
-  }, [patientId, showInactive])
+    loadAllergies();
+  }, [patientId, showInactive]);
 
   const loadAllergies = async () => {
-    setLoading(true)
-    const data = await getPatientAllergies(patientId, !showInactive)
-    setAllergies(data)
-    setLoading(false)
-  }
+    setLoading(true);
+    const data = await getPatientAllergies(patientId, !showInactive);
+    setAllergies(data);
+    setLoading(false);
+  };
 
   const onSubmit = async (data: AllergyFormData) => {
     if (editingId) {
@@ -60,10 +74,10 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
         reaction: data.reaction,
         severity: data.severity,
         onsetDate: data.onsetDate ? new Date(data.onsetDate) : undefined,
-        notes: data.notes
-      }
-      await updateAllergy(editingId, updates)
-      setEditingId(null)
+        notes: data.notes,
+      };
+      await updateAllergy(editingId, updates);
+      setEditingId(null);
     } else {
       const input: CreateAllergyInput = {
         patientId,
@@ -73,58 +87,65 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
         severity: data.severity,
         onsetDate: data.onsetDate ? new Date(data.onsetDate) : undefined,
         notes: data.notes,
-        createdBy: userId
-      }
-      await createAllergy(input)
-      setIsAdding(false)
+        createdBy: userId,
+      };
+      await createAllergy(input);
+      setIsAdding(false);
     }
-    reset()
-    loadAllergies()
-  }
+    reset();
+    loadAllergies();
+  };
 
   const handleDeactivate = async (allergyId: string) => {
-    if (confirm('Deactivate this allergy?')) {
-      await deactivateAllergy(allergyId)
-      loadAllergies()
+    if (confirm("Deactivate this allergy?")) {
+      await deactivateAllergy(allergyId);
+      loadAllergies();
     }
-  }
+  };
 
   const handleReactivate = async (allergyId: string) => {
-    await reactivateAllergy(allergyId)
-    loadAllergies()
-  }
+    await reactivateAllergy(allergyId);
+    loadAllergies();
+  };
 
   const handleEdit = (allergy: PatientAllergy) => {
-    setEditingId(allergy.id)
-    setIsAdding(true)
+    setEditingId(allergy.id);
+    setIsAdding(true);
     reset({
       allergen: allergy.allergen,
       allergyType: allergy.allergyType,
       reaction: allergy.reaction || undefined,
       severity: allergy.severity,
-      onsetDate: allergy.onsetDate ? new Date(allergy.onsetDate).toISOString().split('T')[0] : undefined,
-      notes: allergy.notes || undefined
-    })
-  }
+      onsetDate: allergy.onsetDate
+        ? new Date(allergy.onsetDate).toISOString().split("T")[0]
+        : undefined,
+      notes: allergy.notes || undefined,
+    });
+  };
 
   const handleCancel = () => {
-    setIsAdding(false)
-    setEditingId(null)
-    reset()
-  }
+    setIsAdding(false);
+    setEditingId(null);
+    reset();
+  };
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case 'life-threatening': return 'bg-red-100 text-red-800 border-red-300'
-      case 'severe': return 'bg-orange-100 text-orange-800 border-orange-300'
-      case 'moderate': return 'bg-yellow-100 text-yellow-800 border-yellow-300'
-      case 'mild': return 'bg-blue-100 text-blue-800 border-blue-300'
-      default: return 'bg-gray-100 text-gray-800 border-gray-300'
+      case "life-threatening":
+        return "bg-red-100 text-red-800 border-red-300";
+      case "severe":
+        return "bg-orange-100 text-orange-800 border-orange-300";
+      case "moderate":
+        return "bg-yellow-100 text-yellow-800 border-yellow-300";
+      case "mild":
+        return "bg-blue-100 text-blue-800 border-blue-300";
+      default:
+        return "bg-gray-100 text-gray-800 border-gray-300";
     }
-  }
+  };
 
   if (loading) {
-    return <div className="text-center py-4">Loading allergies...</div>
+    return <div className="text-center py-4">Loading allergies...</div>;
   }
 
   return (
@@ -145,21 +166,33 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
       </div>
 
       {isAdding && (
-        <form onSubmit={handleSubmit(onSubmit)} className="bg-gray-50 p-4 rounded-lg border space-y-3">
+        <form
+          onSubmit={handleSubmit(onSubmit)}
+          className="bg-gray-50 p-4 rounded-lg border space-y-3"
+        >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium mb-1">Allergen *</label>
+              <label className="block text-sm font-medium mb-1">
+                Allergen *
+              </label>
               <input
-                {...register('allergen')}
+                {...register("allergen")}
                 className="w-full px-3 py-2 border rounded"
                 placeholder="e.g., Penicillin"
               />
-              {errors.allergen && <p className="text-red-600 text-sm mt-1">{errors.allergen.message}</p>}
+              {errors.allergen && (
+                <p className="text-red-600 text-sm mt-1">
+                  {errors.allergen.message}
+                </p>
+              )}
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">Type *</label>
-              <select {...register('allergyType')} className="w-full px-3 py-2 border rounded">
+              <select
+                {...register("allergyType")}
+                className="w-full px-3 py-2 border rounded"
+              >
                 <option value="medication">Medication</option>
                 <option value="food">Food</option>
                 <option value="environmental">Environmental</option>
@@ -168,8 +201,13 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Severity *</label>
-              <select {...register('severity')} className="w-full px-3 py-2 border rounded">
+              <label className="block text-sm font-medium mb-1">
+                Severity *
+              </label>
+              <select
+                {...register("severity")}
+                className="w-full px-3 py-2 border rounded"
+              >
                 <option value="mild">Mild</option>
                 <option value="moderate">Moderate</option>
                 <option value="severe">Severe</option>
@@ -178,10 +216,12 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Onset Date</label>
+              <label className="block text-sm font-medium mb-1">
+                Onset Date
+              </label>
               <input
                 type="date"
-                {...register('onsetDate')}
+                {...register("onsetDate")}
                 className="w-full px-3 py-2 border rounded"
               />
             </div>
@@ -190,7 +230,7 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
           <div>
             <label className="block text-sm font-medium mb-1">Reaction</label>
             <input
-              {...register('reaction')}
+              {...register("reaction")}
               className="w-full px-3 py-2 border rounded"
               placeholder="Describe the reaction"
             />
@@ -199,9 +239,9 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
           <div>
             <label className="block text-sm font-medium mb-1">Notes</label>
             <textarea
-              {...register('notes')}
-              className="w-full px-3 py-2 border rounded"
+              {...register("notes")}
               rows={2}
+              className="w-full px-3 py-2 border rounded"
               placeholder="Additional information"
             />
           </div>
@@ -211,7 +251,7 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
               type="submit"
               className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
             >
-              {editingId ? 'Update' : 'Add'} Allergy
+              {editingId ? "Update" : "Add"} Allergy
             </button>
             <button
               type="button"
@@ -230,15 +270,17 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
         </div>
       ) : (
         <div className="space-y-2">
-          {allergies.map(allergy => (
+          {allergies.map((allergy) => (
             <div
               key={allergy.id}
-              className={`border-2 rounded-lg p-3 ${allergy.isActive ? getSeverityColor(allergy.severity) : 'bg-gray-100 text-gray-500 border-gray-300'}`}
+              className={`border-2 rounded-lg p-3 ${allergy.isActive ? getSeverityColor(allergy.severity) : "bg-gray-100 text-gray-500 border-gray-300"}`}
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-semibold text-lg">{allergy.allergen}</h4>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="font-semibold text-lg">
+                      {allergy.allergen}
+                    </h4>
                     <span className="px-2 py-0.5 text-xs rounded bg-white bg-opacity-50">
                       {allergy.allergyType}
                     </span>
@@ -256,14 +298,13 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
                   )}
                   {allergy.onsetDate && (
                     <p className="text-sm mt-1">
-                      Onset: {new Date(allergy.onsetDate).toLocaleDateString()}
+                      Onset: {formatNigerianDate(allergy.onsetDate)}
                     </p>
                   )}
                   {allergy.notes && (
                     <p className="text-sm mt-1 italic">{allergy.notes}</p>
                   )}
                 </div>
-
                 <div className="flex gap-1">
                   {allergy.isActive && (
                     <>
@@ -298,5 +339,5 @@ export function AllergyManager({ patientId, userId, showInactive = false }: Alle
         </div>
       )}
     </div>
-  )
+  );
 }

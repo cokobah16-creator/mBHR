@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: vitals.height
+Locale: ha
+Text: Tsawo
+Generate audio using: speechSynthesis or cloud TTS

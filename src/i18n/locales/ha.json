@@ -97,19 +97,19 @@
   "medical.dizziness": "Jujjuyawa",
   "medical.fatigue": "Gajiya",
   "accessibility": {
-    "audioPrompts": "[EN] Audio Prompts",
-    "fontSize": "[EN] Text Size",
-    "highContrast": "[EN] High Contrast",
-    "largeButtons": "[EN] Large Buttons",
-    "playAudio": "[EN] Play audio",
-    "reduceMotion": "[EN] Reduce Motion"
+    "audioPrompts": "Sauti na Taimako",
+    "fontSize": "Girman Rubutu",
+    "highContrast": "Bambanci Mai Ƙarfi",
+    "largeButtons": "Maɓallai Manya",
+    "playAudio": "Kunna sauti",
+    "reduceMotion": "Rage Motsi"
   },
   "action": {
-    "consult": "[EN] Consultation",
-    "pharmacy": "[EN] Pharmacy",
-    "queue": "[EN] View Queue",
-    "register": "[EN] Register Patient",
-    "vitals": "[EN] Record Vitals"
+    "consult": "Shawarwari",
+    "pharmacy": "Kantin Magani",
+    "queue": "Duba Layi",
+    "register": "Rubuta Majiyyaci",
+    "vitals": "Rubuta Alamun Lafiya"
   },
   "careplan": {
     "addTask": "[EN] Add Task",
@@ -140,18 +140,18 @@
     "vitalCheck": "[EN] Vital Signs Check"
   },
   "common": {
-    "all": "[EN] All",
-    "available": "[EN] available",
-    "of": "[EN] of",
-    "years": "[EN] years"
+    "all": "Duka",
+    "available": "akwai",
+    "of": "daga",
+    "years": "shekaru"
   },
   "consultation": {
-    "assessment": "[EN] Assessment",
-    "plan": "[EN] Plan"
+    "assessment": "Kimantawa",
+    "plan": "Shiri"
   },
   "error": {
-    "dispenseFailed": "[EN] Failed to dispense medication",
-    "registrationFailed": "[EN] Failed to register patient"
+    "dispenseFailed": "Ba a iya raba magani ba",
+    "registrationFailed": "Ba a iya rubuta majiyyaci ba"
   },
   "messaging": {
     "delivered": "[EN] Delivered",
@@ -169,12 +169,12 @@
     "sent": "[EN] Sent"
   },
   "patient": {
-    "age": "[EN] Age",
-    "contact": "[EN] Contact Information",
-    "demographics": "[EN] Age and Gender",
-    "location": "[EN] Location",
-    "names": "[EN] Patient Names",
-    "registrationSuccess": "[EN] Patient registered successfully!"
+    "age": "Shekaru",
+    "contact": "Bayanan Tuntuɓa",
+    "demographics": "Shekaru da Jinsi",
+    "location": "Wuri",
+    "names": "Sunayen Majiyyaci",
+    "registrationSuccess": "An rubuta majiyyaci cikin nasara!"
   },
   "pharmacy": {
     "batch": "[EN] Batch",
@@ -193,22 +193,22 @@
     "insufficientStock": "[EN] Insufficient stock: {{available}} available, {{requested}} requested"
   },
   "simple": {
-    "chooseAction": "[EN] Choose what you want to do",
-    "directionsExample": "[EN] Take twice daily with food",
-    "dosageExample": "[EN] e.g., 1 tablet, 5ml",
-    "enterAddress": "[EN] Enter home address",
-    "enterFirstName": "[EN] Enter first name",
-    "enterLastName": "[EN] Enter last name",
-    "phoneExample": "[EN] Example: 08012345678 or +2348012345678",
-    "registerDescription": "[EN] Add a new patient step by step",
-    "selectLGA": "[EN] Choose your local government",
-    "selectMedication": "[EN] Choose medication",
-    "selectState": "[EN] Choose your state",
-    "tapCameraToAddPhoto": "[EN] Tap camera to add photo (optional)",
-    "tapToHear": "[EN] Tap any button to hear it spoken"
+    "chooseAction": "Zaɓi abin da kake so ka yi",
+    "directionsExample": "Sha sau biyu kowace rana tare da abinci",
+    "dosageExample": "Misali: kwaya 1, 5ml",
+    "enterAddress": "Shigar da adireshin gida",
+    "enterFirstName": "Shigar da suna na farko",
+    "enterLastName": "Shigar da sunan iyali",
+    "phoneExample": "Misali: 08012345678 ko +2348012345678",
+    "registerDescription": "Rubuta sabon majiyyaci mataki-mataki",
+    "selectLGA": "Zaɓi karamar hukumar ku",
+    "selectMedication": "Zaɓi magani",
+    "selectState": "Zaɓi jihar ku",
+    "tapCameraToAddPhoto": "Taɓa kyamara don ƙara hoto (zaɓi)",
+    "tapToHear": "Taɓa kowan maɓalli don ji"
   },
   "stepper": {
-    "step": "[EN] Step"
+    "step": "Mataki"
   },
   "timeline": {
     "consultationCompleted": "[EN] Consultation Completed",
@@ -220,5 +220,23 @@
     "viewDetails": "[EN] View details",
     "visitStarted": "[EN] Visit Started",
     "vitalsRecorded": "[EN] Vitals Recorded"
+  },
+  "nav.issue_tickets": "Bada Tikiti",
+  "nav.restock_game": "Wasan Cika Kayayyaki",
+  "nav.doctor_station": "Wurin Likita",
+  "nav.user_management": "Sarrafa Masu Amfani",
+  "nav.approve_games": "Amince da Wasanni",
+  "app.title": "mBHR",
+  "app.subtitle": "Ta hannun Dr. Isioma Okobah Foundation",
+  "app.offline": "Babu Yanar Gizo",
+  "app.online": "Akwai Yanar Gizo",
+  "nav": {
+    "vitals": "[EN] Vitals"
+  },
+  "queue": {
+    "status": {
+      "closed": "[EN] Closed",
+      "open": "[EN] Open"
+    }
   }
 }

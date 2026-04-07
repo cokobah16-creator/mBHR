@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: auth.login
+Locale: ha
+Text: Shiga
+Generate audio using: speechSynthesis or cloud TTS

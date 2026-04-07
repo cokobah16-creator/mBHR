@@ -390,7 +390,7 @@ Before user access, verify:
 
 ### Database Access
 
-**Supabase Dashboard:** https://app.supabase.com/project/YOUR_PROJECT_REF
+**Supabase Dashboard:** https://app.supabase.com/project/dlogqxzejroeyivfmgcv
 
 ### Application URLs
 

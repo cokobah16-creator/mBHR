@@ -97,19 +97,19 @@
   "medical.dizziness": "Orí ń yí mi",
   "medical.fatigue": "Àárẹ̀",
   "accessibility": {
-    "audioPrompts": "[EN] Audio Prompts",
-    "fontSize": "[EN] Text Size",
-    "highContrast": "[EN] High Contrast",
-    "largeButtons": "[EN] Large Buttons",
-    "playAudio": "[EN] Play audio",
-    "reduceMotion": "[EN] Reduce Motion"
+    "audioPrompts": "Ohun Ìrànlọ́wọ́",
+    "fontSize": "Ìwọ̀n Ọ̀rọ̀",
+    "highContrast": "Ìyàtọ̀ Gíga",
+    "largeButtons": "Bọ́tìnì Ńlá",
+    "playAudio": "Mu ohun jade",
+    "reduceMotion": "Dín Ìṣípayá Kù"
   },
   "action": {
-    "consult": "[EN] Consultation",
-    "pharmacy": "[EN] Pharmacy",
-    "queue": "[EN] View Queue",
-    "register": "[EN] Register Patient",
-    "vitals": "[EN] Record Vitals"
+    "consult": "Ìjíròrò",
+    "pharmacy": "Ilé Ògùn",
+    "queue": "Wo Ìlà",
+    "register": "Forúkọsílẹ̀ Aláìsàn",
+    "vitals": "Gba Àyẹ̀wò Ara"
   },
   "careplan": {
     "addTask": "[EN] Add Task",
@@ -140,18 +140,18 @@
     "vitalCheck": "[EN] Vital Signs Check"
   },
   "common": {
-    "all": "[EN] All",
-    "available": "[EN] available",
-    "of": "[EN] of",
-    "years": "[EN] years"
+    "all": "Gbogbo",
+    "available": "wà",
+    "of": "nínú",
+    "years": "ọdún"
   },
   "consultation": {
-    "assessment": "[EN] Assessment",
-    "plan": "[EN] Plan"
+    "assessment": "Àyẹ̀wò",
+    "plan": "Ètò"
   },
   "error": {
-    "dispenseFailed": "[EN] Failed to dispense medication",
-    "registrationFailed": "[EN] Failed to register patient"
+    "dispenseFailed": "Kò lè pín ògùn",
+    "registrationFailed": "Kò lè forúkọ aláìsàn sílẹ̀"
   },
   "messaging": {
     "delivered": "[EN] Delivered",
@@ -169,12 +169,12 @@
     "sent": "[EN] Sent"
   },
   "patient": {
-    "age": "[EN] Age",
-    "contact": "[EN] Contact Information",
-    "demographics": "[EN] Age and Gender",
-    "location": "[EN] Location",
-    "names": "[EN] Patient Names",
-    "registrationSuccess": "[EN] Patient registered successfully!"
+    "age": "Ọjọ́ Orí",
+    "contact": "Àlàyé Ìbánisọ̀rọ̀",
+    "demographics": "Ọjọ́ Orí àti Akọ/Abo",
+    "location": "Ibi",
+    "names": "Orúkọ Aláìsàn",
+    "registrationSuccess": "A ti forúkọ aláìsàn sílẹ̀ dáadáa!"
   },
   "pharmacy": {
     "batch": "[EN] Batch",
@@ -193,22 +193,22 @@
     "insufficientStock": "[EN] Insufficient stock: {{available}} available, {{requested}} requested"
   },
   "simple": {
-    "chooseAction": "[EN] Choose what you want to do",
-    "directionsExample": "[EN] Take twice daily with food",
-    "dosageExample": "[EN] e.g., 1 tablet, 5ml",
-    "enterAddress": "[EN] Enter home address",
-    "enterFirstName": "[EN] Enter first name",
-    "enterLastName": "[EN] Enter last name",
-    "phoneExample": "[EN] Example: 08012345678 or +2348012345678",
-    "registerDescription": "[EN] Add a new patient step by step",
-    "selectLGA": "[EN] Choose your local government",
-    "selectMedication": "[EN] Choose medication",
-    "selectState": "[EN] Choose your state",
-    "tapCameraToAddPhoto": "[EN] Tap camera to add photo (optional)",
-    "tapToHear": "[EN] Tap any button to hear it spoken"
+    "chooseAction": "Yan ohun tí o fẹ́ ṣe",
+    "directionsExample": "Mu lẹ́ẹ̀mejì lójúmọ́ pẹ̀lú oúnjẹ",
+    "dosageExample": "Àpẹẹrẹ: tábìlẹ́ẹ̀tì 1, 5ml",
+    "enterAddress": "Tẹ àdírẹ́sì ilé sílẹ̀",
+    "enterFirstName": "Tẹ orúkọ àkọ́kọ́ sílẹ̀",
+    "enterLastName": "Tẹ orúkọ ìdílé sílẹ̀",
+    "phoneExample": "Àpẹẹrẹ: 08012345678 tàbí +2348012345678",
+    "registerDescription": "Fi aláìsàn tuntun sílẹ̀ ní ìgbésẹ̀ kan lẹ́yìn ọ̀kan",
+    "selectLGA": "Yan ìjọba ìbílẹ̀ rẹ",
+    "selectMedication": "Yan ògùn",
+    "selectState": "Yan ìpínlẹ̀ rẹ",
+    "tapCameraToAddPhoto": "Tẹ kámẹ́rà láti fi fọ́tò kún (àṣàyàn)",
+    "tapToHear": "Tẹ bọ́tìnì kankan láti gbọ́"
   },
   "stepper": {
-    "step": "[EN] Step"
+    "step": "Ìgbésẹ̀"
   },
   "timeline": {
     "consultationCompleted": "[EN] Consultation Completed",
@@ -220,5 +220,23 @@
     "viewDetails": "[EN] View details",
     "visitStarted": "[EN] Visit Started",
     "vitalsRecorded": "[EN] Vitals Recorded"
+  },
+  "nav.issue_tickets": "Fi Tikẹ́ẹ̀tì Sílẹ̀",
+  "nav.restock_game": "Eré Ìkójọpọ̀ Ohun Èlò",
+  "nav.doctor_station": "Ibi Dókítà",
+  "nav.user_management": "Ìṣàkóso Òǹlò",
+  "nav.approve_games": "Fọwọ́sí Eré",
+  "app.title": "mBHR",
+  "app.subtitle": "Látara Dr. Isioma Okobah Foundation",
+  "app.offline": "Kò sí Ìsopọ̀",
+  "app.online": "Ó wà Lórí Ìsopọ̀",
+  "nav": {
+    "vitals": "[EN] Vitals"
+  },
+  "queue": {
+    "status": {
+      "closed": "[EN] Closed",
+      "open": "[EN] Open"
+    }
   }
 }
