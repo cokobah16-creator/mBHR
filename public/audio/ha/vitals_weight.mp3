@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: vitals.weight
+Locale: ha
+Text: Nauyi
+Generate audio using: speechSynthesis or cloud TTS

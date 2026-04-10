@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: status.success
+Locale: yo
+Text: Aseyori
+Generate audio using: speechSynthesis or cloud TTS

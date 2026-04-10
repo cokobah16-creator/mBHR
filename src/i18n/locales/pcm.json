@@ -199,6 +199,23 @@
   "accessibility.largeButtons": "Big Button",
   "error.registrationFailed": "Person name no save",
   "error.dispenseFailed": "Medicine no give",
+  "nav.issue_tickets": "Give Ticket",
+  "nav.restock_game": "Restock Game",
+  "nav.doctor_station": "Dokita Place",
+  "nav.user_management": "Manage Users",
+  "nav.approve_games": "Approve Games",
+  "app.title": "mBHR",
+  "app.subtitle": "From Dr. Isioma Okobah Foundation",
+  "app.offline": "No Internet",
+  "app.online": "Internet dey",
+  "nav": {
+    "vitals": "[EN] Vitals"
+  },
+  "queue": {
+    "status": {
+      "closed": "[EN] Closed",
+      "open": "[EN] Open"
+    }
   "app": {
     "title": "mBHR - Health Record for Phone"
   }

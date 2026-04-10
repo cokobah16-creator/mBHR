@@ -245,3 +245,37 @@ export async function logAccess(
 ): Promise<void> {
   return;
 }
+
+// ─── Backward-compat stubs ────────────────────────────────────────────────
+// Other services (e.g. portalEnrollment) and tests still import these names
+// from the old OTP-based flow. The offline portal does not actually issue
+// or verify OTPs, so these are no-op shims that report success without doing
+// anything.
+
+export interface OTPRequestArgs {
+  phone?: string;
+  email?: string;
+  purpose: "registration" | "login" | "verification";
+}
+
+export async function requestOTP(
+  _args: OTPRequestArgs,
+): Promise<PatientPortalAuthResponse> {
+  return { success: true };
+}
+
+export interface OTPVerificationArgs {
+  phone?: string;
+  email?: string;
+  otp: string;
+  dob?: string;
+}
+
+export async function verifyOTP(
+  _args: OTPVerificationArgs,
+): Promise<PatientPortalAuthResponse> {
+  return {
+    success: false,
+    error: "OTP verification is disabled in offline mode.",
+  };
+}

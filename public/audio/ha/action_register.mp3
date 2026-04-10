@@ -1,3 +1,5 @@
-# Audio file placeholder - Rubuta Majiyyaci (Register Patient in Hausa)
-# In production, this would be an actual MP3 file
-# For now, the system will fall back to text-to-speech
+[TTS_PLACEHOLDER]
+Key: action.register
+Locale: ha
+Text: Rubuta Majiyyaci
+Generate audio using: speechSynthesis or cloud TTS

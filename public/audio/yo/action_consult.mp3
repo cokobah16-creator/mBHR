@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: action.consult
+Locale: yo
+Text: Ijiroro
+Generate audio using: speechSynthesis or cloud TTS

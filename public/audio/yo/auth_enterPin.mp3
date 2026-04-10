@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: auth.enterPin
+Locale: yo
+Text: Te nomba ipamo re
+Generate audio using: speechSynthesis or cloud TTS

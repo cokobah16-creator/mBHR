@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: auth.welcome
+Locale: ha
+Text: Maraba
+Generate audio using: speechSynthesis or cloud TTS

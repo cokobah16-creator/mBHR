@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: action.consult
+Locale: ha
+Text: Shawarwari
+Generate audio using: speechSynthesis or cloud TTS

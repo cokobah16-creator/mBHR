@@ -2,7 +2,7 @@
 
 ## What I Just Fixed
 
-Your Resend API key (`YOUR_RESEND_API_KEY`) has been:
+Your Resend API key (`re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`) has been:
 
 1. ✅ **Updated in the edge function code** (line 35)
 2. ✅ **Deployed to Supabase** (function is LIVE)
@@ -34,7 +34,7 @@ Your Resend API key (`YOUR_RESEND_API_KEY`) has been:
 
 **Before:** The edge function had an old/invalid API key hardcoded as a fallback
 
-**Now:** Your NEW valid API key is in the function: `YOUR_RESEND_API_KEY`
+**Now:** Your NEW valid API key is in the function: `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
 
 **Result:** Emails send immediately, no configuration needed
 
@@ -73,13 +73,13 @@ Your Resend API key (`YOUR_RESEND_API_KEY`) has been:
    - Check delivery status
 
 4. **Check Supabase Logs**
-   - Go to: https://supabase.com/dashboard/project/YOUR_PROJECT_REF/functions/send-otp-email/logs
+   - Go to: https://supabase.com/dashboard/project/dlogqxzejroeyivfmgcv/functions/send-otp-email/logs
    - Look for successful sends (status 200)
    - Check for any error messages
 
 5. **Verify API Key is Valid**
    - Go to: https://resend.com/dashboard/api-keys
-   - Make sure `YOUR_RESEND_API_KEY` is listed
+   - Make sure `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu` is listed
    - Check it's not disabled or expired
 
 ---
@@ -91,9 +91,9 @@ If you want to test via terminal:
 ```bash
 # Test the edge function directly
 curl -X POST \
-  https://YOUR_PROJECT.supabase.co/functions/v1/send-otp-email \
+  https://dlogqxzejroeyivfmgcv.supabase.co/functions/v1/send-otp-email \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_SUPABASE_ANON_KEY" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRsb2dxeHplanJvZXlpdmZtZ2N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkxNzM3NTAsImV4cCI6MjA3NDc0OTc1MH0.db_GCxbVRDjVH9UslMvCqkKmkGtCLECnpqH-JMxYdZQ" \
   -d '{"email":"YOUR_EMAIL@example.com","otp":"123456"}'
 ```
 

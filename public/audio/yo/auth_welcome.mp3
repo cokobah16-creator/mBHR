@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: auth.welcome
+Locale: yo
+Text: Kaabo
+Generate audio using: speechSynthesis or cloud TTS

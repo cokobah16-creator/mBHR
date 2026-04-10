@@ -234,6 +234,23 @@
     "visitStarted": "[EN] Visit Started",
     "vitalsRecorded": "[EN] Vitals Recorded"
   },
+  "nav.issue_tickets": "Nye Tiketi",
+  "nav.restock_game": "Egwuregwu Nchekwa",
+  "nav.doctor_station": "Ebe Dọkịta",
+  "nav.user_management": "Njikwa Ndị Ọrụ",
+  "nav.approve_games": "Kwado Egwuregwu",
+  "app.title": "mBHR",
+  "app.subtitle": "Site n'aka Dr. Isioma Okobah Foundation",
+  "app.offline": "Ọ nweghị Ịntanetị",
+  "app.online": "Ịntanetị dị",
+  "nav": {
+    "vitals": "[EN] Vitals"
+  },
+  "queue": {
+    "status": {
+      "closed": "[EN] Closed",
+      "open": "[EN] Open"
+    }
   "app": {
     "title": "mBHR - Ndekọ Ọrịa Mma Mkpakọ"
   }

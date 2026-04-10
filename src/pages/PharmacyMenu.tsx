@@ -1,51 +1,51 @@
-import { Link } from 'react-router-dom'
+import { Link } from "react-router-dom";
 import {
   BeakerIcon,
   CubeIcon,
   ClipboardDocumentListIcon,
   ArrowLeftIcon,
   EnvelopeIcon,
-} from '@heroicons/react/24/outline'
+} from "@heroicons/react/24/outline";
 
 const cards = [
   {
-    to: '/rx/dispense',
-    title: 'Dispense',
-    desc: 'Record prescriptions & counsel patients',
+    to: "/rx/dispense",
+    title: "Dispense",
+    desc: "Record prescriptions & counsel patients",
     Icon: BeakerIcon,
   },
   {
-    to: '/rx/stock',
-    title: 'Inventory',
-    desc: 'Stock counts, restock & FEFO tracking',
+    to: "/rx/stock",
+    title: "Inventory",
+    desc: "Stock counts, restock & FEFO tracking",
     Icon: CubeIcon,
   },
   {
-    to: '/rx/new',
-    title: 'New Stock',
-    desc: 'Receive deliveries / add new items',
+    to: "/rx/new",
+    title: "New Stock",
+    desc: "Receive deliveries / add new items",
     Icon: ClipboardDocumentListIcon,
   },
   {
-    to: '/pharmacy/sms-reminders',
-    title: 'SMS Reminders',
-    desc: 'Manage medication reminders & alerts',
+    to: "/pharmacy/sms-reminders",
+    title: "SMS Reminders",
+    desc: "Manage medication reminders & alerts",
     Icon: EnvelopeIcon,
   },
   {
-    to: '/pharmacy/reports',
-    title: 'Reports',
-    desc: 'Daily summary & controlled log',
+    to: "/pharmacy/reports",
+    title: "Reports",
+    desc: "Daily summary & controlled log",
     Icon: ClipboardDocumentListIcon,
   },
-]
+];
 
 export default function PharmacyMenu() {
   return (
     <main className="p-4 sm:p-6 max-w-5xl mx-auto">
       <div className="mb-4">
         <Link
-          to="/"
+          to="/dashboard"
           className="inline-flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900 focus:outline-none focus:ring"
         >
           <ArrowLeftIcon className="h-4 w-4" aria-hidden />
@@ -78,5 +78,5 @@ export default function PharmacyMenu() {
         ))}
       </section>
     </main>
-  )
+  );
 }

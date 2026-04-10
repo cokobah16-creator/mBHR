@@ -1,0 +1,5 @@
+[TTS_PLACEHOLDER]
+Key: vitals.temperature
+Locale: yo
+Text: Igbona Ara
+Generate audio using: speechSynthesis or cloud TTS
