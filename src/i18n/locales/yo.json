@@ -7,6 +7,7 @@
   "nav.users": "Àwọn Òǹlò",
   "nav.analytics": "Ìtúpalẹ̀",
   "nav.games": "Àwọn Eré",
+  "nav.vitals": "Àyẹ̀wò Ara",
   "action.save": "Fi pamọ́",
   "action.cancel": "Fagilee",
   "action.delete": "Parẹ́",
@@ -17,6 +18,16 @@
   "action.next": "Tókàn",
   "action.back": "Padà",
   "action.submit": "Fíránṣẹ́",
+  "action.register": "Ìforúkọsílẹ̀",
+  "action.register.description": "Fi aláìsàn tuntun sílẹ̀",
+  "action.vitals": "Àyẹ̀wò Ara",
+  "action.vitals.description": "Ṣe àyẹ̀wò ara",
+  "action.consult": "Ìjíròrò",
+  "action.consult.description": "Àkọsílẹ̀ nínú ìjíròrò",
+  "action.pharmacy": "Ilé Ògùn",
+  "action.pharmacy.description": "Fi ògùn fún",
+  "action.queue": "Wò Ìlà",
+  "action.queue.description": "Wò àwọn aláìsàn tó ń dúró",
   "auth.login": "Wọlé",
   "auth.logout": "Jáde",
   "auth.pin": "Nọ́mbà Ìpamọ́",
@@ -73,6 +84,8 @@
   "queue.waiting": "Ń dúró",
   "queue.inProgress": "Ń lọ lọ́wọ́",
   "queue.completed": "Ti parí",
+  "queue.status.open": "Ṣísẹ̀",
+  "queue.status.closed": "Ìbúsọ́",
   "status.loading": "Ń gbé wọlé...",
   "status.saving": "Ń fi pamọ́...",
   "status.success": "Àṣeyọrí",
@@ -238,5 +251,7 @@
       "closed": "[EN] Closed",
       "open": "[EN] Open"
     }
+  "app": {
+    "title": "mBHR - Iwe Iṣiro Ẹjọ Oga Ile"
   }
 }

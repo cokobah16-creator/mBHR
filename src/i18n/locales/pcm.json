@@ -7,6 +7,7 @@
   "nav.users": "Workers",
   "nav.analytics": "Check Numbers",
   "nav.games": "Play Games",
+  "nav.vitals": "Check Body",
   "action.save": "Keep Am",
   "action.cancel": "No Do Am",
   "action.delete": "Comot Am",
@@ -71,6 +72,8 @@
   "queue.consultation": "See Doctor",
   "queue.pharmacy": "Collect Medicine",
   "queue.waiting": "Dey Wait",
+  "queue.status.open": "Open",
+  "queue.status.closed": "Closed",
   "queue.inProgress": "Dey Work",
   "queue.completed": "Don Finish",
   "status.loading": "Dey Load...",
@@ -213,5 +216,7 @@
       "closed": "[EN] Closed",
       "open": "[EN] Open"
     }
+  "app": {
+    "title": "mBHR - Health Record for Phone"
   }
 }
