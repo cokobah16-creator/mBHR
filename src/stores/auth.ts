@@ -45,12 +45,10 @@ export const useAuthStore = create<AuthState>()(
 
         // Check lockout
         if (state.checkLockout()) {
-          console.log("Account locked out");
           return false;
         }
 
         if (!/^\d{6}$/.test(pin)) {
-          console.log("Invalid PIN format:", pin);
           state.incrementFailedAttempts();
           return false;
         }
@@ -60,39 +58,10 @@ export const useAuthStore = create<AuthState>()(
           const users = await db.users
             .filter((u) => u.isActive === 1)
             .toArray();
-          console.log("[auth] Found users:", users.length);
-          console.log(
-            "[auth] User details:",
-            users.map((u) => ({
-              id: u.id,
-              fullName: u.fullName,
-              role: u.role,
-              hasPin: !!u.pinHash,
-              hasSalt: !!u.pinSalt,
-            })),
-          );
 
           for (const user of users) {
             if (user.pinHash && user.pinSalt) {
-              console.log(
-                "[auth] Checking PIN for user:",
-                user.fullName,
-                user.role,
-              );
-              console.log(
-                "[auth]   User salt:",
-                user.pinSalt.substring(0, 15),
-                "...",
-              );
-              console.log(
-                "[auth]   User hash:",
-                user.pinHash.substring(0, 20),
-                "...",
-              );
-              console.log("[auth]   Entered PIN:", pin);
-
               const isValid = await verifyPin(pin, user.pinHash, user.pinSalt);
-              console.log("[auth] PIN valid for", user.fullName, ":", isValid);
 
               if (isValid) {
                 // Create session
@@ -125,7 +94,6 @@ export const useAuthStore = create<AuthState>()(
           }
 
           // PIN not found - increment failed attempts
-          console.log("No matching PIN found for:", pin);
           state.incrementFailedAttempts();
           return false;
         } catch (error) {
@@ -135,12 +103,11 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      loginOnline: async (email: string, password: string) => {
+      loginOnline: async (_email: string, _password: string) => {
         const state = get();
 
         // Check lockout
         if (state.checkLockout()) {
-          console.log("Account locked out");
           return false;
         }
 
