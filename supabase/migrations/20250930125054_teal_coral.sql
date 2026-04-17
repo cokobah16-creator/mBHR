@@ -48,7 +48,7 @@ CREATE POLICY "Users can read own sessions"
   TO authenticated
   USING (auth.uid()::text = volunteer_id OR EXISTS (
     SELECT 1 FROM app_users 
-    WHERE id = auth.uid() AND (admin_access = true OR role IN ('admin', 'doctor', 'nurse'))
+    WHERE id = auth.uid()::text AND (admin_access = true OR role IN ('admin', 'doctor', 'nurse'))
   ));
 
 CREATE POLICY "Admins can approve sessions"
@@ -57,7 +57,7 @@ CREATE POLICY "Admins can approve sessions"
   TO authenticated
   USING (EXISTS (
     SELECT 1 FROM app_users 
-    WHERE id = auth.uid() AND (admin_access = true OR role = 'admin')
+    WHERE id = auth.uid()::text AND (admin_access = true OR role = 'admin')
   ));
 
 -- Gamification wallets table
@@ -92,7 +92,7 @@ CREATE POLICY "Admins can read all wallets"
   TO authenticated
   USING (EXISTS (
     SELECT 1 FROM app_users 
-    WHERE id = auth.uid() AND (admin_access = true OR role = 'admin')
+    WHERE id = auth.uid()::text AND (admin_access = true OR role = 'admin')
   ));
 
 -- Vitals ranges reference table
@@ -160,7 +160,7 @@ CREATE POLICY "Doctors can create triage samples"
   TO authenticated
   WITH CHECK (EXISTS (
     SELECT 1 FROM app_users 
-    WHERE id = auth.uid() AND role IN ('doctor', 'admin')
+    WHERE id = auth.uid()::text AND role IN ('doctor', 'admin')
   ));
 
 -- Inventory discrepancies table

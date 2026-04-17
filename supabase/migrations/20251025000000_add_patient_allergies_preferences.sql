@@ -112,7 +112,7 @@ CREATE POLICY "Clinical staff can view patient allergies"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
@@ -124,7 +124,7 @@ CREATE POLICY "Clinical staff can insert patient allergies"
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -136,14 +136,14 @@ CREATE POLICY "Clinical staff can update patient allergies"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -155,7 +155,7 @@ CREATE POLICY "Admins and doctors can delete patient allergies"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor')
     )
   );
@@ -169,7 +169,7 @@ CREATE POLICY "Staff can view patient preferences"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 
@@ -180,7 +180,7 @@ CREATE POLICY "Staff can insert patient preferences"
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 
@@ -191,13 +191,13 @@ CREATE POLICY "Staff can update patient preferences"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 
@@ -208,7 +208,7 @@ CREATE POLICY "Admins can delete patient preferences"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role = 'admin'
     )
   );

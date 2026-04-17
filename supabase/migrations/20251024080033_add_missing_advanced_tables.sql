@@ -392,7 +392,7 @@ CREATE POLICY "Admins can manage users"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid() AND app_users.role = 'admin'
+      WHERE app_users.id = auth.uid()::text AND app_users.role = 'admin'
     )
   );
 
@@ -403,7 +403,7 @@ CREATE POLICY "Clinical staff can manage medication reminders"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
@@ -415,7 +415,7 @@ CREATE POLICY "Clinical staff can manage lab orders"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -427,7 +427,7 @@ CREATE POLICY "Clinical staff can manage lab results"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -451,7 +451,7 @@ CREATE POLICY "Pharmacists can manage stock batches"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'pharmacist')
     )
   );
@@ -463,7 +463,7 @@ CREATE POLICY "Clinical staff can manage care tasks"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -475,7 +475,7 @@ CREATE POLICY "Clinical staff can manage triage records"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -487,7 +487,7 @@ CREATE POLICY "Clinical staff can view allergies"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
@@ -498,7 +498,7 @@ CREATE POLICY "Clinical staff can manage allergies"
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -509,14 +509,14 @@ CREATE POLICY "Clinical staff can update allergies"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -528,7 +528,7 @@ CREATE POLICY "Staff can manage patient preferences"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
     )
   );
 
@@ -539,7 +539,7 @@ CREATE POLICY "Admins can view patient merges"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid() AND app_users.role = 'admin'
+      WHERE app_users.id = auth.uid()::text AND app_users.role = 'admin'
     )
   );
 
@@ -556,7 +556,7 @@ CREATE POLICY "Admins can manage conflict resolutions"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid() AND app_users.role = 'admin'
+      WHERE app_users.id = auth.uid()::text AND app_users.role = 'admin'
     )
   );
 

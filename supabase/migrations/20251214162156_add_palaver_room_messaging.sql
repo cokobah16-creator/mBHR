@@ -94,13 +94,13 @@ CREATE POLICY "Users can view messages they sent or received"
   ON palaver_messages FOR SELECT
   TO authenticated
   USING (
-    sender_id = auth.uid()::text OR recipient_id = auth.uid()::text
+    sender_id = auth.uid() OR recipient_id = auth.uid()::text
   );
 
 CREATE POLICY "Users can insert messages they send"
   ON palaver_messages FOR INSERT
   TO authenticated
-  WITH CHECK (sender_id = auth.uid()::text);
+  WITH CHECK (sender_id = auth.uid());
 
 CREATE POLICY "Recipients can update read status"
   ON palaver_messages FOR UPDATE
@@ -117,18 +117,18 @@ CREATE POLICY "All authenticated users can view active broadcasts"
 CREATE POLICY "Doctors and admins can create broadcasts"
   ON palaver_broadcasts FOR INSERT
   TO authenticated
-  WITH CHECK (sender_id = auth.uid()::text);
+  WITH CHECK (sender_id = auth.uid());
 
 -- RLS Policies for palaver_broadcast_reads
 CREATE POLICY "Users can view their own broadcast reads"
   ON palaver_broadcast_reads FOR SELECT
   TO authenticated
-  USING (user_id = auth.uid()::text);
+  USING (user_id = auth.uid());
 
 CREATE POLICY "Users can mark broadcasts as read"
   ON palaver_broadcast_reads FOR INSERT
   TO authenticated
-  WITH CHECK (user_id = auth.uid()::text);
+  WITH CHECK (user_id = auth.uid());
 
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_palaver_messages_recipient ON palaver_messages(recipient_id, is_read, created_at DESC);
