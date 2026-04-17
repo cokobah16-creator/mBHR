@@ -53,7 +53,7 @@
 CREATE TABLE IF NOT EXISTS patient_secure_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
-  staff_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  staff_id text REFERENCES users(id) ON DELETE SET NULL,
   subject text NOT NULL,
   body text NOT NULL,
   from_patient boolean NOT NULL DEFAULT true,
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS patient_lab_results (
   result_date timestamptz,
   notes text,
   abnormal boolean DEFAULT false,
-  ordered_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  ordered_by text REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS patient_documents (
   description text,
   storage_path text NOT NULL,
   upload_date timestamptz DEFAULT now(),
-  uploaded_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  uploaded_by text REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now()
 );
 
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS patient_referrals (
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'scheduled', 'completed', 'cancelled')),
   priority text NOT NULL DEFAULT 'routine' CHECK (priority IN ('routine', 'urgent', 'emergency')),
   notes text,
-  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );

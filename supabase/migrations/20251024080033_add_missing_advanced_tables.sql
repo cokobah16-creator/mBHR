@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS lab_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   visit_id text REFERENCES visits(id) ON DELETE SET NULL,
-  ordered_by uuid REFERENCES app_users(id),
+  ordered_by text REFERENCES app_users(id),
   test_name text NOT NULL,
   test_code text,
   priority text NOT NULL DEFAULT 'routine' CHECK (priority IN ('routine', 'urgent', 'stat')),
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS lab_results (
   reference_range text,
   interpretation text NOT NULL DEFAULT 'normal' CHECK (interpretation IN ('normal', 'abnormal', 'critical')),
   result_date timestamptz NOT NULL DEFAULT now(),
-  reviewed_by uuid REFERENCES app_users(id),
+  reviewed_by text REFERENCES app_users(id),
   reviewed_at timestamptz,
   notes text,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -121,7 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_lab_results_order ON lab_results(order_id);
 CREATE TABLE IF NOT EXISTS appointments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
-  provider_id uuid REFERENCES app_users(id),
+  provider_id text REFERENCES app_users(id),
   appointment_type text NOT NULL,
   scheduled_at timestamptz NOT NULL,
   duration_minutes integer NOT NULL DEFAULT 30,
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   notes text,
   reminder_sent boolean NOT NULL DEFAULT false,
   reminder_sent_at timestamptz,
-  created_by uuid REFERENCES app_users(id) NOT NULL,
+  created_by text REFERENCES app_users(id) NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS patient_allergies (
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  created_by uuid REFERENCES app_users(id),
+  created_by text REFERENCES app_users(id),
   _dirty integer DEFAULT 0,
   _synced_at timestamptz
 );

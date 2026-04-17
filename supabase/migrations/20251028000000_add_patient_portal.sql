@@ -85,7 +85,7 @@
 
 CREATE TABLE IF NOT EXISTS patient_portal_users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL UNIQUE,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL UNIQUE,
   phone_number text NOT NULL,
   email text,
   phone_verified boolean NOT NULL DEFAULT false,
@@ -143,7 +143,7 @@ CREATE INDEX IF NOT EXISTS idx_patient_portal_sessions_active ON patient_portal_
 CREATE TABLE IF NOT EXISTS patient_portal_access_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   portal_user_id uuid REFERENCES patient_portal_users(id) ON DELETE SET NULL,
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   action_type text NOT NULL,
   resource_type text NOT NULL,
   resource_id uuid,
@@ -166,7 +166,7 @@ CREATE INDEX IF NOT EXISTS idx_patient_portal_access_logs_action ON patient_port
 
 CREATE TABLE IF NOT EXISTS patient_notifications (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   notification_type text NOT NULL,
   title text NOT NULL,
   message text NOT NULL,
@@ -192,7 +192,7 @@ CREATE INDEX IF NOT EXISTS idx_patient_notifications_priority ON patient_notific
 
 CREATE TABLE IF NOT EXISTS patient_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   sender_type text NOT NULL CHECK (sender_type IN ('patient', 'staff')),
   sender_id uuid NOT NULL,
   subject text,
@@ -218,7 +218,7 @@ CREATE INDEX IF NOT EXISTS idx_patient_messages_read ON patient_messages(read);
 
 CREATE TABLE IF NOT EXISTS patient_appointment_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   appointment_type text NOT NULL,
   preferred_date_1 date NOT NULL,
   preferred_time_1 text,
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS patient_appointment_requests (
   reason text,
   notes text,
   status text NOT NULL CHECK (status IN ('pending', 'approved', 'scheduled', 'declined', 'cancelled')) DEFAULT 'pending',
-  reviewed_by uuid REFERENCES app_users(id) ON DELETE SET NULL,
+  reviewed_by text REFERENCES app_users(id) ON DELETE SET NULL,
   reviewed_at timestamptz,
   review_notes text,
   scheduled_appointment_id uuid REFERENCES appointments(id) ON DELETE SET NULL,
@@ -247,14 +247,14 @@ CREATE INDEX IF NOT EXISTS idx_patient_appointment_requests_created ON patient_a
 
 CREATE TABLE IF NOT EXISTS patient_documents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   document_type text NOT NULL,
   document_name text NOT NULL,
   file_path text NOT NULL,
   file_size integer,
   mime_type text,
   uploaded_by_patient boolean NOT NULL DEFAULT true,
-  uploaded_by_user_id uuid REFERENCES app_users(id) ON DELETE SET NULL,
+  uploaded_by_user_id text REFERENCES app_users(id) ON DELETE SET NULL,
   description text,
   metadata jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -271,7 +271,7 @@ CREATE INDEX IF NOT EXISTS idx_patient_documents_created ON patient_documents(cr
 
 CREATE TABLE IF NOT EXISTS patient_consent_records (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   consent_type text NOT NULL,
   consent_given boolean NOT NULL,
   consent_text text NOT NULL,

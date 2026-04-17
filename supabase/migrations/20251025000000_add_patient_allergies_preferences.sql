@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS patient_allergies (
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  created_by uuid REFERENCES users(id),
+  created_by text REFERENCES users(id),
   _dirty integer DEFAULT 0,
   _synced_at timestamptz
 );
