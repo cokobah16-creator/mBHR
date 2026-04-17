@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS patient_documents (
   created_at timestamptz DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_patient ON patient_documents(patient_id, upload_date DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_patient ON patient_documents(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_documents_type ON patient_documents(patient_id, document_type);
 
 -- Create referrals table
