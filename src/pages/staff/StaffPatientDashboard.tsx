@@ -393,7 +393,7 @@ export function StaffPatientDashboard() {
   const filtered = patients.filter((p) => {
     const q = search.toLowerCase();
     return (
-      p.fullName.toLowerCase().includes(q) ||
+      `${p.givenName} ${p.familyName}`.toLowerCase().includes(q) ||
       (p.email ?? "").toLowerCase().includes(q) ||
       (p.phone ?? "").includes(q)
     );
