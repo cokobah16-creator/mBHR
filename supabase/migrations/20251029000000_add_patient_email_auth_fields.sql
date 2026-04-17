@@ -102,14 +102,7 @@ CREATE POLICY "Patients can verify own contact"
   FOR UPDATE
   TO authenticated
   USING (auth.uid()::text = auth_uid)
-  WITH CHECK (
-    auth.uid()::text = auth_uid AND
-    -- Only allow updating contact_verified field
-    (
-      (OLD.email = NEW.email OR (OLD.email IS NULL AND NEW.email IS NULL)) AND
-      (OLD.phone = NEW.phone OR (OLD.phone IS NULL AND NEW.phone IS NULL))
-    )
-  );
+  WITH CHECK (auth.uid()::text = auth_uid);
 
 -- Step 7: Add comment explaining the table structure
 COMMENT ON COLUMN patients.email IS 'Patient email address for portal login (unique, case-insensitive)';
