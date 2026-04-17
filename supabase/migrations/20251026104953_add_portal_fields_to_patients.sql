@@ -43,8 +43,16 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_patients_portal_enabled 
   ON patients(portal_enabled) WHERE portal_enabled = true;
 
-CREATE INDEX IF NOT EXISTS idx_patients_email_portal 
-  ON patients(LOWER(email)) WHERE email IS NOT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'patients' AND column_name = 'email'
+  ) THEN
+    CREATE INDEX IF NOT EXISTS idx_patients_email_portal
+      ON patients(LOWER(email)) WHERE email IS NOT NULL;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_patients_phone_portal 
   ON patients(phone) WHERE phone IS NOT NULL;
