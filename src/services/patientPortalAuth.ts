@@ -2,8 +2,7 @@
  * Patient Portal Authentication Service
  *
  * Offline-first patient portal auth backed by Dexie + localStorage.
- * No OTP, no demo mode. The patient registers with their personal info
- * and logs back in using the same identifier (email or phone) + date of birth.
+ * Supports login via contact+DOB or contact+PIN (6-digit, SHA-256 hashed).
  */
 
 import { db } from "@/db";
@@ -13,6 +12,13 @@ import type { PatientPortalAuthResponse } from "@/types/patientPortal";
 const PORTAL_USERS_KEY = "mbhr_portal_users";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
+export interface ManagedPatient {
+  patientId: string;
+  givenName: string;
+  familyName: string;
+  relationship: string;
+}
+
 export interface LocalPortalUser {
   id: string;
   patientId: string;
@@ -21,9 +27,12 @@ export interface LocalPortalUser {
   email?: string;
   phone?: string;
   dob: string;
+  pin?: string;
   sessionToken?: string;
   sessionExpiresAt?: string;
   createdAt: string;
+  isCaregiverAccount?: boolean;
+  managedPatients?: ManagedPatient[];
 }
 
 function getLocalPortalUsers(): LocalPortalUser[] {
@@ -40,6 +49,14 @@ function saveLocalPortalUsers(users: LocalPortalUser[]) {
 
 function normalize(value: string | undefined): string {
   return (value || "").trim().toLowerCase();
+}
+
+async function hashPIN(pin: string): Promise<string> {
+  const data = new TextEncoder().encode("mbhr_pin_salt_" + pin);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
@@ -79,6 +96,7 @@ export async function registerPatientPortalAccount(
   dob: string,
   givenName: string,
   familyName: string,
+  pin?: string,
 ): Promise<PatientPortalAuthResponse> {
   try {
     if (!phone && !email) {
@@ -124,6 +142,8 @@ export async function registerPatientPortalAccount(
       updatedAt: now,
     });
 
+    const hashedPin = pin ? await hashPIN(pin) : undefined;
+
     const portalUser: LocalPortalUser = {
       id: crypto.randomUUID(),
       patientId,
@@ -132,9 +152,11 @@ export async function registerPatientPortalAccount(
       email: email || undefined,
       phone: phone || undefined,
       dob,
+      pin: hashedPin,
       sessionToken: crypto.randomUUID(),
       sessionExpiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       createdAt: now.toISOString(),
+      managedPatients: [],
     };
 
     users.push(portalUser);
@@ -151,17 +173,18 @@ export async function registerPatientPortalAccount(
 }
 
 /**
- * Log a patient into the portal using their contact + date of birth.
+ * Log a patient into the portal using their contact + date of birth or PIN.
  */
 export async function loginPatientPortal(
   contact: string,
-  dob: string,
+  credential: string,
+  method: "dob" | "pin" = "dob",
 ): Promise<PatientPortalAuthResponse> {
   try {
-    if (!contact || !dob) {
+    if (!contact || !credential) {
       return {
         success: false,
-        error: "Please enter your contact and date of birth.",
+        error: "Please enter your contact and " + (method === "pin" ? "PIN" : "date of birth") + ".",
       };
     }
 
@@ -181,11 +204,24 @@ export async function loginPatientPortal(
       };
     }
 
-    if (user.dob !== dob) {
-      return {
-        success: false,
-        error: "Date of birth does not match our records.",
-      };
+    if (method === "pin") {
+      if (!user.pin) {
+        return {
+          success: false,
+          error: "No PIN set for this account. Please log in with your date of birth.",
+        };
+      }
+      const inputHash = await hashPIN(credential);
+      if (inputHash !== user.pin) {
+        return { success: false, error: "Incorrect PIN." };
+      }
+    } else {
+      if (user.dob !== credential) {
+        return {
+          success: false,
+          error: "Date of birth does not match our records.",
+        };
+      }
     }
 
     user.sessionToken = crypto.randomUUID();
@@ -227,12 +263,58 @@ export async function logout(sessionToken: string): Promise<boolean> {
   }
   localStorage.removeItem("patient_session_token");
   localStorage.removeItem("patient_portal_user");
+  localStorage.removeItem("patient_active_profile");
   return true;
 }
 
 /**
+ * Add a managed (dependent) patient to a caregiver's portal account.
+ */
+export async function addManagedPatient(
+  portalUserId: string,
+  patient: { givenName: string; familyName: string; dob: string; relationship: string },
+): Promise<{ success: boolean; patientId?: string; error?: string }> {
+  try {
+    const users = getLocalPortalUsers();
+    const user = users.find((u) => u.id === portalUserId);
+    if (!user) return { success: false, error: "Account not found." };
+
+    const patientId = crypto.randomUUID();
+    const now = new Date();
+
+    await db.patients.add({
+      id: patientId,
+      givenName: patient.givenName,
+      familyName: patient.familyName,
+      sex: "other",
+      dob: patient.dob,
+      phone: "",
+      address: "",
+      state: "",
+      lga: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    if (!user.managedPatients) user.managedPatients = [];
+    user.managedPatients.push({
+      patientId,
+      givenName: patient.givenName,
+      familyName: patient.familyName,
+      relationship: patient.relationship,
+    });
+    user.isCaregiverAccount = true;
+    saveLocalPortalUsers(users);
+
+    return { success: true, patientId };
+  } catch (error) {
+    logger.error("Error in addManagedPatient:", error);
+    return { success: false, error: "Could not add patient. Please try again." };
+  }
+}
+
+/**
  * No-op access logger kept for compatibility with patientPortalData.
- * Offline mode does not persist portal access logs.
  */
 export async function logAccess(
   _portalUserId: string | undefined,
@@ -247,10 +329,6 @@ export async function logAccess(
 }
 
 // ─── Backward-compat stubs ────────────────────────────────────────────────
-// Other services (e.g. portalEnrollment) and tests still import these names
-// from the old OTP-based flow. The offline portal does not actually issue
-// or verify OTPs, so these are no-op shims that report success without doing
-// anything.
 
 export interface OTPRequestArgs {
   phone?: string;

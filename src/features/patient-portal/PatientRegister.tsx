@@ -28,6 +28,12 @@ const registrationSchema = z
     dob: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
+    pin: z
+      .string()
+      .regex(/^\d{6}$/, "PIN must be exactly 6 digits")
+      .optional()
+      .or(z.literal("")),
+    pinConfirm: z.string().optional().or(z.literal("")),
     consentGiven: z
       .boolean()
       .refine((val) => val === true, "You must accept the terms to continue"),
@@ -35,7 +41,11 @@ const registrationSchema = z
   .refine((data) => data.phone || data.email, {
     message: "Please provide either a phone number or email address",
     path: ["phone"],
-  });
+  })
+  .refine(
+    (data) => !data.pin || data.pin === data.pinConfirm,
+    { message: "PINs do not match", path: ["pinConfirm"] },
+  );
 
 type RegistrationForm = z.infer<typeof registrationSchema>;
 
@@ -53,6 +63,8 @@ export function PatientRegister() {
       phone: "",
       email: "",
       dob: "",
+      pin: "",
+      pinConfirm: "",
       consentGiven: false,
     },
   });
@@ -74,6 +86,7 @@ export function PatientRegister() {
         data.dob,
         data.givenName,
         data.familyName,
+        data.pin || undefined,
       );
 
       if (result.success && result.sessionToken) {
@@ -240,6 +253,61 @@ export function PatientRegister() {
                   <p className="mt-1 text-xs text-gray-500">
                     You'll use this to log back in.
                   </p>
+                </div>
+
+                <div className="border-t border-gray-100 pt-4">
+                  <p className="text-sm font-medium text-gray-700 mb-3">
+                    Set a 6-digit PIN for faster login{" "}
+                    <span className="text-gray-400 font-normal">(optional)</span>
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label
+                        htmlFor="pin"
+                        className="block text-sm text-gray-600 mb-1"
+                      >
+                        PIN
+                      </label>
+                      <input
+                        {...form.register("pin")}
+                        type="password"
+                        id="pin"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="6 digits"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent tracking-widest text-center"
+                        disabled={loading}
+                      />
+                      {form.formState.errors.pin && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {form.formState.errors.pin.message}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="pinConfirm"
+                        className="block text-sm text-gray-600 mb-1"
+                      >
+                        Confirm PIN
+                      </label>
+                      <input
+                        {...form.register("pinConfirm")}
+                        type="password"
+                        id="pinConfirm"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="6 digits"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent tracking-widest text-center"
+                        disabled={loading}
+                      />
+                      {form.formState.errors.pinConfirm && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {form.formState.errors.pinConfirm.message}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex items-start gap-3">

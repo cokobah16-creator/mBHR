@@ -9,8 +9,13 @@ import {
   ArrowLeftOnRectangleIcon,
   Bars3Icon,
   XMarkIcon,
+  ChevronDownIcon,
+  UserGroupIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
 import { useState } from "react";
+import { EmergencyHelp } from "./EmergencyHelp";
+import type { ManagedPatient } from "@/services/patientPortalAuth";
 
 interface PatientPortalLayoutProps {
   children: React.ReactNode;
@@ -29,21 +34,57 @@ const navItems = [
   { path: "/patient/account", label: "Account", icon: UserCircleIcon },
 ];
 
+function getPortalUserInfo() {
+  const str = localStorage.getItem("patient_portal_user");
+  if (!str) return { name: "Patient", managedPatients: [] as ManagedPatient[], portalUserId: "", ownPatientId: "" };
+  const u = JSON.parse(str);
+  return {
+    name: u.givenName || "Patient",
+    managedPatients: (u.managedPatients || []) as ManagedPatient[],
+    portalUserId: u.id || "",
+    ownPatientId: u.patientId || "",
+  };
+}
+
+function getActiveProfile() {
+  const str = localStorage.getItem("patient_active_profile");
+  return str ? JSON.parse(str) : null;
+}
+
 export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [emergencyOpen, setEmergencyOpen] = useState(false);
+
+  const { name, managedPatients, portalUserId, ownPatientId } = getPortalUserInfo();
+  const activeProfile = getActiveProfile();
+  const displayName = activeProfile?.givenName || name;
 
   const handleLogout = () => {
     localStorage.removeItem("patient_session_token");
     localStorage.removeItem("patient_portal_user");
+    localStorage.removeItem("patient_active_profile");
     navigate("/patient");
   };
 
-  const portalUser = localStorage.getItem("patient_portal_user");
-  const userName = portalUser
-    ? JSON.parse(portalUser).givenName || "Patient"
-    : "Patient";
+  const switchProfile = (patientId: string, givenName: string, familyName: string) => {
+    localStorage.setItem(
+      "patient_active_profile",
+      JSON.stringify({ patientId, givenName, familyName }),
+    );
+    setProfileMenuOpen(false);
+    window.location.reload();
+  };
+
+  const switchToSelf = () => {
+    localStorage.removeItem("patient_active_profile");
+    setProfileMenuOpen(false);
+    window.location.reload();
+  };
+
+  const hasManagedPatients = managedPatients.length > 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -82,11 +123,69 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
               })}
             </nav>
 
-            <div className="flex items-center gap-3">
-              <div className="hidden sm:flex items-center gap-2 text-sm text-gray-600">
-                <UserCircleIcon className="w-5 h-5" />
-                <span>{userName}</span>
+            <div className="flex items-center gap-2">
+              {/* Profile / caregiver switcher */}
+              <div className="relative hidden sm:block">
+                <button
+                  onClick={() => hasManagedPatients && setProfileMenuOpen(!profileMenuOpen)}
+                  className={`flex items-center gap-2 text-sm text-gray-700 px-3 py-2 rounded-lg transition-colors ${
+                    hasManagedPatients ? "hover:bg-gray-100 cursor-pointer" : "cursor-default"
+                  }`}
+                >
+                  <UserCircleIcon className="w-5 h-5" />
+                  <span className="max-w-[120px] truncate">{displayName}</span>
+                  {hasManagedPatients && <ChevronDownIcon className="w-4 h-4" />}
+                </button>
+
+                {profileMenuOpen && hasManagedPatients && (
+                  <div className="absolute right-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-xl shadow-lg py-2 z-50">
+                    <button
+                      onClick={switchToSelf}
+                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2 ${
+                        !activeProfile ? "font-semibold text-blue-700" : "text-gray-700"
+                      }`}
+                    >
+                      <UserCircleIcon className="w-4 h-4" />
+                      Yourself – {name}
+                    </button>
+                    {managedPatients.map((mp) => (
+                      <button
+                        key={mp.patientId}
+                        onClick={() => switchProfile(mp.patientId, mp.givenName, mp.familyName)}
+                        className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2 ${
+                          activeProfile?.patientId === mp.patientId
+                            ? "font-semibold text-blue-700"
+                            : "text-gray-700"
+                        }`}
+                      >
+                        <UserGroupIcon className="w-4 h-4" />
+                        {mp.givenName} {mp.familyName}
+                        <span className="ml-auto text-xs text-gray-400">{mp.relationship}</span>
+                      </button>
+                    ))}
+                    <div className="border-t border-gray-100 mt-1 pt-1">
+                      <Link
+                        to="/patient/caregiver/add"
+                        onClick={() => setProfileMenuOpen(false)}
+                        className="w-full text-left px-4 py-2.5 text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2"
+                      >
+                        <span className="text-lg leading-none">+</span>
+                        Add a patient I care for
+                      </Link>
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* Emergency button — desktop */}
+              <button
+                onClick={() => setEmergencyOpen(true)}
+                className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                aria-label="Emergency help"
+              >
+                <ExclamationTriangleIcon className="w-4 h-4" />
+                Emergency
+              </button>
 
               <button
                 onClick={handleLogout}
@@ -132,7 +231,47 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                   </Link>
                 );
               })}
+              {hasManagedPatients && (
+                <>
+                  <hr className="my-1" />
+                  <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                    Switch Profile
+                  </p>
+                  <button
+                    onClick={() => { switchToSelf(); setMobileMenuOpen(false); }}
+                    className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                  >
+                    <UserCircleIcon className="w-5 h-5" />
+                    Yourself – {name}
+                  </button>
+                  {managedPatients.map((mp) => (
+                    <button
+                      key={mp.patientId}
+                      onClick={() => { switchProfile(mp.patientId, mp.givenName, mp.familyName); setMobileMenuOpen(false); }}
+                      className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                    >
+                      <UserGroupIcon className="w-5 h-5" />
+                      {mp.givenName} {mp.familyName}
+                    </button>
+                  ))}
+                </>
+              )}
               <hr className="my-2" />
+              <Link
+                to="/patient/caregiver/add"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 w-full"
+              >
+                <UserGroupIcon className="w-5 h-5" />
+                Add patient I care for
+              </Link>
+              <button
+                onClick={() => { setMobileMenuOpen(false); setEmergencyOpen(true); }}
+                className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 w-full transition-colors"
+              >
+                <ExclamationTriangleIcon className="w-5 h-5" />
+                Emergency Help
+              </button>
               <button
                 onClick={() => {
                   setMobileMenuOpen(false);
@@ -150,6 +289,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
 
       <main className="pb-20 md:pb-8">{children}</main>
 
+      {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40">
         <div className="flex justify-around py-2">
           {navItems.slice(0, 5).map((item) => {
@@ -170,6 +310,18 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
           })}
         </div>
       </nav>
+
+      {/* Mobile emergency FAB */}
+      <button
+        onClick={() => setEmergencyOpen(true)}
+        className="md:hidden fixed bottom-20 right-4 z-50 w-14 h-14 bg-red-600 hover:bg-red-700 text-white rounded-full shadow-lg flex items-center justify-center transition-colors"
+        aria-label="Emergency help"
+      >
+        <ExclamationTriangleIcon className="w-7 h-7" />
+      </button>
+
+      {/* Emergency modal */}
+      {emergencyOpen && <EmergencyHelp onClose={() => setEmergencyOpen(false)} />}
     </div>
   );
 }
