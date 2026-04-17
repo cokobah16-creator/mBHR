@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   CalendarIcon,
@@ -399,7 +400,7 @@ function ErrorCard({ message }: { message: string }) {
 function StatTile({
   icon, bg, label, value, to,
 }: {
-  icon: React.ReactNode; bg: string; label: string; value: number; to: string;
+  icon: ReactNode; bg: string; label: string; value: number; to: string;
 }) {
   return (
     <Link to={to} className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-shadow">

@@ -302,10 +302,11 @@ export async function getVisits(patientId: string): Promise<ServiceResult<Visit[
     .from("visits")
     .select(`
       id, patient_id, started_at, site_name, status,
-      consultations ( soap_assessment, soap_subjective )
+      consultations ( soap_assessment, soap_subjective, created_at )
     `)
     .eq("patient_id", patientId)
-    .order("started_at", { ascending: false });
+    .order("started_at", { ascending: false })
+    .order("created_at", { referencedTable: "consultations", ascending: false });
 
   if (error) {
     logger.error("[patientService] getVisits:", error.message);
@@ -352,7 +353,7 @@ export async function addVisit(
 
   // If there are notes/diagnosis, create a consultation record too
   if (visit.notes || visit.diagnosis) {
-    await supabase.from("consultations").insert({
+    const { error: consultError } = await supabase.from("consultations").insert({
       id:               crypto.randomUUID(),
       patient_id:       patientId,
       visit_id:         visitId,
@@ -363,6 +364,10 @@ export async function addVisit(
       soap_plan:        "",
       provisional_dx:   [],
     });
+    if (consultError) {
+      logger.error("[patientService] addVisit (consultation):", consultError.message);
+      return { data: null, error: `Visit was saved but clinical notes failed: ${consultError.message}` };
+    }
   }
 
   return {

@@ -17,7 +17,6 @@ max_rows = 1000
 [db]
 # Local Postgres port (used by supabase start)
 port = 54322
-pool_mode = "transaction"
 [db.pooler]
 enabled = false
 
