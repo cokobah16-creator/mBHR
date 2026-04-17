@@ -278,7 +278,7 @@ ALTER TABLE message_templates ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can view own game sessions"
   ON game_sessions FOR SELECT
   TO authenticated
-  USING (volunteer_id = auth.uid()::text OR auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'));
+  USING (volunteer_id = auth.uid()::text OR auth.uid()::text IN (SELECT id FROM app_users WHERE role = 'admin'));
 
 CREATE POLICY "Users can create own game sessions"
   ON game_sessions FOR INSERT
@@ -294,7 +294,7 @@ CREATE POLICY "Users can update own game sessions"
 CREATE POLICY "Users can view own wallet"
   ON gamification_wallets FOR SELECT
   TO authenticated
-  USING (volunteer_id = auth.uid()::text OR auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'));
+  USING (volunteer_id = auth.uid()::text OR auth.uid()::text IN (SELECT id FROM app_users WHERE role = 'admin'));
 
 DROP POLICY IF EXISTS "Users can update own wallet" ON gamification_wallets;
 CREATE POLICY "Users can update own wallet"
@@ -316,8 +316,8 @@ CREATE POLICY "Authenticated users can view vitals ranges"
 CREATE POLICY "Admins can manage vitals ranges"
   ON vitals_ranges FOR ALL
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'))
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role = 'admin'))
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role = 'admin'));
 
 -- RLS Policies for quiz_questions (read-only for users)
 CREATE POLICY "Authenticated users can view quiz questions"
@@ -328,8 +328,8 @@ CREATE POLICY "Authenticated users can view quiz questions"
 CREATE POLICY "Admins can manage quiz questions"
   ON quiz_questions FOR ALL
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'))
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role = 'admin'))
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role = 'admin'));
 
 -- RLS Policies for triage_samples
 CREATE POLICY "Authenticated users can view triage samples"
@@ -340,7 +340,7 @@ CREATE POLICY "Authenticated users can view triage samples"
 CREATE POLICY "Staff can create triage samples"
   ON triage_samples FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('nurse', 'doctor', 'admin')));
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('nurse', 'doctor', 'admin')));
 
 -- RLS Policies for triage_records
 CREATE POLICY "Authenticated users can view triage records"
@@ -351,44 +351,44 @@ CREATE POLICY "Authenticated users can view triage records"
 CREATE POLICY "Staff can create triage records"
   ON triage_records FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')));
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')));
 
 CREATE POLICY "Staff can update triage records"
   ON triage_records FOR UPDATE
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')));
 
 -- RLS Policies for inventory_discrepancies
 CREATE POLICY "Staff can view inventory discrepancies"
   ON inventory_discrepancies FOR SELECT
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
 
 CREATE POLICY "Staff can create inventory discrepancies"
   ON inventory_discrepancies FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
 
 CREATE POLICY "Staff can update inventory discrepancies"
   ON inventory_discrepancies FOR UPDATE
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
 
 -- RLS Policies for stock_batches
 CREATE POLICY "Staff can view stock batches"
   ON stock_batches FOR SELECT
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
 
 CREATE POLICY "Staff can create stock batches"
   ON stock_batches FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
 
 CREATE POLICY "Staff can update stock batches"
   ON stock_batches FOR UPDATE
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')));
 
 -- RLS Policies for care_tasks
 CREATE POLICY "Staff can view care tasks"
@@ -399,12 +399,12 @@ CREATE POLICY "Staff can view care tasks"
 CREATE POLICY "Staff can create care tasks"
   ON care_tasks FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'pharmacist', 'admin')));
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'pharmacist', 'admin')));
 
 CREATE POLICY "Staff can update care tasks"
   ON care_tasks FOR UPDATE
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'pharmacist', 'admin')));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'pharmacist', 'admin')));
 
 -- RLS Policies for patient_merges
 CREATE POLICY "Staff can view patient merges"
@@ -415,7 +415,7 @@ CREATE POLICY "Staff can view patient merges"
 CREATE POLICY "Authorized staff can create patient merges"
   ON patient_merges FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('nurse', 'doctor', 'admin')));
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role IN ('nurse', 'doctor', 'admin')));
 
 -- RLS Policies for daily_counts
 CREATE POLICY "Authenticated users can view daily counts"
@@ -450,8 +450,8 @@ CREATE POLICY "Authenticated users can view message templates"
 CREATE POLICY "Admins can manage message templates"
   ON message_templates FOR ALL
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'))
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'));
+  USING (auth.uid()::text IN (SELECT id FROM app_users WHERE role = 'admin'))
+  WITH CHECK (auth.uid()::text IN (SELECT id FROM app_users WHERE role = 'admin'));
 
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_game_sessions_volunteer ON game_sessions(volunteer_id);

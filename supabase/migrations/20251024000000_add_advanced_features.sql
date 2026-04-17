@@ -190,7 +190,7 @@ CREATE POLICY "Pharmacists and admins can view reminders"
   ON medication_reminders FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')
     )
   );
@@ -199,7 +199,7 @@ CREATE POLICY "Pharmacists and admins can create reminders"
   ON medication_reminders FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')
     )
   );
@@ -208,7 +208,7 @@ CREATE POLICY "Pharmacists and admins can update reminders"
   ON medication_reminders FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')
     )
   );
@@ -223,7 +223,7 @@ CREATE POLICY "Doctors and nurses can create lab orders"
   ON lab_orders FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('doctor', 'nurse', 'admin')
     )
   );
@@ -232,7 +232,7 @@ CREATE POLICY "Doctors and nurses can update lab orders"
   ON lab_orders FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('doctor', 'nurse', 'admin')
     )
   );
@@ -247,7 +247,7 @@ CREATE POLICY "Authorized staff can create lab results"
   ON lab_results FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('doctor', 'nurse', 'admin')
     )
   );
@@ -256,7 +256,7 @@ CREATE POLICY "Authorized staff can update lab results"
   ON lab_results FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('doctor', 'nurse', 'admin')
     )
   );
@@ -271,7 +271,7 @@ CREATE POLICY "Staff can create appointments"
   ON appointments FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
     )
   );
@@ -280,7 +280,7 @@ CREATE POLICY "Staff can update appointments"
   ON appointments FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
     )
   );
@@ -295,7 +295,7 @@ CREATE POLICY "Staff can create waitlist entries"
   ON waitlist FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
     )
   );
@@ -304,7 +304,7 @@ CREATE POLICY "Staff can update waitlist entries"
   ON waitlist FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
     )
   );

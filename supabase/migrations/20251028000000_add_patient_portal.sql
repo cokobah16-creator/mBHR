@@ -318,7 +318,7 @@ CREATE POLICY "Staff can view patient portal accounts"
   ON patient_portal_users FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
@@ -327,7 +327,7 @@ CREATE POLICY "Admins can manage patient portal accounts"
   ON patient_portal_users FOR ALL
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role = 'admin'
     )
   );
@@ -350,7 +350,7 @@ CREATE POLICY "Admins can view all patient sessions"
   ON patient_portal_sessions FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role = 'admin'
     )
   );
@@ -389,7 +389,7 @@ CREATE POLICY "Staff can create patient notifications"
   ON patient_notifications FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw', 'pharmacist')
     )
   );
@@ -438,7 +438,7 @@ CREATE POLICY "Staff can view patient messages"
   ON patient_messages FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
@@ -447,7 +447,7 @@ CREATE POLICY "Staff can send messages to patients"
   ON patient_messages FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
     AND sender_type = 'staff'
@@ -498,7 +498,7 @@ CREATE POLICY "Staff can view all appointment requests"
   ON patient_appointment_requests FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
@@ -507,7 +507,7 @@ CREATE POLICY "Staff can review appointment requests"
   ON patient_appointment_requests FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
@@ -541,7 +541,7 @@ CREATE POLICY "Staff can view patient documents"
   ON patient_documents FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
@@ -550,7 +550,7 @@ CREATE POLICY "Staff can upload documents for patients"
   ON patient_documents FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
@@ -583,7 +583,7 @@ CREATE POLICY "Staff can view patient consent records"
   ON patient_consent_records FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
@@ -596,7 +596,7 @@ CREATE POLICY "Admins can view all access logs"
   ON patient_portal_access_logs FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role = 'admin'
     )
   );
