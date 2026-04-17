@@ -35,7 +35,7 @@
 -- Create conflict_change_deltas table for granular field tracking
 CREATE TABLE IF NOT EXISTS conflict_change_deltas (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  conflict_id uuid NOT NULL REFERENCES conflict_resolutions(id) ON DELETE CASCADE,
+  conflict_id text NOT NULL REFERENCES conflict_resolutions(id) ON DELETE CASCADE,
   field_name text NOT NULL,
   old_value jsonb,
   new_value jsonb,
