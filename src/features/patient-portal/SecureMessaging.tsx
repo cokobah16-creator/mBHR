@@ -5,8 +5,8 @@ import { formatNigerianDate } from "@/utils/dateFormat";
 import {
   PaperAirplaneIcon,
   InboxIcon,
-  PaperClipIcon,
   UserCircleIcon,
+  WifiIcon,
 } from "@heroicons/react/24/outline";
 
 interface Message {
@@ -21,6 +21,13 @@ interface Message {
   staff_id?: string;
 }
 
+const QUICK_MESSAGES = [
+  "I am feeling pain",
+  "I need help",
+  "I missed my medication",
+  "I have a question",
+];
+
 export function SecureMessaging() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,11 +37,13 @@ export function SecureMessaging() {
   const [showCompose, setShowCompose] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [newMessage, setNewMessage] = useState({ subject: "", body: "" });
+  const isOffline = !supabase;
 
   useEffect(() => {
     loadMessages();
 
-    // Set up real-time subscription
+    if (!supabase) return;
+
     const channel = supabase
       .channel("secure_messages")
       .on(
@@ -51,7 +60,7 @@ export function SecureMessaging() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase!.removeChannel(channel);
     };
   }, []);
 
@@ -69,6 +78,11 @@ export function SecureMessaging() {
       const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId) {
         window.location.href = "/patient/login";
+        return;
+      }
+
+      if (!supabase) {
+        setMessages([]);
         return;
       }
 
@@ -95,6 +109,28 @@ export function SecureMessaging() {
       return;
     }
 
+    if (!supabase) {
+      const offline: Message = {
+        id: crypto.randomUUID(),
+        subject: newMessage.subject,
+        body: newMessage.body,
+        from_patient: true,
+        from_name: "You",
+        created_at: new Date().toISOString(),
+        read: true,
+        patient_id: "",
+      };
+      const queue: Message[] = JSON.parse(
+        localStorage.getItem("patient_message_queue") || "[]",
+      );
+      queue.push(offline);
+      localStorage.setItem("patient_message_queue", JSON.stringify(queue));
+      setSuccess("Message saved. It will be sent when you connect.");
+      setNewMessage({ subject: "", body: "" });
+      setShowCompose(false);
+      return;
+    }
+
     setSending(true);
     setError("");
     setSuccess("");
@@ -110,9 +146,13 @@ export function SecureMessaging() {
 
       const { data: patient } = await supabase
         .from("patients")
-        .select("name")
+        .select("given_name, family_name")
         .eq("id", portalUser.patientId)
         .maybeSingle();
+
+      const fromName = patient
+        ? `${patient.given_name} ${patient.family_name}`
+        : "Patient";
 
       const { error: insertError } = await supabase
         .from("patient_secure_messages")
@@ -121,7 +161,7 @@ export function SecureMessaging() {
           subject: newMessage.subject,
           body: newMessage.body,
           from_patient: true,
-          from_name: patient?.name || "Patient",
+          from_name: fromName,
           read: false,
         });
 
@@ -140,6 +180,7 @@ export function SecureMessaging() {
   };
 
   const markAsRead = async (messageId: string) => {
+    if (!supabase) return;
     try {
       await supabase
         .from("patient_secure_messages")
@@ -192,6 +233,15 @@ export function SecureMessaging() {
           </button>
         </div>
 
+        {isOffline && (
+          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
+            <WifiIcon className="w-5 h-5 text-amber-600 flex-shrink-0" />
+            <p className="text-sm text-amber-800">
+              Offline mode — messages will sync when you connect to the internet.
+            </p>
+          </div>
+        )}
+
         {error && (
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
             <p className="text-sm text-red-800">{error}</p>
@@ -225,6 +275,23 @@ export function SecureMessaging() {
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Quick Messages
+                </label>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {QUICK_MESSAGES.map((msg) => (
+                    <button
+                      key={msg}
+                      type="button"
+                      onClick={() =>
+                        setNewMessage({ ...newMessage, body: msg })
+                      }
+                      className="px-4 py-2 rounded-full text-sm font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors min-h-[44px]"
+                    >
+                      {msg}
+                    </button>
+                  ))}
+                </div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Message
                 </label>
@@ -299,7 +366,9 @@ export function SecureMessaging() {
                   No messages
                 </h3>
                 <p className="text-gray-600">
-                  Start a conversation with your healthcare provider
+                  {isOffline
+                    ? "Messages will appear here when you connect to the internet."
+                    : "Start a conversation with your healthcare provider"}
                 </p>
               </div>
             ) : (

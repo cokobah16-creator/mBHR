@@ -180,6 +180,16 @@ const Referrals = lazy(() =>
     default: m.Referrals,
   })),
 );
+const OutreachFinder = lazy(() =>
+  import("@/features/patient-portal/OutreachFinder").then((m) => ({
+    default: m.OutreachFinder,
+  })),
+);
+const CaregiverSetup = lazy(() =>
+  import("@/features/patient-portal/CaregiverSetup").then((m) => ({
+    default: m.CaregiverSetup,
+  })),
+);
 const HealthDataExport = lazy(() =>
   import("@/features/patient-portal/HealthDataExport").then((m) => ({
     default: m.HealthDataExport,
@@ -276,14 +286,7 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
       const sessionToken = localStorage.getItem("patient_session_token");
       const portalUser = localStorage.getItem("patient_portal_user");
 
-      console.log("[PatientProtectedRoute] Validating session...", {
-        hasToken: !!sessionToken,
-        hasUser: !!portalUser,
-        token: sessionToken?.substring(0, 8) + "...",
-      });
-
       if (!sessionToken || !portalUser) {
-        console.log("[PatientProtectedRoute] No session or user found");
         setIsValid(false);
         setIsValidating(false);
         return;
@@ -292,16 +295,10 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
       try {
         const { validateAndRefreshPatientSession } =
           await import("@/utils/sessionManager");
-        console.log(
-          "[PatientProtectedRoute] Validating and refreshing session...",
-        );
 
         const result = await validateAndRefreshPatientSession(sessionToken);
 
-        console.log("[PatientProtectedRoute] Validation result:", result);
-
         if (!result.valid) {
-          console.log("[PatientProtectedRoute] Session invalid or expired");
           localStorage.removeItem("patient_session_token");
           localStorage.removeItem("patient_portal_user");
           setIsValid(false);
@@ -309,11 +306,6 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (result.needsRefresh) {
-          console.log("[PatientProtectedRoute] Session was refreshed");
-        }
-
-        console.log("[PatientProtectedRoute] Session is valid!");
         setIsValid(true);
         setIsValidating(false);
       } catch (err) {
@@ -421,6 +413,8 @@ function App() {
                       path="/data-sharing"
                       element={<DataSharingWrapper />}
                     />
+                    <Route path="/outreach" element={<OutreachFinder />} />
+                    <Route path="/caregiver/add" element={<CaregiverSetup />} />
                     <Route
                       path="/"
                       element={<Navigate to="/patient/dashboard" replace />}

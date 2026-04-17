@@ -254,6 +254,17 @@ export async function validateAndRefreshPatientSession(
   sessionToken: string,
 ): Promise<{ valid: boolean; needsRefresh: boolean; expiresAt?: Date }> {
   try {
+    if (!supabase) {
+      const { validateSession } = await import("@/services/patientPortalAuth");
+      const user = await validateSession(sessionToken);
+      if (!user) return { valid: false, needsRefresh: false };
+      return {
+        valid: true,
+        needsRefresh: false,
+        expiresAt: user.sessionExpiresAt ? new Date(user.sessionExpiresAt) : undefined,
+      };
+    }
+
     const { data: session, error } = await supabase
       .from("patient_portal_sessions")
       .select("id, expires_at, is_active, last_activity_at")

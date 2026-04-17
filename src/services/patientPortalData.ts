@@ -30,6 +30,54 @@ export async function getPatientDashboard(
   try {
     await logAccess(portalUserId, patientId, 'view', 'dashboard')
 
+    if (!supabase) {
+      const { db } = await import('@/db')
+      const patient = await db.patients.get(patientId)
+      if (!patient) return null
+      const vitalsArr = await db.vitals.where('patientId').equals(patientId).toArray()
+      const latestVital = vitalsArr.sort(
+        (a, b) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime()
+      )[0]
+      const medsArr = await db.dispenses.where('patientId').equals(patientId).toArray()
+      const recentMeds = medsArr
+        .sort((a, b) => new Date(b.dispensedAt).getTime() - new Date(a.dispensedAt).getTime())
+        .slice(0, 10)
+      return {
+        patient: {
+          id: patient.id,
+          givenName: patient.givenName,
+          familyName: patient.familyName,
+          dob: patient.dob,
+          sex: patient.sex,
+          phone: patient.phone || '',
+          email: patient.email,
+        },
+        upcomingAppointments: [],
+        recentVitals: latestVital
+          ? {
+              takenAt: new Date(latestVital.takenAt),
+              heightCm: latestVital.heightCm,
+              weightKg: latestVital.weightKg,
+              bmi: latestVital.bmi,
+              tempC: latestVital.tempC,
+              pulseBpm: latestVital.pulseBpm,
+              systolic: latestVital.systolic,
+              diastolic: latestVital.diastolic,
+              spo2: latestVital.spo2,
+            }
+          : undefined,
+        activeMedications: recentMeds.map(m => ({
+          medicationName: m.itemName,
+          dosage: m.dosage,
+          directions: m.directions,
+          dispensedAt: new Date(m.dispensedAt),
+        })),
+        unreadMessages: 0,
+        unreadNotifications: 0,
+        recentLabResults: [],
+      }
+    }
+
     const { data: patient, error: patientError } = await supabase
       .from('patients')
       .select('*')
