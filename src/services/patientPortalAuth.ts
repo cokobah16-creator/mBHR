@@ -6,6 +6,8 @@
  */
 
 import { db } from "@/db";
+import { supabase } from "@/lib/supabase";
+import { normalizePhone } from "@/utils/phone";
 import * as logger from "@/lib/logger";
 import type { PatientPortalAuthResponse } from "@/types/patientPortal";
 
@@ -125,30 +127,115 @@ export async function registerPatientPortalAccount(
       };
     }
 
-    const patientId = crypto.randomUUID();
+    // --- Try to find existing patient record (staff-registered) before creating new ---
+    let patientId: string | null = null;
+    let existingPatientName: { givenName: string; familyName: string } | null = null;
+
+    // 1. Check Supabase first (the source of truth for staff-registered patients)
+    if (supabase && (email || phone)) {
+      try {
+        const normPhone = normalizePhone(phone);
+        const orClauses: string[] = [];
+        if (email) orClauses.push(`email.eq.${email.toLowerCase().trim()}`);
+        if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
+        if (phone) orClauses.push(`phone.eq.${phone.trim()}`);
+
+        const { data: match } = await supabase
+          .from("patients")
+          .select("id, given_name, family_name, dob, portal_enabled")
+          .or(orClauses.join(","))
+          .maybeSingle();
+
+        if (match) {
+          if (!match.portal_enabled) {
+            return {
+              success: false,
+              error:
+                "Your healthcare provider has not enabled portal access for you yet. Please ask them to enable it.",
+            };
+          }
+          if (match.dob !== dob) {
+            return {
+              success: false,
+              error:
+                "Date of birth does not match our records. Please check and try again.",
+            };
+          }
+          patientId = match.id;
+          existingPatientName = { givenName: match.given_name, familyName: match.family_name };
+          logger.info("Linked registration to existing Supabase patient:", patientId);
+        }
+      } catch (sbError) {
+        logger.warn("Supabase patient lookup failed, falling back to local:", sbError);
+      }
+    }
+
+    // 2. Check local Dexie if no Supabase match
+    if (!patientId) {
+      const localMatches = await db.patients
+        .where("email")
+        .equalsIgnoreCase(email || "___nomatch___")
+        .or("phone")
+        .equals(normalizePhone(phone) || phone || "___nomatch___")
+        .toArray();
+
+      const localMatch = localMatches.find(
+        (p) =>
+          (normalizedEmail && normalize(p.email) === normalizedEmail) ||
+          (normalizedPhone && normalize(p.phone) === normalizedPhone),
+      );
+
+      if (localMatch) {
+        if (!localMatch.portalEnabled) {
+          return {
+            success: false,
+            error:
+              "Your healthcare provider has not enabled portal access for you yet. Please ask them to enable it.",
+          };
+        }
+        if (localMatch.dob !== dob) {
+          return {
+            success: false,
+            error:
+              "Date of birth does not match our records. Please check and try again.",
+          };
+        }
+        patientId = localMatch.id;
+        existingPatientName = { givenName: localMatch.givenName, familyName: localMatch.familyName };
+        logger.info("Linked registration to existing local patient:", patientId);
+      }
+    }
+
     const now = new Date();
 
-    await db.patients.add({
-      id: patientId,
-      givenName,
-      familyName,
-      sex: "other",
-      dob,
-      phone: phone || "",
-      address: "",
-      state: "",
-      lga: "",
-      createdAt: now,
-      updatedAt: now,
-    });
+    // 3. No existing record found — create a new self-registered patient
+    if (!patientId) {
+      patientId = crypto.randomUUID();
+      await db.patients.add({
+        id: patientId,
+        givenName,
+        familyName,
+        sex: "other",
+        dob,
+        phone: phone || "",
+        address: "",
+        state: "",
+        lga: "",
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    // Use existing patient's name if we found a match
+    const resolvedName = existingPatientName || { givenName, familyName };
 
     const hashedPin = pin ? await hashPIN(pin) : undefined;
 
     const portalUser: LocalPortalUser = {
       id: crypto.randomUUID(),
       patientId,
-      givenName,
-      familyName,
+      givenName: resolvedName.givenName,
+      familyName: resolvedName.familyName,
       email: email || undefined,
       phone: phone || undefined,
       dob,
@@ -198,6 +285,29 @@ export async function loginPatientPortal(
     );
 
     if (!user) {
+      // Give a more helpful error if we can detect they're a portal-enabled patient
+      if (supabase) {
+        try {
+          const normPhone = normalizePhone(contact);
+          const orClauses: string[] = [`email.eq.${contact.toLowerCase().trim()}`];
+          if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
+
+          const { data: match } = await supabase
+            .from("patients")
+            .select("id, portal_enabled")
+            .or(orClauses.join(","))
+            .maybeSingle();
+
+          if (match && match.portal_enabled) {
+            return {
+              success: false,
+              error: "No portal account found. Please register first using the details your clinic has on file.",
+            };
+          }
+        } catch {
+          // ignore
+        }
+      }
       return {
         success: false,
         error: "No account found. Please register first.",
