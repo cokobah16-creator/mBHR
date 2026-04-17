@@ -1,87 +1,73 @@
-import { useState, startTransition, useRef } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowRightIcon, PhoneIcon } from "@heroicons/react/24/outline";
+import { ArrowRightIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
+import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
 
-const loginSchema = z.object({
-  contact: z.string().min(3, "Please enter your phone number or email address"),
-  dob: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
-    .optional()
-    .or(z.literal("")),
-  pin: z.string().optional(),
+const schema = z.object({
+  email:    z.string().email("Please enter a valid email address"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-type LoginForm = z.infer<typeof loginSchema>;
+type LoginForm = z.infer<typeof schema>;
 
 export function PatientLogin() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [usePIN, setUsePIN] = useState(false);
-  const [pinDigits, setPinDigits] = useState(["", "", "", "", "", ""]);
-  const pinRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const [error, setError]     = useState("");
 
   const form = useForm<LoginForm>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { contact: "", dob: "", pin: "" },
+    resolver: zodResolver(schema),
+    defaultValues: { email: "", password: "" },
   });
 
-  const handlePinInput = (index: number, value: string) => {
-    if (!/^\d?$/.test(value)) return;
-    const updated = [...pinDigits];
-    updated[index] = value;
-    setPinDigits(updated);
-    if (value && index < 5) {
-      pinRefs.current[index + 1]?.focus();
+  const handleSupabaseLogin = async (data: LoginForm) => {
+    const authError = await login(data.email, data.password);
+    if (authError) {
+      // Translate common Supabase error messages into patient-friendly language
+      const msg = authError.message.toLowerCase();
+      if (msg.includes("invalid login") || msg.includes("invalid credentials")) {
+        setError("Email or password is incorrect. Please try again.");
+      } else if (msg.includes("email not confirmed")) {
+        setError("Please check your email and confirm your account before logging in.");
+      } else if (msg.includes("too many requests")) {
+        setError("Too many login attempts. Please wait a moment and try again.");
+      } else {
+        setError(authError.message);
+      }
+      return;
+    }
+    navigate("/patient/dashboard");
+  };
+
+  const handleOfflineLogin = async (data: LoginForm) => {
+    // Offline fallback: contact = email, credential = password treated as DOB or PIN
+    const result = await loginPatientPortal(data.email, data.password, "dob").catch(() => null);
+    if (result?.success && result.sessionToken) {
+      localStorage.setItem("patient_session_token", result.sessionToken);
+      localStorage.setItem("patient_portal_user", JSON.stringify(result.portalUser));
+      navigate("/patient/dashboard");
+    } else {
+      setError(result?.error || "No account found. Please register first.");
     }
   };
 
-  const handlePinKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === "Backspace" && !pinDigits[index] && index > 0) {
-      pinRefs.current[index - 1]?.focus();
-    }
-  };
-
-  const handleLogin = async (data: LoginForm) => {
+  const handleSubmit = async (data: LoginForm) => {
     setLoading(true);
     setError("");
-
     try {
-      let result;
-      if (usePIN) {
-        const pin = pinDigits.join("");
-        if (pin.length !== 6) {
-          setError("Please enter your full 6-digit PIN");
-          setLoading(false);
-          return;
-        }
-        result = await loginPatientPortal(data.contact, pin, "pin");
+      if (isSupabaseEnabled) {
+        await handleSupabaseLogin(data);
       } else {
-        if (!data.dob) {
-          setError("Please enter your date of birth");
-          setLoading(false);
-          return;
-        }
-        result = await loginPatientPortal(data.contact, data.dob, "dob");
-      }
-
-      if (result.success && result.sessionToken) {
-        localStorage.setItem("patient_session_token", result.sessionToken);
-        localStorage.setItem(
-          "patient_portal_user",
-          JSON.stringify(result.portalUser),
-        );
-        startTransition(() => navigate("/patient/dashboard"));
-      } else {
-        setError(result.error || "Could not log in");
+        await handleOfflineLogin(data);
       }
     } catch {
-      setError("An error occurred. Please try again.");
+      setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -93,16 +79,19 @@ export function PatientLogin() {
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-              <PhoneIcon className="w-8 h-8 text-blue-600" />
+              <ShieldCheckIcon className="w-8 h-8 text-blue-600" />
             </div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              Patient Portal Login
-            </h1>
-            <p className="text-gray-600">
-              Enter the email or phone number you registered with, plus your{" "}
-              {usePIN ? "6-digit PIN" : "date of birth"}.
-            </p>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Patient Portal Login</h1>
+            <p className="text-gray-600">Sign in with your email and password.</p>
           </div>
+
+          {!isSupabaseEnabled && (
+            <div className="mb-6 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-xs text-yellow-800">
+                Running in offline mode — data is stored on this device only.
+              </p>
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -110,85 +99,42 @@ export function PatientLogin() {
             </div>
           )}
 
-          <form onSubmit={form.handleSubmit(handleLogin)} className="space-y-6">
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-5">
             <div>
-              <label
-                htmlFor="contact"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
-                Email or Phone Number
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                Email Address
               </label>
               <input
-                {...form.register("contact")}
-                type="text"
-                id="contact"
-                placeholder="email@example.com or +234 ..."
+                {...form.register("email")}
+                type="email"
+                id="email"
+                placeholder="your.email@example.com"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={loading}
+                autoComplete="email"
               />
-              {form.formState.errors.contact && (
-                <p className="mt-2 text-sm text-red-600">
-                  {form.formState.errors.contact.message}
-                </p>
+              {form.formState.errors.email && (
+                <p className="mt-2 text-sm text-red-600">{form.formState.errors.email.message}</p>
               )}
             </div>
 
-            {usePIN ? (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-3">
-                  6-Digit PIN
-                </label>
-                <div className="flex gap-2 justify-center">
-                  {pinDigits.map((digit, i) => (
-                    <input
-                      key={i}
-                      ref={(el) => { pinRefs.current[i] = el; }}
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={1}
-                      value={digit}
-                      onChange={(e) => handlePinInput(i, e.target.value)}
-                      onKeyDown={(e) => handlePinKeyDown(i, e)}
-                      className="w-12 h-14 text-center text-xl font-bold border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      disabled={loading}
-                    />
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div>
-                <label
-                  htmlFor="dob"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Date of Birth
-                </label>
-                <input
-                  {...form.register("dob")}
-                  type="date"
-                  id="dob"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={loading}
-                />
-                {form.formState.errors.dob && (
-                  <p className="mt-2 text-sm text-red-600">
-                    {form.formState.errors.dob.message}
-                  </p>
-                )}
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                setUsePIN(!usePIN);
-                setError("");
-                setPinDigits(["", "", "", "", "", ""]);
-              }}
-              className="w-full text-sm text-blue-600 hover:text-blue-700 font-medium py-1"
-            >
-              {usePIN ? "Use Date of Birth instead" : "Use PIN instead"}
-            </button>
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+                Password
+              </label>
+              <input
+                {...form.register("password")}
+                type="password"
+                id="password"
+                placeholder="Your password"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={loading}
+                autoComplete="current-password"
+              />
+              {form.formState.errors.password && (
+                <p className="mt-2 text-sm text-red-600">{form.formState.errors.password.message}</p>
+              )}
+            </div>
 
             <button
               type="submit"
@@ -223,7 +169,7 @@ export function PatientLogin() {
           </form>
         </div>
 
-        <div className="mt-6 text-center space-y-3">
+        <div className="mt-6 text-center space-y-2">
           <button
             type="button"
             onClick={() => navigate("/patient")}
@@ -231,10 +177,7 @@ export function PatientLogin() {
           >
             Back to Home
           </button>
-          <div className="text-sm text-gray-600">
-            <p>Med Bridge Health Reach</p>
-            <p className="mt-1">Secure patient portal powered by mBHR</p>
-          </div>
+          <p className="text-sm text-gray-500">Med Bridge Health Reach · Secure patient portal</p>
         </div>
       </div>
     </div>
