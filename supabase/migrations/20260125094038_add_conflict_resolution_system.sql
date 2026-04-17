@@ -106,6 +106,11 @@ CREATE TABLE IF NOT EXISTS auto_resolution_rules (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Add columns to conflict_resolutions if created by earlier migration without them
+ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS entity_type text;
+ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS entity_id text;
+ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 5;
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_status ON conflict_resolutions(status);
 CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_entity ON conflict_resolutions(entity_type, entity_id);
