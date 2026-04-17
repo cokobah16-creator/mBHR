@@ -485,13 +485,23 @@ CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_status ON conflict_resolutio
 CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_type ON conflict_resolutions(conflict_type);
 
 -- Create updated_at triggers
+DROP TRIGGER IF EXISTS update_game_sessions_updated_at ON game_sessions;
 CREATE TRIGGER update_game_sessions_updated_at BEFORE UPDATE ON game_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_gamification_wallets_updated_at ON gamification_wallets;
 CREATE TRIGGER update_gamification_wallets_updated_at BEFORE UPDATE ON gamification_wallets FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_vitals_ranges_updated_at ON vitals_ranges;
 CREATE TRIGGER update_vitals_ranges_updated_at BEFORE UPDATE ON vitals_ranges FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_quiz_questions_updated_at ON quiz_questions;
 CREATE TRIGGER update_quiz_questions_updated_at BEFORE UPDATE ON quiz_questions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_triage_records_updated_at ON triage_records;
 CREATE TRIGGER update_triage_records_updated_at BEFORE UPDATE ON triage_records FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_inventory_discrepancies_updated_at ON inventory_discrepancies;
 CREATE TRIGGER update_inventory_discrepancies_updated_at BEFORE UPDATE ON inventory_discrepancies FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_stock_batches_updated_at ON stock_batches;
 CREATE TRIGGER update_stock_batches_updated_at BEFORE UPDATE ON stock_batches FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_care_tasks_updated_at ON care_tasks;
 CREATE TRIGGER update_care_tasks_updated_at BEFORE UPDATE ON care_tasks FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_daily_counts_updated_at ON daily_counts;
 CREATE TRIGGER update_daily_counts_updated_at BEFORE UPDATE ON daily_counts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_message_templates_updated_at ON message_templates;
 CREATE TRIGGER update_message_templates_updated_at BEFORE UPDATE ON message_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
