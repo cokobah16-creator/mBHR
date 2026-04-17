@@ -10,6 +10,7 @@ import { seedDemo } from "@/db/seedMbhr";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { Home } from "@/pages/Home";
 import { startPortalSyncWorker } from "@/services/portalSyncWorker";
+import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 
 // Core pages - loaded eagerly for initial navigation
 const Dashboard = lazy(() =>
@@ -246,6 +247,13 @@ const Users = lazy(() =>
   import("@/pages/Users").then((m) => ({ default: m.Users })),
 );
 
+// Staff patient records (Supabase-backed)
+const StaffPatientDashboard = lazy(() =>
+  import("@/pages/staff/StaffPatientDashboard").then((m) => ({
+    default: m.StaffPatientDashboard,
+  })),
+);
+
 // Doctor features
 const DoctorDashboard = lazy(() =>
   import("@/pages/DoctorDashboard").then((m) => ({
@@ -283,6 +291,21 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     const validateSession = async () => {
+      // 1. If Supabase is configured, trust the Supabase session first
+      if (isSupabaseEnabled && supabase) {
+        const { data } = await supabase.auth.getSession();
+        if (data.session) {
+          setIsValid(true);
+          setIsValidating(false);
+          return;
+        }
+        // No Supabase session — redirect to login
+        setIsValid(false);
+        setIsValidating(false);
+        return;
+      }
+
+      // 2. Offline fallback: validate legacy localStorage session token
       const sessionToken = localStorage.getItem("patient_session_token");
       const portalUser = localStorage.getItem("patient_portal_user");
 
@@ -444,6 +467,14 @@ function App() {
                 <Layout>
                   <Routes>
                     <Route path="/dashboard" element={<Dashboard />} />
+                    <Route
+                      path="/staff/patients"
+                      element={
+                        <RequireRoles roles={["doctor", "nurse", "admin", "volunteer"]}>
+                          <StaffPatientDashboard />
+                        </RequireRoles>
+                      }
+                    />
                     <Route
                       path="/doctor/dashboard"
                       element={
