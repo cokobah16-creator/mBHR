@@ -83,22 +83,28 @@ ALTER TABLE consultation_reviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE protocol_library ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for patient_flags
+DROP POLICY IF EXISTS "Staff can view flags in their organizations" ON patient_flags;
 CREATE POLICY "Staff can view flags in their organizations" ON patient_flags FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+DROP POLICY IF EXISTS "Staff can create flags in their organizations" ON patient_flags;
 CREATE POLICY "Staff can create flags in their organizations" ON patient_flags FOR INSERT TO authenticated
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+DROP POLICY IF EXISTS "Staff can update flags in their organizations" ON patient_flags;
 CREATE POLICY "Staff can update flags in their organizations" ON patient_flags FOR UPDATE TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
 -- RLS Policies for referrals
+DROP POLICY IF EXISTS "Staff can view referrals in their organizations" ON referrals;
 CREATE POLICY "Staff can view referrals in their organizations" ON referrals FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+DROP POLICY IF EXISTS "Doctors can manage referrals in their organizations" ON referrals;
 CREATE POLICY "Doctors can manage referrals in their organizations" ON referrals FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
 -- RLS Policies for follow_up_schedules
+DROP POLICY IF EXISTS "Staff can view follow-ups in their organizations" ON follow_up_schedules;
 CREATE POLICY "Staff can view follow-ups in their organizations" ON follow_up_schedules FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 CREATE POLICY "Clinical staff can manage follow-ups" ON follow_up_schedules FOR ALL TO authenticated
@@ -122,6 +128,7 @@ CREATE POLICY "Pharmacists can manage site formulary" ON site_formulary FOR ALL 
 -- RLS Policies for doctor_analytics
 CREATE POLICY "Staff can view doctor analytics" ON doctor_analytics FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()) OR doctor_id = auth.uid());
+DROP POLICY IF EXISTS "System can manage doctor analytics" ON doctor_analytics;
 CREATE POLICY "System can manage doctor analytics" ON doctor_analytics FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
@@ -129,6 +136,7 @@ CREATE POLICY "System can manage doctor analytics" ON doctor_analytics FOR ALL T
 -- RLS Policies for consultation_reviews
 CREATE POLICY "Staff can view consultation reviews" ON consultation_reviews FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()) OR reviewed_doctor_id = auth.uid() OR reviewing_doctor_id = auth.uid());
+DROP POLICY IF EXISTS "Supervising doctors can manage reviews" ON consultation_reviews;
 CREATE POLICY "Supervising doctors can manage reviews" ON consultation_reviews FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
@@ -141,9 +149,15 @@ CREATE POLICY "Doctors can manage protocols" ON protocol_library FOR ALL TO auth
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
 -- Triggers
+DROP TRIGGER IF EXISTS referrals_updated_at ON referrals;
 CREATE TRIGGER referrals_updated_at BEFORE UPDATE ON referrals FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS follow_up_schedules_updated_at ON follow_up_schedules;
 CREATE TRIGGER follow_up_schedules_updated_at BEFORE UPDATE ON follow_up_schedules FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS prescription_templates_updated_at ON prescription_templates;
 CREATE TRIGGER prescription_templates_updated_at BEFORE UPDATE ON prescription_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS site_formulary_updated_at ON site_formulary;
 CREATE TRIGGER site_formulary_updated_at BEFORE UPDATE ON site_formulary FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS doctor_analytics_updated_at ON doctor_analytics;
 CREATE TRIGGER doctor_analytics_updated_at BEFORE UPDATE ON doctor_analytics FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS protocol_library_updated_at ON protocol_library;
 CREATE TRIGGER protocol_library_updated_at BEFORE UPDATE ON protocol_library FOR EACH ROW EXECUTE FUNCTION update_updated_at();

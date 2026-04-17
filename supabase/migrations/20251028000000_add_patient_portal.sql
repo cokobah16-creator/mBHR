@@ -359,6 +359,7 @@ CREATE POLICY "Admins can view all patient sessions"
 -- ROW LEVEL SECURITY POLICIES - PATIENT NOTIFICATIONS
 -- ============================================================================
 
+DROP POLICY IF EXISTS "Patients can view own notifications" ON patient_notifications;
 CREATE POLICY "Patients can view own notifications"
   ON patient_notifications FOR SELECT
   TO authenticated
@@ -368,6 +369,7 @@ CREATE POLICY "Patients can view own notifications"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can update own notifications" ON patient_notifications;
 CREATE POLICY "Patients can update own notifications"
   ON patient_notifications FOR UPDATE
   TO authenticated
@@ -382,6 +384,7 @@ CREATE POLICY "Patients can update own notifications"
     )
   );
 
+DROP POLICY IF EXISTS "Staff can create patient notifications" ON patient_notifications;
 CREATE POLICY "Staff can create patient notifications"
   ON patient_notifications FOR INSERT
   TO authenticated
@@ -395,6 +398,7 @@ CREATE POLICY "Staff can create patient notifications"
 -- ROW LEVEL SECURITY POLICIES - PATIENT MESSAGES
 -- ============================================================================
 
+DROP POLICY IF EXISTS "Patients can view own messages" ON patient_messages;
 CREATE POLICY "Patients can view own messages"
   ON patient_messages FOR SELECT
   TO authenticated
@@ -404,6 +408,7 @@ CREATE POLICY "Patients can view own messages"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can send messages" ON patient_messages;
 CREATE POLICY "Patients can send messages"
   ON patient_messages FOR INSERT
   TO authenticated
@@ -453,6 +458,7 @@ CREATE POLICY "Staff can send messages to patients"
 -- ROW LEVEL SECURITY POLICIES - PATIENT APPOINTMENT REQUESTS
 -- ============================================================================
 
+DROP POLICY IF EXISTS "Patients can view own appointment requests" ON patient_appointment_requests;
 CREATE POLICY "Patients can view own appointment requests"
   ON patient_appointment_requests FOR SELECT
   TO authenticated
@@ -462,6 +468,7 @@ CREATE POLICY "Patients can view own appointment requests"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can create appointment requests" ON patient_appointment_requests;
 CREATE POLICY "Patients can create appointment requests"
   ON patient_appointment_requests FOR INSERT
   TO authenticated
@@ -509,6 +516,7 @@ CREATE POLICY "Staff can review appointment requests"
 -- ROW LEVEL SECURITY POLICIES - PATIENT DOCUMENTS
 -- ============================================================================
 
+DROP POLICY IF EXISTS "Patients can view own documents" ON patient_documents;
 CREATE POLICY "Patients can view own documents"
   ON patient_documents FOR SELECT
   TO authenticated
@@ -518,6 +526,7 @@ CREATE POLICY "Patients can view own documents"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can upload documents" ON patient_documents;
 CREATE POLICY "Patients can upload documents"
   ON patient_documents FOR INSERT
   TO authenticated
@@ -550,6 +559,7 @@ CREATE POLICY "Staff can upload documents for patients"
 -- ROW LEVEL SECURITY POLICIES - PATIENT CONSENT RECORDS
 -- ============================================================================
 
+DROP POLICY IF EXISTS "Patients can view own consent records" ON patient_consent_records;
 CREATE POLICY "Patients can view own consent records"
   ON patient_consent_records FOR SELECT
   TO authenticated
@@ -559,6 +569,7 @@ CREATE POLICY "Patients can view own consent records"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can create consent records" ON patient_consent_records;
 CREATE POLICY "Patients can create consent records"
   ON patient_consent_records FOR INSERT
   TO authenticated
@@ -706,21 +717,25 @@ CREATE POLICY "Patients can view own preferences"
 -- UPDATED_AT TRIGGERS
 -- ============================================================================
 
+DROP TRIGGER IF EXISTS update_patient_portal_users_updated_at ON patient_portal_users;
 CREATE TRIGGER update_patient_portal_users_updated_at
   BEFORE UPDATE ON patient_portal_users
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_patient_messages_updated_at ON patient_messages;
 CREATE TRIGGER update_patient_messages_updated_at
   BEFORE UPDATE ON patient_messages
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_patient_appointment_requests_updated_at ON patient_appointment_requests;
 CREATE TRIGGER update_patient_appointment_requests_updated_at
   BEFORE UPDATE ON patient_appointment_requests
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_patient_documents_updated_at ON patient_documents;
 CREATE TRIGGER update_patient_documents_updated_at
   BEFORE UPDATE ON patient_documents
   FOR EACH ROW

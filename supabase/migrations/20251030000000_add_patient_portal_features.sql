@@ -168,6 +168,7 @@ ALTER TABLE patient_portal_preferences ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for patient_secure_messages
 
+DROP POLICY IF EXISTS "Patients can view own messages" ON patient_secure_messages;
 CREATE POLICY "Patients can view own messages"
   ON patient_secure_messages FOR SELECT
   TO authenticated
@@ -178,6 +179,7 @@ CREATE POLICY "Patients can view own messages"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can send messages" ON patient_secure_messages;
 CREATE POLICY "Patients can send messages"
   ON patient_secure_messages FOR INSERT
   TO authenticated
@@ -200,6 +202,7 @@ CREATE POLICY "Staff can send messages"
 
 -- RLS Policies for patient_lab_results
 
+DROP POLICY IF EXISTS "Patients can view own lab results" ON patient_lab_results;
 CREATE POLICY "Patients can view own lab results"
   ON patient_lab_results FOR SELECT
   TO authenticated
@@ -223,6 +226,7 @@ CREATE POLICY "Staff can manage lab results"
 
 -- RLS Policies for patient_medical_conditions
 
+DROP POLICY IF EXISTS "Patients can view own conditions" ON patient_medical_conditions;
 CREATE POLICY "Patients can view own conditions"
   ON patient_medical_conditions FOR SELECT
   TO authenticated
@@ -250,6 +254,7 @@ CREATE POLICY "Staff can view all conditions"
 
 -- RLS Policies for patient_documents
 
+DROP POLICY IF EXISTS "Patients can view own documents" ON patient_documents;
 CREATE POLICY "Patients can view own documents"
   ON patient_documents FOR SELECT
   TO authenticated
@@ -260,6 +265,7 @@ CREATE POLICY "Patients can view own documents"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can upload documents" ON patient_documents;
 CREATE POLICY "Patients can upload documents"
   ON patient_documents FOR INSERT
   TO authenticated

@@ -296,6 +296,7 @@ CREATE POLICY "Users can view own wallet"
   TO authenticated
   USING (volunteer_id = auth.uid()::text OR auth.uid() IN (SELECT id FROM app_users WHERE role = 'admin'));
 
+DROP POLICY IF EXISTS "Users can update own wallet" ON gamification_wallets;
 CREATE POLICY "Users can update own wallet"
   ON gamification_wallets FOR UPDATE
   TO authenticated
