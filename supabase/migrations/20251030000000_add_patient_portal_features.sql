@@ -52,7 +52,7 @@
 -- Create secure messaging table
 CREATE TABLE IF NOT EXISTS patient_secure_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   staff_id text REFERENCES users(id) ON DELETE SET NULL,
   subject text NOT NULL,
   body text NOT NULL,
@@ -70,7 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_secure_messages_unread ON patient_secure_messages
 -- Create lab results table
 CREATE TABLE IF NOT EXISTS patient_lab_results (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   test_name text NOT NULL,
   test_type text NOT NULL,
   result_value text,
@@ -93,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_lab_results_abnormal ON patient_lab_results(patie
 -- Create medical conditions table
 CREATE TABLE IF NOT EXISTS patient_medical_conditions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   condition_name text NOT NULL,
   diagnosed_date date,
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'resolved', 'managed')),
@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_medical_conditions_status ON patient_medical_cond
 -- Create documents table
 CREATE TABLE IF NOT EXISTS patient_documents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   file_name text NOT NULL,
   file_type text NOT NULL,
   file_size integer NOT NULL,
@@ -126,7 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_type ON patient_documents(patient_id, d
 -- Create referrals table
 CREATE TABLE IF NOT EXISTS patient_referrals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   referring_provider text NOT NULL,
   specialist_name text,
   specialty text NOT NULL,
