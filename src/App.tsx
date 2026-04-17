@@ -11,6 +11,7 @@ import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { Home } from "@/pages/Home";
 import { startPortalSyncWorker } from "@/services/portalSyncWorker";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
+import { AuthCallback } from "@/components/AuthCallback";
 
 // Core pages - loaded eagerly for initial navigation
 const Dashboard = lazy(() =>
@@ -379,6 +380,9 @@ function App() {
         {/* Public Routes - Must be defined before catch-all */}
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
+
+        {/* Supabase auth email-confirmation redirect */}
+        <Route path="/auth/callback" element={<AuthCallback />} />
 
         {/* Patient Portal Routes */}
         <Route path="/patient" element={<PatientPortalLanding />} />

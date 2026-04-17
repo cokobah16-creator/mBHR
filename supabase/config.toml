@@ -1,0 +1,63 @@
+# Supabase CLI project configuration
+# https://supabase.com/docs/guides/cli/config
+#
+# To find your project_id:
+#   supabase projects list
+# Then replace the placeholder below and commit the file.
+
+project_id = "your-supabase-project-id"
+
+[api]
+# The port the local API gateway listens on
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+# Local Postgres port (used by supabase start)
+port = 54322
+pool_mode = "transaction"
+[db.pooler]
+enabled = false
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+
+[auth]
+# The URL that Supabase Auth redirects to after email confirmation.
+# Set this to your Vercel deployment URL in production.
+site_url = "http://localhost:5173"
+additional_redirect_urls = [
+  "http://localhost:5173/auth/callback",
+  "https://*.vercel.app/auth/callback",
+]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+
+[auth.sms]
+enable_signup = false
+
+[edge_runtime]
+enabled = true
+
+[analytics]
+enabled = false

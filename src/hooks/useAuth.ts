@@ -1,8 +1,10 @@
 /**
  * useAuth – Supabase auth hook for the patient portal.
  *
- * Exposes login, signup, logout, and the current Supabase user/session.
- * Falls back gracefully when Supabase is not configured.
+ * Wraps signInWithPassword, signUp (auto-creates the patients row),
+ * signOut, and exposes live user/session state.
+ * Safe to call when Supabase is not configured — all operations no-op
+ * gracefully so offline mode keeps working.
  */
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -15,9 +17,10 @@ export interface AuthError {
 export interface SignUpData {
   email: string;
   password: string;
-  fullName: string;
+  givenName: string;
+  familyName: string;
   phone?: string;
-  dateOfBirth?: string;
+  dob?: string;
 }
 
 export interface UseAuthReturn {
@@ -31,7 +34,7 @@ export interface UseAuthReturn {
 }
 
 export function useAuth(): UseAuthReturn {
-  const [user, setUser]       = useState<User | null>(null);
+  const [user,    setUser]    = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -41,7 +44,7 @@ export function useAuth(): UseAuthReturn {
       return;
     }
 
-    // Populate from existing session immediately
+    // Prime from existing session immediately (no network call)
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setUser(data.session?.user ?? null);
@@ -57,41 +60,58 @@ export function useAuth(): UseAuthReturn {
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<AuthError | null> => {
-    if (!supabase) return { message: "Supabase is not configured. Running in offline mode." };
-
+    if (!supabase) return { message: "Supabase is not configured — running in offline mode." };
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { message: error.message };
     return null;
   }, []);
 
   const signup = useCallback(async (data: SignUpData): Promise<AuthError | null> => {
-    if (!supabase) return { message: "Supabase is not configured. Running in offline mode." };
+    if (!supabase) return { message: "Supabase is not configured — running in offline mode." };
 
+    // 1. Create the auth user
     const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email: data.email,
+      email:    data.email,
       password: data.password,
+      options: {
+        // Pre-populate display name in auth metadata
+        data: { full_name: `${data.givenName} ${data.familyName}`.trim() },
+      },
     });
 
     if (signUpError) return { message: signUpError.message };
-    if (!authData.user) return { message: "Signup succeeded but no user returned." };
+    if (!authData.user) return { message: "Sign-up succeeded but no user was returned." };
 
-    // Insert the patient profile row linked to the new auth user
+    // 2. Insert into the existing `patients` table
+    //    Matches columns from migrations/20250930025202_young_hat.sql +
+    //    20251029000000_add_patient_email_auth_fields.sql
+    const patientId = crypto.randomUUID();
     const { error: insertError } = await supabase.from("patients").insert({
-      auth_user_id:   authData.user.id,
-      full_name:      data.fullName,
-      email:          data.email,
-      phone:          data.phone ?? null,
-      date_of_birth:  data.dateOfBirth ?? null,
+      id:           patientId,
+      auth_uid:     authData.user.id,   // UUID stored as text (existing schema pattern)
+      given_name:   data.givenName,
+      family_name:  data.familyName,
+      email:        data.email,
+      phone:        data.phone ?? null,
+      dob:          data.dob   ?? null,
+      sex:          "other",
+      address:      "",
+      state:        "",
+      lga:          "",
     });
 
-    if (insertError) return { message: insertError.message };
+    if (insertError) {
+      // Auth user was created but patient insert failed.
+      // Surface the error — user can still log in and the profile will be missing.
+      return { message: `Account created but profile save failed: ${insertError.message}` };
+    }
+
     return null;
   }, []);
 
   const logout = useCallback(async () => {
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    // Also clear legacy localStorage keys left by the old offline auth
+    if (supabase) await supabase.auth.signOut();
+    // Clear legacy localStorage keys from the old offline auth system
     localStorage.removeItem("patient_session_token");
     localStorage.removeItem("patient_portal_user");
     localStorage.removeItem("patient_active_profile");
