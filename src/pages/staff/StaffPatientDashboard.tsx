@@ -54,10 +54,13 @@ function AddVitalForm({
     e.preventDefault();
     setLoading(true);
     setError("");
+    // Parse "120/80" format into systolic/diastolic
+    const [sysStr, diaStr] = (bp || "").split("/");
     const result = await addVital(patientId, {
-      bloodPressure: bp   || null,
-      weight:        wt   ? parseFloat(wt)   : null,
-      temperature:   temp ? parseFloat(temp) : null,
+      bloodPressureSystolic:  sysStr ? parseInt(sysStr, 10) : null,
+      bloodPressureDiastolic: diaStr ? parseInt(diaStr, 10) : null,
+      weightKg:    wt   ? parseFloat(wt)   : null,
+      tempC:       temp ? parseFloat(temp) : null,
     });
     setLoading(false);
     if (result.error) {
@@ -109,7 +112,7 @@ function AddMedForm({
     setError("");
     const result = await addMedication(patientId, {
       name, dosage: dose || null, instructions: instr || null,
-    });
+    } as { name: string; dosage?: string | null; instructions?: string | null });
     setLoading(false);
     if (result.error) {
       setError(result.error);
@@ -259,10 +262,10 @@ function PatientPanel({ patient }: { patient: PatientProfile }) {
             <ul className="space-y-2 text-xs text-gray-700">
               {vitals.slice(0, 3).map((v) => (
                 <li key={v.id} className="bg-white rounded p-2">
-                  {v.bloodPressure && <p>BP: {v.bloodPressure}</p>}
-                  {v.weight        && <p>Wt: {v.weight} kg</p>}
-                  {v.temperature   && <p>Temp: {v.temperature}°C</p>}
-                  <p className="text-gray-400">{new Date(v.recordedAt).toLocaleDateString()}</p>
+                  {v.systolic != null && v.diastolic != null && <p>BP: {v.systolic}/{v.diastolic} mmHg</p>}
+                  {v.weightKg  != null && <p>Wt: {v.weightKg} kg</p>}
+                  {v.tempC     != null && <p>Temp: {v.tempC}°C</p>}
+                  <p className="text-gray-400">{new Date(v.takenAt).toLocaleDateString()}</p>
                 </li>
               ))}
             </ul>
@@ -278,9 +281,9 @@ function PatientPanel({ patient }: { patient: PatientProfile }) {
             <ul className="space-y-2 text-xs text-gray-700">
               {medications.slice(0, 3).map((m) => (
                 <li key={m.id} className="bg-white rounded p-2">
-                  <p className="font-medium">{m.name}</p>
-                  {m.dosage       && <p>{m.dosage}</p>}
-                  {m.instructions && <p className="text-gray-400">{m.instructions}</p>}
+                  <p className="font-medium">{m.itemName}</p>
+                  {m.dosage     && <p>{m.dosage}</p>}
+                  {m.directions && <p className="text-gray-400">{m.directions}</p>}
                 </li>
               ))}
             </ul>
@@ -296,7 +299,7 @@ function PatientPanel({ patient }: { patient: PatientProfile }) {
             <ul className="space-y-2 text-xs text-gray-700">
               {visits.slice(0, 3).map((v) => (
                 <li key={v.id} className="bg-white rounded p-2">
-                  <p className="font-medium">{new Date(v.visitDate).toLocaleDateString()}</p>
+                  <p className="font-medium">{new Date(v.startedAt).toLocaleDateString()}</p>
                   {v.diagnosis && <p>Dx: {v.diagnosis}</p>}
                   {v.notes     && <p className="text-gray-400 truncate">{v.notes}</p>}
                 </li>
@@ -323,18 +326,18 @@ function PatientRow({ patient }: { patient: PatientProfile }) {
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
             <span className="text-blue-700 font-bold text-sm">
-              {patient.fullName.charAt(0).toUpperCase()}
+              {patient.givenName.charAt(0).toUpperCase()}
             </span>
           </div>
           <div>
-            <p className="font-semibold text-gray-900">{patient.fullName}</p>
+            <p className="font-semibold text-gray-900">{patient.givenName} {patient.familyName}</p>
             <p className="text-sm text-gray-500">{patient.email ?? "No email"}</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
-          {patient.dateOfBirth && (
+          {patient.dob && (
             <span className="text-xs text-gray-400 hidden md:block">
-              DOB: {patient.dateOfBirth}
+              DOB: {patient.dob}
             </span>
           )}
           {expanded
@@ -390,7 +393,7 @@ export function StaffPatientDashboard() {
   const filtered = patients.filter((p) => {
     const q = search.toLowerCase();
     return (
-      p.fullName.toLowerCase().includes(q) ||
+      `${p.givenName} ${p.familyName}`.toLowerCase().includes(q) ||
       (p.email ?? "").toLowerCase().includes(q) ||
       (p.phone ?? "").includes(q)
     );

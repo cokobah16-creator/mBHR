@@ -32,7 +32,7 @@
 -- Create clinical_alerts table
 CREATE TABLE IF NOT EXISTS clinical_alerts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   alert_type text NOT NULL CHECK (alert_type IN ('vital_sign', 'drug_interaction', 'high_risk', 'adherence', 'follow_up')),
   severity text NOT NULL CHECK (severity IN ('low', 'moderate', 'high', 'critical')),
   message text NOT NULL,

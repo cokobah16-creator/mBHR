@@ -60,12 +60,17 @@ export function PatientRegister() {
   });
 
   const handleSupabaseRegister = async (data: RegistrationForm) => {
+    const parts      = data.fullName.trim().split(/\s+/);
+    const givenName  = parts[0]          ?? data.fullName;
+    const familyName = parts.slice(1).join(" ") || "";
+
     const authError = await signup({
-      email:       data.email,
-      password:    data.password,
-      fullName:    data.fullName,
-      phone:       data.phone || undefined,
-      dateOfBirth: data.dateOfBirth || undefined,
+      email:      data.email,
+      password:   data.password,
+      givenName,
+      familyName,
+      phone:      data.phone        || undefined,
+      dob:        data.dateOfBirth  || undefined,
     });
     if (authError) {
       const msg = authError.message.toLowerCase();

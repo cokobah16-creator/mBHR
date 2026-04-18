@@ -158,23 +158,16 @@ ALTER TABLE patient_consent_records ENABLE ROW LEVEL SECURITY;
 -- ============================================================================
 
 -- NOTIFICATIONS: Patients can view and update own notifications
+-- Stub policies — patient_portal_users doesn't exist yet; proper policies installed by 20251028000000
 CREATE POLICY "Patients can view own notifications"
   ON patient_notifications FOR SELECT
   TO anon, authenticated
-  USING (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  USING (false);
 
 CREATE POLICY "Patients can update own notifications"
   ON patient_notifications FOR UPDATE
   TO anon, authenticated
-  USING (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  USING (false);
 
 CREATE POLICY "Staff can create patient notifications"
   ON patient_notifications FOR INSERT
@@ -185,20 +178,12 @@ CREATE POLICY "Staff can create patient notifications"
 CREATE POLICY "Patients can view own messages"
   ON patient_messages FOR SELECT
   TO anon, authenticated
-  USING (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  USING (false);
 
 CREATE POLICY "Patients can send messages"
   ON patient_messages FOR INSERT
   TO anon, authenticated
-  WITH CHECK (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  WITH CHECK (false);
 
 CREATE POLICY "Staff can manage messages"
   ON patient_messages FOR ALL
@@ -209,20 +194,12 @@ CREATE POLICY "Staff can manage messages"
 CREATE POLICY "Patients can view own appointment requests"
   ON patient_appointment_requests FOR SELECT
   TO anon, authenticated
-  USING (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  USING (false);
 
 CREATE POLICY "Patients can create appointment requests"
   ON patient_appointment_requests FOR INSERT
   TO anon, authenticated
-  WITH CHECK (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  WITH CHECK (false);
 
 CREATE POLICY "Staff can manage appointment requests"
   ON patient_appointment_requests FOR ALL
@@ -233,20 +210,12 @@ CREATE POLICY "Staff can manage appointment requests"
 CREATE POLICY "Patients can view own documents"
   ON patient_documents FOR SELECT
   TO anon, authenticated
-  USING (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  USING (false);
 
 CREATE POLICY "Patients can upload documents"
   ON patient_documents FOR INSERT
   TO anon, authenticated
-  WITH CHECK (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  WITH CHECK (false);
 
 CREATE POLICY "Staff can manage patient documents"
   ON patient_documents FOR ALL
@@ -257,20 +226,12 @@ CREATE POLICY "Staff can manage patient documents"
 CREATE POLICY "Patients can view own consent records"
   ON patient_consent_records FOR SELECT
   TO anon, authenticated
-  USING (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  USING (false);
 
 CREATE POLICY "Patients can create consent records"
   ON patient_consent_records FOR INSERT
   TO anon, authenticated
-  WITH CHECK (
-    patient_id IN (
-      SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
-    )
-  );
+  WITH CHECK (false);
 
 CREATE POLICY "Staff can view consent records"
   ON patient_consent_records FOR SELECT

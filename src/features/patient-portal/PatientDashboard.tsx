@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   CalendarIcon,
@@ -108,14 +109,8 @@ function SupabaseDashboard() {
     setLoading(true);
     setError("");
     try {
-      const [profileRes, vitalsRes, medsRes, visitsRes] = await Promise.all([
-        getPatientProfile(user.id),
-        (async () => { const r = await getPatientProfile(user.id); return r; })(),
-        getMedications(""),
-        getVisits(""),
-      ]);
-
-      // Get profile first, then use its id for other queries
+      // Load profile first so we have the patientId for subsequent queries
+      const profileRes = await getPatientProfile(user.id);
       if (profileRes.error || !profileRes.data) {
         setError("Could not load your profile. Make sure your account is set up.");
         setLoading(false);
@@ -150,7 +145,8 @@ function SupabaseDashboard() {
   if (!profile) return null;
 
   const latest = vitals[0] ?? null;
-  const [bpSys, bpDia] = (latest?.bloodPressure ?? "").split("/").map(Number);
+  const bpSys = latest?.systolic  ?? 0;
+  const bpDia = latest?.diastolic ?? 0;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
@@ -159,7 +155,7 @@ function SupabaseDashboard() {
         <div className="flex items-start justify-between flex-wrap gap-2">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
-              Welcome back, {profile.fullName.split(" ")[0]}!
+              Welcome back, {profile.givenName}!
             </h1>
             <p className="text-gray-600 mt-1">Here's an overview of your health information.</p>
           </div>
@@ -193,15 +189,15 @@ function SupabaseDashboard() {
             {bpSys > 0 && bpDia > 0 && (
               <VitalCard label="Blood Pressure" value={`${bpSys}/${bpDia}`} unit="mmHg" status={bpStatus(bpSys)} />
             )}
-            {latest.weight && (
-              <VitalCard label="Weight" value={`${latest.weight}`} unit="kg" status="normal" />
+            {latest.weightKg != null && (
+              <VitalCard label="Weight" value={`${latest.weightKg}`} unit="kg" status="normal" />
             )}
-            {latest.temperature && (
-              <VitalCard label="Temperature" value={`${latest.temperature}°C`} unit="celsius" status={tempStatus(latest.temperature)} />
+            {latest.tempC != null && (
+              <VitalCard label="Temperature" value={`${latest.tempC}°C`} unit="celsius" status={tempStatus(latest.tempC)} />
             )}
           </div>
           <p className="text-xs text-gray-500 mt-4">
-            Recorded: {new Date(latest.recordedAt).toLocaleDateString()}
+            Recorded: {new Date(latest.takenAt).toLocaleDateString()}
           </p>
         </div>
       )}
@@ -222,9 +218,9 @@ function SupabaseDashboard() {
                   <HeartIcon className="w-5 h-5 text-blue-600" />
                 </div>
                 <div>
-                  <p className="font-medium text-gray-900">{med.name}</p>
+                  <p className="font-medium text-gray-900">{med.itemName}</p>
                   <p className="text-sm text-gray-600">{med.dosage}</p>
-                  <p className="text-xs text-gray-500">{med.instructions}</p>
+                  <p className="text-xs text-gray-500">{med.directions}</p>
                 </div>
               </div>
             ))}
@@ -247,7 +243,7 @@ function SupabaseDashboard() {
             {visits.slice(0, 3).map((v) => (
               <div key={v.id} className="p-3 bg-gray-50 rounded-lg">
                 <p className="text-sm font-medium text-gray-900">
-                  {new Date(v.visitDate).toLocaleDateString()}
+                  {new Date(v.startedAt).toLocaleDateString()}
                 </p>
                 {v.diagnosis && <p className="text-xs text-gray-600 mt-1">Diagnosis: {v.diagnosis}</p>}
                 {v.notes && <p className="text-xs text-gray-500 mt-0.5">{v.notes}</p>}
@@ -404,7 +400,7 @@ function ErrorCard({ message }: { message: string }) {
 function StatTile({
   icon, bg, label, value, to,
 }: {
-  icon: React.ReactNode; bg: string; label: string; value: number; to: string;
+  icon: ReactNode; bg: string; label: string; value: number; to: string;
 }) {
   return (
     <Link to={to} className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-shadow">

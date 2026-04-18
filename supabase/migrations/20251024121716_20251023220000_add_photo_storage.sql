@@ -30,6 +30,7 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 -- Allow authenticated users to upload photos
+DROP POLICY IF EXISTS "Authenticated users can upload photos" ON storage.objects;
 CREATE POLICY "Authenticated users can upload photos"
 ON storage.objects
 FOR INSERT
@@ -40,6 +41,7 @@ WITH CHECK (
 );
 
 -- Allow public read access to photos
+DROP POLICY IF EXISTS "Public can view photos" ON storage.objects;
 CREATE POLICY "Public can view photos"
 ON storage.objects
 FOR SELECT
@@ -47,6 +49,7 @@ TO public
 USING (bucket_id = 'photos');
 
 -- Allow users to update their uploaded photos
+DROP POLICY IF EXISTS "Users can update their photos" ON storage.objects;
 CREATE POLICY "Users can update their photos"
 ON storage.objects
 FOR UPDATE
@@ -54,6 +57,7 @@ TO authenticated
 USING (bucket_id = 'photos');
 
 -- Allow users to delete photos
+DROP POLICY IF EXISTS "Users can delete photos" ON storage.objects;
 CREATE POLICY "Users can delete photos"
 ON storage.objects
 FOR DELETE

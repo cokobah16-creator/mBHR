@@ -76,7 +76,7 @@ CREATE POLICY "Admins can view OTP rate limit tracking"
   ON otp_rate_limit_tracking FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role = 'admin'
     )
   );

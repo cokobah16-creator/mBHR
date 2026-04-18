@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS lab_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   visit_id text REFERENCES visits(id) ON DELETE SET NULL,
-  ordered_by uuid REFERENCES app_users(id),
+  ordered_by text REFERENCES app_users(id),
   test_name text NOT NULL,
   test_code text,
   priority text NOT NULL DEFAULT 'routine' CHECK (priority IN ('routine', 'urgent', 'stat')),
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS lab_results (
   reference_range text,
   interpretation text NOT NULL DEFAULT 'normal' CHECK (interpretation IN ('normal', 'abnormal', 'critical')),
   result_date timestamptz NOT NULL DEFAULT now(),
-  reviewed_by uuid REFERENCES app_users(id),
+  reviewed_by text REFERENCES app_users(id),
   reviewed_at timestamptz,
   notes text,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -121,7 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_lab_results_order ON lab_results(order_id);
 CREATE TABLE IF NOT EXISTS appointments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
-  provider_id uuid REFERENCES app_users(id),
+  provider_id text REFERENCES app_users(id),
   appointment_type text NOT NULL,
   scheduled_at timestamptz NOT NULL,
   duration_minutes integer NOT NULL DEFAULT 30,
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   notes text,
   reminder_sent boolean NOT NULL DEFAULT false,
   reminder_sent_at timestamptz,
-  created_by uuid REFERENCES app_users(id) NOT NULL,
+  created_by text REFERENCES app_users(id) NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS patient_allergies (
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  created_by uuid REFERENCES app_users(id),
+  created_by text REFERENCES app_users(id),
   _dirty integer DEFAULT 0,
   _synced_at timestamptz
 );
@@ -392,7 +392,7 @@ CREATE POLICY "Admins can manage users"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid() AND app_users.role = 'admin'
+      WHERE app_users.id = auth.uid()::text AND app_users.role = 'admin'
     )
   );
 
@@ -403,7 +403,7 @@ CREATE POLICY "Clinical staff can manage medication reminders"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
@@ -415,7 +415,7 @@ CREATE POLICY "Clinical staff can manage lab orders"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -427,7 +427,7 @@ CREATE POLICY "Clinical staff can manage lab results"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -451,7 +451,7 @@ CREATE POLICY "Pharmacists can manage stock batches"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'pharmacist')
     )
   );
@@ -463,7 +463,7 @@ CREATE POLICY "Clinical staff can manage care tasks"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -475,7 +475,7 @@ CREATE POLICY "Clinical staff can manage triage records"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -487,7 +487,7 @@ CREATE POLICY "Clinical staff can view allergies"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
@@ -498,7 +498,7 @@ CREATE POLICY "Clinical staff can manage allergies"
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -509,14 +509,14 @@ CREATE POLICY "Clinical staff can update allergies"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -528,7 +528,7 @@ CREATE POLICY "Staff can manage patient preferences"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid()
+      WHERE app_users.id = auth.uid()::text
     )
   );
 
@@ -539,7 +539,7 @@ CREATE POLICY "Admins can view patient merges"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid() AND app_users.role = 'admin'
+      WHERE app_users.id = auth.uid()::text AND app_users.role = 'admin'
     )
   );
 
@@ -556,7 +556,7 @@ CREATE POLICY "Admins can manage conflict resolutions"
   USING (
     EXISTS (
       SELECT 1 FROM app_users
-      WHERE app_users.id = auth.uid() AND app_users.role = 'admin'
+      WHERE app_users.id = auth.uid()::text AND app_users.role = 'admin'
     )
   );
 

@@ -93,50 +93,60 @@ ALTER TABLE event_staff_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_org_sites ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for organizations
+DROP POLICY IF EXISTS "Users can view their organizations" ON organizations;
 CREATE POLICY "Users can view their organizations"
   ON organizations FOR SELECT TO authenticated
   USING (id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
+DROP POLICY IF EXISTS "Admins can manage their organizations" ON organizations;
 CREATE POLICY "Admins can manage their organizations"
   ON organizations FOR ALL TO authenticated
   USING (id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
 -- RLS Policies for sites
+DROP POLICY IF EXISTS "Users can view sites in their organizations" ON sites;
 CREATE POLICY "Users can view sites in their organizations"
   ON sites FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
+DROP POLICY IF EXISTS "Admins can manage sites in their organizations" ON sites;
 CREATE POLICY "Admins can manage sites in their organizations"
   ON sites FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
 -- RLS Policies for outreach_events
+DROP POLICY IF EXISTS "Users can view events in their organizations" ON outreach_events;
 CREATE POLICY "Users can view events in their organizations"
   ON outreach_events FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
+DROP POLICY IF EXISTS "Staff can manage events in their organizations" ON outreach_events;
 CREATE POLICY "Staff can manage events in their organizations"
   ON outreach_events FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
 
 -- RLS Policies for event_staff_assignments
+DROP POLICY IF EXISTS "Users can view their event assignments" ON event_staff_assignments;
 CREATE POLICY "Users can view their event assignments"
   ON event_staff_assignments FOR SELECT TO authenticated
   USING (user_id = auth.uid() OR event_id IN (SELECT id FROM outreach_events WHERE org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid())));
 
+DROP POLICY IF EXISTS "Staff can manage event assignments in their organizations" ON event_staff_assignments;
 CREATE POLICY "Staff can manage event assignments in their organizations"
   ON event_staff_assignments FOR ALL TO authenticated
   USING (event_id IN (SELECT id FROM outreach_events WHERE org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid())))
   WITH CHECK (event_id IN (SELECT id FROM outreach_events WHERE org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid())));
 
 -- RLS Policies for user_org_sites
+DROP POLICY IF EXISTS "Users can view their own org assignments" ON user_org_sites;
 CREATE POLICY "Users can view their own org assignments"
   ON user_org_sites FOR SELECT TO authenticated
   USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "Admins can manage user org assignments" ON user_org_sites;
 CREATE POLICY "Admins can manage user org assignments"
   ON user_org_sites FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
@@ -151,6 +161,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS organizations_updated_at ON organizations;
 CREATE TRIGGER organizations_updated_at BEFORE UPDATE ON organizations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS sites_updated_at ON sites;
 CREATE TRIGGER sites_updated_at BEFORE UPDATE ON sites FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS outreach_events_updated_at ON outreach_events;
 CREATE TRIGGER outreach_events_updated_at BEFORE UPDATE ON outreach_events FOR EACH ROW EXECUTE FUNCTION update_updated_at();

@@ -45,7 +45,7 @@ CREATE POLICY "Staff can view all patient sessions"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE id = auth.uid()
+      WHERE id = auth.uid()::text
       AND role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -57,14 +57,14 @@ CREATE POLICY "Staff can manage patient sessions"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE id = auth.uid()
+      WHERE id = auth.uid()::text
       AND role IN ('admin', 'doctor', 'nurse')
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE id = auth.uid()
+      WHERE id = auth.uid()::text
       AND role IN ('admin', 'doctor', 'nurse')
     )
   );
