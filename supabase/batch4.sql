@@ -41,70 +41,107 @@ DROP POLICY IF EXISTS "Users can view their own broadcast reads" ON palaver_broa
 DROP POLICY IF EXISTS "Users can mark broadcasts as read" ON palaver_broadcast_reads;
 
 -- Create permissive policies for palaver_messages
-CREATE POLICY "Allow select on palaver_messages"
+DO $$ BEGIN
+  CREATE POLICY "Allow select on palaver_messages"
   ON palaver_messages FOR SELECT
   TO anon, authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow insert on palaver_messages"
+DO $$ BEGIN
+  CREATE POLICY "Allow insert on palaver_messages"
   ON palaver_messages FOR INSERT
   TO anon, authenticated
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow update on palaver_messages"
+DO $$ BEGIN
+  CREATE POLICY "Allow update on palaver_messages"
   ON palaver_messages FOR UPDATE
   TO anon, authenticated
   USING (true)
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow delete on palaver_messages"
+DO $$ BEGIN
+  CREATE POLICY "Allow delete on palaver_messages"
   ON palaver_messages FOR DELETE
   TO anon, authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create permissive policies for palaver_broadcasts
-CREATE POLICY "Allow select on palaver_broadcasts"
+DO $$ BEGIN
+  CREATE POLICY "Allow select on palaver_broadcasts"
   ON palaver_broadcasts FOR SELECT
   TO anon, authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow insert on palaver_broadcasts"
+DO $$ BEGIN
+  CREATE POLICY "Allow insert on palaver_broadcasts"
   ON palaver_broadcasts FOR INSERT
   TO anon, authenticated
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow update on palaver_broadcasts"
+DO $$ BEGIN
+  CREATE POLICY "Allow update on palaver_broadcasts"
   ON palaver_broadcasts FOR UPDATE
   TO anon, authenticated
   USING (true)
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow delete on palaver_broadcasts"
+DO $$ BEGIN
+  CREATE POLICY "Allow delete on palaver_broadcasts"
   ON palaver_broadcasts FOR DELETE
   TO anon, authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create permissive policies for palaver_broadcast_reads
-CREATE POLICY "Allow select on palaver_broadcast_reads"
+DO $$ BEGIN
+  CREATE POLICY "Allow select on palaver_broadcast_reads"
   ON palaver_broadcast_reads FOR SELECT
   TO anon, authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow insert on palaver_broadcast_reads"
+DO $$ BEGIN
+  CREATE POLICY "Allow insert on palaver_broadcast_reads"
   ON palaver_broadcast_reads FOR INSERT
   TO anon, authenticated
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow update on palaver_broadcast_reads"
+DO $$ BEGIN
+  CREATE POLICY "Allow update on palaver_broadcast_reads"
   ON palaver_broadcast_reads FOR UPDATE
   TO anon, authenticated
   USING (true)
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Allow delete on palaver_broadcast_reads"
+DO $$ BEGIN
+  CREATE POLICY "Allow delete on palaver_broadcast_reads"
   ON palaver_broadcast_reads FOR DELETE
   TO anon, authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 
 -- Migration: 20260115072241_add_portal_enhancements_v3.sql
 -- ============================================================
@@ -182,19 +219,28 @@ CREATE INDEX IF NOT EXISTS idx_portal_users_email ON patient_portal_users(email)
 ALTER TABLE patient_portal_users ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Portal users can view own data" ON patient_portal_users;
-CREATE POLICY "Portal users can view own data"
+DO $$ BEGIN
+  CREATE POLICY "Portal users can view own data"
   ON patient_portal_users FOR SELECT
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Portal users can update own data" ON patient_portal_users;
-CREATE POLICY "Portal users can update own data"
+DO $$ BEGIN
+  CREATE POLICY "Portal users can update own data"
   ON patient_portal_users FOR UPDATE
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Allow insert for portal users" ON patient_portal_users;
-CREATE POLICY "Allow insert for portal users"
+DO $$ BEGIN
+  CREATE POLICY "Allow insert for portal users"
   ON patient_portal_users FOR INSERT
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- PATIENT PORTAL SESSIONS TABLE
@@ -219,19 +265,28 @@ CREATE INDEX IF NOT EXISTS idx_portal_sessions_token ON patient_portal_sessions(
 ALTER TABLE patient_portal_sessions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Sessions viewable" ON patient_portal_sessions;
-CREATE POLICY "Sessions viewable"
+DO $$ BEGIN
+  CREATE POLICY "Sessions viewable"
   ON patient_portal_sessions FOR SELECT
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Sessions insertable" ON patient_portal_sessions;
-CREATE POLICY "Sessions insertable"
+DO $$ BEGIN
+  CREATE POLICY "Sessions insertable"
   ON patient_portal_sessions FOR INSERT
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Sessions updatable" ON patient_portal_sessions;
-CREATE POLICY "Sessions updatable"
+DO $$ BEGIN
+  CREATE POLICY "Sessions updatable"
   ON patient_portal_sessions FOR UPDATE
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- PATIENT MESSAGES TABLE
@@ -260,19 +315,28 @@ CREATE INDEX IF NOT EXISTS idx_patient_messages_created ON patient_messages(crea
 ALTER TABLE patient_messages ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Messages viewable" ON patient_messages;
-CREATE POLICY "Messages viewable"
+DO $$ BEGIN
+  CREATE POLICY "Messages viewable"
   ON patient_messages FOR SELECT
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Messages insertable" ON patient_messages;
-CREATE POLICY "Messages insertable"
+DO $$ BEGIN
+  CREATE POLICY "Messages insertable"
   ON patient_messages FOR INSERT
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Messages updatable" ON patient_messages;
-CREATE POLICY "Messages updatable"
+DO $$ BEGIN
+  CREATE POLICY "Messages updatable"
   ON patient_messages FOR UPDATE
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- PATIENT NOTIFICATIONS TABLE
@@ -300,19 +364,28 @@ CREATE INDEX IF NOT EXISTS idx_patient_notifications_unread ON patient_notificat
 ALTER TABLE patient_notifications ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Notifications viewable" ON patient_notifications;
-CREATE POLICY "Notifications viewable"
+DO $$ BEGIN
+  CREATE POLICY "Notifications viewable"
   ON patient_notifications FOR SELECT
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Notifications insertable" ON patient_notifications;
-CREATE POLICY "Notifications insertable"
+DO $$ BEGIN
+  CREATE POLICY "Notifications insertable"
   ON patient_notifications FOR INSERT
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Notifications updatable" ON patient_notifications;
-CREATE POLICY "Notifications updatable"
+DO $$ BEGIN
+  CREATE POLICY "Notifications updatable"
   ON patient_notifications FOR UPDATE
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- APPOINTMENTS TABLE
@@ -342,19 +415,28 @@ CREATE INDEX IF NOT EXISTS idx_appointments_upcoming ON appointments(patient_id,
 ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Appointments viewable" ON appointments;
-CREATE POLICY "Appointments viewable"
+DO $$ BEGIN
+  CREATE POLICY "Appointments viewable"
   ON appointments FOR SELECT
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Appointments insertable" ON appointments;
-CREATE POLICY "Appointments insertable"
+DO $$ BEGIN
+  CREATE POLICY "Appointments insertable"
   ON appointments FOR INSERT
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Appointments updatable" ON appointments;
-CREATE POLICY "Appointments updatable"
+DO $$ BEGIN
+  CREATE POLICY "Appointments updatable"
   ON appointments FOR UPDATE
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- ADD PORTAL VISIBILITY COLUMNS TO CLINICAL TABLES
@@ -522,19 +604,28 @@ CREATE INDEX IF NOT EXISTS idx_submitted_data_created ON patient_submitted_data(
 ALTER TABLE patient_submitted_data ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Submitted data viewable" ON patient_submitted_data;
-CREATE POLICY "Submitted data viewable"
+DO $$ BEGIN
+  CREATE POLICY "Submitted data viewable"
   ON patient_submitted_data FOR SELECT
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Submitted data insertable" ON patient_submitted_data;
-CREATE POLICY "Submitted data insertable"
+DO $$ BEGIN
+  CREATE POLICY "Submitted data insertable"
   ON patient_submitted_data FOR INSERT
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Submitted data updatable" ON patient_submitted_data;
-CREATE POLICY "Submitted data updatable"
+DO $$ BEGIN
+  CREATE POLICY "Submitted data updatable"
   ON patient_submitted_data FOR UPDATE
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- PORTAL ENROLLMENT SETTINGS TABLE
@@ -559,14 +650,20 @@ ON CONFLICT (setting_key) DO NOTHING;
 ALTER TABLE portal_enrollment_settings ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Settings viewable" ON portal_enrollment_settings;
-CREATE POLICY "Settings viewable"
+DO $$ BEGIN
+  CREATE POLICY "Settings viewable"
   ON portal_enrollment_settings FOR SELECT
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Settings updatable" ON portal_enrollment_settings;
-CREATE POLICY "Settings updatable"
+DO $$ BEGIN
+  CREATE POLICY "Settings updatable"
   ON portal_enrollment_settings FOR UPDATE
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- RECORD VISIBILITY LOG TABLE
@@ -589,14 +686,20 @@ CREATE INDEX IF NOT EXISTS idx_visibility_log_record ON record_visibility_log(re
 ALTER TABLE record_visibility_log ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Visibility log viewable" ON record_visibility_log;
-CREATE POLICY "Visibility log viewable"
+DO $$ BEGIN
+  CREATE POLICY "Visibility log viewable"
   ON record_visibility_log FOR SELECT
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Visibility log insertable" ON record_visibility_log;
-CREATE POLICY "Visibility log insertable"
+DO $$ BEGIN
+  CREATE POLICY "Visibility log insertable"
   ON record_visibility_log FOR INSERT
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- PERFORMANCE INDEXES
@@ -734,6 +837,7 @@ CREATE TRIGGER update_portal_users_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
+
 -- Migration: 20260116102858_fix_patient_portal_missing_objects.sql
 -- ============================================================
 /*
@@ -860,12 +964,15 @@ CREATE TABLE IF NOT EXISTS otp_rate_limits (
 
 ALTER TABLE otp_rate_limits ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Service role can manage OTP rate limits"
+DO $$ BEGIN
+  CREATE POLICY "Service role can manage OTP rate limits"
   ON otp_rate_limits
   FOR ALL
   TO authenticated
   USING (true)
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================
 -- 4. Create patient portal access logs table
@@ -887,17 +994,23 @@ CREATE TABLE IF NOT EXISTS patient_portal_access_logs (
 
 ALTER TABLE patient_portal_access_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Staff can view access logs"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view access logs"
   ON patient_portal_access_logs
   FOR SELECT
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "System can insert access logs"
+DO $$ BEGIN
+  CREATE POLICY "System can insert access logs"
   ON patient_portal_access_logs
   FOR INSERT
   TO authenticated
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_portal_access_logs_patient 
   ON patient_portal_access_logs(patient_id);
@@ -981,6 +1094,7 @@ BEGIN
 END;
 $$;
 
+
 -- Migration: 20260121145002_add_patient_portal_registration_policy.sql
 -- ============================================================
 /*
@@ -1002,11 +1116,15 @@ $$;
     - Full patient data access still requires authentication
 */
 
-CREATE POLICY "Allow anonymous patient lookup for portal registration"
+DO $$ BEGIN
+  CREATE POLICY "Allow anonymous patient lookup for portal registration"
   ON patients
   FOR SELECT
   TO anon
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 
 -- Migration: 20260121150150_add_anonymous_patient_registration_policy.sql
 -- ============================================================
@@ -1028,11 +1146,15 @@ CREATE POLICY "Allow anonymous patient lookup for portal registration"
     - The SELECT policy already exists for registration lookup
 */
 
-CREATE POLICY "Allow anonymous patient registration"
+DO $$ BEGIN
+  CREATE POLICY "Allow anonymous patient registration"
   ON patients
   FOR INSERT
   TO anon
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 
 -- Migration: 20260125091118_add_tefca_audit_logs.sql
 -- ============================================================
@@ -1139,7 +1261,8 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'tefca_access_logs' AND policyname = 'Admins can view TEFCA access logs'
   ) THEN
-    CREATE POLICY "Admins can view TEFCA access logs"
+DO $$ BEGIN
+      CREATE POLICY "Admins can view TEFCA access logs"
       ON tefca_access_logs
       FOR SELECT
       TO authenticated
@@ -1150,6 +1273,8 @@ BEGIN
           AND app_users.role = 'admin'
         )
       );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1158,11 +1283,14 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'tefca_access_logs' AND policyname = 'Service role can insert TEFCA logs'
   ) THEN
-    CREATE POLICY "Service role can insert TEFCA logs"
+DO $$ BEGIN
+      CREATE POLICY "Service role can insert TEFCA logs"
       ON tefca_access_logs
       FOR INSERT
       TO service_role
       WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1171,11 +1299,14 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'tefca_access_logs' AND policyname = 'Anon can insert TEFCA logs for edge functions'
   ) THEN
-    CREATE POLICY "Anon can insert TEFCA logs for edge functions"
+DO $$ BEGIN
+      CREATE POLICY "Anon can insert TEFCA logs for edge functions"
       ON tefca_access_logs
       FOR INSERT
       TO anon
       WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1184,7 +1315,8 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'tefca_qhin_partners' AND policyname = 'Admins can manage QHIN partners'
   ) THEN
-    CREATE POLICY "Admins can manage QHIN partners"
+DO $$ BEGIN
+      CREATE POLICY "Admins can manage QHIN partners"
       ON tefca_qhin_partners
       FOR ALL
       TO authenticated
@@ -1202,6 +1334,8 @@ BEGIN
           AND app_users.role = 'admin'
         )
       );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1210,7 +1344,8 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'patient_data_sharing_preferences' AND policyname = 'Patients can view own data sharing preferences'
   ) THEN
-    CREATE POLICY "Patients can view own data sharing preferences"
+DO $$ BEGIN
+      CREATE POLICY "Patients can view own data sharing preferences"
       ON patient_data_sharing_preferences
       FOR SELECT
       TO authenticated
@@ -1222,6 +1357,8 @@ BEGIN
           AND app_users.role IN ('admin', 'doctor', 'nurse')
         )
       );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1230,12 +1367,15 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'patient_data_sharing_preferences' AND policyname = 'Patients can update own data sharing preferences'
   ) THEN
-    CREATE POLICY "Patients can update own data sharing preferences"
+DO $$ BEGIN
+      CREATE POLICY "Patients can update own data sharing preferences"
       ON patient_data_sharing_preferences
       FOR UPDATE
       TO authenticated
       USING (patient_id = auth.uid()::text)
       WITH CHECK (patient_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1244,11 +1384,14 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'patient_data_sharing_preferences' AND policyname = 'Patients can insert own data sharing preferences'
   ) THEN
-    CREATE POLICY "Patients can insert own data sharing preferences"
+DO $$ BEGIN
+      CREATE POLICY "Patients can insert own data sharing preferences"
       ON patient_data_sharing_preferences
       FOR INSERT
       TO authenticated
       WITH CHECK (patient_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1302,6 +1445,7 @@ COMMENT ON TABLE patient_data_sharing_preferences IS 'Patient preferences for he
 COMMENT ON COLUMN tefca_access_logs.exchange_purpose IS 'TEFCA exchange purpose: individual-access, treatment, payment, or operations';
 COMMENT ON COLUMN tefca_access_logs.resources_requested IS 'FHIR resource types that were requested';
 COMMENT ON COLUMN tefca_access_logs.request_id IS 'Unique identifier for correlating related log entries';
+
 
 -- Migration: 20260125091822_add_immunizations_conditions_sdoh.sql
 -- ============================================================
@@ -1432,7 +1576,8 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'immunizations' AND policyname = 'Staff can manage immunizations'
   ) THEN
-    CREATE POLICY "Staff can manage immunizations"
+DO $$ BEGIN
+      CREATE POLICY "Staff can manage immunizations"
       ON immunizations
       FOR ALL
       TO authenticated
@@ -1450,6 +1595,8 @@ BEGIN
           AND app_users.role IN ('admin', 'doctor', 'nurse')
         )
       );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1458,11 +1605,14 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'immunizations' AND policyname = 'Patients can view own immunizations'
   ) THEN
-    CREATE POLICY "Patients can view own immunizations"
+DO $$ BEGIN
+      CREATE POLICY "Patients can view own immunizations"
       ON immunizations
       FOR SELECT
       TO authenticated
       USING (patient_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1471,7 +1621,8 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'conditions' AND policyname = 'Staff can manage conditions'
   ) THEN
-    CREATE POLICY "Staff can manage conditions"
+DO $$ BEGIN
+      CREATE POLICY "Staff can manage conditions"
       ON conditions
       FOR ALL
       TO authenticated
@@ -1489,6 +1640,8 @@ BEGIN
           AND app_users.role IN ('admin', 'doctor', 'nurse')
         )
       );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1497,11 +1650,14 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'conditions' AND policyname = 'Patients can view own conditions'
   ) THEN
-    CREATE POLICY "Patients can view own conditions"
+DO $$ BEGIN
+      CREATE POLICY "Patients can view own conditions"
       ON conditions
       FOR SELECT
       TO authenticated
       USING (patient_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1510,7 +1666,8 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'sdoh_observations' AND policyname = 'Staff can manage SDOH observations'
   ) THEN
-    CREATE POLICY "Staff can manage SDOH observations"
+DO $$ BEGIN
+      CREATE POLICY "Staff can manage SDOH observations"
       ON sdoh_observations
       FOR ALL
       TO authenticated
@@ -1528,6 +1685,8 @@ BEGIN
           AND app_users.role IN ('admin', 'doctor', 'nurse')
         )
       );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1536,11 +1695,14 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE tablename = 'sdoh_observations' AND policyname = 'Patients can view own SDOH observations'
   ) THEN
-    CREATE POLICY "Patients can view own SDOH observations"
+DO $$ BEGIN
+      CREATE POLICY "Patients can view own SDOH observations"
       ON sdoh_observations
       FOR SELECT
       TO authenticated
       USING (patient_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
   END IF;
 END $$;
 
@@ -1606,6 +1768,7 @@ COMMENT ON TABLE sdoh_observations IS 'Social Determinants of Health observation
 COMMENT ON COLUMN immunizations.vaccine_code IS 'CVX vaccine code from CDC';
 COMMENT ON COLUMN conditions.condition_code IS 'ICD-10-CM or SNOMED CT code';
 COMMENT ON COLUMN sdoh_observations.category IS 'SDOH domain: housing, food, transportation, employment, education, social, financial, safety';
+
 
 -- Migration: 20260125094038_add_conflict_resolution_system.sql
 -- ============================================================
@@ -1732,7 +1895,8 @@ ALTER TABLE conflict_audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_resolution_rules ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for conflict_resolutions
-CREATE POLICY "Staff can view conflicts"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view conflicts"
   ON conflict_resolutions FOR SELECT
   TO authenticated
   USING (
@@ -1742,8 +1906,11 @@ CREATE POLICY "Staff can view conflicts"
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can create conflicts"
+DO $$ BEGIN
+  CREATE POLICY "Staff can create conflicts"
   ON conflict_resolutions FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -1753,8 +1920,11 @@ CREATE POLICY "Staff can create conflicts"
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can update conflicts"
+DO $$ BEGIN
+  CREATE POLICY "Staff can update conflicts"
   ON conflict_resolutions FOR UPDATE
   TO authenticated
   USING (
@@ -1771,9 +1941,12 @@ CREATE POLICY "Staff can update conflicts"
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for conflict_audit_logs (append-only)
-CREATE POLICY "Staff can view audit logs"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view audit logs"
   ON conflict_audit_logs FOR SELECT
   TO authenticated
   USING (
@@ -1783,8 +1956,11 @@ CREATE POLICY "Staff can view audit logs"
       AND app_users.role IN ('admin', 'doctor')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can create audit logs"
+DO $$ BEGIN
+  CREATE POLICY "Staff can create audit logs"
   ON conflict_audit_logs FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -1794,11 +1970,14 @@ CREATE POLICY "Staff can create audit logs"
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- No UPDATE or DELETE policies for audit logs (immutable)
 
 -- RLS Policies for auto_resolution_rules
-CREATE POLICY "Admins can manage auto resolution rules"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage auto resolution rules"
   ON auto_resolution_rules FOR ALL
   TO authenticated
   USING (
@@ -1815,8 +1994,11 @@ CREATE POLICY "Admins can manage auto resolution rules"
       AND app_users.role = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view auto resolution rules"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view auto resolution rules"
   ON auto_resolution_rules FOR SELECT
   TO authenticated
   USING (
@@ -1826,6 +2008,8 @@ CREATE POLICY "Staff can view auto resolution rules"
       AND app_users.role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_conflict_resolution_timestamp()
@@ -1855,6 +2039,7 @@ VALUES
   ('Keep Newer Vitals', 'Automatically keep the more recent vital signs reading', 'vitals', 'sync_conflict', '{"field_type": "measurement"}', 'keep_newer', false, 10),
   ('Keep More Complete Patient', 'For duplicates, prefer record with more populated fields', 'patients', 'duplicate', '{"completeness_threshold": 0.8}', 'keep_more_complete', false, 20)
 ON CONFLICT DO NOTHING;
+
 -- Migration: 20260125095031_add_enhanced_conflict_roles_and_site_settings.sql
 -- ============================================================
 /*
@@ -1927,13 +2112,17 @@ COMMENT ON COLUMN site_conflict_settings.require_dual_approval_for_patient_merge
 
 ALTER TABLE site_conflict_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Authenticated users can view site conflict settings"
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can view site conflict settings"
   ON site_conflict_settings
   FOR SELECT
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can manage site conflict settings"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage site conflict settings"
   ON site_conflict_settings
   FOR ALL
   TO authenticated
@@ -1951,6 +2140,8 @@ CREATE POLICY "Admins can manage site conflict settings"
       AND app_users.role IN ('admin', 'auditor')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Add new columns to conflict_resolutions table
 DO $$
@@ -2031,6 +2222,7 @@ VALUES
   ('region_igbo', 'Igbo-Speaking Region (Anambra, Enugu)', 'igbo', 0.75),
   ('region_delta', 'Niger Delta Region', 'delta', 0.85)
 ON CONFLICT (site_id) DO NOTHING;
+
 -- Migration: 20260125095109_add_conflict_delta_retention_and_archiving.sql
 -- ============================================================
 /*
@@ -2091,7 +2283,8 @@ CREATE INDEX IF NOT EXISTS idx_conflict_change_deltas_phi_field ON conflict_chan
 
 ALTER TABLE conflict_change_deltas ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Authenticated users can view conflict change deltas"
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can view conflict change deltas"
   ON conflict_change_deltas
   FOR SELECT
   TO authenticated
@@ -2102,8 +2295,11 @@ CREATE POLICY "Authenticated users can view conflict change deltas"
       AND app_users.role IN ('admin', 'auditor', 'lead_clinician', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins and auditors can insert conflict change deltas"
+DO $$ BEGIN
+  CREATE POLICY "Admins and auditors can insert conflict change deltas"
   ON conflict_change_deltas
   FOR INSERT
   TO authenticated
@@ -2114,6 +2310,8 @@ CREATE POLICY "Admins and auditors can insert conflict change deltas"
       AND app_users.role IN ('admin', 'auditor', 'lead_clinician', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create archived_conflict_summaries table
 CREATE TABLE IF NOT EXISTS archived_conflict_summaries (
@@ -2144,7 +2342,8 @@ CREATE INDEX IF NOT EXISTS idx_archived_conflict_summaries_archived_at ON archiv
 
 ALTER TABLE archived_conflict_summaries ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Admins and auditors can view archived summaries"
+DO $$ BEGIN
+  CREATE POLICY "Admins and auditors can view archived summaries"
   ON archived_conflict_summaries
   FOR SELECT
   TO authenticated
@@ -2155,8 +2354,11 @@ CREATE POLICY "Admins and auditors can view archived summaries"
       AND app_users.role IN ('admin', 'auditor')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Only system can insert archived summaries"
+DO $$ BEGIN
+  CREATE POLICY "Only system can insert archived summaries"
   ON archived_conflict_summaries
   FOR INSERT
   TO authenticated
@@ -2167,6 +2369,8 @@ CREATE POLICY "Only system can insert archived summaries"
       AND app_users.role = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create data_retention_policies table
 CREATE TABLE IF NOT EXISTS data_retention_policies (
@@ -2192,7 +2396,8 @@ COMMENT ON COLUMN data_retention_policies.legal_hold IS 'Prevents archiving duri
 
 ALTER TABLE data_retention_policies ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Admins can manage retention policies"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage retention policies"
   ON data_retention_policies
   FOR ALL
   TO authenticated
@@ -2210,12 +2415,17 @@ CREATE POLICY "Admins can manage retention policies"
       AND app_users.role IN ('admin', 'auditor')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Authenticated users can view retention policies"
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can view retention policies"
   ON data_retention_policies
   FOR SELECT
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create retention_policy_executions audit table
 CREATE TABLE IF NOT EXISTS retention_policy_executions (
@@ -2240,7 +2450,8 @@ CREATE INDEX IF NOT EXISTS idx_retention_executions_started ON retention_policy_
 
 ALTER TABLE retention_policy_executions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Admins and auditors can view retention executions"
+DO $$ BEGIN
+  CREATE POLICY "Admins and auditors can view retention executions"
   ON retention_policy_executions
   FOR SELECT
   TO authenticated
@@ -2251,8 +2462,11 @@ CREATE POLICY "Admins and auditors can view retention executions"
       AND app_users.role IN ('admin', 'auditor')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Only admins can insert retention executions"
+DO $$ BEGIN
+  CREATE POLICY "Only admins can insert retention executions"
   ON retention_policy_executions
   FOR INSERT
   TO authenticated
@@ -2263,6 +2477,8 @@ CREATE POLICY "Only admins can insert retention executions"
       AND app_users.role = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Insert default retention policies aligned with federal requirements
 INSERT INTO data_retention_policies (table_name, retention_period_days, archive_strategy) VALUES

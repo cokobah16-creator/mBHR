@@ -108,7 +108,8 @@ ALTER TABLE patient_preferences ENABLE ROW LEVEL SECURITY;
 -- RLS Policies for patient_allergies
 
 -- Clinical staff can view all patient allergies
-CREATE POLICY "Clinical staff can view patient allergies"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can view patient allergies"
   ON patient_allergies FOR SELECT
   TO authenticated
   USING (
@@ -118,9 +119,12 @@ CREATE POLICY "Clinical staff can view patient allergies"
       AND users.role IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Clinical staff can insert patient allergies
-CREATE POLICY "Clinical staff can insert patient allergies"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can insert patient allergies"
   ON patient_allergies FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -130,9 +134,12 @@ CREATE POLICY "Clinical staff can insert patient allergies"
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Clinical staff can update patient allergies
-CREATE POLICY "Clinical staff can update patient allergies"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can update patient allergies"
   ON patient_allergies FOR UPDATE
   TO authenticated
   USING (
@@ -149,9 +156,12 @@ CREATE POLICY "Clinical staff can update patient allergies"
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Only admins and doctors can delete allergies
-CREATE POLICY "Admins and doctors can delete patient allergies"
+DO $$ BEGIN
+  CREATE POLICY "Admins and doctors can delete patient allergies"
   ON patient_allergies FOR DELETE
   TO authenticated
   USING (
@@ -161,11 +171,14 @@ CREATE POLICY "Admins and doctors can delete patient allergies"
       AND users.role IN ('admin', 'doctor')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for patient_preferences
 
 -- All authenticated staff can view patient preferences
-CREATE POLICY "Staff can view patient preferences"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view patient preferences"
   ON patient_preferences FOR SELECT
   TO authenticated
   USING (
@@ -174,9 +187,12 @@ CREATE POLICY "Staff can view patient preferences"
       WHERE users.id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Clinical staff can insert patient preferences
-CREATE POLICY "Staff can insert patient preferences"
+DO $$ BEGIN
+  CREATE POLICY "Staff can insert patient preferences"
   ON patient_preferences FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -185,9 +201,12 @@ CREATE POLICY "Staff can insert patient preferences"
       WHERE users.id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Clinical staff can update patient preferences
-CREATE POLICY "Staff can update patient preferences"
+DO $$ BEGIN
+  CREATE POLICY "Staff can update patient preferences"
   ON patient_preferences FOR UPDATE
   TO authenticated
   USING (
@@ -202,9 +221,12 @@ CREATE POLICY "Staff can update patient preferences"
       WHERE users.id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Only admins can delete preferences
-CREATE POLICY "Admins can delete patient preferences"
+DO $$ BEGIN
+  CREATE POLICY "Admins can delete patient preferences"
   ON patient_preferences FOR DELETE
   TO authenticated
   USING (
@@ -214,6 +236,8 @@ CREATE POLICY "Admins can delete patient preferences"
       AND users.role = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create updated_at trigger function if not exists
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -236,6 +260,7 @@ CREATE TRIGGER update_patient_preferences_updated_at
   BEFORE UPDATE ON patient_preferences
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
+
 
 -- Migration: 20251026000000_add_clinical_decision_support.sql
 -- ============================================================
@@ -299,7 +324,8 @@ CREATE INDEX IF NOT EXISTS idx_clinical_alerts_dirty ON clinical_alerts(_dirty) 
 ALTER TABLE clinical_alerts ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Clinical staff can view all alerts
-CREATE POLICY "Clinical staff can view clinical alerts"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can view clinical alerts"
   ON clinical_alerts
   FOR SELECT
   TO authenticated
@@ -310,9 +336,12 @@ CREATE POLICY "Clinical staff can view clinical alerts"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Policy: Clinical staff can create alerts
-CREATE POLICY "Clinical staff can create clinical alerts"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can create clinical alerts"
   ON clinical_alerts
   FOR INSERT
   TO authenticated
@@ -323,9 +352,12 @@ CREATE POLICY "Clinical staff can create clinical alerts"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Policy: Clinical staff can acknowledge alerts
-CREATE POLICY "Clinical staff can acknowledge clinical alerts"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can acknowledge clinical alerts"
   ON clinical_alerts
   FOR UPDATE
   TO authenticated
@@ -343,9 +375,12 @@ CREATE POLICY "Clinical staff can acknowledge clinical alerts"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Policy: Admins can delete alerts
-CREATE POLICY "Admins can delete clinical alerts"
+DO $$ BEGIN
+  CREATE POLICY "Admins can delete clinical alerts"
   ON clinical_alerts
   FOR DELETE
   TO authenticated
@@ -356,6 +391,8 @@ CREATE POLICY "Admins can delete clinical alerts"
       AND auth.users.raw_app_meta_data->>'role' = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create function to automatically set acknowledged_at timestamp
 CREATE OR REPLACE FUNCTION set_acknowledged_at()
@@ -396,6 +433,7 @@ COMMENT ON COLUMN clinical_alerts.details IS 'Detailed clinical information incl
 COMMENT ON COLUMN clinical_alerts.acknowledged IS 'Whether a clinician has reviewed and acknowledged the alert';
 COMMENT ON COLUMN clinical_alerts._dirty IS 'Offline sync flag - true when local changes need to be synced to server';
 COMMENT ON COLUMN clinical_alerts._synced_at IS 'Timestamp of last successful sync with offline client';
+
 
 -- Migration: 20251026065550_add_otp_rate_limit_tracking.sql
 -- ============================================================
@@ -467,13 +505,17 @@ ALTER TABLE otp_rate_limit_tracking ENABLE ROW LEVEL SECURITY;
 -- ============================================================================
 
 -- System can insert and update tracking records
-CREATE POLICY "System can manage OTP rate limit tracking"
+DO $$ BEGIN
+  CREATE POLICY "System can manage OTP rate limit tracking"
   ON otp_rate_limit_tracking FOR ALL
   TO authenticated
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Admins can view rate limit tracking for monitoring
-CREATE POLICY "Admins can view OTP rate limit tracking"
+DO $$ BEGIN
+  CREATE POLICY "Admins can view OTP rate limit tracking"
   ON otp_rate_limit_tracking FOR SELECT
   TO authenticated
   USING (
@@ -481,6 +523,8 @@ CREATE POLICY "Admins can view OTP rate limit tracking"
       SELECT id FROM app_users WHERE role = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- HELPER FUNCTIONS
@@ -604,6 +648,7 @@ COMMENT ON FUNCTION check_and_increment_otp_rate_limit IS
 
 COMMENT ON FUNCTION cleanup_expired_otp_rate_limits IS 
   'Removes OTP rate limit tracking records older than 24 hours. Should be called periodically via cron job.';
+
 -- Migration: 20251026102016_fix_portal_activity_column.sql
 -- ============================================================
 /*
@@ -625,6 +670,7 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_patients_last_portal_activity ON patients(last_portal_activity);
+
 
 -- Migration: 20251026104953_add_portal_fields_to_patients.sql
 -- ============================================================
@@ -688,6 +734,7 @@ COMMENT ON COLUMN patients.contact_verified IS
 
 COMMENT ON COLUMN patients.portal_invited_at IS 
   'Timestamp when patient was invited to use the portal';
+
 
 -- Migration: 20251026225242_20251031000001_add_patient_portal_fixed.sql
 -- ============================================================
@@ -851,7 +898,8 @@ ALTER TABLE patient_consent_records ENABLE ROW LEVEL SECURITY;
 -- ============================================================================
 
 -- NOTIFICATIONS: Patients can view and update own notifications
-CREATE POLICY "Patients can view own notifications"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own notifications"
   ON patient_notifications FOR SELECT
   TO anon, authenticated
   USING (
@@ -859,8 +907,11 @@ CREATE POLICY "Patients can view own notifications"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can update own notifications"
+DO $$ BEGIN
+  CREATE POLICY "Patients can update own notifications"
   ON patient_notifications FOR UPDATE
   TO anon, authenticated
   USING (
@@ -868,14 +919,20 @@ CREATE POLICY "Patients can update own notifications"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can create patient notifications"
+DO $$ BEGIN
+  CREATE POLICY "Staff can create patient notifications"
   ON patient_notifications FOR INSERT
   TO authenticated
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- MESSAGES: Patients can view and send messages
-CREATE POLICY "Patients can view own messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own messages"
   ON patient_messages FOR SELECT
   TO anon, authenticated
   USING (
@@ -883,8 +940,11 @@ CREATE POLICY "Patients can view own messages"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can send messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can send messages"
   ON patient_messages FOR INSERT
   TO anon, authenticated
   WITH CHECK (
@@ -892,14 +952,20 @@ CREATE POLICY "Patients can send messages"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage messages"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage messages"
   ON patient_messages FOR ALL
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- APPOINTMENT REQUESTS: Patients can create and view own requests
-CREATE POLICY "Patients can view own appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own appointment requests"
   ON patient_appointment_requests FOR SELECT
   TO anon, authenticated
   USING (
@@ -907,8 +973,11 @@ CREATE POLICY "Patients can view own appointment requests"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can create appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Patients can create appointment requests"
   ON patient_appointment_requests FOR INSERT
   TO anon, authenticated
   WITH CHECK (
@@ -916,14 +985,20 @@ CREATE POLICY "Patients can create appointment requests"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage appointment requests"
   ON patient_appointment_requests FOR ALL
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- DOCUMENTS: Patients can upload and view own documents
-CREATE POLICY "Patients can view own documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own documents"
   ON patient_documents FOR SELECT
   TO anon, authenticated
   USING (
@@ -931,8 +1006,11 @@ CREATE POLICY "Patients can view own documents"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can upload documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can upload documents"
   ON patient_documents FOR INSERT
   TO anon, authenticated
   WITH CHECK (
@@ -940,14 +1018,20 @@ CREATE POLICY "Patients can upload documents"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage patient documents"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage patient documents"
   ON patient_documents FOR ALL
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CONSENT RECORDS: Patients can view and create own consent
-CREATE POLICY "Patients can view own consent records"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own consent records"
   ON patient_consent_records FOR SELECT
   TO anon, authenticated
   USING (
@@ -955,8 +1039,11 @@ CREATE POLICY "Patients can view own consent records"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can create consent records"
+DO $$ BEGIN
+  CREATE POLICY "Patients can create consent records"
   ON patient_consent_records FOR INSERT
   TO anon, authenticated
   WITH CHECK (
@@ -964,11 +1051,16 @@ CREATE POLICY "Patients can create consent records"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view consent records"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view consent records"
   ON patient_consent_records FOR SELECT
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- UPDATED_AT TRIGGERS
@@ -1006,6 +1098,7 @@ BEGIN
       EXECUTE FUNCTION update_updated_at_column();
   END IF;
 END $$;
+
 -- Migration: 20251027000000_fix_security_performance_issues.sql
 -- ============================================================
 /*
@@ -1212,7 +1305,8 @@ $$;
 
 -- App users table policies
 DROP POLICY IF EXISTS "service_role_manage_permanent_admins" ON app_users;
-CREATE POLICY "service_role_manage_permanent_admins"
+DO $$ BEGIN
+  CREATE POLICY "service_role_manage_permanent_admins"
   ON app_users
   FOR ALL
   TO authenticated
@@ -1223,10 +1317,13 @@ CREATE POLICY "service_role_manage_permanent_admins"
       AND auth.users.raw_app_meta_data->>'role' = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Triage samples policies
 DROP POLICY IF EXISTS "Doctors can create triage samples" ON triage_samples;
-CREATE POLICY "Doctors can create triage samples"
+DO $$ BEGIN
+  CREATE POLICY "Doctors can create triage samples"
   ON triage_samples
   FOR INSERT
   TO authenticated
@@ -1237,10 +1334,13 @@ CREATE POLICY "Doctors can create triage samples"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Gamification wallets policies
 DROP POLICY IF EXISTS "Admins can read all wallets" ON gamification_wallets;
-CREATE POLICY "Admins can read all wallets"
+DO $$ BEGIN
+  CREATE POLICY "Admins can read all wallets"
   ON gamification_wallets
   FOR SELECT
   TO authenticated
@@ -1251,25 +1351,34 @@ CREATE POLICY "Admins can read all wallets"
       AND auth.users.raw_app_meta_data->>'role' = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Users can read own wallet" ON gamification_wallets;
-CREATE POLICY "Users can read own wallet"
+DO $$ BEGIN
+  CREATE POLICY "Users can read own wallet"
   ON gamification_wallets
   FOR SELECT
   TO authenticated
   USING (volunteer_id = (select auth.uid())::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Users can update own wallet" ON gamification_wallets;
-CREATE POLICY "Users can update own wallet"
+DO $$ BEGIN
+  CREATE POLICY "Users can update own wallet"
   ON gamification_wallets
   FOR UPDATE
   TO authenticated
   USING (volunteer_id = (select auth.uid())::text)
   WITH CHECK (volunteer_id = (select auth.uid())::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Game sessions policies
 DROP POLICY IF EXISTS "Admins can approve sessions" ON game_sessions;
-CREATE POLICY "Admins can approve sessions"
+DO $$ BEGIN
+  CREATE POLICY "Admins can approve sessions"
   ON game_sessions
   FOR UPDATE
   TO authenticated
@@ -1280,24 +1389,33 @@ CREATE POLICY "Admins can approve sessions"
       AND auth.users.raw_app_meta_data->>'role' = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Users can read own sessions" ON game_sessions;
-CREATE POLICY "Users can read own sessions"
+DO $$ BEGIN
+  CREATE POLICY "Users can read own sessions"
   ON game_sessions
   FOR SELECT
   TO authenticated
   USING (volunteer_id = (select auth.uid())::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Volunteers can create own sessions" ON game_sessions;
-CREATE POLICY "Volunteers can create own sessions"
+DO $$ BEGIN
+  CREATE POLICY "Volunteers can create own sessions"
   ON game_sessions
   FOR INSERT
   TO authenticated
   WITH CHECK (volunteer_id = (select auth.uid())::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Medication reminders policies
 DROP POLICY IF EXISTS "Clinical staff can manage medication reminders" ON medication_reminders;
-CREATE POLICY "Clinical staff can manage medication reminders"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can manage medication reminders"
   ON medication_reminders
   FOR ALL
   TO authenticated
@@ -1308,10 +1426,13 @@ CREATE POLICY "Clinical staff can manage medication reminders"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Lab orders policies
 DROP POLICY IF EXISTS "Clinical staff can manage lab orders" ON lab_orders;
-CREATE POLICY "Clinical staff can manage lab orders"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can manage lab orders"
   ON lab_orders
   FOR ALL
   TO authenticated
@@ -1322,10 +1443,13 @@ CREATE POLICY "Clinical staff can manage lab orders"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Lab results policies
 DROP POLICY IF EXISTS "Clinical staff can manage lab results" ON lab_results;
-CREATE POLICY "Clinical staff can manage lab results"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can manage lab results"
   ON lab_results
   FOR ALL
   TO authenticated
@@ -1336,10 +1460,13 @@ CREATE POLICY "Clinical staff can manage lab results"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Appointments policies
 DROP POLICY IF EXISTS "Authenticated users can manage appointments" ON appointments;
-CREATE POLICY "Authenticated users can manage appointments"
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can manage appointments"
   ON appointments
   FOR ALL
   TO authenticated
@@ -1349,10 +1476,13 @@ CREATE POLICY "Authenticated users can manage appointments"
       WHERE auth.users.id = (select auth.uid())
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Waitlist policies
 DROP POLICY IF EXISTS "Authenticated users can manage waitlist" ON waitlist;
-CREATE POLICY "Authenticated users can manage waitlist"
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can manage waitlist"
   ON waitlist
   FOR ALL
   TO authenticated
@@ -1362,10 +1492,13 @@ CREATE POLICY "Authenticated users can manage waitlist"
       WHERE auth.users.id = (select auth.uid())
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Care tasks policies
 DROP POLICY IF EXISTS "Clinical staff can manage care tasks" ON care_tasks;
-CREATE POLICY "Clinical staff can manage care tasks"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can manage care tasks"
   ON care_tasks
   FOR ALL
   TO authenticated
@@ -1376,10 +1509,13 @@ CREATE POLICY "Clinical staff can manage care tasks"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Triage records policies
 DROP POLICY IF EXISTS "Clinical staff can manage triage records" ON triage_records;
-CREATE POLICY "Clinical staff can manage triage records"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can manage triage records"
   ON triage_records
   FOR ALL
   TO authenticated
@@ -1390,10 +1526,13 @@ CREATE POLICY "Clinical staff can manage triage records"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patient allergies policies
 DROP POLICY IF EXISTS "Clinical staff can manage allergies" ON patient_allergies;
-CREATE POLICY "Clinical staff can manage allergies"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can manage allergies"
   ON patient_allergies
   FOR INSERT
   TO authenticated
@@ -1404,9 +1543,12 @@ CREATE POLICY "Clinical staff can manage allergies"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Clinical staff can update allergies" ON patient_allergies;
-CREATE POLICY "Clinical staff can update allergies"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can update allergies"
   ON patient_allergies
   FOR UPDATE
   TO authenticated
@@ -1424,9 +1566,12 @@ CREATE POLICY "Clinical staff can update allergies"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 DROP POLICY IF EXISTS "Clinical staff can view allergies" ON patient_allergies;
-CREATE POLICY "Clinical staff can view allergies"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can view allergies"
   ON patient_allergies
   FOR SELECT
   TO authenticated
@@ -1437,10 +1582,13 @@ CREATE POLICY "Clinical staff can view allergies"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patient preferences policies
 DROP POLICY IF EXISTS "Staff can manage patient preferences" ON patient_preferences;
-CREATE POLICY "Staff can manage patient preferences"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage patient preferences"
   ON patient_preferences
   FOR ALL
   TO authenticated
@@ -1450,10 +1598,13 @@ CREATE POLICY "Staff can manage patient preferences"
       WHERE auth.users.id = (select auth.uid())
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patient merges policies
 DROP POLICY IF EXISTS "Admins can view patient merges" ON patient_merges;
-CREATE POLICY "Admins can view patient merges"
+DO $$ BEGIN
+  CREATE POLICY "Admins can view patient merges"
   ON patient_merges
   FOR SELECT
   TO authenticated
@@ -1464,10 +1615,13 @@ CREATE POLICY "Admins can view patient merges"
       AND auth.users.raw_app_meta_data->>'role' = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Daily counts policies
 DROP POLICY IF EXISTS "Authenticated users can read daily counts" ON daily_counts;
-CREATE POLICY "Authenticated users can read daily counts"
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can read daily counts"
   ON daily_counts
   FOR SELECT
   TO authenticated
@@ -1477,10 +1631,13 @@ CREATE POLICY "Authenticated users can read daily counts"
       WHERE auth.users.id = (select auth.uid())
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Conflict resolutions policies
 DROP POLICY IF EXISTS "Admins can manage conflict resolutions" ON conflict_resolutions;
-CREATE POLICY "Admins can manage conflict resolutions"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage conflict resolutions"
   ON conflict_resolutions
   FOR ALL
   TO authenticated
@@ -1491,10 +1648,13 @@ CREATE POLICY "Admins can manage conflict resolutions"
       AND auth.users.raw_app_meta_data->>'role' = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Message templates policies
 DROP POLICY IF EXISTS "Authenticated users can read message templates" ON message_templates;
-CREATE POLICY "Authenticated users can read message templates"
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can read message templates"
   ON message_templates
   FOR SELECT
   TO authenticated
@@ -1504,10 +1664,13 @@ CREATE POLICY "Authenticated users can read message templates"
       WHERE auth.users.id = (select auth.uid())
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Outbound messages policies
 DROP POLICY IF EXISTS "Authenticated users can manage outbound messages" ON outbound_messages;
-CREATE POLICY "Authenticated users can manage outbound messages"
+DO $$ BEGIN
+  CREATE POLICY "Authenticated users can manage outbound messages"
   ON outbound_messages
   FOR ALL
   TO authenticated
@@ -1517,10 +1680,13 @@ CREATE POLICY "Authenticated users can manage outbound messages"
       WHERE auth.users.id = (select auth.uid())
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Users table policies
 DROP POLICY IF EXISTS "Admins can manage users" ON users;
-CREATE POLICY "Admins can manage users"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage users"
   ON users
   FOR ALL
   TO authenticated
@@ -1531,10 +1697,13 @@ CREATE POLICY "Admins can manage users"
       AND auth.users.raw_app_meta_data->>'role' = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Stock batches policies
 DROP POLICY IF EXISTS "Pharmacists can manage stock batches" ON stock_batches;
-CREATE POLICY "Pharmacists can manage stock batches"
+DO $$ BEGIN
+  CREATE POLICY "Pharmacists can manage stock batches"
   ON stock_batches
   FOR ALL
   TO authenticated
@@ -1545,6 +1714,8 @@ CREATE POLICY "Pharmacists can manage stock batches"
       AND auth.users.raw_app_meta_data->>'role' IN ('admin', 'pharmacist')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- =====================================================
 -- PART 5: CONSOLIDATE DUPLICATE POLICIES
@@ -1556,7 +1727,8 @@ DROP POLICY IF EXISTS "select_app_users_any" ON app_users;
 
 -- Update the main app_users policy to be comprehensive
 DROP POLICY IF EXISTS "Allow authenticated access to app_users" ON app_users;
-CREATE POLICY "Allow authenticated access to app_users"
+DO $$ BEGIN
+  CREATE POLICY "Allow authenticated access to app_users"
   ON app_users
   FOR ALL
   TO authenticated
@@ -1572,6 +1744,8 @@ CREATE POLICY "Allow authenticated access to app_users"
       WHERE auth.users.id = (select auth.uid())
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- =====================================================
 -- COMMENTS FOR DOCUMENTATION
@@ -1593,6 +1767,7 @@ COMMENT ON INDEX idx_triage_records_visit_id_fk IS 'Foreign key index for query 
 COMMENT ON INDEX idx_visits_patient_id_fk IS 'Foreign key index for query performance';
 COMMENT ON INDEX idx_vitals_patient_id_fk IS 'Foreign key index for query performance';
 COMMENT ON INDEX idx_vitals_visit_id_fk IS 'Foreign key index for query performance';
+
 
 -- Migration: 20251028000000_add_patient_portal.sql
 -- ============================================================
@@ -1901,18 +2076,25 @@ ALTER TABLE patient_consent_records ENABLE ROW LEVEL SECURITY;
 -- ROW LEVEL SECURITY POLICIES - PATIENT PORTAL USERS
 -- ============================================================================
 
-CREATE POLICY "Patients can view own portal account"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own portal account"
   ON patient_portal_users FOR SELECT
   TO authenticated
   USING (auth.uid() = id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can update own preferences"
+DO $$ BEGIN
+  CREATE POLICY "Patients can update own preferences"
   ON patient_portal_users FOR UPDATE
   TO authenticated
   USING (auth.uid() = id)
   WITH CHECK (auth.uid() = id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view patient portal accounts"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view patient portal accounts"
   ON patient_portal_users FOR SELECT
   TO authenticated
   USING (
@@ -1920,8 +2102,11 @@ CREATE POLICY "Staff can view patient portal accounts"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can manage patient portal accounts"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage patient portal accounts"
   ON patient_portal_users FOR ALL
   TO authenticated
   USING (
@@ -1929,22 +2114,31 @@ CREATE POLICY "Admins can manage patient portal accounts"
       SELECT id FROM app_users WHERE role = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- ROW LEVEL SECURITY POLICIES - PATIENT PORTAL SESSIONS
 -- ============================================================================
 
-CREATE POLICY "Patients can view own sessions"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own sessions"
   ON patient_portal_sessions FOR SELECT
   TO authenticated
   USING (portal_user_id = auth.uid());
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can delete own sessions"
+DO $$ BEGIN
+  CREATE POLICY "Patients can delete own sessions"
   ON patient_portal_sessions FOR DELETE
   TO authenticated
   USING (portal_user_id = auth.uid());
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can view all patient sessions"
+DO $$ BEGIN
+  CREATE POLICY "Admins can view all patient sessions"
   ON patient_portal_sessions FOR SELECT
   TO authenticated
   USING (
@@ -1952,12 +2146,15 @@ CREATE POLICY "Admins can view all patient sessions"
       SELECT id FROM app_users WHERE role = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- ROW LEVEL SECURITY POLICIES - PATIENT NOTIFICATIONS
 -- ============================================================================
 
-CREATE POLICY "Patients can view own notifications"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own notifications"
   ON patient_notifications FOR SELECT
   TO authenticated
   USING (
@@ -1965,8 +2162,11 @@ CREATE POLICY "Patients can view own notifications"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can update own notifications"
+DO $$ BEGIN
+  CREATE POLICY "Patients can update own notifications"
   ON patient_notifications FOR UPDATE
   TO authenticated
   USING (
@@ -1979,8 +2179,11 @@ CREATE POLICY "Patients can update own notifications"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can create patient notifications"
+DO $$ BEGIN
+  CREATE POLICY "Staff can create patient notifications"
   ON patient_notifications FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -1988,12 +2191,15 @@ CREATE POLICY "Staff can create patient notifications"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw', 'pharmacist')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- ROW LEVEL SECURITY POLICIES - PATIENT MESSAGES
 -- ============================================================================
 
-CREATE POLICY "Patients can view own messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own messages"
   ON patient_messages FOR SELECT
   TO authenticated
   USING (
@@ -2001,8 +2207,11 @@ CREATE POLICY "Patients can view own messages"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can send messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can send messages"
   ON patient_messages FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -2012,8 +2221,11 @@ CREATE POLICY "Patients can send messages"
     AND sender_type = 'patient'
     AND sender_id = auth.uid()
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can update own messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can update own messages"
   ON patient_messages FOR UPDATE
   TO authenticated
   USING (
@@ -2026,8 +2238,11 @@ CREATE POLICY "Patients can update own messages"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view patient messages"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view patient messages"
   ON patient_messages FOR SELECT
   TO authenticated
   USING (
@@ -2035,8 +2250,11 @@ CREATE POLICY "Staff can view patient messages"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can send messages to patients"
+DO $$ BEGIN
+  CREATE POLICY "Staff can send messages to patients"
   ON patient_messages FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -2046,12 +2264,15 @@ CREATE POLICY "Staff can send messages to patients"
     AND sender_type = 'staff'
     AND sender_id = auth.uid()
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- ROW LEVEL SECURITY POLICIES - PATIENT APPOINTMENT REQUESTS
 -- ============================================================================
 
-CREATE POLICY "Patients can view own appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own appointment requests"
   ON patient_appointment_requests FOR SELECT
   TO authenticated
   USING (
@@ -2059,8 +2280,11 @@ CREATE POLICY "Patients can view own appointment requests"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can create appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Patients can create appointment requests"
   ON patient_appointment_requests FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -2068,8 +2292,11 @@ CREATE POLICY "Patients can create appointment requests"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can cancel own appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Patients can cancel own appointment requests"
   ON patient_appointment_requests FOR UPDATE
   TO authenticated
   USING (
@@ -2084,8 +2311,11 @@ CREATE POLICY "Patients can cancel own appointment requests"
     )
     AND status = 'cancelled'
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view all appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view all appointment requests"
   ON patient_appointment_requests FOR SELECT
   TO authenticated
   USING (
@@ -2093,8 +2323,11 @@ CREATE POLICY "Staff can view all appointment requests"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can review appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Staff can review appointment requests"
   ON patient_appointment_requests FOR UPDATE
   TO authenticated
   USING (
@@ -2102,12 +2335,15 @@ CREATE POLICY "Staff can review appointment requests"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- ROW LEVEL SECURITY POLICIES - PATIENT DOCUMENTS
 -- ============================================================================
 
-CREATE POLICY "Patients can view own documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own documents"
   ON patient_documents FOR SELECT
   TO authenticated
   USING (
@@ -2115,8 +2351,11 @@ CREATE POLICY "Patients can view own documents"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can upload documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can upload documents"
   ON patient_documents FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -2125,8 +2364,11 @@ CREATE POLICY "Patients can upload documents"
     )
     AND uploaded_by_patient = true
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view patient documents"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view patient documents"
   ON patient_documents FOR SELECT
   TO authenticated
   USING (
@@ -2134,8 +2376,11 @@ CREATE POLICY "Staff can view patient documents"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can upload documents for patients"
+DO $$ BEGIN
+  CREATE POLICY "Staff can upload documents for patients"
   ON patient_documents FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -2143,12 +2388,15 @@ CREATE POLICY "Staff can upload documents for patients"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- ROW LEVEL SECURITY POLICIES - PATIENT CONSENT RECORDS
 -- ============================================================================
 
-CREATE POLICY "Patients can view own consent records"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own consent records"
   ON patient_consent_records FOR SELECT
   TO authenticated
   USING (
@@ -2156,8 +2404,11 @@ CREATE POLICY "Patients can view own consent records"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can create consent records"
+DO $$ BEGIN
+  CREATE POLICY "Patients can create consent records"
   ON patient_consent_records FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -2165,8 +2416,11 @@ CREATE POLICY "Patients can create consent records"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view patient consent records"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view patient consent records"
   ON patient_consent_records FOR SELECT
   TO authenticated
   USING (
@@ -2174,12 +2428,15 @@ CREATE POLICY "Staff can view patient consent records"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- ROW LEVEL SECURITY POLICIES - PATIENT ACCESS LOGS
 -- ============================================================================
 
-CREATE POLICY "Admins can view all access logs"
+DO $$ BEGIN
+  CREATE POLICY "Admins can view all access logs"
   ON patient_portal_access_logs FOR SELECT
   TO authenticated
   USING (
@@ -2187,18 +2444,24 @@ CREATE POLICY "Admins can view all access logs"
       SELECT id FROM app_users WHERE role = 'admin'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "System can create access logs"
+DO $$ BEGIN
+  CREATE POLICY "System can create access logs"
   ON patient_portal_access_logs FOR INSERT
   TO authenticated
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- RLS POLICIES FOR PATIENT READ ACCESS TO CLINICAL DATA
 -- ============================================================================
 
 -- Patients can view their own visits
-CREATE POLICY "Patients can view own visits"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own visits"
   ON visits FOR SELECT
   TO authenticated
   USING (
@@ -2207,9 +2470,12 @@ CREATE POLICY "Patients can view own visits"
     )
     AND status = 'closed'
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own vitals
-CREATE POLICY "Patients can view own vitals"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own vitals"
   ON vitals FOR SELECT
   TO authenticated
   USING (
@@ -2217,9 +2483,12 @@ CREATE POLICY "Patients can view own vitals"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own consultations
-CREATE POLICY "Patients can view own consultations"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own consultations"
   ON consultations FOR SELECT
   TO authenticated
   USING (
@@ -2227,9 +2496,12 @@ CREATE POLICY "Patients can view own consultations"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own dispenses (prescriptions)
-CREATE POLICY "Patients can view own dispenses"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own dispenses"
   ON dispenses FOR SELECT
   TO authenticated
   USING (
@@ -2237,9 +2509,12 @@ CREATE POLICY "Patients can view own dispenses"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own lab orders
-CREATE POLICY "Patients can view own lab orders"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own lab orders"
   ON lab_orders FOR SELECT
   TO authenticated
   USING (
@@ -2247,9 +2522,12 @@ CREATE POLICY "Patients can view own lab orders"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own lab results
-CREATE POLICY "Patients can view own lab results"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own lab results"
   ON lab_results FOR SELECT
   TO authenticated
   USING (
@@ -2259,9 +2537,12 @@ CREATE POLICY "Patients can view own lab results"
       WHERE ppu.id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own appointments
-CREATE POLICY "Patients can view own appointments"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own appointments"
   ON appointments FOR SELECT
   TO authenticated
   USING (
@@ -2269,9 +2550,12 @@ CREATE POLICY "Patients can view own appointments"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own medication reminders
-CREATE POLICY "Patients can view own medication reminders"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own medication reminders"
   ON medication_reminders FOR SELECT
   TO authenticated
   USING (
@@ -2279,9 +2563,12 @@ CREATE POLICY "Patients can view own medication reminders"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own allergies
-CREATE POLICY "Patients can view own allergies"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own allergies"
   ON patient_allergies FOR SELECT
   TO authenticated
   USING (
@@ -2289,9 +2576,12 @@ CREATE POLICY "Patients can view own allergies"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Patients can view their own preferences
-CREATE POLICY "Patients can view own preferences"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own preferences"
   ON patient_preferences FOR SELECT
   TO authenticated
   USING (
@@ -2299,6 +2589,8 @@ CREATE POLICY "Patients can view own preferences"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- UPDATED_AT TRIGGERS
@@ -2409,6 +2701,7 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
 
 -- Migration: 20251028120000_add_multi_tenant_foundation.sql
 -- ============================================================
@@ -2584,7 +2877,8 @@ ALTER TABLE event_staff_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_org_sites ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for organizations
-CREATE POLICY "Users can view their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Users can view their organizations"
   ON organizations
   FOR SELECT
   TO authenticated
@@ -2593,8 +2887,11 @@ CREATE POLICY "Users can view their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can manage their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage their organizations"
   ON organizations
   FOR ALL
   TO authenticated
@@ -2608,9 +2905,12 @@ CREATE POLICY "Admins can manage their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for sites
-CREATE POLICY "Users can view sites in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Users can view sites in their organizations"
   ON sites
   FOR SELECT
   TO authenticated
@@ -2619,8 +2919,11 @@ CREATE POLICY "Users can view sites in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can manage sites in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage sites in their organizations"
   ON sites
   FOR ALL
   TO authenticated
@@ -2634,9 +2937,12 @@ CREATE POLICY "Admins can manage sites in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for outreach_events
-CREATE POLICY "Users can view events in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Users can view events in their organizations"
   ON outreach_events
   FOR SELECT
   TO authenticated
@@ -2645,8 +2951,11 @@ CREATE POLICY "Users can view events in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage events in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage events in their organizations"
   ON outreach_events
   FOR ALL
   TO authenticated
@@ -2660,9 +2969,12 @@ CREATE POLICY "Staff can manage events in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for event_staff_assignments
-CREATE POLICY "Users can view their event assignments"
+DO $$ BEGIN
+  CREATE POLICY "Users can view their event assignments"
   ON event_staff_assignments
   FOR SELECT
   TO authenticated
@@ -2674,8 +2986,11 @@ CREATE POLICY "Users can view their event assignments"
       )
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage event assignments in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage event assignments in their organizations"
   ON event_staff_assignments
   FOR ALL
   TO authenticated
@@ -2693,15 +3008,21 @@ CREATE POLICY "Staff can manage event assignments in their organizations"
       )
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for user_org_sites
-CREATE POLICY "Users can view their own org assignments"
+DO $$ BEGIN
+  CREATE POLICY "Users can view their own org assignments"
   ON user_org_sites
   FOR SELECT
   TO authenticated
   USING (user_id = auth.uid());
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can manage user org assignments"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage user org assignments"
   ON user_org_sites
   FOR ALL
   TO authenticated
@@ -2715,6 +3036,8 @@ CREATE POLICY "Admins can manage user org assignments"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Add updated_at trigger for organizations
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -2739,6 +3062,7 @@ CREATE TRIGGER outreach_events_updated_at
   BEFORE UPDATE ON outreach_events
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
+
 
 -- Migration: 20251028121000_add_doctor_features_tables.sql
 -- ============================================================
@@ -3001,7 +3325,8 @@ ALTER TABLE consultation_reviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE protocol_library ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for patient_flags
-CREATE POLICY "Staff can view flags in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view flags in their organizations"
   ON patient_flags
   FOR SELECT
   TO authenticated
@@ -3010,8 +3335,11 @@ CREATE POLICY "Staff can view flags in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can create flags in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can create flags in their organizations"
   ON patient_flags
   FOR INSERT
   TO authenticated
@@ -3020,8 +3348,11 @@ CREATE POLICY "Staff can create flags in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can update flags in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can update flags in their organizations"
   ON patient_flags
   FOR UPDATE
   TO authenticated
@@ -3035,9 +3366,12 @@ CREATE POLICY "Staff can update flags in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for referrals
-CREATE POLICY "Staff can view referrals in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view referrals in their organizations"
   ON referrals
   FOR SELECT
   TO authenticated
@@ -3046,8 +3380,11 @@ CREATE POLICY "Staff can view referrals in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Doctors can manage referrals in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Doctors can manage referrals in their organizations"
   ON referrals
   FOR ALL
   TO authenticated
@@ -3061,9 +3398,12 @@ CREATE POLICY "Doctors can manage referrals in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for follow_up_schedules
-CREATE POLICY "Staff can view follow-ups in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view follow-ups in their organizations"
   ON follow_up_schedules
   FOR SELECT
   TO authenticated
@@ -3072,8 +3412,11 @@ CREATE POLICY "Staff can view follow-ups in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Clinical staff can manage follow-ups in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can manage follow-ups in their organizations"
   ON follow_up_schedules
   FOR ALL
   TO authenticated
@@ -3087,9 +3430,12 @@ CREATE POLICY "Clinical staff can manage follow-ups in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for prescription_templates
-CREATE POLICY "Staff can view prescription templates in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view prescription templates in their organizations"
   ON prescription_templates
   FOR SELECT
   TO authenticated
@@ -3098,8 +3444,11 @@ CREATE POLICY "Staff can view prescription templates in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Doctors and admins can manage prescription templates"
+DO $$ BEGIN
+  CREATE POLICY "Doctors and admins can manage prescription templates"
   ON prescription_templates
   FOR ALL
   TO authenticated
@@ -3113,9 +3462,12 @@ CREATE POLICY "Doctors and admins can manage prescription templates"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for site_formulary
-CREATE POLICY "Staff can view site formulary in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view site formulary in their organizations"
   ON site_formulary
   FOR SELECT
   TO authenticated
@@ -3124,8 +3476,11 @@ CREATE POLICY "Staff can view site formulary in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Pharmacists and admins can manage site formulary"
+DO $$ BEGIN
+  CREATE POLICY "Pharmacists and admins can manage site formulary"
   ON site_formulary
   FOR ALL
   TO authenticated
@@ -3139,9 +3494,12 @@ CREATE POLICY "Pharmacists and admins can manage site formulary"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for doctor_analytics
-CREATE POLICY "Staff can view doctor analytics in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view doctor analytics in their organizations"
   ON doctor_analytics
   FOR SELECT
   TO authenticated
@@ -3151,8 +3509,11 @@ CREATE POLICY "Staff can view doctor analytics in their organizations"
     ) OR
     doctor_id = auth.uid()
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "System can manage doctor analytics"
+DO $$ BEGIN
+  CREATE POLICY "System can manage doctor analytics"
   ON doctor_analytics
   FOR ALL
   TO authenticated
@@ -3166,9 +3527,12 @@ CREATE POLICY "System can manage doctor analytics"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for consultation_reviews
-CREATE POLICY "Staff can view consultation reviews in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view consultation reviews in their organizations"
   ON consultation_reviews
   FOR SELECT
   TO authenticated
@@ -3179,8 +3543,11 @@ CREATE POLICY "Staff can view consultation reviews in their organizations"
     reviewed_doctor_id = auth.uid() OR
     reviewing_doctor_id = auth.uid()
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Supervising doctors can manage reviews"
+DO $$ BEGIN
+  CREATE POLICY "Supervising doctors can manage reviews"
   ON consultation_reviews
   FOR ALL
   TO authenticated
@@ -3194,9 +3561,12 @@ CREATE POLICY "Supervising doctors can manage reviews"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for protocol_library
-CREATE POLICY "Staff can view protocols in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view protocols in their organizations"
   ON protocol_library
   FOR SELECT
   TO authenticated
@@ -3205,8 +3575,11 @@ CREATE POLICY "Staff can view protocols in their organizations"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Doctors and admins can manage protocols"
+DO $$ BEGIN
+  CREATE POLICY "Doctors and admins can manage protocols"
   ON protocol_library
   FOR ALL
   TO authenticated
@@ -3220,6 +3593,8 @@ CREATE POLICY "Doctors and admins can manage protocols"
       SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Add updated_at triggers
 CREATE TRIGGER referrals_updated_at

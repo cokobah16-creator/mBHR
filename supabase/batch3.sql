@@ -95,54 +95,84 @@ ALTER TABLE event_staff_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_org_sites ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for organizations
-CREATE POLICY "Users can view their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Users can view their organizations"
   ON organizations FOR SELECT TO authenticated
   USING (id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can manage their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage their organizations"
   ON organizations FOR ALL TO authenticated
   USING (id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for sites
-CREATE POLICY "Users can view sites in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Users can view sites in their organizations"
   ON sites FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can manage sites in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage sites in their organizations"
   ON sites FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for outreach_events
-CREATE POLICY "Users can view events in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Users can view events in their organizations"
   ON outreach_events FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage events in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage events in their organizations"
   ON outreach_events FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for event_staff_assignments
-CREATE POLICY "Users can view their event assignments"
+DO $$ BEGIN
+  CREATE POLICY "Users can view their event assignments"
   ON event_staff_assignments FOR SELECT TO authenticated
   USING (user_id = auth.uid() OR event_id IN (SELECT id FROM outreach_events WHERE org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid())));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage event assignments in their organizations"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage event assignments in their organizations"
   ON event_staff_assignments FOR ALL TO authenticated
   USING (event_id IN (SELECT id FROM outreach_events WHERE org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid())))
   WITH CHECK (event_id IN (SELECT id FROM outreach_events WHERE org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid())));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for user_org_sites
-CREATE POLICY "Users can view their own org assignments"
+DO $$ BEGIN
+  CREATE POLICY "Users can view their own org assignments"
   ON user_org_sites FOR SELECT TO authenticated
   USING (user_id = auth.uid());
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Admins can manage user org assignments"
+DO $$ BEGIN
+  CREATE POLICY "Admins can manage user org assignments"
   ON user_org_sites FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Add updated_at trigger
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -156,6 +186,7 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER organizations_updated_at BEFORE UPDATE ON organizations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER sites_updated_at BEFORE UPDATE ON sites FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER outreach_events_updated_at BEFORE UPDATE ON outreach_events FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 
 -- Migration: 20251028170517_add_doctor_features_tables_part1.sql
 -- ============================================================
@@ -272,6 +303,7 @@ ALTER TABLE follow_up_schedules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prescription_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE site_formulary ENABLE ROW LEVEL SECURITY;
 
+
 -- Migration: 20251028170617_add_doctor_features_tables_part2_fixed.sql
 -- ============================================================
 -- Create doctor_analytics table
@@ -359,62 +391,113 @@ ALTER TABLE consultation_reviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE protocol_library ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for patient_flags
-CREATE POLICY "Staff can view flags in their organizations" ON patient_flags FOR SELECT TO authenticated
+DO $$ BEGIN
+  CREATE POLICY "Staff can view flags in their organizations" ON patient_flags FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
-CREATE POLICY "Staff can create flags in their organizations" ON patient_flags FOR INSERT TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "Staff can create flags in their organizations" ON patient_flags FOR INSERT TO authenticated
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
-CREATE POLICY "Staff can update flags in their organizations" ON patient_flags FOR UPDATE TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "Staff can update flags in their organizations" ON patient_flags FOR UPDATE TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for referrals
-CREATE POLICY "Staff can view referrals in their organizations" ON referrals FOR SELECT TO authenticated
+DO $$ BEGIN
+  CREATE POLICY "Staff can view referrals in their organizations" ON referrals FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
-CREATE POLICY "Doctors can manage referrals in their organizations" ON referrals FOR ALL TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "Doctors can manage referrals in their organizations" ON referrals FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for follow_up_schedules
-CREATE POLICY "Staff can view follow-ups in their organizations" ON follow_up_schedules FOR SELECT TO authenticated
+DO $$ BEGIN
+  CREATE POLICY "Staff can view follow-ups in their organizations" ON follow_up_schedules FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
-CREATE POLICY "Clinical staff can manage follow-ups" ON follow_up_schedules FOR ALL TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "Clinical staff can manage follow-ups" ON follow_up_schedules FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for prescription_templates
-CREATE POLICY "Staff can view prescription templates" ON prescription_templates FOR SELECT TO authenticated
+DO $$ BEGIN
+  CREATE POLICY "Staff can view prescription templates" ON prescription_templates FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
-CREATE POLICY "Doctors can manage prescription templates" ON prescription_templates FOR ALL TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "Doctors can manage prescription templates" ON prescription_templates FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for site_formulary
-CREATE POLICY "Staff can view site formulary" ON site_formulary FOR SELECT TO authenticated
+DO $$ BEGIN
+  CREATE POLICY "Staff can view site formulary" ON site_formulary FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
-CREATE POLICY "Pharmacists can manage site formulary" ON site_formulary FOR ALL TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "Pharmacists can manage site formulary" ON site_formulary FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for doctor_analytics
-CREATE POLICY "Staff can view doctor analytics" ON doctor_analytics FOR SELECT TO authenticated
+DO $$ BEGIN
+  CREATE POLICY "Staff can view doctor analytics" ON doctor_analytics FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()) OR doctor_id = auth.uid());
-CREATE POLICY "System can manage doctor analytics" ON doctor_analytics FOR ALL TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "System can manage doctor analytics" ON doctor_analytics FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for consultation_reviews
-CREATE POLICY "Staff can view consultation reviews" ON consultation_reviews FOR SELECT TO authenticated
+DO $$ BEGIN
+  CREATE POLICY "Staff can view consultation reviews" ON consultation_reviews FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()) OR reviewed_doctor_id = auth.uid() OR reviewing_doctor_id = auth.uid());
-CREATE POLICY "Supervising doctors can manage reviews" ON consultation_reviews FOR ALL TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "Supervising doctors can manage reviews" ON consultation_reviews FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for protocol_library
-CREATE POLICY "Staff can view protocols" ON protocol_library FOR SELECT TO authenticated
+DO $$ BEGIN
+  CREATE POLICY "Staff can view protocols" ON protocol_library FOR SELECT TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
-CREATE POLICY "Doctors can manage protocols" ON protocol_library FOR ALL TO authenticated
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE POLICY "Doctors can manage protocols" ON protocol_library FOR ALL TO authenticated
   USING (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()))
   WITH CHECK (org_id IN (SELECT org_id FROM user_org_sites WHERE user_id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Triggers
 CREATE TRIGGER referrals_updated_at BEFORE UPDATE ON referrals FOR EACH ROW EXECUTE FUNCTION update_updated_at();
@@ -423,6 +506,7 @@ CREATE TRIGGER prescription_templates_updated_at BEFORE UPDATE ON prescription_t
 CREATE TRIGGER site_formulary_updated_at BEFORE UPDATE ON site_formulary FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER doctor_analytics_updated_at BEFORE UPDATE ON doctor_analytics FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER protocol_library_updated_at BEFORE UPDATE ON protocol_library FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 
 -- Migration: 20251028180000_add_queue_enhancements.sql
 -- ============================================================
@@ -490,6 +574,7 @@ COMMENT ON COLUMN queue.priority IS 'Priority level for queue management: urgent
 COMMENT ON COLUMN queue.created_by IS 'User ID of staff member who added patient to queue';
 COMMENT ON COLUMN queue.queued_at IS 'Timestamp when patient was added to this queue stage';
 
+
 -- Migration: 20251028183104_add_queue_enhancements.sql
 -- ============================================================
 /*
@@ -555,6 +640,7 @@ WHERE queued_at IS NULL;
 COMMENT ON COLUMN queue.priority IS 'Priority level for queue management: urgent (front of queue), normal (standard), low (back of queue)';
 COMMENT ON COLUMN queue.created_by IS 'User ID of staff member who added patient to queue';
 COMMENT ON COLUMN queue.queued_at IS 'Timestamp when patient was added to this queue stage';
+
 -- Migration: 20251029000000_add_patient_email_auth_fields.sql
 -- ============================================================
 /*
@@ -643,7 +729,8 @@ CREATE INDEX IF NOT EXISTS idx_patients_contact_verified
 -- Drop and recreate the "Patients can view own record" policy to include auth_uid
 DROP POLICY IF EXISTS "Patients can view own record" ON patients;
 
-CREATE POLICY "Patients can view own record"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own record"
   ON patients
   FOR SELECT
   TO authenticated
@@ -654,9 +741,12 @@ CREATE POLICY "Patients can view own record"
     auth.uid()::text = auth_uid OR
     (SELECT auth.email()) = email
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Add policy for patients to update their own contact verification status
-CREATE POLICY "Patients can verify own contact"
+DO $$ BEGIN
+  CREATE POLICY "Patients can verify own contact"
   ON patients
   FOR UPDATE
   TO authenticated
@@ -669,6 +759,8 @@ CREATE POLICY "Patients can verify own contact"
       (OLD.phone = NEW.phone OR (OLD.phone IS NULL AND NEW.phone IS NULL))
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Step 7: Add comment explaining the table structure
 COMMENT ON COLUMN patients.email IS 'Patient email address for portal login (unique, case-insensitive)';
@@ -691,6 +783,7 @@ CREATE TRIGGER patients_updated_at_trigger
   BEFORE UPDATE ON patients
   FOR EACH ROW
   EXECUTE FUNCTION update_patients_updated_at();
+
 
 -- Migration: 20251030000000_add_patient_portal_features.sql
 -- ============================================================
@@ -864,7 +957,8 @@ ALTER TABLE patient_portal_preferences ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for patient_secure_messages
 
-CREATE POLICY "Patients can view own messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own messages"
   ON patient_secure_messages FOR SELECT
   TO authenticated
   USING (
@@ -873,8 +967,11 @@ CREATE POLICY "Patients can view own messages"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can send messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can send messages"
   ON patient_secure_messages FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -883,20 +980,29 @@ CREATE POLICY "Patients can send messages"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view all messages"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view all messages"
   ON patient_secure_messages FOR SELECT
   TO authenticated
   USING (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can send messages"
+DO $$ BEGIN
+  CREATE POLICY "Staff can send messages"
   ON patient_secure_messages FOR INSERT
   TO authenticated
   WITH CHECK (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for patient_lab_results
 
-CREATE POLICY "Patients can view own lab results"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own lab results"
   ON patient_lab_results FOR SELECT
   TO authenticated
   USING (
@@ -905,21 +1011,30 @@ CREATE POLICY "Patients can view own lab results"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view all lab results"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view all lab results"
   ON patient_lab_results FOR SELECT
   TO authenticated
   USING (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage lab results"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage lab results"
   ON patient_lab_results FOR ALL
   TO authenticated
   USING (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'))
   WITH CHECK (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for patient_medical_conditions
 
-CREATE POLICY "Patients can view own conditions"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own conditions"
   ON patient_medical_conditions FOR SELECT
   TO authenticated
   USING (
@@ -928,8 +1043,11 @@ CREATE POLICY "Patients can view own conditions"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can add own conditions"
+DO $$ BEGIN
+  CREATE POLICY "Patients can add own conditions"
   ON patient_medical_conditions FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -938,15 +1056,21 @@ CREATE POLICY "Patients can add own conditions"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view all conditions"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view all conditions"
   ON patient_medical_conditions FOR SELECT
   TO authenticated
   USING (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for patient_documents
 
-CREATE POLICY "Patients can view own documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own documents"
   ON patient_documents FOR SELECT
   TO authenticated
   USING (
@@ -955,8 +1079,11 @@ CREATE POLICY "Patients can view own documents"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can upload documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can upload documents"
   ON patient_documents FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -965,8 +1092,11 @@ CREATE POLICY "Patients can upload documents"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can delete own documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can delete own documents"
   ON patient_documents FOR DELETE
   TO authenticated
   USING (
@@ -975,15 +1105,21 @@ CREATE POLICY "Patients can delete own documents"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view all documents"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view all documents"
   ON patient_documents FOR SELECT
   TO authenticated
   USING (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for patient_referrals
 
-CREATE POLICY "Patients can view own referrals"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own referrals"
   ON patient_referrals FOR SELECT
   TO authenticated
   USING (
@@ -992,16 +1128,22 @@ CREATE POLICY "Patients can view own referrals"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage referrals"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage referrals"
   ON patient_referrals FOR ALL
   TO authenticated
   USING (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'))
   WITH CHECK (auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for patient_portal_preferences
 
-CREATE POLICY "Patients can manage own preferences"
+DO $$ BEGIN
+  CREATE POLICY "Patients can manage own preferences"
   ON patient_portal_preferences FOR ALL
   TO authenticated
   USING (
@@ -1010,6 +1152,8 @@ CREATE POLICY "Patients can manage own preferences"
   WITH CHECK (
     portal_user_id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create storage bucket for patient documents
 INSERT INTO storage.buckets (id, name, public)
@@ -1017,7 +1161,8 @@ VALUES ('patient-documents', 'patient-documents', false)
 ON CONFLICT (id) DO NOTHING;
 
 -- Storage policies for patient documents
-CREATE POLICY "Patients can upload own documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can upload own documents"
   ON storage.objects FOR INSERT
   TO authenticated
   WITH CHECK (
@@ -1027,8 +1172,11 @@ CREATE POLICY "Patients can upload own documents"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can view own documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own documents"
   ON storage.objects FOR SELECT
   TO authenticated
   USING (
@@ -1038,14 +1186,19 @@ CREATE POLICY "Patients can view own documents"
       WHERE id = (SELECT (auth.jwt() -> 'app_metadata' ->> 'portal_user_id')::uuid)
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view all patient documents"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view all patient documents"
   ON storage.objects FOR SELECT
   TO authenticated
   USING (
     bucket_id = 'patient-documents' AND
     auth.jwt() ->> 'role' IN ('admin', 'doctor', 'nurse')
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Update triggers for updated_at timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -1084,6 +1237,7 @@ BEGIN
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 END $$;
 
+
 -- Migration: 20251031000000_fix_patient_session_rls.sql
 -- ============================================================
 /*
@@ -1114,20 +1268,27 @@ DROP POLICY IF EXISTS "Patients can delete own sessions" ON patient_portal_sessi
 DROP POLICY IF EXISTS "Admins can view all patient sessions" ON patient_portal_sessions;
 
 -- Allow anyone to SELECT their session by token (for validation)
-CREATE POLICY "Anyone can validate session by token"
+DO $$ BEGIN
+  CREATE POLICY "Anyone can validate session by token"
   ON patient_portal_sessions FOR SELECT
   TO anon, authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Allow anyone to UPDATE their session by token (for refresh)
-CREATE POLICY "Anyone can refresh session by token"
+DO $$ BEGIN
+  CREATE POLICY "Anyone can refresh session by token"
   ON patient_portal_sessions FOR UPDATE
   TO anon, authenticated
   USING (true)
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Staff can view all sessions for monitoring
-CREATE POLICY "Staff can view all patient sessions"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view all patient sessions"
   ON patient_portal_sessions FOR SELECT
   TO authenticated
   USING (
@@ -1137,9 +1298,12 @@ CREATE POLICY "Staff can view all patient sessions"
       AND role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Staff can manage sessions
-CREATE POLICY "Staff can manage patient sessions"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage patient sessions"
   ON patient_portal_sessions FOR ALL
   TO authenticated
   USING (
@@ -1156,6 +1320,9 @@ CREATE POLICY "Staff can manage patient sessions"
       AND role IN ('admin', 'doctor', 'nurse')
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 
 -- Migration: 20251031000001_add_patient_portal_fixed.sql
 -- ============================================================
@@ -1319,7 +1486,8 @@ ALTER TABLE patient_consent_records ENABLE ROW LEVEL SECURITY;
 -- ============================================================================
 
 -- NOTIFICATIONS: Patients can view and update own notifications
-CREATE POLICY "Patients can view own notifications"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own notifications"
   ON patient_notifications FOR SELECT
   TO anon, authenticated
   USING (
@@ -1327,8 +1495,11 @@ CREATE POLICY "Patients can view own notifications"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can update own notifications"
+DO $$ BEGIN
+  CREATE POLICY "Patients can update own notifications"
   ON patient_notifications FOR UPDATE
   TO anon, authenticated
   USING (
@@ -1336,14 +1507,20 @@ CREATE POLICY "Patients can update own notifications"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can create patient notifications"
+DO $$ BEGIN
+  CREATE POLICY "Staff can create patient notifications"
   ON patient_notifications FOR INSERT
   TO authenticated
   WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- MESSAGES: Patients can view and send messages
-CREATE POLICY "Patients can view own messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own messages"
   ON patient_messages FOR SELECT
   TO anon, authenticated
   USING (
@@ -1351,8 +1528,11 @@ CREATE POLICY "Patients can view own messages"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can send messages"
+DO $$ BEGIN
+  CREATE POLICY "Patients can send messages"
   ON patient_messages FOR INSERT
   TO anon, authenticated
   WITH CHECK (
@@ -1360,14 +1540,20 @@ CREATE POLICY "Patients can send messages"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage messages"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage messages"
   ON patient_messages FOR ALL
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- APPOINTMENT REQUESTS: Patients can create and view own requests
-CREATE POLICY "Patients can view own appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own appointment requests"
   ON patient_appointment_requests FOR SELECT
   TO anon, authenticated
   USING (
@@ -1375,8 +1561,11 @@ CREATE POLICY "Patients can view own appointment requests"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can create appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Patients can create appointment requests"
   ON patient_appointment_requests FOR INSERT
   TO anon, authenticated
   WITH CHECK (
@@ -1384,14 +1573,20 @@ CREATE POLICY "Patients can create appointment requests"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage appointment requests"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage appointment requests"
   ON patient_appointment_requests FOR ALL
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- DOCUMENTS: Patients can upload and view own documents
-CREATE POLICY "Patients can view own documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own documents"
   ON patient_documents FOR SELECT
   TO anon, authenticated
   USING (
@@ -1399,8 +1594,11 @@ CREATE POLICY "Patients can view own documents"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can upload documents"
+DO $$ BEGIN
+  CREATE POLICY "Patients can upload documents"
   ON patient_documents FOR INSERT
   TO anon, authenticated
   WITH CHECK (
@@ -1408,14 +1606,20 @@ CREATE POLICY "Patients can upload documents"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can manage patient documents"
+DO $$ BEGIN
+  CREATE POLICY "Staff can manage patient documents"
   ON patient_documents FOR ALL
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CONSENT RECORDS: Patients can view and create own consent
-CREATE POLICY "Patients can view own consent records"
+DO $$ BEGIN
+  CREATE POLICY "Patients can view own consent records"
   ON patient_consent_records FOR SELECT
   TO anon, authenticated
   USING (
@@ -1423,8 +1627,11 @@ CREATE POLICY "Patients can view own consent records"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Patients can create consent records"
+DO $$ BEGIN
+  CREATE POLICY "Patients can create consent records"
   ON patient_consent_records FOR INSERT
   TO anon, authenticated
   WITH CHECK (
@@ -1432,11 +1639,16 @@ CREATE POLICY "Patients can create consent records"
       SELECT patient_id FROM patient_portal_users WHERE phone_number = current_setting('request.jwt.claims', true)::json->>'phone'
     )
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Staff can view consent records"
+DO $$ BEGIN
+  CREATE POLICY "Staff can view consent records"
   ON patient_consent_records FOR SELECT
   TO authenticated
   USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- UPDATED_AT TRIGGERS
@@ -1474,6 +1686,7 @@ BEGIN
       EXECUTE FUNCTION update_updated_at_column();
   END IF;
 END $$;
+
 
 -- Migration: 20251214162156_add_palaver_room_messaging.sql
 -- ============================================================
@@ -1569,45 +1782,66 @@ ALTER TABLE palaver_broadcasts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE palaver_broadcast_reads ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for palaver_messages
-CREATE POLICY "Users can view messages they sent or received"
+DO $$ BEGIN
+  CREATE POLICY "Users can view messages they sent or received"
   ON palaver_messages FOR SELECT
   TO authenticated
   USING (
     sender_id = auth.uid()::text OR recipient_id = auth.uid()::text
   );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Users can insert messages they send"
+DO $$ BEGIN
+  CREATE POLICY "Users can insert messages they send"
   ON palaver_messages FOR INSERT
   TO authenticated
   WITH CHECK (sender_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Recipients can update read status"
+DO $$ BEGIN
+  CREATE POLICY "Recipients can update read status"
   ON palaver_messages FOR UPDATE
   TO authenticated
   USING (recipient_id = auth.uid()::text)
   WITH CHECK (recipient_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for palaver_broadcasts
-CREATE POLICY "All authenticated users can view active broadcasts"
+DO $$ BEGIN
+  CREATE POLICY "All authenticated users can view active broadcasts"
   ON palaver_broadcasts FOR SELECT
   TO authenticated
   USING (is_active = true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Doctors and admins can create broadcasts"
+DO $$ BEGIN
+  CREATE POLICY "Doctors and admins can create broadcasts"
   ON palaver_broadcasts FOR INSERT
   TO authenticated
   WITH CHECK (sender_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- RLS Policies for palaver_broadcast_reads
-CREATE POLICY "Users can view their own broadcast reads"
+DO $$ BEGIN
+  CREATE POLICY "Users can view their own broadcast reads"
   ON palaver_broadcast_reads FOR SELECT
   TO authenticated
   USING (user_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Users can mark broadcasts as read"
+DO $$ BEGIN
+  CREATE POLICY "Users can mark broadcasts as read"
   ON palaver_broadcast_reads FOR INSERT
   TO authenticated
   WITH CHECK (user_id = auth.uid()::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_palaver_messages_recipient ON palaver_messages(recipient_id, is_read, created_at DESC);
