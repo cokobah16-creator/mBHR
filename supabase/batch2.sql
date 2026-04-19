@@ -115,7 +115,7 @@ DO $$ BEGIN
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
@@ -130,7 +130,7 @@ DO $$ BEGIN
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -145,14 +145,14 @@ DO $$ BEGIN
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -167,7 +167,7 @@ DO $$ BEGIN
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor')
     )
   );
@@ -184,7 +184,7 @@ DO $$ BEGIN
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -198,7 +198,7 @@ DO $$ BEGIN
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -212,13 +212,13 @@ DO $$ BEGIN
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -232,7 +232,7 @@ DO $$ BEGIN
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role = 'admin'
     )
   );
