@@ -82,7 +82,11 @@ export function PatientLogin() {
               <ShieldCheckIcon className="w-8 h-8 text-blue-600" />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">Patient Portal Login</h1>
-            <p className="text-gray-600">Sign in with your email and password.</p>
+            <p className="text-gray-600">
+              {isSupabaseEnabled
+                ? "Sign in with your email and password."
+                : "Sign in with your email and date of birth."}
+            </p>
           </div>
 
           {!isSupabaseEnabled && (
@@ -120,17 +124,20 @@ export function PatientLogin() {
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Password
+                {isSupabaseEnabled ? "Password" : "Date of Birth"}
               </label>
               <input
                 {...form.register("password")}
-                type="password"
+                type={isSupabaseEnabled ? "password" : "text"}
                 id="password"
-                placeholder="Your password"
+                placeholder={isSupabaseEnabled ? "Your password" : "YYYY-MM-DD"}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={loading}
-                autoComplete="current-password"
+                autoComplete={isSupabaseEnabled ? "current-password" : "bday"}
               />
+              {!isSupabaseEnabled && (
+                <p className="mt-1 text-xs text-gray-500">Enter your date of birth as registered (e.g. 1990-01-15)</p>
+              )}
               {form.formState.errors.password && (
                 <p className="mt-2 text-sm text-red-600">{form.formState.errors.password.message}</p>
               )}
