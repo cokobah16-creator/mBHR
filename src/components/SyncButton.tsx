@@ -122,13 +122,13 @@ export const SyncButton = memo(() => {
           <div className="flex items-center gap-1 text-xs">
             {syncStore.errorMessage ? (
               <>
-                <ExclamationCircleIcon className="h-4 w-4 text-red-500" />
-                <span className="text-red-600">Sync error</span>
+                <ExclamationCircleIcon className="h-4 w-4 text-red-200" />
+                <span className="text-red-100">Sync error</span>
               </>
             ) : syncStore.lastSuccessAt > 0 ? (
               <>
-                <CheckCircleIcon className="h-4 w-4 text-green-500" />
-                <span className="text-gray-600">
+                <CheckCircleIcon className="h-4 w-4 text-emerald-200" />
+                <span className="text-white/90">
                   {new Date(syncStore.lastSuccessAt).toLocaleTimeString()}
                 </span>
               </>
