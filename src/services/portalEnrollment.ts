@@ -268,12 +268,6 @@ export async function sendPortalInvitation(
       _dirty: 1,
     });
 
-    const registrationUrl = patient.email
-      ? `${window.location.origin}/patient/register?email=${encodeURIComponent(patient.email)}`
-      : patient.phone
-        ? `${window.location.origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
-        : `${window.location.origin}/patient/register`;
-
     logger.info(
       `[Portal Invitation] ${patientName} (${contact}) → ${registrationUrl}`,
     );
