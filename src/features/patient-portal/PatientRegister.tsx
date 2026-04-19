@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -60,16 +60,21 @@ type RegistrationForm = z.infer<typeof schema>;
 
 export function PatientRegister() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { signup } = useAuth();
   const [step, setStep]       = useState<"form" | "success">("form");
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
 
+  // Pre-fill from staff-shared invitation link (?email=xxx&phone=xxx)
+  const prefillEmail = searchParams.get("email") || "";
+  const prefillPhone = searchParams.get("phone") || "";
+
   const form = useForm<RegistrationForm>({
     resolver: zodResolver(schema),
     defaultValues: isSupabaseEnabled
-      ? { fullName: "", email: "", phone: "", dateOfBirth: "", password: "", confirmPassword: "", consentGiven: false }
-      : { fullName: "", email: "", phone: "", dateOfBirth: "", consentGiven: false },
+      ? { fullName: "", email: prefillEmail, phone: prefillPhone, dateOfBirth: "", password: "", confirmPassword: "", consentGiven: false }
+      : { fullName: "", email: prefillEmail, phone: prefillPhone, dateOfBirth: "", consentGiven: false },
   });
 
   const handleSupabaseRegister = async (data: RegistrationForm) => {

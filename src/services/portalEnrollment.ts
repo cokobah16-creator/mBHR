@@ -149,7 +149,7 @@ export async function disablePortalAccess(
  */
 export async function sendPortalInvitation(
   patientId: string,
-): Promise<{ success: boolean; error?: string; demoOTP?: string }> {
+): Promise<{ success: boolean; error?: string; demoOTP?: string; registrationUrl?: string }> {
   try {
     const patient = await db.patients.get(patientId);
     if (!patient) {
@@ -256,22 +256,27 @@ export async function sendPortalInvitation(
       }
     }
 
-    // --- Fallback: mark as sent and return instructions for staff to relay manually ---
+    // --- Offline fallback: mark as sent and return a pre-filled registration link ---
     await db.patients.update(patientId, {
       portalInvitation: { ...invitation, lastStatus: "sent" },
       _dirty: 1,
     });
 
+    const registrationUrl = patient.email
+      ? `${window.location.origin}/patient/register?email=${encodeURIComponent(patient.email)}`
+      : patient.phone
+        ? `${window.location.origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
+        : `${window.location.origin}/patient/register`;
+
     logger.info(
-      `[Portal Invitation] ${patientName} (${contact}) → ${portalUrl}`,
+      `[Portal Invitation] ${patientName} (${contact}) → ${registrationUrl}`,
     );
 
     return {
       success: true,
+      registrationUrl,
       demoOTP:
-        `Tell the patient to go to: ${portalUrl} and register using ` +
-        `their ${patient.email ? "email (" + patient.email + ")" : "phone number (" + patient.phone + ")"} ` +
-        `and date of birth.`,
+        `No email service configured. Share this registration link with the patient: ${registrationUrl}`,
     };
   } catch (error: any) {
     logger.error("Error sending portal invitation:", error);

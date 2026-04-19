@@ -20,6 +20,8 @@ import {
   ArrowPathIcon,
   ExclamationCircleIcon,
   GlobeAltIcon,
+  ClipboardDocumentIcon,
+  ClipboardDocumentCheckIcon,
 } from "@heroicons/react/24/outline";
 import {
   getPortalStatus,
@@ -47,6 +49,8 @@ export function PortalStatusCard({
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
+  const [offlineLink, setOfflineLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const { push: pushToast } = useToast();
 
   useEffect(() => {
@@ -125,13 +129,16 @@ export function PortalStatusCard({
       const result = await sendPortalInvitation(patientId);
 
       if (result.success) {
-        pushToast({
-          id: crypto.randomUUID(),
-          title: result.demoOTP ? "Invitation Ready" : "Invitation Sent",
-          body: result.demoOTP
-            ? result.demoOTP
-            : "Portal invitation sent successfully. The patient can now register using their contact details and date of birth.",
-        });
+        if (result.registrationUrl) {
+          // Offline mode: persist the link in the card so staff can share it
+          setOfflineLink(result.registrationUrl);
+        } else {
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Invitation Sent",
+            body: "Portal invitation sent successfully. The patient can now register using their contact details and date of birth.",
+          });
+        }
         await loadStatus();
         onStatusChange?.();
       } else {
@@ -150,6 +157,13 @@ export function PortalStatusCard({
     } finally {
       setSending(false);
     }
+  };
+
+  const handleCopyLink = async () => {
+    if (!offlineLink) return;
+    await navigator.clipboard.writeText(offlineLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
   };
 
   const formatCountdown = (seconds: number): string => {
@@ -322,6 +336,49 @@ export function PortalStatusCard({
             <p className="text-sm text-gray-600">
               Sent {formatNigerianDate(status.lastInviteSent)}
             </p>
+          </div>
+        )}
+
+        {/* Offline registration link panel */}
+        {offlineLink && (
+          <div className="border-t pt-4">
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 space-y-3">
+              <p className="text-sm font-semibold text-amber-900">
+                No email service — share this link with the patient
+              </p>
+              <p className="text-xs text-amber-800">
+                Email requires Supabase/SMTP. Instead, read this link aloud,
+                show it on screen, or copy it and send via WhatsApp/SMS from
+                your own device.
+              </p>
+              <div className="flex items-center gap-2 bg-white border border-amber-300 rounded-md px-3 py-2">
+                <span className="text-xs text-gray-700 truncate flex-1 font-mono">
+                  {offlineLink}
+                </span>
+                <button
+                  onClick={handleCopyLink}
+                  className="shrink-0 flex items-center gap-1 text-xs font-medium text-amber-800 hover:text-amber-900"
+                  title="Copy to clipboard"
+                >
+                  {copied ? (
+                    <>
+                      <ClipboardDocumentCheckIcon className="h-4 w-4 text-green-600" />
+                      <span className="text-green-700">Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <ClipboardDocumentIcon className="h-4 w-4" />
+                      Copy
+                    </>
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-amber-800">
+                The patient's email will be pre-filled when they open this link.
+                They will need to enter their <strong>date of birth</strong> to
+                complete registration.
+              </p>
+            </div>
           </div>
         )}
 
