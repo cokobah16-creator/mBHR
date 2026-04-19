@@ -149,7 +149,7 @@ export async function disablePortalAccess(
  */
 export async function sendPortalInvitation(
   patientId: string,
-): Promise<{ success: boolean; error?: string; demoOTP?: string }> {
+): Promise<{ success: boolean; error?: string; demoOTP?: string; registrationUrl?: string }> {
   try {
     const patient = await db.patients.get(patientId);
     if (!patient) {
@@ -192,9 +192,16 @@ export async function sendPortalInvitation(
       _dirty: 1,
     });
 
-    const portalUrl = `${window.location.origin}/patient/login`;
     const patientName = `${patient.givenName} ${patient.familyName}`;
     const contact = patient.email || patient.phone!;
+
+    // Build a pre-filled registration URL so patients land with their contact ready
+    const registrationUrl = patient.email
+      ? `${window.location.origin}/patient/register?email=${encodeURIComponent(patient.email)}`
+      : patient.phone
+        ? `${window.location.origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
+        : `${window.location.origin}/patient/register`;
+    const loginUrl = `${window.location.origin}/patient/login`;
 
     // --- Send via Supabase edge function (email preferred, SMS fallback) ---
     if (supabase) {
@@ -208,12 +215,11 @@ export async function sendPortalInvitation(
                 subject: "Your mBHR Patient Portal is Ready",
                 message:
                   `Hi ${patient.givenName},\n\n` +
-                  `Your patient portal has been enabled by your healthcare provider.\n\n` +
-                  `To access your health records, appointments, and more:\n\n` +
-                  `1. Go to: ${portalUrl}\n` +
-                  `2. Click "Register here"\n` +
-                  `3. Enter your email (${patient.email}) and date of birth\n\n` +
-                  `If you already registered, log in with your email and date of birth (or PIN if you set one).\n\n` +
+                  `Your patient portal has been set up by your healthcare provider.\n\n` +
+                  `Click the link below to create your account — your email will be pre-filled:\n\n` +
+                  `${registrationUrl}\n\n` +
+                  `You will be asked to enter your date of birth to complete registration.\n\n` +
+                  `Already registered? Log in here: ${loginUrl}\n\n` +
                   `Med Bridge Health Reach`,
               },
             },
@@ -225,7 +231,7 @@ export async function sendPortalInvitation(
               _dirty: 1,
             });
             logger.info("Portal invitation email sent via edge function to:", patient.email);
-            return { success: true };
+            return { success: true, registrationUrl };
           }
           logger.warn("Edge function email failed:", fnError);
         } else if (patient.phone) {
@@ -236,7 +242,7 @@ export async function sendPortalInvitation(
                 phone: normalizePhone(patient.phone) || patient.phone,
                 message:
                   `Hi ${patient.givenName}, your mBHR patient portal is ready. ` +
-                  `Visit ${portalUrl}, register with your phone number and date of birth to access your health records.`,
+                  `Register at: ${registrationUrl} — use your phone number and date of birth.`,
               },
             },
           );
@@ -247,7 +253,7 @@ export async function sendPortalInvitation(
               _dirty: 1,
             });
             logger.info("Portal invitation SMS sent via edge function to:", patient.phone);
-            return { success: true };
+            return { success: true, registrationUrl };
           }
           logger.warn("Edge function SMS failed:", fnError);
         }
@@ -256,22 +262,21 @@ export async function sendPortalInvitation(
       }
     }
 
-    // --- Fallback: mark as sent and return instructions for staff to relay manually ---
+    // --- Offline fallback: mark as sent and return a pre-filled registration link ---
     await db.patients.update(patientId, {
       portalInvitation: { ...invitation, lastStatus: "sent" },
       _dirty: 1,
     });
 
     logger.info(
-      `[Portal Invitation] ${patientName} (${contact}) → ${portalUrl}`,
+      `[Portal Invitation] ${patientName} (${contact}) → ${registrationUrl}`,
     );
 
     return {
       success: true,
+      registrationUrl,
       demoOTP:
-        `Tell the patient to go to: ${portalUrl} and register using ` +
-        `their ${patient.email ? "email (" + patient.email + ")" : "phone number (" + patient.phone + ")"} ` +
-        `and date of birth.`,
+        `No email service configured. Share this registration link with the patient: ${registrationUrl}`,
     };
   } catch (error: any) {
     logger.error("Error sending portal invitation:", error);

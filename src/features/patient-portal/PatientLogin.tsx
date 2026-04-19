@@ -19,6 +19,19 @@ const offlineSchema = z.object({
 });
 
 type LoginForm = z.infer<typeof onlineSchema>;
+  email:      z.string().email("Please enter a valid email address"),
+  credential: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+const offlineSchema = z.object({
+  email:      z.string().email("Please enter a valid email address"),
+  credential: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Please enter your date of birth as YYYY-MM-DD (e.g. 1990-01-15)"),
+});
+
+const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
+type LoginForm = z.infer<typeof schema>;
 
 export function PatientLogin() {
   const navigate = useNavigate();
@@ -29,10 +42,12 @@ export function PatientLogin() {
   const form = useForm<LoginForm>({
     resolver: zodResolver(isSupabaseEnabled ? onlineSchema : offlineSchema),
     defaultValues: { email: "", password: "" },
+    resolver: zodResolver(schema),
+    defaultValues: { email: "", credential: "" },
   });
 
   const handleSupabaseLogin = async (data: LoginForm) => {
-    const authError = await login(data.email, data.password);
+    const authError = await login(data.email, data.credential);
     if (authError) {
       const msg = authError.message.toLowerCase();
       if (msg.includes("invalid login") || msg.includes("invalid credentials")) {
@@ -51,6 +66,7 @@ export function PatientLogin() {
 
   const handleOfflineLogin = async (data: LoginForm) => {
     const result = await loginPatientPortal(data.email, data.password, "dob").catch(() => null);
+    const result = await loginPatientPortal(data.email, data.credential, "dob").catch(() => null);
     if (result?.success && result.sessionToken) {
       localStorage.setItem("patient_session_token", result.sessionToken);
       localStorage.setItem("patient_portal_user", JSON.stringify(result.portalUser));
@@ -99,6 +115,9 @@ export function PatientLogin() {
                 Data is stored on this device only. Email invitations are not
                 available without an internet connection — register directly
                 using the link below.
+              <p className="text-xs text-yellow-700">
+                Data is stored on this device only. Email invitations are not available without an
+                internet connection — register directly using the link below.
               </p>
             </div>
           )}
@@ -137,6 +156,14 @@ export function PatientLogin() {
                 type={isSupabaseEnabled ? "password" : "date"}
                 id="password"
                 placeholder={isSupabaseEnabled ? "Your password" : ""}
+              <label htmlFor="credential" className="block text-sm font-medium text-gray-700 mb-2">
+                {isSupabaseEnabled ? "Password" : "Date of Birth"}
+              </label>
+              <input
+                {...form.register("credential")}
+                type={isSupabaseEnabled ? "password" : "text"}
+                id="credential"
+                placeholder={isSupabaseEnabled ? "Your password" : "YYYY-MM-DD"}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={loading}
                 autoComplete={isSupabaseEnabled ? "current-password" : "bday"}
@@ -148,6 +175,8 @@ export function PatientLogin() {
               )}
               {form.formState.errors.password && (
                 <p className="mt-2 text-sm text-red-600">{form.formState.errors.password.message}</p>
+              {form.formState.errors.credential && (
+                <p className="mt-2 text-sm text-red-600">{form.formState.errors.credential.message}</p>
               )}
             </div>
 
