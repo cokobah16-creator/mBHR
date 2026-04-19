@@ -285,7 +285,75 @@ export async function loginPatientPortal(
     );
 
     if (!user) {
-      // Give a more helpful error if we can detect they're a portal-enabled patient
+      // --- Dexie fallback: auto-create a portal session for staff-registered patients ---
+      // Covers the case where the patient was registered by staff (stored in local Dexie)
+      // but has never created a portal account via /patient/register.
+      try {
+        const emailNorm = contact.toLowerCase().trim();
+        const normPhone = normalizePhone(contact);
+
+        const emailMatches = await db.patients
+          .where("email")
+          .equalsIgnoreCase(emailNorm)
+          .toArray();
+
+        let localPatient = emailMatches[0];
+
+        if (!localPatient && normPhone) {
+          const phoneMatches = await db.patients
+            .where("phone")
+            .equals(normPhone)
+            .toArray();
+          localPatient = phoneMatches[0];
+        }
+
+        if (localPatient) {
+          if (!localPatient.portalEnabled) {
+            return {
+              success: false,
+              error: "Your healthcare provider has not enabled portal access for your account yet. Please ask the clinic to enable it.",
+            };
+          }
+
+          if (method === "pin") {
+            return {
+              success: false,
+              error: "No PIN set for this account. Please log in with your date of birth.",
+            };
+          }
+
+          if (localPatient.dob !== credential) {
+            return {
+              success: false,
+              error: "Date of birth does not match our records. Please use the format YYYY-MM-DD.",
+            };
+          }
+
+          // Auto-create a portal session for this staff-registered patient.
+          const newPortalUser: LocalPortalUser = {
+            id: crypto.randomUUID(),
+            patientId: localPatient.id,
+            givenName: localPatient.givenName,
+            familyName: localPatient.familyName,
+            email: localPatient.email || undefined,
+            phone: localPatient.phone || undefined,
+            dob: localPatient.dob,
+            sessionToken: crypto.randomUUID(),
+            sessionExpiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+            createdAt: new Date().toISOString(),
+            managedPatients: [],
+          };
+
+          users.push(newPortalUser);
+          saveLocalPortalUsers(users);
+          logger.info("Auto-created portal session for staff-registered patient:", localPatient.id);
+          return buildAuthResponse(newPortalUser);
+        }
+      } catch (dexieErr) {
+        logger.warn("Dexie patient lookup during login failed:", dexieErr);
+      }
+
+      // Supabase hint: give a more helpful error when the patient record exists online
       if (supabase) {
         try {
           const normPhone = normalizePhone(contact);
@@ -308,6 +376,7 @@ export async function loginPatientPortal(
           // ignore
         }
       }
+
       return {
         success: false,
         error: "No account found. Please register first.",

@@ -8,12 +8,17 @@ import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 
-const schema = z.object({
+const onlineSchema = z.object({
   email:    z.string().email("Please enter a valid email address"),
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-type LoginForm = z.infer<typeof schema>;
+const offlineSchema = z.object({
+  email:    z.string().email("Please enter a valid email address"),
+  password: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Please use the format YYYY-MM-DD"),
+});
+
+type LoginForm = z.infer<typeof onlineSchema>;
 
 export function PatientLogin() {
   const navigate = useNavigate();
@@ -22,14 +27,13 @@ export function PatientLogin() {
   const [error, setError]     = useState("");
 
   const form = useForm<LoginForm>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(isSupabaseEnabled ? onlineSchema : offlineSchema),
     defaultValues: { email: "", password: "" },
   });
 
   const handleSupabaseLogin = async (data: LoginForm) => {
     const authError = await login(data.email, data.password);
     if (authError) {
-      // Translate common Supabase error messages into patient-friendly language
       const msg = authError.message.toLowerCase();
       if (msg.includes("invalid login") || msg.includes("invalid credentials")) {
         setError("Email or password is incorrect. Please try again.");
@@ -46,7 +50,6 @@ export function PatientLogin() {
   };
 
   const handleOfflineLogin = async (data: LoginForm) => {
-    // Offline fallback: contact = email, credential = password treated as DOB or PIN
     const result = await loginPatientPortal(data.email, data.password, "dob").catch(() => null);
     if (result?.success && result.sessionToken) {
       localStorage.setItem("patient_session_token", result.sessionToken);
@@ -82,13 +85,20 @@ export function PatientLogin() {
               <ShieldCheckIcon className="w-8 h-8 text-blue-600" />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">Patient Portal Login</h1>
-            <p className="text-gray-600">Sign in with your email and password.</p>
+            <p className="text-gray-600">
+              {isSupabaseEnabled
+                ? "Sign in with your email and password."
+                : "Sign in with your email and date of birth."}
+            </p>
           </div>
 
           {!isSupabaseEnabled && (
             <div className="mb-6 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-xs text-yellow-800 font-medium mb-1">Running in offline mode</p>
               <p className="text-xs text-yellow-800">
-                Running in offline mode — data is stored on this device only.
+                Data is stored on this device only. Email invitations are not
+                available without an internet connection — register directly
+                using the link below.
               </p>
             </div>
           )}
@@ -120,17 +130,22 @@ export function PatientLogin() {
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Password
+                {isSupabaseEnabled ? "Password" : "Date of Birth"}
               </label>
               <input
                 {...form.register("password")}
-                type="password"
+                type={isSupabaseEnabled ? "password" : "date"}
                 id="password"
-                placeholder="Your password"
+                placeholder={isSupabaseEnabled ? "Your password" : ""}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={loading}
-                autoComplete="current-password"
+                autoComplete={isSupabaseEnabled ? "current-password" : "bday"}
               />
+              {!isSupabaseEnabled && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Use the same date of birth you entered when you registered (e.g. 1990-01-15)
+                </p>
+              )}
               {form.formState.errors.password && (
                 <p className="mt-2 text-sm text-red-600">{form.formState.errors.password.message}</p>
               )}
