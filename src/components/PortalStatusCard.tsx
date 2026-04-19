@@ -49,7 +49,7 @@ export function PortalStatusCard({
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
-  const [offlineLink, setOfflineLink] = useState<string | null>(null);
+  const [inviteLink, setInviteLink] = useState<{ url: string; delivered: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
   const { push: pushToast } = useToast();
 
@@ -130,13 +130,13 @@ export function PortalStatusCard({
 
       if (result.success) {
         if (result.registrationUrl) {
-          // Offline mode: persist the link in the card so staff can share it
-          setOfflineLink(result.registrationUrl);
+          // Show the registration link — amber if offline (no email sent), green if delivered
+          setInviteLink({ url: result.registrationUrl, delivered: !result.demoOTP });
         } else {
           pushToast({
             id: crypto.randomUUID(),
             title: "Invitation Sent",
-            body: "Portal invitation sent successfully. The patient can now register using their contact details and date of birth.",
+            body: "Portal invitation sent successfully.",
           });
         }
         await loadStatus();
@@ -160,8 +160,8 @@ export function PortalStatusCard({
   };
 
   const handleCopyLink = async () => {
-    if (!offlineLink) return;
-    await navigator.clipboard.writeText(offlineLink);
+    if (!inviteLink) return;
+    await navigator.clipboard.writeText(inviteLink.url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };
@@ -339,25 +339,49 @@ export function PortalStatusCard({
           </div>
         )}
 
-        {/* Offline registration link panel */}
-        {offlineLink && (
+        {/* Registration link panel — shown after sending invitation */}
+        {inviteLink && (
           <div className="border-t pt-4">
-            <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 space-y-3">
-              <p className="text-sm font-semibold text-amber-900">
-                No email service — share this link with the patient
+            <div
+              className={`rounded-lg p-4 space-y-3 ${
+                inviteLink.delivered
+                  ? "bg-green-50 border border-green-300"
+                  : "bg-amber-50 border border-amber-300"
+              }`}
+            >
+              <p
+                className={`text-sm font-semibold ${
+                  inviteLink.delivered ? "text-green-900" : "text-amber-900"
+                }`}
+              >
+                {inviteLink.delivered
+                  ? "Invitation sent — registration link also shown below"
+                  : "No email service — share this link with the patient"}
               </p>
-              <p className="text-xs text-amber-800">
-                Email requires Supabase/SMTP. Instead, read this link aloud,
-                show it on screen, or copy it and send via WhatsApp/SMS from
-                your own device.
+              <p
+                className={`text-xs ${
+                  inviteLink.delivered ? "text-green-800" : "text-amber-800"
+                }`}
+              >
+                {inviteLink.delivered
+                  ? "The patient will receive an email with this link. You can also copy and share it directly."
+                  : "Email requires Supabase + RESEND_API_KEY. Read this link aloud, show it on screen, or copy it and send via WhatsApp/SMS."}
               </p>
-              <div className="flex items-center gap-2 bg-white border border-amber-300 rounded-md px-3 py-2">
+              <div
+                className={`flex items-center gap-2 bg-white rounded-md px-3 py-2 border ${
+                  inviteLink.delivered ? "border-green-300" : "border-amber-300"
+                }`}
+              >
                 <span className="text-xs text-gray-700 truncate flex-1 font-mono">
-                  {offlineLink}
+                  {inviteLink.url}
                 </span>
                 <button
                   onClick={handleCopyLink}
-                  className="shrink-0 flex items-center gap-1 text-xs font-medium text-amber-800 hover:text-amber-900"
+                  className={`shrink-0 flex items-center gap-1 text-xs font-medium ${
+                    inviteLink.delivered
+                      ? "text-green-800 hover:text-green-900"
+                      : "text-amber-800 hover:text-amber-900"
+                  }`}
                   title="Copy to clipboard"
                 >
                   {copied ? (
@@ -373,10 +397,13 @@ export function PortalStatusCard({
                   )}
                 </button>
               </div>
-              <p className="text-xs text-amber-800">
-                The patient's email will be pre-filled when they open this link.
-                They will need to enter their <strong>date of birth</strong> to
-                complete registration.
+              <p
+                className={`text-xs ${
+                  inviteLink.delivered ? "text-green-800" : "text-amber-800"
+                }`}
+              >
+                The patient's contact will be pre-filled. They only need to
+                enter their <strong>date of birth</strong> to complete registration.
               </p>
             </div>
           </div>
