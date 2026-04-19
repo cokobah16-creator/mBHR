@@ -30,6 +30,7 @@ import {
 } from "@/components/ConflictComparisonCard";
 import { db } from "@/db";
 import { getRoleDisplayName, type Role } from "@/auth/roles";
+import { useToast } from "@/stores/toast";
 
 type TabType = "pending" | "needs_approval" | "resolved";
 
@@ -72,6 +73,7 @@ const REQUIRED_ROLE_LABELS: Record<string, { label: string; color: string }> = {
 
 export default function ConflictDashboard() {
   const { currentUser } = useAuthStore();
+  const { push: pushToast } = useToast();
   const [activeTab, setActiveTab] = useState<TabType>("pending");
   const [conflicts, setConflicts] = useState<ConflictResolution[]>([]);
   const [stats, setStats] = useState<ConflictStats | null>(null);
@@ -158,12 +160,18 @@ export default function ConflictDashboard() {
         await loadConflicts();
         await loadStats();
       }
-      alert(
-        `Scan complete. Found ${found} new potential duplicate${found !== 1 ? "s" : ""}.`,
-      );
+      pushToast({
+        id: `duplicate-scan-${Date.now()}`,
+        title: "Duplicate scan complete",
+        body: `Found ${found} new potential duplicate${found !== 1 ? "s" : ""}.`,
+      });
     } catch (error) {
       console.error("Scan failed:", error);
-      alert("Scan failed. Please try again.");
+      pushToast({
+        id: `duplicate-scan-error-${Date.now()}`,
+        title: "Duplicate scan failed",
+        body: "Please try again.",
+      });
     } finally {
       setIsScanning(false);
     }
