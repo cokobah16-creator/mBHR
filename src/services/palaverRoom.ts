@@ -61,7 +61,49 @@ export interface SendBroadcastParams {
   expiresAt?: Date;
 }
 
+export interface PalaverAvailabilityStatus {
+  available: boolean;
+  reason?: string;
+  details?: string;
+}
+
 class PalaverRoomService {
+  getAvailabilityStatus(): PalaverAvailabilityStatus {
+    const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as
+      | string
+      | undefined;
+
+    if (!url || !anonKey) {
+      return {
+        available: false,
+        reason: "supabase_env_missing",
+        details:
+          "Missing VITE_SUPABASE_URL and/or VITE_SUPABASE_ANON_KEY in the client environment.",
+      };
+    }
+
+    if (url === "your_supabase_project_url_here") {
+      return {
+        available: false,
+        reason: "supabase_env_placeholder",
+        details:
+          "VITE_SUPABASE_URL is still set to a placeholder value and not a real Supabase project URL.",
+      };
+    }
+
+    if (!supabase) {
+      return {
+        available: false,
+        reason: "supabase_client_init_failed",
+        details:
+          "Supabase client initialization failed in the browser at runtime.",
+      };
+    }
+
+    return { available: true };
+  }
+
   async sendMessage(params: SendMessageParams): Promise<PalaverMessage | null> {
     if (!supabase) {
       logger.warn("Supabase not configured - message not sent");
@@ -212,7 +254,7 @@ class PalaverRoomService {
   }
 
   isAvailable(): boolean {
-    return supabase !== null;
+    return this.getAvailabilityStatus().available;
   }
 
   async markAsRead(messageId: string): Promise<void> {
