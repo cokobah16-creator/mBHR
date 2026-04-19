@@ -3277,7 +3277,7 @@ CREATE TABLE IF NOT EXISTS protocol_library (
   medications jsonb,
   contraindications text[],
   special_considerations text,
-  references text,
+  "references" text,
   version text DEFAULT '1.0',
   is_active boolean DEFAULT true,
   created_by uuid NOT NULL,
