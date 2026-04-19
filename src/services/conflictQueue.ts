@@ -777,7 +777,7 @@ export class ConflictQueueService {
 
     let duplicatesFound = 0;
 
-    for (const patient of patients) {
+    for (const [index, patient] of patients.entries()) {
       const candidates = await patientDeduplication.findDuplicates({
         givenName: patient.givenName,
         familyName: patient.familyName,
@@ -812,6 +812,13 @@ export class ConflictQueueService {
           });
           duplicatesFound++;
         }
+      }
+
+      // Yield periodically so large scans don't block the UI thread and hurt INP.
+      if ((index + 1) % 10 === 0) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0);
+        });
       }
     }
 
