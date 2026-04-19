@@ -127,10 +127,10 @@ export function PortalStatusCard({
       if (result.success) {
         pushToast({
           id: crypto.randomUUID(),
-          title: "Success",
+          title: result.demoOTP ? "Invitation Ready" : "Invitation Sent",
           body: result.demoOTP
-            ? `Portal invitation prepared. ${result.demoOTP}`
-            : "Portal invitation sent successfully",
+            ? result.demoOTP
+            : "Portal invitation sent successfully. The patient can now register using their contact details and date of birth.",
         });
         await loadStatus();
         onStatusChange?.();
@@ -327,40 +327,56 @@ export function PortalStatusCard({
 
         {/* Send/Resend Button */}
         {status.enabled && (
-          <div className="border-t pt-4">
-            <button
-              onClick={handleSendInvitation}
-              disabled={!status.canResend || sending || countdown > 0}
-              className={`w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg font-medium transition-colors ${
-                status.canResend && countdown === 0
-                  ? "bg-blue-600 hover:bg-blue-700 text-white"
-                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
-              }`}
-            >
-              {sending ? (
-                <>
-                  <ArrowPathIcon className="h-5 w-5 animate-spin" />
-                  <span>Sending...</span>
-                </>
-              ) : countdown > 0 ? (
-                <>
-                  <ClockIcon className="h-5 w-5" />
-                  <span>Resend available in {formatCountdown(countdown)}</span>
-                </>
-              ) : (
-                <>
-                  <EnvelopeIcon className="h-5 w-5" />
-                  <span>
-                    {status.inviteCount > 0 ? "Resend" : "Send"} Portal
-                    Invitation
-                  </span>
-                </>
-              )}
-            </button>
-            {!status.canResend && countdown === 0 && (
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                Add email or phone to send invitations
-              </p>
+          <div className="border-t pt-4 space-y-3">
+            {status.contactMethod ? (
+              <button
+                onClick={handleSendInvitation}
+                disabled={sending || countdown > 0}
+                className={`w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg font-medium transition-colors ${
+                  countdown === 0 && !sending
+                    ? "bg-blue-600 hover:bg-blue-700 text-white"
+                    : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                }`}
+              >
+                {sending ? (
+                  <>
+                    <ArrowPathIcon className="h-5 w-5 animate-spin" />
+                    <span>Sending...</span>
+                  </>
+                ) : countdown > 0 ? (
+                  <>
+                    <ClockIcon className="h-5 w-5" />
+                    <span>Resend available in {formatCountdown(countdown)}</span>
+                  </>
+                ) : (
+                  <>
+                    <EnvelopeIcon className="h-5 w-5" />
+                    <span>
+                      {status.inviteCount > 0 ? "Resend" : "Send"} Portal
+                      Invitation
+                    </span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="text-center py-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4">
+                Add an email or phone number to this patient's record before sending a portal invitation.
+              </div>
+            )}
+
+            {/* Patient access instructions for staff */}
+            {status.inviteCount > 0 && !status.verified && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-blue-800 mb-1">
+                  What to tell the patient:
+                </p>
+                <p className="text-xs text-blue-700">
+                  Go to <strong>{window.location.origin}/patient/login</strong>,
+                  click "Register here", and enter your{" "}
+                  {status.contactMethod === "email" ? "email address" : "phone number"}{" "}
+                  + date of birth.
+                </p>
+              </div>
             )}
           </div>
         )}
