@@ -199,6 +199,18 @@ export class ConflictQueueService {
       escalationReason = "High-sensitivity conflict requires Admin approval";
     }
 
+    if (!supabase) {
+      const localId = crypto.randomUUID();
+      await db.conflictResolutions.add({
+        id: localId,
+        patientId: params.entityId,
+        conflictType: params.conflictType as "duplicate" | "sync_conflict",
+        status: "pending",
+        candidateIds: params.candidateIds || [],
+      });
+      return localId;
+    }
+
     const { data, error } = await supabase
       .from("conflict_resolutions")
       .insert({
@@ -767,13 +779,8 @@ export class ConflictQueueService {
   }
 
   async scanForDuplicates(limit = 100): Promise<number> {
-    const patients = await db.patients
-      .where("mergeInto")
-      .equals("")
-      .or("mergeInto")
-      .equals(undefined as unknown as string)
-      .limit(limit)
-      .toArray();
+    const allPatients = await db.patients.limit(limit).toArray();
+    const patients = allPatients.filter((p) => !p.mergeInto);
 
     let duplicatesFound = 0;
 
@@ -822,6 +829,15 @@ export class ConflictQueueService {
     entityId: string,
     conflictType: ConflictType,
   ): Promise<boolean> {
+    if (!supabase) {
+      const existing = await db.conflictResolutions
+        .where("patientId")
+        .equals(entityId)
+        .and((r) => r.conflictType === conflictType && r.status === "pending")
+        .first();
+      return !!existing;
+    }
+
     const { data } = await supabase
       .from("conflict_resolutions")
       .select("id")
