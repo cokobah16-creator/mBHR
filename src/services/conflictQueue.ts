@@ -793,6 +793,18 @@ export class ConflictQueueService {
           dob,
           address: patient.address,
         });
+    for (const patient of patients) {
+      const candidates = await patientDeduplication.findDuplicates({
+        givenName: patient.givenName,
+        familyName: patient.familyName,
+        phone: patient.phone || undefined,
+        dob: new Date(patient.dob),
+        address: patient.address,
+      });
+
+      const otherCandidates = candidates.filter(
+        (c) => c.patient.id !== patient.id,
+      );
 
         const otherCandidates = candidates.filter(
           (c) => c.patient.id !== patient.id,

@@ -36,6 +36,7 @@ export function SecureMessaging() {
   const [success, setSuccess] = useState("");
   const [showCompose, setShowCompose] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [replyStaffId, setReplyStaffId] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState({ subject: "", body: "" });
   const isOffline = !supabase;
 
@@ -158,6 +159,7 @@ export function SecureMessaging() {
         .from("patient_secure_messages")
         .insert({
           patient_id: portalUser.patientId,
+          staff_id: replyStaffId,
           subject: newMessage.subject,
           body: newMessage.body,
           from_patient: true,
@@ -170,6 +172,7 @@ export function SecureMessaging() {
       setSuccess("Message sent successfully");
       setNewMessage({ subject: "", body: "" });
       setShowCompose(false);
+      setReplyStaffId(null);
       await loadMessages();
     } catch (err) {
       logger.error("Error sending message:", err);
@@ -200,6 +203,18 @@ export function SecureMessaging() {
     }
   };
 
+  const handleReply = () => {
+    if (!selectedMessage) return;
+    setReplyStaffId(selectedMessage.staff_id || null);
+    setNewMessage({
+      subject: selectedMessage.subject.startsWith("Re:")
+        ? selectedMessage.subject
+        : `Re: ${selectedMessage.subject}`,
+      body: "",
+    });
+    setShowCompose(true);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 px-4 py-8">
@@ -226,7 +241,10 @@ export function SecureMessaging() {
             </p>
           </div>
           <button
-            onClick={() => setShowCompose(true)}
+            onClick={() => {
+              setReplyStaffId(null);
+              setShowCompose(true);
+            }}
             className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
           >
             New Message
@@ -237,7 +255,8 @@ export function SecureMessaging() {
           <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
             <WifiIcon className="w-5 h-5 text-amber-600 flex-shrink-0" />
             <p className="text-sm text-amber-800">
-              Offline mode — messages will sync when you connect to the internet.
+              Offline mode — messages will sync when you connect to the
+              internet.
             </p>
           </div>
         )}
@@ -329,12 +348,22 @@ export function SecureMessaging() {
 
         {selectedMessage ? (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <button
-              onClick={() => setSelectedMessage(null)}
-              className="mb-4 text-blue-600 hover:text-blue-800"
-            >
-              ← Back to inbox
-            </button>
+            <div className="mb-4 flex items-center justify-between">
+              <button
+                onClick={() => setSelectedMessage(null)}
+                className="text-blue-600 hover:text-blue-800"
+              >
+                ← Back to inbox
+              </button>
+              {!selectedMessage.from_patient && (
+                <button
+                  onClick={handleReply}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Reply
+                </button>
+              )}
+            </div>
 
             <div className="border-b border-gray-200 pb-4 mb-4">
               <h2 className="text-xl font-semibold text-gray-900">

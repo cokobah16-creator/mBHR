@@ -3,7 +3,18 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "path";
 
+const clientSupabaseUrl =
+  process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+const clientSupabaseAnonKey =
+  process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "";
+
 export default defineConfig({
+  define: {
+    "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(clientSupabaseUrl),
+    "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(
+      clientSupabaseAnonKey,
+    ),
+  },
   resolve: {
     alias: {
       "@": resolve(__dirname, "./src"),
