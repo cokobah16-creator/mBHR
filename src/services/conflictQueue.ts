@@ -766,16 +766,25 @@ export class ConflictQueueService {
     return { success, failed };
   }
 
-  async scanForDuplicates(limit = 100): Promise<number> {
+  async scanForDuplicates(
+    limit = 100,
+  ): Promise<{ found: number; skipped: number }> {
     const patients = await db.patients
-      .where("mergeInto")
-      .equals("")
-      .or("mergeInto")
-      .equals(undefined as unknown as string)
+      .filter((patient) => !patient.mergeInto)
       .limit(limit)
       .toArray();
 
     let duplicatesFound = 0;
+    let skippedRecords = 0;
+
+    for (const [index, patient] of patients.entries()) {
+      try {
+        const dob = new Date(patient.dob);
+        const hasValidDob = Number.isFinite(dob.getTime());
+        if (!hasValidDob || !patient.givenName || !patient.familyName) {
+          skippedRecords++;
+          continue;
+        }
 
         const candidates = await patientDeduplication.findDuplicates({
           givenName: patient.givenName,
@@ -797,27 +806,32 @@ export class ConflictQueueService {
         (c) => c.patient.id !== patient.id,
       );
 
-      if (otherCandidates.length > 0) {
-        const existing = await this.checkExistingConflict(
-          patient.id,
-          "duplicate",
+        const otherCandidates = candidates.filter(
+          (c) => c.patient.id !== patient.id,
         );
-        if (!existing) {
-          await this.createConflict({
-            conflictType: "duplicate",
-            entityType: "patients",
-            entityId: patient.id,
-            candidateIds: otherCandidates.map((c) => c.patient.id),
-            conflictDetails: {
-              fields: this.buildDuplicateFields(
-                patient,
-                otherCandidates[0].patient,
-              ),
-              matchScore: otherCandidates[0].score,
-              matchReasons: otherCandidates[0].matchReasons,
-            },
-          });
-          duplicatesFound++;
+
+        if (otherCandidates.length > 0) {
+          const existing = await this.checkExistingConflict(
+            patient.id,
+            "duplicate",
+          );
+          if (!existing) {
+            await this.createConflict({
+              conflictType: "duplicate",
+              entityType: "patients",
+              entityId: patient.id,
+              candidateIds: otherCandidates.map((c) => c.patient.id),
+              conflictDetails: {
+                fields: this.buildDuplicateFields(
+                  patient,
+                  otherCandidates[0].patient,
+                ),
+                matchScore: otherCandidates[0].score,
+                matchReasons: otherCandidates[0].matchReasons,
+              },
+            });
+            duplicatesFound++;
+          }
         }
       } catch (error) {
         skippedRecords++;
@@ -835,7 +849,7 @@ export class ConflictQueueService {
       }
     }
 
-    return duplicatesFound;
+    return { found: duplicatesFound, skipped: skippedRecords };
   }
 
   private async checkExistingConflict(
