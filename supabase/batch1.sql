@@ -1368,11 +1368,11 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_medication_reminders_updated_at BEFORE UPDATE ON medication_reminders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_lab_orders_updated_at BEFORE UPDATE ON lab_orders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_lab_results_updated_at BEFORE UPDATE ON lab_results FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_appointments_updated_at BEFORE UPDATE ON appointments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_waitlist_updated_at BEFORE UPDATE ON waitlist FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_medication_reminders_updated_at BEFORE UPDATE ON medication_reminders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_lab_orders_updated_at BEFORE UPDATE ON lab_orders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_lab_results_updated_at BEFORE UPDATE ON lab_results FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_appointments_updated_at BEFORE UPDATE ON appointments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_waitlist_updated_at BEFORE UPDATE ON waitlist FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 
 -- Migration: 20251024080033_add_missing_advanced_tables.sql
@@ -2020,67 +2020,67 @@ $$ language 'plpgsql';
 
 -- Add triggers for updated_at
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at
+CREATE OR REPLACE TRIGGER update_users_updated_at
   BEFORE UPDATE ON users
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_medication_reminders_updated_at ON medication_reminders;
-CREATE TRIGGER update_medication_reminders_updated_at
+CREATE OR REPLACE TRIGGER update_medication_reminders_updated_at
   BEFORE UPDATE ON medication_reminders
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_lab_orders_updated_at ON lab_orders;
-CREATE TRIGGER update_lab_orders_updated_at
+CREATE OR REPLACE TRIGGER update_lab_orders_updated_at
   BEFORE UPDATE ON lab_orders
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_lab_results_updated_at ON lab_results;
-CREATE TRIGGER update_lab_results_updated_at
+CREATE OR REPLACE TRIGGER update_lab_results_updated_at
   BEFORE UPDATE ON lab_results
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_appointments_updated_at ON appointments;
-CREATE TRIGGER update_appointments_updated_at
+CREATE OR REPLACE TRIGGER update_appointments_updated_at
   BEFORE UPDATE ON appointments
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_waitlist_updated_at ON waitlist;
-CREATE TRIGGER update_waitlist_updated_at
+CREATE OR REPLACE TRIGGER update_waitlist_updated_at
   BEFORE UPDATE ON waitlist
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_stock_batches_updated_at ON stock_batches;
-CREATE TRIGGER update_stock_batches_updated_at
+CREATE OR REPLACE TRIGGER update_stock_batches_updated_at
   BEFORE UPDATE ON stock_batches
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_care_tasks_updated_at ON care_tasks;
-CREATE TRIGGER update_care_tasks_updated_at
+CREATE OR REPLACE TRIGGER update_care_tasks_updated_at
   BEFORE UPDATE ON care_tasks
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_triage_records_updated_at ON triage_records;
-CREATE TRIGGER update_triage_records_updated_at
+CREATE OR REPLACE TRIGGER update_triage_records_updated_at
   BEFORE UPDATE ON triage_records
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_patient_allergies_updated_at ON patient_allergies;
-CREATE TRIGGER update_patient_allergies_updated_at
+CREATE OR REPLACE TRIGGER update_patient_allergies_updated_at
   BEFORE UPDATE ON patient_allergies
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_patient_preferences_updated_at ON patient_preferences;
-CREATE TRIGGER update_patient_preferences_updated_at
+CREATE OR REPLACE TRIGGER update_patient_preferences_updated_at
   BEFORE UPDATE ON patient_preferences
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
@@ -2874,16 +2874,16 @@ CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_status ON conflict_resolutio
 CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_type ON conflict_resolutions(conflict_type);
 
 -- Create updated_at triggers
-CREATE TRIGGER update_game_sessions_updated_at BEFORE UPDATE ON game_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_gamification_wallets_updated_at BEFORE UPDATE ON gamification_wallets FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_vitals_ranges_updated_at BEFORE UPDATE ON vitals_ranges FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_quiz_questions_updated_at BEFORE UPDATE ON quiz_questions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_triage_records_updated_at BEFORE UPDATE ON triage_records FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_inventory_discrepancies_updated_at BEFORE UPDATE ON inventory_discrepancies FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_stock_batches_updated_at BEFORE UPDATE ON stock_batches FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_care_tasks_updated_at BEFORE UPDATE ON care_tasks FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_daily_counts_updated_at BEFORE UPDATE ON daily_counts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_message_templates_updated_at BEFORE UPDATE ON message_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_game_sessions_updated_at BEFORE UPDATE ON game_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_gamification_wallets_updated_at BEFORE UPDATE ON gamification_wallets FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_vitals_ranges_updated_at BEFORE UPDATE ON vitals_ranges FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_quiz_questions_updated_at BEFORE UPDATE ON quiz_questions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_triage_records_updated_at BEFORE UPDATE ON triage_records FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_inventory_discrepancies_updated_at BEFORE UPDATE ON inventory_discrepancies FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_stock_batches_updated_at BEFORE UPDATE ON stock_batches FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_care_tasks_updated_at BEFORE UPDATE ON care_tasks FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_daily_counts_updated_at BEFORE UPDATE ON daily_counts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_message_templates_updated_at BEFORE UPDATE ON message_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 
 -- Migration: 20251024121716_20251023220000_add_photo_storage.sql

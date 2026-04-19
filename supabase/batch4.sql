@@ -796,7 +796,7 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS trigger_auto_enrollment ON patients;
-CREATE TRIGGER trigger_auto_enrollment
+CREATE OR REPLACE TRIGGER trigger_auto_enrollment
   BEFORE INSERT OR UPDATE ON patients
   FOR EACH ROW
   EXECUTE FUNCTION check_auto_enrollment();
@@ -814,25 +814,25 @@ END;
 $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS update_patient_messages_updated_at ON patient_messages;
-CREATE TRIGGER update_patient_messages_updated_at
+CREATE OR REPLACE TRIGGER update_patient_messages_updated_at
   BEFORE UPDATE ON patient_messages
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_patient_submitted_data_updated_at ON patient_submitted_data;
-CREATE TRIGGER update_patient_submitted_data_updated_at
+CREATE OR REPLACE TRIGGER update_patient_submitted_data_updated_at
   BEFORE UPDATE ON patient_submitted_data
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_appointments_updated_at ON appointments;
-CREATE TRIGGER update_appointments_updated_at
+CREATE OR REPLACE TRIGGER update_appointments_updated_at
   BEFORE UPDATE ON appointments
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_portal_users_updated_at ON patient_portal_users;
-CREATE TRIGGER update_portal_users_updated_at
+CREATE OR REPLACE TRIGGER update_portal_users_updated_at
   BEFORE UPDATE ON patient_portal_users
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
@@ -2022,13 +2022,13 @@ $$ LANGUAGE plpgsql;
 
 -- Trigger for updated_at
 DROP TRIGGER IF EXISTS update_conflict_resolutions_timestamp ON conflict_resolutions;
-CREATE TRIGGER update_conflict_resolutions_timestamp
+CREATE OR REPLACE TRIGGER update_conflict_resolutions_timestamp
   BEFORE UPDATE ON conflict_resolutions
   FOR EACH ROW
   EXECUTE FUNCTION update_conflict_resolution_timestamp();
 
 DROP TRIGGER IF EXISTS update_auto_resolution_rules_timestamp ON auto_resolution_rules;
-CREATE TRIGGER update_auto_resolution_rules_timestamp
+CREATE OR REPLACE TRIGGER update_auto_resolution_rules_timestamp
   BEFORE UPDATE ON auto_resolution_rules
   FOR EACH ROW
   EXECUTE FUNCTION update_conflict_resolution_timestamp();

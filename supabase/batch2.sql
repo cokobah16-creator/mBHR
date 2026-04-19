@@ -250,13 +250,13 @@ $$ language 'plpgsql';
 
 -- Add updated_at triggers
 DROP TRIGGER IF EXISTS update_patient_allergies_updated_at ON patient_allergies;
-CREATE TRIGGER update_patient_allergies_updated_at
+CREATE OR REPLACE TRIGGER update_patient_allergies_updated_at
   BEFORE UPDATE ON patient_allergies
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_patient_preferences_updated_at ON patient_preferences;
-CREATE TRIGGER update_patient_preferences_updated_at
+CREATE OR REPLACE TRIGGER update_patient_preferences_updated_at
   BEFORE UPDATE ON patient_preferences
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
@@ -410,7 +410,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Create trigger for acknowledged_at
 DROP TRIGGER IF EXISTS trigger_set_acknowledged_at ON clinical_alerts;
-CREATE TRIGGER trigger_set_acknowledged_at
+CREATE OR REPLACE TRIGGER trigger_set_acknowledged_at
   BEFORE UPDATE ON clinical_alerts
   FOR EACH ROW
   EXECUTE FUNCTION set_acknowledged_at();
@@ -631,7 +631,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- UPDATED_AT TRIGGER
 -- ============================================================================
 
-CREATE TRIGGER update_otp_rate_limit_tracking_updated_at
+CREATE OR REPLACE TRIGGER update_otp_rate_limit_tracking_updated_at
   BEFORE UPDATE ON otp_rate_limit_tracking
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
@@ -2596,22 +2596,22 @@ END $$;
 -- UPDATED_AT TRIGGERS
 -- ============================================================================
 
-CREATE TRIGGER update_patient_portal_users_updated_at
+CREATE OR REPLACE TRIGGER update_patient_portal_users_updated_at
   BEFORE UPDATE ON patient_portal_users
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_patient_messages_updated_at
+CREATE OR REPLACE TRIGGER update_patient_messages_updated_at
   BEFORE UPDATE ON patient_messages
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_patient_appointment_requests_updated_at
+CREATE OR REPLACE TRIGGER update_patient_appointment_requests_updated_at
   BEFORE UPDATE ON patient_appointment_requests
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_patient_documents_updated_at
+CREATE OR REPLACE TRIGGER update_patient_documents_updated_at
   BEFORE UPDATE ON patient_documents
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
@@ -3048,17 +3048,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER organizations_updated_at
+CREATE OR REPLACE TRIGGER organizations_updated_at
   BEFORE UPDATE ON organizations
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER sites_updated_at
+CREATE OR REPLACE TRIGGER sites_updated_at
   BEFORE UPDATE ON sites
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER outreach_events_updated_at
+CREATE OR REPLACE TRIGGER outreach_events_updated_at
   BEFORE UPDATE ON outreach_events
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
@@ -3597,32 +3597,32 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- Add updated_at triggers
-CREATE TRIGGER referrals_updated_at
+CREATE OR REPLACE TRIGGER referrals_updated_at
   BEFORE UPDATE ON referrals
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER follow_up_schedules_updated_at
+CREATE OR REPLACE TRIGGER follow_up_schedules_updated_at
   BEFORE UPDATE ON follow_up_schedules
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER prescription_templates_updated_at
+CREATE OR REPLACE TRIGGER prescription_templates_updated_at
   BEFORE UPDATE ON prescription_templates
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER site_formulary_updated_at
+CREATE OR REPLACE TRIGGER site_formulary_updated_at
   BEFORE UPDATE ON site_formulary
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER doctor_analytics_updated_at
+CREATE OR REPLACE TRIGGER doctor_analytics_updated_at
   BEFORE UPDATE ON doctor_analytics
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
 
-CREATE TRIGGER protocol_library_updated_at
+CREATE OR REPLACE TRIGGER protocol_library_updated_at
   BEFORE UPDATE ON protocol_library
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();

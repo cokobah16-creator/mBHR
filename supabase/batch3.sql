@@ -183,9 +183,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER organizations_updated_at BEFORE UPDATE ON organizations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER sites_updated_at BEFORE UPDATE ON sites FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER outreach_events_updated_at BEFORE UPDATE ON outreach_events FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER organizations_updated_at BEFORE UPDATE ON organizations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER sites_updated_at BEFORE UPDATE ON sites FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER outreach_events_updated_at BEFORE UPDATE ON outreach_events FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 
 -- Migration: 20251028170517_add_doctor_features_tables_part1.sql
@@ -500,12 +500,12 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- Triggers
-CREATE TRIGGER referrals_updated_at BEFORE UPDATE ON referrals FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER follow_up_schedules_updated_at BEFORE UPDATE ON follow_up_schedules FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER prescription_templates_updated_at BEFORE UPDATE ON prescription_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER site_formulary_updated_at BEFORE UPDATE ON site_formulary FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER doctor_analytics_updated_at BEFORE UPDATE ON doctor_analytics FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER protocol_library_updated_at BEFORE UPDATE ON protocol_library FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER referrals_updated_at BEFORE UPDATE ON referrals FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER follow_up_schedules_updated_at BEFORE UPDATE ON follow_up_schedules FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER prescription_templates_updated_at BEFORE UPDATE ON prescription_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER site_formulary_updated_at BEFORE UPDATE ON site_formulary FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER doctor_analytics_updated_at BEFORE UPDATE ON doctor_analytics FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE OR REPLACE TRIGGER protocol_library_updated_at BEFORE UPDATE ON protocol_library FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 
 -- Migration: 20251028180000_add_queue_enhancements.sql
@@ -779,7 +779,7 @@ $$ LANGUAGE plpgsql;
 
 -- Ensure trigger exists for updated_at
 DROP TRIGGER IF EXISTS patients_updated_at_trigger ON patients;
-CREATE TRIGGER patients_updated_at_trigger
+CREATE OR REPLACE TRIGGER patients_updated_at_trigger
   BEFORE UPDATE ON patients
   FOR EACH ROW
   EXECUTE FUNCTION update_patients_updated_at();
