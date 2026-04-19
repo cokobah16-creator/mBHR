@@ -20,6 +20,8 @@ import {
   ArrowPathIcon,
   ExclamationCircleIcon,
   GlobeAltIcon,
+  ClipboardDocumentIcon,
+  ClipboardDocumentCheckIcon,
 } from "@heroicons/react/24/outline";
 import {
   getPortalStatus,
@@ -47,6 +49,8 @@ export function PortalStatusCard({
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
+  const [inviteLink, setInviteLink] = useState<{ url: string; delivered: boolean } | null>(null);
+  const [copied, setCopied] = useState(false);
   const { push: pushToast } = useToast();
 
   useEffect(() => {
@@ -125,13 +129,16 @@ export function PortalStatusCard({
       const result = await sendPortalInvitation(patientId);
 
       if (result.success) {
-        pushToast({
-          id: crypto.randomUUID(),
-          title: result.demoOTP ? "Invitation Ready" : "Invitation Sent",
-          body: result.demoOTP
-            ? result.demoOTP
-            : "Portal invitation sent successfully. The patient can now register using their contact details and date of birth.",
-        });
+        if (result.registrationUrl) {
+          // Show the registration link — amber if offline (no email sent), green if delivered
+          setInviteLink({ url: result.registrationUrl, delivered: !result.demoOTP });
+        } else {
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Invitation Sent",
+            body: "Portal invitation sent successfully.",
+          });
+        }
         await loadStatus();
         onStatusChange?.();
       } else {
@@ -150,6 +157,13 @@ export function PortalStatusCard({
     } finally {
       setSending(false);
     }
+  };
+
+  const handleCopyLink = async () => {
+    if (!inviteLink) return;
+    await navigator.clipboard.writeText(inviteLink.url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
   };
 
   const formatCountdown = (seconds: number): string => {
@@ -322,6 +336,76 @@ export function PortalStatusCard({
             <p className="text-sm text-gray-600">
               Sent {formatNigerianDate(status.lastInviteSent)}
             </p>
+          </div>
+        )}
+
+        {/* Registration link panel — shown after sending invitation */}
+        {inviteLink && (
+          <div className="border-t pt-4">
+            <div
+              className={`rounded-lg p-4 space-y-3 ${
+                inviteLink.delivered
+                  ? "bg-green-50 border border-green-300"
+                  : "bg-amber-50 border border-amber-300"
+              }`}
+            >
+              <p
+                className={`text-sm font-semibold ${
+                  inviteLink.delivered ? "text-green-900" : "text-amber-900"
+                }`}
+              >
+                {inviteLink.delivered
+                  ? "Invitation sent — registration link also shown below"
+                  : "No email service — share this link with the patient"}
+              </p>
+              <p
+                className={`text-xs ${
+                  inviteLink.delivered ? "text-green-800" : "text-amber-800"
+                }`}
+              >
+                {inviteLink.delivered
+                  ? "The patient will receive an email with this link. You can also copy and share it directly."
+                  : "Email requires Supabase + RESEND_API_KEY. Read this link aloud, show it on screen, or copy it and send via WhatsApp/SMS."}
+              </p>
+              <div
+                className={`flex items-center gap-2 bg-white rounded-md px-3 py-2 border ${
+                  inviteLink.delivered ? "border-green-300" : "border-amber-300"
+                }`}
+              >
+                <span className="text-xs text-gray-700 truncate flex-1 font-mono">
+                  {inviteLink.url}
+                </span>
+                <button
+                  onClick={handleCopyLink}
+                  className={`shrink-0 flex items-center gap-1 text-xs font-medium ${
+                    inviteLink.delivered
+                      ? "text-green-800 hover:text-green-900"
+                      : "text-amber-800 hover:text-amber-900"
+                  }`}
+                  title="Copy to clipboard"
+                >
+                  {copied ? (
+                    <>
+                      <ClipboardDocumentCheckIcon className="h-4 w-4 text-green-600" />
+                      <span className="text-green-700">Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <ClipboardDocumentIcon className="h-4 w-4" />
+                      Copy
+                    </>
+                  )}
+                </button>
+              </div>
+              <p
+                className={`text-xs ${
+                  inviteLink.delivered ? "text-green-800" : "text-amber-800"
+                }`}
+              >
+                The patient's contact will be pre-filled. They only need to
+                enter their <strong>date of birth</strong> to complete registration.
+              </p>
+            </div>
           </div>
         )}
 
