@@ -47,12 +47,9 @@ const Pharmacy = lazy(() =>
 );
 const PharmacyMenu = lazy(() => import("@/pages/PharmacyMenu"));
 const PharmacyReports = lazy(() => import("@/pages/PharmacyReports"));
-// Temporarily disabled - corrupted files
-// const PharmacyStock = lazy(() => import('@/features/pharmacy/PharmacyStock'))
-// const RxForm = lazy(() => import('@/features/pharmacy/RxForm'))
-// const Dispense = lazy(() => import('@/features/pharmacy/Dispense'))
-// const EnhancedPharmacy = lazy(() => import('@/features/pharmacy/EnhancedPharmacy'))
-// const FEFODispenser = lazy(() => import('@/features/pharmacy/FEFODispenser'))
+const PharmacyStock = lazy(() => import('@/features/pharmacy/PharmacyStock'))
+const RxForm = lazy(() => import('@/features/pharmacy/RxForm'))
+const Dispense = lazy(() => import('@/features/pharmacy/Dispense'))
 const SMSReminders = lazy(() => import("@/pages/SMSReminders"));
 
 // Labs and appointments (Sprint 5 features)
@@ -517,27 +514,21 @@ function App() {
                         </RequireRoles>
                       }
                     />
-                    {/* Temporarily disabled - corrupted file
                     <Route path="/rx/stock" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
                         <PharmacyStock />
                       </RequireRoles>
                     } />
-                    */}
-                    {/* Temporarily disabled - corrupted file
                     <Route path="/rx/new" element={
                       <RequireRoles roles={['doctor', 'nurse', 'admin']}>
                         <RxForm />
                       </RequireRoles>
                     } />
-                    */}
-                    {/* Temporarily disabled - corrupted file
                     <Route path="/rx/dispense" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
                         <Dispense />
                       </RequireRoles>
                     } />
-                    */}
                     <Route
                       path="/tickets/queue"
                       element={
