@@ -5,8 +5,8 @@ import type { Patient, Visit, Vital, QueueItem } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { queueManagement } from "@/services/queueManagement";
 import { getFlagColor } from "@/utils/vitals";
-import { palaverRoom } from "@/services/palaverRoom";
-import { PalaverRoom } from "@/features/doctor/PalaverRoom";
+import { getDoctorUnreadCount } from "@/services/patientSecureMessaging";
+import { PatientMessagesPanel } from "@/features/doctor/PatientMessagesPanel";
 import {
   UserIcon,
   ClockIcon,
@@ -33,15 +33,13 @@ export function DoctorDashboard() {
   const [loading, setLoading] = useState(true);
   const [showPalaverRoom, setShowPalaverRoom] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
-  const [initialLoadDone, setInitialLoadDone] = useState(false);
 
   const userId = currentUser?.id;
 
   const loadUnreadCount = useCallback(async () => {
     if (!userId) return;
     try {
-      if (!palaverRoom.isAvailable()) return;
-      const count = await palaverRoom.getUnreadCount(userId);
+      const count = await getDoctorUnreadCount(userId);
       setUnreadMessages(count);
     } catch (err) {
       console.error("Failed to load unread count:", err);
@@ -116,7 +114,6 @@ export function DoctorDashboard() {
       } finally {
         if (isInitial) {
           setLoading(false);
-          setInitialLoadDone(true);
         }
       }
     },
@@ -203,13 +200,13 @@ export function DoctorDashboard() {
           </p>
         </div>
         <div className="flex items-center gap-4">
-          {/* Palaver Room Button */}
+          {/* Patient Messages Button */}
           <button
             onClick={() => setShowPalaverRoom(true)}
             className="relative flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
           >
             <ChatBubbleLeftRightIcon className="h-5 w-5" />
-            <span className="font-medium">Palaver Room</span>
+            <span className="font-medium">Patient Messages</span>
             {unreadMessages > 0 && (
               <span className="absolute -top-2 -right-2 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] text-center">
                 {unreadMessages}
@@ -241,7 +238,7 @@ export function DoctorDashboard() {
         </div>
       </div>
 
-      {/* Palaver Room Sliding Panel */}
+      {/* Patient Messages Sliding Panel */}
       {showPalaverRoom && (
         <>
           <div
@@ -249,12 +246,12 @@ export function DoctorDashboard() {
             onClick={() => setShowPalaverRoom(false)}
           />
           <div className="fixed right-0 top-0 bottom-0 w-full max-w-md z-50 shadow-2xl">
-            <PalaverRoom
+            <PatientMessagesPanel
               onClose={() => {
                 setShowPalaverRoom(false);
                 loadUnreadCount();
               }}
-              isPanel={true}
+              onUnreadChange={setUnreadMessages}
             />
           </div>
         </>
@@ -481,7 +478,7 @@ export function DoctorDashboard() {
             className="relative btn-secondary flex flex-col items-center justify-center p-4 h-24 bg-emerald-50 border-emerald-200 hover:bg-emerald-100"
           >
             <ChatBubbleLeftRightIcon className="h-6 w-6 mb-2 text-emerald-600" />
-            <span className="text-sm text-emerald-800">Palaver Room</span>
+            <span className="text-sm text-emerald-800">Patient Messages</span>
             {unreadMessages > 0 && (
               <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full">
                 {unreadMessages}

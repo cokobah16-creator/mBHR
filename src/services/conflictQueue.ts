@@ -793,18 +793,6 @@ export class ConflictQueueService {
           dob,
           address: patient.address,
         });
-    for (const [index, patient] of patients.entries()) {
-      const candidates = await patientDeduplication.findDuplicates({
-        givenName: patient.givenName,
-        familyName: patient.familyName,
-        phone: patient.phone || undefined,
-        dob: new Date(patient.dob),
-        address: patient.address,
-      });
-
-      const otherCandidates = candidates.filter(
-        (c) => c.patient.id !== patient.id,
-      );
 
         const otherCandidates = candidates.filter(
           (c) => c.patient.id !== patient.id,
@@ -838,13 +826,6 @@ export class ConflictQueueService {
         logger.warn("Skipping patient during duplicate scan", {
           patientId: patient.id,
           error,
-        });
-      }
-
-      // Yield periodically so large scans don't block the UI thread and hurt INP.
-      if ((index + 1) % 10 === 0) {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 0);
         });
       }
 
