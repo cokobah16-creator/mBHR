@@ -1287,7 +1287,7 @@ DO $$ BEGIN
   TO authenticated
   WITH CHECK (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
+      SELECT id FROM app_users WHERE role IN ('volunteer', 'nurse', 'doctor', 'admin')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -1299,7 +1299,7 @@ DO $$ BEGIN
   TO authenticated
   USING (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
+      SELECT id FROM app_users WHERE role IN ('volunteer', 'nurse', 'doctor', 'admin')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -1320,7 +1320,7 @@ DO $$ BEGIN
   TO authenticated
   WITH CHECK (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
+      SELECT id FROM app_users WHERE role IN ('volunteer', 'nurse', 'doctor', 'admin')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -1332,7 +1332,7 @@ DO $$ BEGIN
   TO authenticated
   USING (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
+      SELECT id FROM app_users WHERE role IN ('volunteer', 'nurse', 'doctor', 'admin')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -2684,7 +2684,7 @@ DO $$ BEGIN
   CREATE POLICY "Staff can create triage records"
   ON triage_records FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')));
+  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('volunteer', 'nurse', 'doctor', 'admin')));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -2692,7 +2692,7 @@ DO $$ BEGIN
   CREATE POLICY "Staff can update triage records"
   ON triage_records FOR UPDATE
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')));
+  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('volunteer', 'nurse', 'doctor', 'admin')));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -2759,7 +2759,7 @@ DO $$ BEGIN
   CREATE POLICY "Staff can create care tasks"
   ON care_tasks FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'pharmacist', 'admin')));
+  WITH CHECK (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('volunteer', 'nurse', 'doctor', 'pharmacist', 'admin')));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -2767,7 +2767,7 @@ DO $$ BEGIN
   CREATE POLICY "Staff can update care tasks"
   ON care_tasks FOR UPDATE
   TO authenticated
-  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'pharmacist', 'admin')));
+  USING (auth.uid() IN (SELECT id FROM app_users WHERE role IN ('volunteer', 'nurse', 'doctor', 'pharmacist', 'admin')));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 

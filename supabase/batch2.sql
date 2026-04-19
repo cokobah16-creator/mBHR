@@ -2099,7 +2099,7 @@ DO $$ BEGIN
   TO authenticated
   USING (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -2188,7 +2188,7 @@ DO $$ BEGIN
   TO authenticated
   WITH CHECK (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw', 'pharmacist')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer', 'pharmacist')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -2247,7 +2247,7 @@ DO $$ BEGIN
   TO authenticated
   USING (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -2259,7 +2259,7 @@ DO $$ BEGIN
   TO authenticated
   WITH CHECK (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer')
     )
     AND sender_type = 'staff'
     AND sender_id = auth.uid()
@@ -2320,7 +2320,7 @@ DO $$ BEGIN
   TO authenticated
   USING (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -2332,7 +2332,7 @@ DO $$ BEGIN
   TO authenticated
   USING (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -2373,7 +2373,7 @@ DO $$ BEGIN
   TO authenticated
   USING (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -2385,7 +2385,7 @@ DO $$ BEGIN
   TO authenticated
   WITH CHECK (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -2425,7 +2425,7 @@ DO $$ BEGIN
   TO authenticated
   USING (
     auth.uid() IN (
-      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
+      SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'volunteer')
     )
   );
 EXCEPTION WHEN duplicate_object THEN NULL;
