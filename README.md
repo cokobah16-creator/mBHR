@@ -92,6 +92,10 @@ To enable cloud sync, add Supabase configuration to `.env`:
 ```
 VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_anon_key
+
+# Optional on Vercel with Supabase integration:
+# If only SUPABASE_URL / SUPABASE_ANON_KEY are set, the Vite build now maps
+# them automatically to the client VITE_ variables.
 ```
 
 Then run the SQL migration to create the database schema:
@@ -106,14 +110,17 @@ The app will automatically detect the configuration and enable background sync!
 ### Migration File Location
 
 The complete SQL migration is located at:
+
 ```
 supabase/migrations/create_sync_schema.sql
 ```
 
 This migration creates all necessary tables, indexes, and Row Level Security policies for syncing your offline data with Supabase.
+
 ## Acceptance Tests
 
 ### A1: First Run Setup
+
 - App shows Admin Setup screen
 - Create admin with Setup PIN
 - Create additional users
@@ -121,36 +128,43 @@ This migration creates all necessary tables, indexes, and Row Level Security pol
 - Dashboard shows with offline badge
 
 ### A2: Patient Registration
+
 - Register patient with photo
 - Start visit
 - Patient appears in queue
 
 ### A3: Vitals Recording
+
 - Enter vital signs
 - BMI auto-calculates
 - Abnormal values trigger flags
 
 ### A4: Consultation
+
 - Add SOAP notes
 - Record provisional diagnosis
 - Save offline
 
 ### A5: Pharmacy
+
 - Dispense medication
 - Inventory decrements
 - Low stock warnings
 
 ### A6: Offline Resilience
+
 - Disable internet
 - Hard refresh
 - Data persists
 - Register new patient
 
 ### A7: Data Export
+
 - Export CSV files
 - Verify data integrity
 
 ### A8: Online Sync (Optional)
+
 - Add Supabase keys
 - Online login available
 - Offline PIN still works
@@ -161,6 +175,7 @@ This migration creates all necessary tables, indexes, and Row Level Security pol
 The app is built with strict TypeScript, ESLint, and includes error boundaries to catch JSX mistakes early.
 
 Key directories:
+
 - `/src/db` - Database schema and utilities
 - `/src/stores` - Zustand state management
 - `/src/components` - Reusable UI components
