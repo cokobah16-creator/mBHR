@@ -74,8 +74,10 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
     setLoadError("");
 
     if (!palaverRoom.isAvailable()) {
+      const status = palaverRoom.getAvailabilityStatus();
       setLoadError(
-        "Messaging service is not configured. Please check your database connection.",
+        status.details ||
+          "Messaging service is not configured. Please check your database connection.",
       );
       setLoading(false);
       return;
