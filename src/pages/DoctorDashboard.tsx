@@ -7,6 +7,10 @@ import { queueManagement } from "@/services/queueManagement";
 import { getFlagColor } from "@/utils/vitals";
 import { getDoctorUnreadCount } from "@/services/patientSecureMessaging";
 import { PatientMessagesPanel } from "@/features/doctor/PatientMessagesPanel";
+import { palaverRoom } from "@/services/palaverRoom";
+import { PalaverRoom } from "@/features/doctor/PalaverRoom";
+import { PatientMessagesPanel } from "@/features/doctor/PatientMessagesPanel";
+import { supabase } from "@/lib/supabase";
 import {
   UserIcon,
   ClockIcon,
@@ -14,6 +18,7 @@ import {
   CheckCircleIcon,
   HeartIcon,
   ChatBubbleLeftRightIcon,
+  InboxIcon,
 } from "@heroicons/react/24/outline";
 
 interface PatientInQueue extends QueueItem {
@@ -32,7 +37,10 @@ export function DoctorDashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [showPalaverRoom, setShowPalaverRoom] = useState(false);
+  const [showPatientMessages, setShowPatientMessages] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [unreadPatientMessages, setUnreadPatientMessages] = useState(0);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
 
   const userId = currentUser?.id;
 
@@ -45,6 +53,20 @@ export function DoctorDashboard() {
       console.error("Failed to load unread count:", err);
     }
   }, [userId]);
+
+  const loadUnreadPatientMessages = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      const { count } = await supabase
+        .from("patient_secure_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("from_patient", true)
+        .eq("read", false);
+      setUnreadPatientMessages(count || 0);
+    } catch (err) {
+      console.error("Failed to load unread patient message count:", err);
+    }
+  }, []);
 
   const loadDashboardData = useCallback(
     async (isInitial = false) => {
@@ -125,15 +147,18 @@ export function DoctorDashboard() {
 
     loadDashboardData(true);
     loadUnreadCount();
+    loadUnreadPatientMessages();
 
     const interval = setInterval(() => loadDashboardData(false), 10000);
     const messageInterval = setInterval(loadUnreadCount, 30000);
+    const patientMsgInterval = setInterval(loadUnreadPatientMessages, 30000);
 
     return () => {
       clearInterval(interval);
       clearInterval(messageInterval);
+      clearInterval(patientMsgInterval);
     };
-  }, [userId, loadDashboardData, loadUnreadCount]);
+  }, [userId, loadDashboardData, loadUnreadCount, loadUnreadPatientMessages]);
 
   const handleStartConsultation = async (item: PatientInQueue) => {
     try {
@@ -202,6 +227,20 @@ export function DoctorDashboard() {
         <div className="flex items-center gap-4">
           {/* Patient Messages Button */}
           <button
+            onClick={() => setShowPatientMessages(true)}
+            className="relative flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+          >
+            <InboxIcon className="h-5 w-5" />
+            <span className="font-medium">Patient Messages</span>
+            {unreadPatientMessages > 0 && (
+              <span className="absolute -top-2 -right-2 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] text-center">
+                {unreadPatientMessages}
+              </span>
+            )}
+          </button>
+
+          {/* Palaver Room Button */}
+          <button
             onClick={() => setShowPalaverRoom(true)}
             className="relative flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
           >
@@ -239,6 +278,24 @@ export function DoctorDashboard() {
       </div>
 
       {/* Patient Messages Sliding Panel */}
+      {showPatientMessages && (
+        <>
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-40"
+            onClick={() => setShowPatientMessages(false)}
+          />
+          <div className="fixed right-0 top-0 bottom-0 w-full max-w-md z-50 shadow-2xl">
+            <PatientMessagesPanel
+              onClose={() => {
+                setShowPatientMessages(false);
+                loadUnreadPatientMessages();
+              }}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Palaver Room Sliding Panel */}
       {showPalaverRoom && (
         <>
           <div
@@ -472,7 +529,19 @@ export function DoctorDashboard() {
         <h3 className="text-lg font-semibold text-gray-900 mb-4">
           Quick Actions
         </h3>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <button
+            onClick={() => setShowPatientMessages(true)}
+            className="relative btn-secondary flex flex-col items-center justify-center p-4 h-24 bg-blue-50 border-blue-200 hover:bg-blue-100"
+          >
+            <InboxIcon className="h-6 w-6 mb-2 text-blue-600" />
+            <span className="text-sm text-blue-800">Patient Messages</span>
+            {unreadPatientMessages > 0 && (
+              <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full">
+                {unreadPatientMessages}
+              </span>
+            )}
+          </button>
           <button
             onClick={() => setShowPalaverRoom(true)}
             className="relative btn-secondary flex flex-col items-center justify-center p-4 h-24 bg-emerald-50 border-emerald-200 hover:bg-emerald-100"
