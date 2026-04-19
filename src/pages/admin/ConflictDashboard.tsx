@@ -155,11 +155,19 @@ export default function ConflictDashboard() {
   const handleScanForDuplicates = async () => {
     setIsScanning(true);
     try {
-      const found = await conflictQueueService.scanForDuplicates(50);
-      if (found > 0) {
+      const result = await conflictQueueService.scanForDuplicates(50);
+      if (result.found > 0) {
         await loadConflicts();
         await loadStats();
       }
+      const skippedMessage =
+        result.skipped > 0
+          ? ` Skipped ${result.skipped} record${result.skipped !== 1 ? "s" : ""} with invalid data.`
+          : "";
+      pushToast({
+        id: `duplicate-scan-${Date.now()}`,
+        title: "Duplicate scan complete",
+        body: `Found ${result.found} new potential duplicate${result.found !== 1 ? "s" : ""}.${skippedMessage}`,
       pushToast({
         id: `duplicate-scan-${Date.now()}`,
         title: "Duplicate scan complete",
