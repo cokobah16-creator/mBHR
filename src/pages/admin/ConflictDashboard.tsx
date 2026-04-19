@@ -158,6 +158,15 @@ export default function ConflictDashboard() {
         await loadConflicts();
         await loadStats();
       }
+      const skippedMessage =
+        result.skipped > 0
+          ? ` Skipped ${result.skipped} record${result.skipped !== 1 ? "s" : ""} with invalid data.`
+          : "";
+      pushToast({
+        id: `duplicate-scan-${Date.now()}`,
+        title: "Duplicate scan complete",
+        body: `Found ${result.found} new potential duplicate${result.found !== 1 ? "s" : ""}.${skippedMessage}`,
+      });
       alert(
         `Scan complete. Found ${found} new potential duplicate${found !== 1 ? "s" : ""}.`,
       );
