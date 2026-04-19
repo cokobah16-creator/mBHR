@@ -30,7 +30,6 @@ import {
 } from "@/components/ConflictComparisonCard";
 import { db } from "@/db";
 import { getRoleDisplayName, type Role } from "@/auth/roles";
-import { useToast } from "@/stores/toast";
 
 type TabType = "pending" | "needs_approval" | "resolved";
 
@@ -73,7 +72,6 @@ const REQUIRED_ROLE_LABELS: Record<string, { label: string; color: string }> = {
 
 export default function ConflictDashboard() {
   const { currentUser } = useAuthStore();
-  const { push: pushToast } = useToast();
   const [activeTab, setActiveTab] = useState<TabType>("pending");
   const [conflicts, setConflicts] = useState<ConflictResolution[]>([]);
   const [stats, setStats] = useState<ConflictStats | null>(null);
@@ -155,31 +153,17 @@ export default function ConflictDashboard() {
   const handleScanForDuplicates = async () => {
     setIsScanning(true);
     try {
-      const result = await conflictQueueService.scanForDuplicates(50);
-      if (result.found > 0) {
+      const found = await conflictQueueService.scanForDuplicates(50);
+      if (found > 0) {
         await loadConflicts();
         await loadStats();
       }
-      const skippedMessage =
-        result.skipped > 0
-          ? ` Skipped ${result.skipped} record${result.skipped !== 1 ? "s" : ""} with invalid data.`
-          : "";
-      pushToast({
-        id: `duplicate-scan-${Date.now()}`,
-        title: "Duplicate scan complete",
-        body: `Found ${result.found} new potential duplicate${result.found !== 1 ? "s" : ""}.${skippedMessage}`,
-      pushToast({
-        id: `duplicate-scan-${Date.now()}`,
-        title: "Duplicate scan complete",
-        body: `Found ${found} new potential duplicate${found !== 1 ? "s" : ""}.`,
-      });
+      alert(
+        `Scan complete. Found ${found} new potential duplicate${found !== 1 ? "s" : ""}.`,
+      );
     } catch (error) {
       console.error("Scan failed:", error);
-      pushToast({
-        id: `duplicate-scan-error-${Date.now()}`,
-        title: "Duplicate scan failed",
-        body: "Please try again.",
-      });
+      alert("Scan failed. Please try again.");
     } finally {
       setIsScanning(false);
     }

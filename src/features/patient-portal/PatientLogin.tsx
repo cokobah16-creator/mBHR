@@ -9,16 +9,6 @@ import { loginPatientPortal } from "@/services/patientPortalAuth";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 
 const onlineSchema = z.object({
-  email:    z.string().email("Please enter a valid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-});
-
-const offlineSchema = z.object({
-  email:    z.string().email("Please enter a valid email address"),
-  password: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Please use the format YYYY-MM-DD"),
-});
-
-type LoginForm = z.infer<typeof onlineSchema>;
   email:      z.string().email("Please enter a valid email address"),
   credential: z.string().min(6, "Password must be at least 6 characters"),
 });
@@ -40,8 +30,6 @@ export function PatientLogin() {
   const [error, setError]     = useState("");
 
   const form = useForm<LoginForm>({
-    resolver: zodResolver(isSupabaseEnabled ? onlineSchema : offlineSchema),
-    defaultValues: { email: "", password: "" },
     resolver: zodResolver(schema),
     defaultValues: { email: "", credential: "" },
   });
@@ -65,7 +53,6 @@ export function PatientLogin() {
   };
 
   const handleOfflineLogin = async (data: LoginForm) => {
-    const result = await loginPatientPortal(data.email, data.password, "dob").catch(() => null);
     const result = await loginPatientPortal(data.email, data.credential, "dob").catch(() => null);
     if (result?.success && result.sessionToken) {
       localStorage.setItem("patient_session_token", result.sessionToken);
@@ -111,10 +98,6 @@ export function PatientLogin() {
           {!isSupabaseEnabled && (
             <div className="mb-6 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
               <p className="text-xs text-yellow-800 font-medium mb-1">Running in offline mode</p>
-              <p className="text-xs text-yellow-800">
-                Data is stored on this device only. Email invitations are not
-                available without an internet connection — register directly
-                using the link below.
               <p className="text-xs text-yellow-700">
                 Data is stored on this device only. Email invitations are not available without an
                 internet connection — register directly using the link below.
@@ -148,14 +131,6 @@ export function PatientLogin() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                {isSupabaseEnabled ? "Password" : "Date of Birth"}
-              </label>
-              <input
-                {...form.register("password")}
-                type={isSupabaseEnabled ? "password" : "date"}
-                id="password"
-                placeholder={isSupabaseEnabled ? "Your password" : ""}
               <label htmlFor="credential" className="block text-sm font-medium text-gray-700 mb-2">
                 {isSupabaseEnabled ? "Password" : "Date of Birth"}
               </label>
@@ -173,8 +148,6 @@ export function PatientLogin() {
                   Use the same date of birth you entered when you registered (e.g. 1990-01-15)
                 </p>
               )}
-              {form.formState.errors.password && (
-                <p className="mt-2 text-sm text-red-600">{form.formState.errors.password.message}</p>
               {form.formState.errors.credential && (
                 <p className="mt-2 text-sm text-red-600">{form.formState.errors.credential.message}</p>
               )}
