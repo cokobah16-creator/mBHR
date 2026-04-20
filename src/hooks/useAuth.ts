@@ -110,52 +110,6 @@ export function useAuth(): UseAuthReturn {
         const normPhone = normalizePhone(data.phone);
         if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
       }
-  const login = useCallback(async (email: string, password: string): Promise<AuthError | null> => {
-    if (!supabase) return { message: "Supabase is not configured — running in offline mode." };
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { message: error.message };
-    return null;
-  }, []);
-
-  const signup = useCallback(async (data: SignUpData): Promise<AuthError | null> => {
-    if (!supabase) return { message: "Supabase is not configured — running in offline mode." };
-
-    // 1. Create the auth user
-    // 1. Create the Supabase auth user
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email:    data.email,
-      password: data.password,
-      options: {
-        // Pre-populate display name in auth metadata
-        data: { full_name: `${data.givenName} ${data.familyName}`.trim() },
-      },
-    });
-
-    if (signUpError) return { message: signUpError.message };
-    if (!authData.user) return { message: "Sign-up succeeded but no user was returned." };
-
-    // 2. Insert into the existing `patients` table
-    //    Matches columns from migrations/20250930025202_young_hat.sql +
-    //    20251029000000_add_patient_email_auth_fields.sql
-    const patientId = crypto.randomUUID();
-    const { error: insertError } = await supabase.from("patients").insert({
-      id:           patientId,
-      auth_uid:     authData.user.id,   // UUID stored as text (existing schema pattern)
-
-    // 2. Look for an existing staff-registered patient with this email or phone.
-    //    If one exists, stamp auth_uid onto it so the portal can find their
-    //    clinical records (vitals, consults, dispenses) via getPatientProfile().
-    const orClauses: string[] = [`email.eq.${data.email.toLowerCase().trim()}`];
-    if (data.phone) {
-      const normPhone = normalizePhone(data.phone);
-      if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
-    }
-
-    const { data: existingPatient } = await supabase
-      .from("patients")
-      .select("id")
-      .or(orClauses.join(","))
-      .maybeSingle();
 
       const { data: existingPatient } = await supabase
         .from("patients")
@@ -206,26 +160,6 @@ export function useAuth(): UseAuthReturn {
           message: `Account created but profile save failed: ${insertError.message}`,
         };
       }
-    // 3. No existing clinic record — create a fresh patient row for self-registered users.
-    const { error: insertError } = await supabase.from("patients").insert({
-      id:           crypto.randomUUID(),
-      auth_uid:     authData.user.id,
-      given_name:   data.givenName,
-      family_name:  data.familyName,
-      email:        data.email,
-      phone:        data.phone ?? null,
-      dob:          data.dob   ?? null,
-      sex:          "other",
-      address:      "",
-      state:        "",
-      lga:          "",
-    });
-
-    if (insertError) {
-      // Auth user was created but patient insert failed.
-      // Surface the error — user can still log in and the profile will be missing.
-      return { message: `Account created but profile save failed: ${insertError.message}` };
-    }
 
       return null;
     },
