@@ -24,6 +24,8 @@ create index if not exists idx_inventory_nm_threshold on inventory_nm (reorder_t
 
 alter table inventory_nm enable row level security;
 drop policy if exists "Allow authenticated access to inventory_nm" on inventory_nm;
+-- Enable RLS
+alter table inventory_nm enable row level security;
 create policy "Allow authenticated access to inventory_nm"
   on inventory_nm
   for all
@@ -187,6 +189,25 @@ create policy "Allow authenticated access to dispenses"
   to authenticated
   using (true)
   with check (true);
+-- Policy is already created in 20250930060647_old_dream.sql; guard re-creation.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'dispenses'
+      and policyname = 'Allow authenticated access to dispenses'
+  ) then
+    create policy "Allow authenticated access to dispenses"
+      on dispenses
+      for all
+      to authenticated
+      using (true)
+      with check (true);
+  end if;
+end
+$$;
 
 create table if not exists stock_moves_rx (
   id text primary key,

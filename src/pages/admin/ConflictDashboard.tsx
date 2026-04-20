@@ -169,6 +169,9 @@ export default function ConflictDashboard() {
         title: "Duplicate scan complete",
         body: `Found ${result.found} new potential duplicate${result.found !== 1 ? "s" : ""}.${skippedMessage}`,
       });
+      alert(
+        `Scan complete. Found ${found} new potential duplicate${found !== 1 ? "s" : ""}.`,
+      );
     } catch (error) {
       console.error("Scan failed:", error);
       pushToast({
