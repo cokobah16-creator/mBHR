@@ -139,6 +139,13 @@ function getFieldPHISensitivity(field: string): PHISensitivity {
   return PHI_FIELDS[field] || "none";
 }
 
+class InvalidDuplicateScanPatientError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidDuplicateScanPatientError";
+  }
+}
+
 function calculateOverallPHISensitivity(
   fields: ConflictField[],
 ): PHISensitivity {
@@ -778,53 +785,63 @@ export class ConflictQueueService {
     let skippedRecords = 0;
 
     for (const [index, patient] of patients.entries()) {
-      const dob = new Date(patient.dob);
-      const hasValidDob = Number.isFinite(dob.getTime());
-      if (!hasValidDob || !patient.givenName || !patient.familyName) {
-        skippedRecords++;
-        logger.warn("Skipping patient with invalid duplicate-scan data", {
-          patientId: patient.id,
-          hasValidDob,
-          hasGivenName: Boolean(patient.givenName),
-          hasFamilyName: Boolean(patient.familyName),
-        });
-        continue;
-      }
-
-      const candidates = await patientDeduplication.findDuplicates({
-        givenName: patient.givenName,
-        familyName: patient.familyName,
-        phone: patient.phone || undefined,
-        dob,
-        address: patient.address,
-      });
-
-      const otherCandidates = candidates.filter(
-        (c) => c.patient.id !== patient.id,
-      );
-
-      if (otherCandidates.length > 0) {
-        const existing = await this.checkExistingConflict(
-          patient.id,
-          "duplicate",
-        );
-        if (!existing) {
-          await this.createConflict({
-            conflictType: "duplicate",
-            entityType: "patients",
-            entityId: patient.id,
-            candidateIds: otherCandidates.map((c) => c.patient.id),
-            conflictDetails: {
-              fields: this.buildDuplicateFields(
-                patient,
-                otherCandidates[0].patient,
-              ),
-              matchScore: otherCandidates[0].score,
-              matchReasons: otherCandidates[0].matchReasons,
-            },
-          });
-          duplicatesFound++;
+      try {
+        const dob = new Date(patient.dob);
+        const hasValidDob = Number.isFinite(dob.getTime());
+        if (!hasValidDob || !patient.givenName || !patient.familyName) {
+          throw new InvalidDuplicateScanPatientError(
+            "Patient record is missing required duplicate-scan fields",
+          );
         }
+
+        const candidates = await patientDeduplication.findDuplicates({
+          givenName: patient.givenName,
+          familyName: patient.familyName,
+          phone: patient.phone || undefined,
+          dob,
+          address: patient.address,
+        });
+
+        const otherCandidates = candidates.filter(
+          (c) => c.patient.id !== patient.id,
+        );
+
+        if (otherCandidates.length > 0) {
+          const existing = await this.checkExistingConflict(
+            patient.id,
+            "duplicate",
+          );
+          if (!existing) {
+            await this.createConflict({
+              conflictType: "duplicate",
+              entityType: "patients",
+              entityId: patient.id,
+              candidateIds: otherCandidates.map((c) => c.patient.id),
+              conflictDetails: {
+                fields: this.buildDuplicateFields(
+                  patient,
+                  otherCandidates[0].patient,
+                ),
+                matchScore: otherCandidates[0].score,
+                matchReasons: otherCandidates[0].matchReasons,
+              },
+            });
+            duplicatesFound++;
+          }
+        }
+      } catch (error) {
+        if (error instanceof InvalidDuplicateScanPatientError) {
+          skippedRecords++;
+          logger.warn("Skipping patient with invalid duplicate-scan data", {
+            patientId: patient.id,
+            hasValidDob: Number.isFinite(new Date(patient.dob).getTime()),
+            hasGivenName: Boolean(patient.givenName),
+            hasFamilyName: Boolean(patient.familyName),
+          });
+          continue;
+        }
+
+        throw error;
       }
 
       // Yield periodically so large scans don't block the UI thread and hurt INP.
