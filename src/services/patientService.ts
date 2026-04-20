@@ -77,6 +77,10 @@ function rowToProfile(r: Record<string, unknown>): PatientProfile {
 const PATIENT_SELECT =
   "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at";
 
+const PATIENT_SELECT =
+  "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at";
+
+/** Fetch a patient by their Supabase auth UID (stored as text in auth_uid). */
 export async function getPatientProfile(
   authUid: string,
 ): Promise<ServiceResult<PatientProfile>> {
@@ -95,6 +99,46 @@ export async function getPatientProfile(
 
   if (!data) {
     return { data: null, error: "No patient profile found for this account." };
+  }
+
+  return { data: rowToProfile(data), error: null };
+}
+
+/**
+ * Fetch a patient by email (RLS allows access when auth.email() matches).
+ * Used as a fallback when auth_uid is not yet set on the patient row.
+ * If found, links the row to the auth account by setting auth_uid.
+ */
+export async function getPatientProfileByEmail(
+  authUid: string,
+  email: string,
+): Promise<ServiceResult<PatientProfile>> {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+
+  const { data, error } = await supabase
+    .from("patients")
+    .select(PATIENT_SELECT)
+    .eq("email", email.toLowerCase())
+    .maybeSingle();
+
+  if (error) {
+    logger.error("[patientService] getPatientProfileByEmail:", error.message);
+    return { data: null, error: error.message };
+  }
+  if (!data)
+    return { data: null, error: "No patient profile found for this email." };
+
+  // Link auth_uid for future lookups (best-effort, ignore failure)
+  if (!data.auth_uid) {
+    supabase
+      .from("patients")
+      .update({ auth_uid: authUid })
+      .eq("id", data.id)
+      .then(({ error: updateError }) => {
+        if (updateError) {
+          logger.error("[patientService] linkAuthUid:", updateError.message);
+        }
+      });
   }
 
   return { data: rowToProfile(data), error: null };
