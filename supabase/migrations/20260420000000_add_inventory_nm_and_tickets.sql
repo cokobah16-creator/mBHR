@@ -168,19 +168,50 @@ CREATE POLICY "Allow authenticated access to prescriptions"
   USING (true) WITH CHECK (true);
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- dispenses already exists from 20250930060647_old_dream.sql; the table
--- creation is skipped by IF NOT EXISTS, but the policy must be dropped first.
+-- dispenses already exists from an earlier migration. Explicitly evolve the
+-- table shape here so upgraded and fresh databases converge on the same schema.
 
-CREATE TABLE IF NOT EXISTS dispenses (
-  id              text        PRIMARY KEY,
-  prescription_id text        NOT NULL REFERENCES prescriptions (id) ON DELETE CASCADE,
-  patient_id      text        NOT NULL,
-  item_id         text        NOT NULL REFERENCES pharmacy_items (id) ON DELETE RESTRICT,
-  batch_id        text        NOT NULL REFERENCES pharmacy_batches (id) ON DELETE RESTRICT,
-  qty             int         NOT NULL,
-  dispensed_by    text        NOT NULL,
-  dispensed_at    timestamptz NOT NULL DEFAULT now()
-);
+ALTER TABLE IF EXISTS dispenses
+  ADD COLUMN IF NOT EXISTS prescription_id text,
+  ADD COLUMN IF NOT EXISTS item_id text,
+  ADD COLUMN IF NOT EXISTS batch_id text;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'dispenses_prescription_id_fkey'
+      AND conrelid = 'dispenses'::regclass
+  ) THEN
+    ALTER TABLE dispenses
+      ADD CONSTRAINT dispenses_prescription_id_fkey
+      FOREIGN KEY (prescription_id) REFERENCES prescriptions (id) ON DELETE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'dispenses_item_id_fkey'
+      AND conrelid = 'dispenses'::regclass
+  ) THEN
+    ALTER TABLE dispenses
+      ADD CONSTRAINT dispenses_item_id_fkey
+      FOREIGN KEY (item_id) REFERENCES pharmacy_items (id) ON DELETE RESTRICT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'dispenses_batch_id_fkey'
+      AND conrelid = 'dispenses'::regclass
+  ) THEN
+    ALTER TABLE dispenses
+      ADD CONSTRAINT dispenses_batch_id_fkey
+      FOREIGN KEY (batch_id) REFERENCES pharmacy_batches (id) ON DELETE RESTRICT;
+  END IF;
+END
+$$;
 
 ALTER TABLE dispenses ENABLE ROW LEVEL SECURITY;
 
