@@ -7,6 +7,7 @@
       - `conflict_type` (text) - 'sync_conflict', 'duplicate', 'data_quality'
       - `entity_type` (text) - 'patients', 'vitals', 'consultations', etc.
       - `entity_id` (text) - The primary record involved (supports legacy text IDs and UUIDs)
+      - `entity_id` (text) - The primary record involved (supports legacy text PKs)
       - `candidate_ids` (uuid[]) - Related records (for duplicates)
       - `status` (text) - 'pending', 'resolved', 'ignored', 'auto_resolved'
       - `priority` (text) - 'low', 'medium', 'high', 'critical'
