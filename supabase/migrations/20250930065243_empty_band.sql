@@ -173,9 +173,10 @@ do $$
 begin
   if not exists (
     select 1
-    from pg_policy p
-    where p.polname = 'Allow authenticated access to dispenses'
-      and p.polrelid = 'public.dispenses'::regclass
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'dispenses'
+      and policyname = 'Allow authenticated access to dispenses'
   ) then
     create policy "Allow authenticated access to dispenses"
       on dispenses
