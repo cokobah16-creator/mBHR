@@ -17,7 +17,10 @@ import { useState, useEffect } from "react";
 import { EmergencyHelp } from "./EmergencyHelp";
 import type { ManagedPatient } from "@/services/patientPortalAuth";
 import { supabase } from "@/lib/supabase";
-import { getPatientProfile } from "@/services/patientService";
+import {
+  getPatientProfile,
+  getPatientProfileByEmail,
+} from "@/services/patientService";
 
 interface PatientPortalLayoutProps {
   children: React.ReactNode;
@@ -90,14 +93,21 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
         setPortalUserReady(true);
         return;
       }
-      const result = await getPatientProfile(user.id);
-      if (result.data) {
+
+      // Try lookup by auth_uid first, then fall back to email for patients
+      // whose records were created by staff (no auth_uid set yet).
+      let profile = (await getPatientProfile(user.id)).data;
+      if (!profile && user.email) {
+        profile = (await getPatientProfileByEmail(user.id, user.email)).data;
+      }
+
+      if (profile) {
         const entry = {
           id: user.id,
-          patientId: result.data.id,
-          givenName: result.data.givenName,
-          familyName: result.data.familyName,
-          email: user.email ?? result.data.email ?? "",
+          patientId: profile.id,
+          givenName: profile.givenName,
+          familyName: profile.familyName,
+          email: user.email ?? profile.email ?? "",
           managedPatients: [],
         };
         localStorage.setItem("patient_portal_user", JSON.stringify(entry));
