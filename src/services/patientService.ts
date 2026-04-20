@@ -486,49 +486,31 @@ export async function addVisit(
     return { data: null, error: visitError.message };
   }
 
-  const hasClinicalNote = [visit.notes, visit.diagnosis].some((entry) => {
-    if (typeof entry === "string") return entry.trim().length > 0;
-    return entry != null;
-  });
-
-  // If there are notes/diagnosis, create a consultation record too
-  if (hasClinicalNote) {
-    const soapSubjective = visit.notes?.trim() ?? "";
-    const soapAssessment = visit.diagnosis?.trim() ?? "";
-
-    const { error: consultError } = await supabase
-      .from("consultations")
-      .insert({
-        id: crypto.randomUUID(),
-        patient_id: patientId,
-        visit_id: visitId,
-        provider_name: "Staff (portal)",
-        soap_subjective: soapSubjective,
-        soap_objective: "",
-        soap_assessment: soapAssessment,
-        soap_plan: "",
-        provisional_dx: [],
-      });
   if (hasConsultationContent) {
-    const { data: consultRow, error: consultError } = await supabase
+    const { data: consultationRow, error: consultationError } = await supabase
       .from("consultations")
       .insert({
         id: crypto.randomUUID(),
         patient_id: patientId,
         visit_id: visitId,
         provider_name: "Staff (portal)",
-        soap_subjective: visit.notes ?? "",
+        soap_subjective: visit.notes?.trim() ?? "",
         soap_objective: "",
-        soap_assessment: visit.diagnosis ?? "",
+        soap_assessment: visit.diagnosis?.trim() ?? "",
         soap_plan: "",
         provisional_dx: [],
       })
       .select("id")
       .single();
 
-    if (consultError || !consultRow?.id) {
-      const consultFailureMessage = consultError?.message ?? "No consultation row was returned after insert";
-      logger.error("[patientService] addVisit (consultation):", consultFailureMessage);
+    if (consultationError || !consultationRow?.id) {
+      const consultationFailureMessage =
+        consultationError?.message ??
+        "No consultation row was returned after insert";
+      logger.error(
+        "[patientService] addVisit (consultation):",
+        consultationFailureMessage,
+      );
 
       // Best-effort rollback to avoid reporting a successful visit when clinical
       // notes failed to persist.
@@ -546,13 +528,13 @@ export async function addVisit(
 
         return {
           data: null,
-          error: `Consultation save failed and visit cleanup failed: ${consultFailureMessage}. Cleanup error: ${rollbackError.message}`,
+          error: `Consultation save failed and visit cleanup failed: ${consultationFailureMessage}. Cleanup error: ${rollbackError.message}`,
         };
       }
 
       return {
         data: null,
-        error: `Consultation save failed; visit was rolled back: ${consultFailureMessage}`,
+        error: `Consultation save failed; visit was rolled back: ${consultationFailureMessage}`,
       };
     }
   }
