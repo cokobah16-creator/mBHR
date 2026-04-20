@@ -168,6 +168,8 @@ create table if not exists dispenses (
 );
 
 alter table dispenses enable row level security;
+-- Policy is intentionally not re-created here because it already exists in
+-- 20250930060647_old_dream.sql for the same table and role.
 -- Policy is already created in 20250930060647_old_dream.sql; guard re-creation.
 do $$
 begin
