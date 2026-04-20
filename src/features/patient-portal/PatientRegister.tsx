@@ -84,6 +84,11 @@ export function PatientRegister() {
 
     const authError = await signup({
       email:      data.email,
+      password:   data.password,
+      givenName,
+      familyName,
+      phone:      data.phone        || undefined,
+      dob:        data.dateOfBirth  || undefined,
       password:   (data as z.infer<typeof onlineSchema>).password,
       givenName,
       familyName,

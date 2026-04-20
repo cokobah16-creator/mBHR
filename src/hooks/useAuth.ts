@@ -70,17 +70,27 @@ export function useAuth(): UseAuthReturn {
   const signup = useCallback(async (data: SignUpData): Promise<AuthError | null> => {
     if (!supabase) return { message: "Supabase is not configured — running in offline mode." };
 
+    // 1. Create the auth user
     // 1. Create the Supabase auth user
     const { data: authData, error: signUpError } = await supabase.auth.signUp({
       email:    data.email,
       password: data.password,
       options: {
+        // Pre-populate display name in auth metadata
         data: { full_name: `${data.givenName} ${data.familyName}`.trim() },
       },
     });
 
     if (signUpError) return { message: signUpError.message };
     if (!authData.user) return { message: "Sign-up succeeded but no user was returned." };
+
+    // 2. Insert into the existing `patients` table
+    //    Matches columns from migrations/20250930025202_young_hat.sql +
+    //    20251029000000_add_patient_email_auth_fields.sql
+    const patientId = crypto.randomUUID();
+    const { error: insertError } = await supabase.from("patients").insert({
+      id:           patientId,
+      auth_uid:     authData.user.id,   // UUID stored as text (existing schema pattern)
 
     // 2. Look for an existing staff-registered patient with this email or phone.
     //    If one exists, stamp auth_uid onto it so the portal can find their
@@ -126,6 +136,8 @@ export function useAuth(): UseAuthReturn {
     });
 
     if (insertError) {
+      // Auth user was created but patient insert failed.
+      // Surface the error — user can still log in and the profile will be missing.
       return { message: `Account created but profile save failed: ${insertError.message}` };
     }
 
