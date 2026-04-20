@@ -92,10 +92,6 @@ To enable cloud sync, add Supabase configuration to `.env`:
 ```
 VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_anon_key
-
-# Optional on Vercel with Supabase integration:
-# If only SUPABASE_URL / SUPABASE_ANON_KEY are set, the Vite build now maps
-# them automatically to the client VITE_ variables.
 ```
 
 Then run the SQL migration to create the database schema:
