@@ -108,7 +108,8 @@ CREATE TABLE IF NOT EXISTS auto_resolution_rules (
 
 -- Add columns to conflict_resolutions if created by earlier migration without them
 ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS entity_type text;
-ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS entity_id uuid;
+-- Keep fallback column text-typed for compatibility with legacy conflict rows tied to text PKs.
+ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS entity_id text;
 ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'medium';
 
 -- Indexes for performance
