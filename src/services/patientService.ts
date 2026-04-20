@@ -10,7 +10,6 @@ import * as logger from "@/lib/logger";
 
 export interface PatientProfile {
   id: string;
-  id: string; // text pk
   authUid: string | null;
   givenName: string;
   familyName: string;
@@ -54,8 +53,6 @@ export interface Visit {
   status: string;
   diagnosis: string | null;
   notes: string | null;
-  diagnosis: string | null; // from consultations.soap_assessment
-  notes: string | null; // from consultations.soap_subjective
 }
 
 export interface ServiceResult<T> {
@@ -380,11 +377,9 @@ export async function addVisit(
     return { data: null, error: visitError.message };
   }
 
-  if (hasConsultationContent) {
-    const { error: consultationError } = await supabase
   // If there are notes/diagnosis, create a consultation record too
   if (visit.notes || visit.diagnosis) {
-    const { data: consultationRow, error: consultError } = await supabase
+    const { error: consultError } = await supabase
       .from("consultations")
       .insert({
         id: crypto.randomUUID(),
@@ -398,8 +393,8 @@ export async function addVisit(
         provisional_dx: [],
       });
 
-    if (consultationError) {
-      const consultationFailureMessage = consultationError.message;
+    if (consultError) {
+      const consultationFailureMessage = consultError.message;
       logger.error(
         "[patientService] addVisit (consultation):",
         consultationFailureMessage,
@@ -415,7 +410,6 @@ export async function addVisit(
           "[patientService] addVisit (rollback visit):",
           rollbackError.message,
         );
-
         return {
           data: null,
           error: `Consultation save failed and visit cleanup failed: ${consultationFailureMessage}. Cleanup error: ${rollbackError.message}`,
