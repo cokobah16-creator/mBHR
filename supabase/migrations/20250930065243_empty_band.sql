@@ -168,9 +168,10 @@ create table if not exists dispenses (
 );
 
 alter table dispenses enable row level security;
+-- Policy is already created in 20250930060647_old_dream.sql; guard re-creation.
 do $$
 begin
-  if exists (
+  if not exists (
     select 1
     from pg_policy p
     join pg_class c on c.oid = p.polrelid
@@ -179,8 +180,6 @@ begin
       and c.relname = 'dispenses'
       and p.polname = 'Allow authenticated access to dispenses'
   ) then
-    raise notice 'Skipping policy "Allow authenticated access to dispenses" because it already exists';
-  else
     create policy "Allow authenticated access to dispenses"
       on dispenses
       for all
