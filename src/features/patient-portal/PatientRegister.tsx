@@ -107,8 +107,6 @@ export function PatientRegister() {
       familyName,
       phone: data.phone || undefined,
       dob: data.dateOfBirth || undefined,
-      phone:      data.phone       || undefined,
-      dob:        data.dateOfBirth || undefined,
     });
     if (authError) {
       const msg = authError.message.toLowerCase();
@@ -125,17 +123,22 @@ export function PatientRegister() {
     // Populate patient_portal_user so Medical History / Messages can find the patient ID
     if (supabase) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         if (user) {
           const profileRes = await getPatientProfile(user.id);
           if (profileRes.data) {
-            localStorage.setItem("patient_portal_user", JSON.stringify({
-              id: user.id,
-              patientId: profileRes.data.id,
-              givenName: profileRes.data.givenName,
-              familyName: profileRes.data.familyName,
-              email: profileRes.data.email,
-            }));
+            localStorage.setItem(
+              "patient_portal_user",
+              JSON.stringify({
+                id: user.id,
+                patientId: profileRes.data.id,
+                givenName: profileRes.data.givenName,
+                familyName: profileRes.data.familyName,
+                email: profileRes.data.email,
+              }),
+            );
           }
         }
       } catch {
