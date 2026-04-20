@@ -1,6 +1,7 @@
 import { outboxDb, MessageQueue, OutboundMessage } from "@/db/outbox";
 import { db } from "@/db";
 import { getPatientPreference } from "./preferences";
+import * as logger from "@/lib/logger";
 
 export interface SMSGateway {
   send(
@@ -70,7 +71,7 @@ export class MockGateway implements SMSGateway {
   async send(
     message: OutboundMessage,
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    console.log("📱 Mock SMS sent:", {
+    logger.info("[MockGateway] SMS send:", {
       to: message.to,
       template: message.templateKey,
       payload: message.payload,
@@ -196,9 +197,19 @@ let messageService: MessageService | null = null;
 
 export function getMessageService(): MessageService {
   if (!messageService) {
-    // Use mock gateway by default, can be configured with real gateway
-    const gateway = new MockGateway();
+    const termiiKey = import.meta.env.VITE_TERMII_API_KEY as string | undefined;
+    const termiiSender = import.meta.env.VITE_TERMII_SENDER_ID as
+      | string
+      | undefined;
+    const gateway = termiiKey
+      ? new TermiiGateway(termiiKey, termiiSender)
+      : new MockGateway();
     messageService = new MessageService(gateway);
+    if (!termiiKey) {
+      logger.warn(
+        "[MessageService] VITE_TERMII_API_KEY not set — using mock gateway. Set this env var to enable real SMS delivery.",
+      );
+    }
   }
   return messageService;
 }
