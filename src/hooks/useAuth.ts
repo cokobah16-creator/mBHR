@@ -136,12 +136,20 @@ export function useAuth(): UseAuthReturn {
       }
       const normalizedEmail = data.email.toLowerCase().trim();
 
-      const { data: existingPatient } = await supabase
-        .from("patients")
-        .select("id, auth_uid, dob, email, phone")
-        .or(orClauses.join(","))
-        .is("auth_uid", null)
-        .maybeSingle();
+      const { data: existingPatient, error: existingPatientError } =
+        await supabase
+          .from("patients")
+          .select("id, auth_uid, dob, email, phone")
+          .or(orClauses.join(","))
+          .is("auth_uid", null)
+          .maybeSingle();
+
+      if (existingPatientError) {
+        return {
+          message:
+            "We could not automatically verify your clinic profile. Please contact support for identity verification.",
+        };
+      }
 
       if (existingPatient) {
         const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
