@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS conflict_resolutions (
 -- Conflict Audit Logs Table (append-only for compliance)
 CREATE TABLE IF NOT EXISTS conflict_audit_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  conflict_id text NOT NULL REFERENCES conflict_resolutions(id) ON DELETE CASCADE,
+  conflict_id uuid NOT NULL REFERENCES conflict_resolutions(id) ON DELETE CASCADE,
   action text NOT NULL CHECK (action IN ('created', 'viewed', 'resolved', 'approved', 'rejected', 'appealed', 'auto_resolved')),
   actor_id uuid REFERENCES auth.users(id),
   actor_role text,

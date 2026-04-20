@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import type { Session, User } from "@/lib/supabaseClient";
+import { normalizePhone } from "@/utils/phone";
 
 export interface AuthError {
   message: string;
@@ -70,6 +71,7 @@ export function useAuth(): UseAuthReturn {
     if (!supabase) return { message: "Supabase is not configured — running in offline mode." };
 
     // 1. Create the auth user
+    // 1. Create the Supabase auth user
     const { data: authData, error: signUpError } = await supabase.auth.signUp({
       email:    data.email,
       password: data.password,
@@ -89,6 +91,39 @@ export function useAuth(): UseAuthReturn {
     const { error: insertError } = await supabase.from("patients").insert({
       id:           patientId,
       auth_uid:     authData.user.id,   // UUID stored as text (existing schema pattern)
+
+    // 2. Look for an existing staff-registered patient with this email or phone.
+    //    If one exists, stamp auth_uid onto it so the portal can find their
+    //    clinical records (vitals, consults, dispenses) via getPatientProfile().
+    const orClauses: string[] = [`email.eq.${data.email.toLowerCase().trim()}`];
+    if (data.phone) {
+      const normPhone = normalizePhone(data.phone);
+      if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
+    }
+
+    const { data: existingPatient } = await supabase
+      .from("patients")
+      .select("id")
+      .or(orClauses.join(","))
+      .maybeSingle();
+
+    if (existingPatient) {
+      // Link the new auth user to the pre-existing clinic patient record.
+      const { error: linkError } = await supabase
+        .from("patients")
+        .update({ auth_uid: authData.user.id })
+        .eq("id", existingPatient.id);
+
+      if (linkError) {
+        return { message: `Account created but could not link to your clinic record: ${linkError.message}` };
+      }
+      return null;
+    }
+
+    // 3. No existing clinic record — create a fresh patient row for self-registered users.
+    const { error: insertError } = await supabase.from("patients").insert({
+      id:           crypto.randomUUID(),
+      auth_uid:     authData.user.id,
       given_name:   data.givenName,
       family_name:  data.familyName,
       email:        data.email,
