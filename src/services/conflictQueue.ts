@@ -4,6 +4,21 @@ import { patientDeduplication } from "./patientDeduplication";
 import logger from "@/lib/logger";
 import { getRequiredApproverRole, type Role } from "@/auth/roles";
 
+class DuplicateScanValidationError extends Error {
+  constructor(
+    message: string,
+    readonly context: {
+      patientId: string;
+      hasValidDob: boolean;
+      hasGivenName: boolean;
+      hasFamilyName: boolean;
+    },
+  ) {
+    super(message);
+    this.name = "DuplicateScanValidationError";
+  }
+}
+
 export type ConflictType = "sync_conflict" | "duplicate" | "data_quality";
 export type ConflictStatus =
   | "pending"
@@ -778,53 +793,66 @@ export class ConflictQueueService {
     let skippedRecords = 0;
 
     for (const [index, patient] of patients.entries()) {
-      const dob = new Date(patient.dob);
-      const hasValidDob = Number.isFinite(dob.getTime());
-      if (!hasValidDob || !patient.givenName || !patient.familyName) {
-        skippedRecords++;
-        logger.warn("Skipping patient with invalid duplicate-scan data", {
-          patientId: patient.id,
-          hasValidDob,
-          hasGivenName: Boolean(patient.givenName),
-          hasFamilyName: Boolean(patient.familyName),
-        });
-        continue;
-      }
-
-      const candidates = await patientDeduplication.findDuplicates({
-        givenName: patient.givenName,
-        familyName: patient.familyName,
-        phone: patient.phone || undefined,
-        dob,
-        address: patient.address,
-      });
-
-      const otherCandidates = candidates.filter(
-        (c) => c.patient.id !== patient.id,
-      );
-
-      if (otherCandidates.length > 0) {
-        const existing = await this.checkExistingConflict(
-          patient.id,
-          "duplicate",
-        );
-        if (!existing) {
-          await this.createConflict({
-            conflictType: "duplicate",
-            entityType: "patients",
-            entityId: patient.id,
-            candidateIds: otherCandidates.map((c) => c.patient.id),
-            conflictDetails: {
-              fields: this.buildDuplicateFields(
-                patient,
-                otherCandidates[0].patient,
-              ),
-              matchScore: otherCandidates[0].score,
-              matchReasons: otherCandidates[0].matchReasons,
-            },
-          });
-          duplicatesFound++;
+      try {
+        const dob = new Date(patient.dob);
+        const hasValidDob = Number.isFinite(dob.getTime());
+        const hasGivenName = Boolean(patient.givenName);
+        const hasFamilyName = Boolean(patient.familyName);
+        if (!hasValidDob || !hasGivenName || !hasFamilyName) {
+          throw new DuplicateScanValidationError(
+            "Invalid duplicate-scan patient data",
+            { patientId: patient.id, hasValidDob, hasGivenName, hasFamilyName },
+          );
         }
+
+        const candidates = await patientDeduplication.findDuplicates({
+          givenName: patient.givenName,
+          familyName: patient.familyName,
+          phone: patient.phone || undefined,
+          dob,
+          address: patient.address,
+        });
+
+        const otherCandidates = candidates.filter(
+          (c) => c.patient.id !== patient.id,
+        );
+
+        if (otherCandidates.length > 0) {
+          const existing = await this.checkExistingConflict(
+            patient.id,
+            "duplicate",
+          );
+          if (!existing) {
+            await this.createConflict({
+              conflictType: "duplicate",
+              entityType: "patients",
+              entityId: patient.id,
+              candidateIds: otherCandidates.map((c) => c.patient.id),
+              conflictDetails: {
+                fields: this.buildDuplicateFields(
+                  patient,
+                  otherCandidates[0].patient,
+                ),
+                matchScore: otherCandidates[0].score,
+                matchReasons: otherCandidates[0].matchReasons,
+              },
+            });
+            duplicatesFound++;
+          }
+        }
+      } catch (error) {
+        if (error instanceof DuplicateScanValidationError) {
+          skippedRecords++;
+          logger.warn("Skipping patient with invalid duplicate-scan data", {
+            patientId: error.context.patientId,
+            hasValidDob: error.context.hasValidDob,
+            hasGivenName: error.context.hasGivenName,
+            hasFamilyName: error.context.hasFamilyName,
+          });
+          continue;
+        }
+
+        throw error;
       }
 
       // Yield periodically so large scans don't block the UI thread and hurt INP.
