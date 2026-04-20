@@ -371,6 +371,9 @@ export async function addVisit(
 
   const visitId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
+  const hasConsultationContent = Boolean(
+    visit.notes?.trim() || visit.diagnosis?.trim(),
+  );
 
   // Create the visit row
   const { error: visitError } = await supabase.from("visits").insert({
@@ -388,6 +391,8 @@ export async function addVisit(
   // If there are notes/diagnosis, create a consultation record too
   if (visit.notes || visit.diagnosis) {
     const { data: consultationRow, error: consultError } = await supabase
+  if (hasConsultationContent) {
+    const { error: consultError } = await supabase
       .from("consultations")
       .insert({
         id: crypto.randomUUID(),
@@ -413,7 +418,8 @@ export async function addVisit(
       const { error: rollbackError } = await supabase
         .from("visits")
         .delete()
-        .eq("id", visitId);
+        .eq("id", visitId)
+        .eq("patient_id", patientId);
 
       if (rollbackError) {
         logger.error(
