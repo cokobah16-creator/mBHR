@@ -1,5 +1,10 @@
 -- MBHR (Med Bridge Health Reach) Extended Schema
 -- Non-medical inventory, Pharmacy, and Ticketing systems
+--
+-- Every CREATE POLICY is preceded by DROP POLICY IF EXISTS so this migration
+-- is safe to apply on databases that already have any of these policies
+-- (e.g. "Allow authenticated access to dispenses" created earlier in
+-- 20250930060647_old_dream.sql).
 
 -- Non-medical inventory
 create table if not exists inventory_nm (
@@ -17,6 +22,8 @@ create index if not exists idx_inventory_nm_item on inventory_nm (item_name);
 create index if not exists idx_inventory_nm_updated on inventory_nm (updated_at);
 create index if not exists idx_inventory_nm_threshold on inventory_nm (reorder_threshold);
 
+alter table inventory_nm enable row level security;
+drop policy if exists "Allow authenticated access to inventory_nm" on inventory_nm;
 -- Enable RLS
 alter table inventory_nm enable row level security;
 create policy "Allow authenticated access to inventory_nm"
@@ -40,6 +47,7 @@ create table if not exists stock_moves_nm (
 create index if not exists idx_stock_moves_nm_created on stock_moves_nm (created_at);
 
 alter table stock_moves_nm enable row level security;
+drop policy if exists "Allow authenticated access to stock_moves_nm" on stock_moves_nm;
 create policy "Allow authenticated access to stock_moves_nm"
   on stock_moves_nm
   for all
@@ -56,6 +64,7 @@ create table if not exists gamification (
 );
 
 alter table gamification enable row level security;
+drop policy if exists "Allow authenticated access to gamification" on gamification;
 create policy "Allow authenticated access to gamification"
   on gamification
   for all
@@ -74,6 +83,7 @@ create table if not exists restock_sessions (
 );
 
 alter table restock_sessions enable row level security;
+drop policy if exists "Allow authenticated access to restock_sessions" on restock_sessions;
 create policy "Allow authenticated access to restock_sessions"
   on restock_sessions
   for all
@@ -90,6 +100,7 @@ create table if not exists alerts_nm (
 );
 
 alter table alerts_nm enable row level security;
+drop policy if exists "Allow authenticated access to alerts_nm" on alerts_nm;
 create policy "Allow authenticated access to alerts_nm"
   on alerts_nm
   for all
@@ -112,6 +123,7 @@ create table if not exists pharmacy_items (
 create index if not exists idx_pharmacy_items_name on pharmacy_items (med_name);
 
 alter table pharmacy_items enable row level security;
+drop policy if exists "Allow authenticated access to pharmacy_items" on pharmacy_items;
 create policy "Allow authenticated access to pharmacy_items"
   on pharmacy_items
   for all
@@ -131,6 +143,7 @@ create table if not exists pharmacy_batches (
 create index if not exists idx_pharmacy_batches_expiry on pharmacy_batches (expiry_date);
 
 alter table pharmacy_batches enable row level security;
+drop policy if exists "Allow authenticated access to pharmacy_batches" on pharmacy_batches;
 create policy "Allow authenticated access to pharmacy_batches"
   on pharmacy_batches
   for all
@@ -149,6 +162,7 @@ create table if not exists prescriptions (
 );
 
 alter table prescriptions enable row level security;
+drop policy if exists "Allow authenticated access to prescriptions" on prescriptions;
 create policy "Allow authenticated access to prescriptions"
   on prescriptions
   for all
@@ -168,6 +182,7 @@ create table if not exists dispenses (
 );
 
 alter table dispenses enable row level security;
+drop policy if exists "Allow authenticated access to dispenses" on dispenses;
 create policy "Allow authenticated access to dispenses"
   on dispenses
   for all
@@ -187,6 +202,7 @@ create table if not exists stock_moves_rx (
 create index if not exists idx_stock_moves_rx_created on stock_moves_rx (created_at);
 
 alter table stock_moves_rx enable row level security;
+drop policy if exists "Allow authenticated access to stock_moves_rx" on stock_moves_rx;
 create policy "Allow authenticated access to stock_moves_rx"
   on stock_moves_rx
   for all
@@ -209,6 +225,7 @@ create table if not exists tickets (
 create index if not exists idx_tickets_stage_state on tickets (current_stage, state);
 
 alter table tickets enable row level security;
+drop policy if exists "Allow authenticated access to tickets" on tickets;
 create policy "Allow authenticated access to tickets"
   on tickets
   for all
@@ -226,6 +243,7 @@ create table if not exists stage_events (
 );
 
 alter table stage_events enable row level security;
+drop policy if exists "Allow authenticated access to stage_events" on stage_events;
 create policy "Allow authenticated access to stage_events"
   on stage_events
   for all
@@ -241,6 +259,7 @@ create table if not exists queue_metrics (
 );
 
 alter table queue_metrics enable row level security;
+drop policy if exists "Allow authenticated access to queue_metrics" on queue_metrics;
 create policy "Allow authenticated access to queue_metrics"
   on queue_metrics
   for all
@@ -258,6 +277,7 @@ create table if not exists notifications (
 );
 
 alter table notifications enable row level security;
+drop policy if exists "Allow authenticated access to notifications" on notifications;
 create policy "Allow authenticated access to notifications"
   on notifications
   for all
@@ -274,6 +294,7 @@ create table if not exists daily_counters (
 );
 
 alter table daily_counters enable row level security;
+drop policy if exists "Allow authenticated access to daily_counters" on daily_counters;
 create policy "Allow authenticated access to daily_counters"
   on daily_counters
   for all

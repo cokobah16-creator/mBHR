@@ -1,24 +1,47 @@
-import React from 'react'
-import { db } from '@/db'
-import { exportTable } from '@/utils/export'
-import { useAuthStore } from '@/stores/auth'
-import { can } from '@/auth/roles'
-import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
+import React from "react";
+import { db } from "@/db";
+import { exportTable } from "@/utils/export";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
+import { ArrowDownTrayIcon } from "@heroicons/react/24/outline";
 
 export function ExportButtons() {
-  const { currentUser } = useAuthStore()
-  
+  const { currentUser } = useAuthStore();
+
   // Only admins can export data
-  if (!currentUser || !can(currentUser.role, 'export')) return null
+  if (!currentUser || !can(currentUser.role, "export")) return null;
 
   const exports = [
-    { table: db.patients as any, filename: 'patients.csv', label: 'Patients' },
-    { table: db.vitals as any, filename: 'vitals.csv', label: 'Vitals' },
-    { table: db.consultations as any, filename: 'consultations.csv', label: 'Consultations' },
-    { table: db.dispenses as any, filename: 'dispenses.csv', label: 'Dispenses' },
-    { table: db.inventory as any, filename: 'inventory.csv', label: 'Inventory' },
-    { table: db.auditLogs as any, filename: 'audit_logs.csv', label: 'Audit Logs' }
-  ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    { table: db.patients as any, filename: "patients.csv", label: "Patients" },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    { table: db.vitals as any, filename: "vitals.csv", label: "Vitals" },
+
+    {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      table: db.consultations as any,
+      filename: "consultations.csv",
+      label: "Consultations",
+    },
+    {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      table: db.dispenses as any,
+      filename: "dispenses.csv",
+      label: "Dispenses",
+    },
+    {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      table: db.inventory as any,
+      filename: "inventory.csv",
+      label: "Inventory",
+    },
+    {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      table: db.auditLogs as any,
+      filename: "audit_logs.csv",
+      label: "Audit Logs",
+    },
+  ];
 
   return (
     <div className="card">
@@ -27,7 +50,7 @@ export function ExportButtons() {
         {exports.map(({ table, filename, label }) => (
           <button
             key={filename}
-            onClick={() => exportTable(table, filename, 'csv')}
+            onClick={() => exportTable(table, filename, "csv")}
             className="flex items-center space-x-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors text-sm"
           >
             <ArrowDownTrayIcon className="h-4 w-4" />
@@ -35,10 +58,10 @@ export function ExportButtons() {
           </button>
         ))}
       </div>
-      
+
       <div className="mt-4 pt-4 border-t border-gray-200">
         <button
-          onClick={() => exportTable(db.patients, 'all_data.json', 'json')}
+          onClick={() => exportTable(db.patients, "all_data.json", "json")}
           className="flex items-center space-x-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors text-sm font-medium"
         >
           <ArrowDownTrayIcon className="h-4 w-4" />
@@ -46,5 +69,5 @@ export function ExportButtons() {
         </button>
       </div>
     </div>
-  )
+  );
 }

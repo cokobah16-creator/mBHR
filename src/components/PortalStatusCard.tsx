@@ -16,7 +16,6 @@ import {
   PhoneIcon,
   ClockIcon,
   CheckCircleIcon,
-  XCircleIcon,
   ArrowPathIcon,
   ExclamationCircleIcon,
   GlobeAltIcon,
@@ -32,6 +31,7 @@ import {
 } from "@/services/portalEnrollment";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useToast } from "@/stores/toast";
+import { getErrorMessage } from "@/utils/errors";
 
 interface PortalStatusCardProps {
   patientId: string;
@@ -49,12 +49,16 @@ export function PortalStatusCard({
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
-  const [inviteLink, setInviteLink] = useState<{ url: string; delivered: boolean } | null>(null);
+  const [inviteLink, setInviteLink] = useState<{
+    url: string;
+    delivered: boolean;
+  } | null>(null);
   const [copied, setCopied] = useState(false);
   const { push: pushToast } = useToast();
 
   useEffect(() => {
     loadStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
   // Countdown timer for rate limiting
@@ -112,11 +116,12 @@ export function PortalStatusCard({
           body: result.error || "Failed to update portal access",
         });
       }
-    } catch (error: any) {
+       
+    } catch (error: unknown) {
       pushToast({
         id: crypto.randomUUID(),
         title: "Error",
-        body: error.message || "An error occurred",
+        body: getErrorMessage(error),
       });
     } finally {
       setToggling(false);
@@ -131,7 +136,10 @@ export function PortalStatusCard({
       if (result.success) {
         if (result.registrationUrl) {
           // Show the registration link — amber if offline (no email sent), green if delivered
-          setInviteLink({ url: result.registrationUrl, delivered: !result.demoOTP });
+          setInviteLink({
+            url: result.registrationUrl,
+            delivered: !result.demoOTP,
+          });
         } else {
           pushToast({
             id: crypto.randomUUID(),
@@ -148,11 +156,12 @@ export function PortalStatusCard({
           body: result.error || "Failed to send invitation",
         });
       }
-    } catch (error: any) {
+       
+    } catch (error: unknown) {
       pushToast({
         id: crypto.randomUUID(),
         title: "Error",
-        body: error.message || "Failed to send invitation",
+        body: getErrorMessage(error),
       });
     } finally {
       setSending(false);
@@ -403,7 +412,8 @@ export function PortalStatusCard({
                 }`}
               >
                 The patient's contact will be pre-filled. They only need to
-                enter their <strong>date of birth</strong> to complete registration.
+                enter their <strong>date of birth</strong> to complete
+                registration.
               </p>
             </div>
           </div>
@@ -430,7 +440,9 @@ export function PortalStatusCard({
                 ) : countdown > 0 ? (
                   <>
                     <ClockIcon className="h-5 w-5" />
-                    <span>Resend available in {formatCountdown(countdown)}</span>
+                    <span>
+                      Resend available in {formatCountdown(countdown)}
+                    </span>
                   </>
                 ) : (
                   <>
@@ -444,7 +456,8 @@ export function PortalStatusCard({
               </button>
             ) : (
               <div className="text-center py-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4">
-                Add an email or phone number to this patient's record before sending a portal invitation.
+                Add an email or phone number to this patient's record before
+                sending a portal invitation.
               </div>
             )}
 
@@ -457,7 +470,9 @@ export function PortalStatusCard({
                 <p className="text-xs text-blue-700">
                   Go to <strong>{window.location.origin}/patient/login</strong>,
                   click "Register here", and enter your{" "}
-                  {status.contactMethod === "email" ? "email address" : "phone number"}{" "}
+                  {status.contactMethod === "email"
+                    ? "email address"
+                    : "phone number"}{" "}
                   + date of birth.
                 </p>
               </div>

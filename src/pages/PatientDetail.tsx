@@ -1,6 +1,5 @@
 import React, { useEffect, useState, startTransition } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { db, Patient, Visit, Vital, Consultation, Dispense } from "@/db";
@@ -14,6 +13,7 @@ import { patientSchema, PatientFormData } from "@/validation/schemas";
 import { NIGERIAN_STATES, LGAS_BY_STATE } from "@/utils/nigeria";
 import { normalizePhone } from "@/utils/phone";
 import { useToast } from "@/stores/toast";
+import { supabase } from "@/lib/supabase";
 import {
   ArrowLeftIcon,
   UserIcon,
@@ -28,12 +28,12 @@ import {
   XMarkIcon,
   CheckIcon,
   EnvelopeIcon,
+  TrashIcon,
 } from "@heroicons/react/24/outline";
 
 export function PatientDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { t } = useTranslation();
   const user = useAuthStore((s) => s.currentUser);
 
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -44,9 +44,12 @@ export function PatientDetail() {
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const { push: pushToast } = useToast();
 
   const canEdit = user && ["admin", "doctor", "nurse"].includes(user.role);
+  const canDelete = user?.role === "admin";
 
   const {
     register,
@@ -174,6 +177,47 @@ export function PatientDetail() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!patient) return;
+    setDeleting(true);
+    try {
+      const pid = patient.id;
+      await Promise.all([
+        db.patients.delete(pid),
+        db.visits.where("patientId").equals(pid).delete(),
+        db.vitals.where("patientId").equals(pid).delete(),
+        db.consultations.where("patientId").equals(pid).delete(),
+        db.dispenses.where("patientId").equals(pid).delete(),
+      ]);
+
+      if (supabase) {
+        await Promise.allSettled([
+          supabase.from("dispenses").delete().eq("patient_id", pid),
+          supabase.from("vitals").delete().eq("patient_id", pid),
+          supabase.from("consultations").delete().eq("patient_id", pid),
+          supabase.from("visits").delete().eq("patient_id", pid),
+          supabase.from("patients").delete().eq("id", pid),
+        ]);
+      }
+
+      pushToast({
+        id: crypto.randomUUID(),
+        title: "Patient deleted",
+        body: `${patient.givenName} ${patient.familyName} has been removed.`,
+      });
+      navigate("/patients");
+    } catch (error) {
+      console.error("Error deleting patient:", error);
+      pushToast({
+        id: crypto.randomUUID(),
+        title: "Error",
+        body: "Failed to delete patient. Please try again.",
+      });
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   const onSubmit = async (data: PatientFormData) => {
     if (!patient || !user) return;
 
@@ -267,6 +311,15 @@ export function PatientDetail() {
         </div>
         {!isEditing && (
           <>
+            {canDelete && (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="inline-flex items-center space-x-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors text-sm font-medium"
+              >
+                <TrashIcon className="h-5 w-5" />
+                <span>Delete</span>
+              </button>
+            )}
             {canEdit && (
               <button
                 onClick={handleEdit}
@@ -700,6 +753,50 @@ export function PatientDetail() {
           patientName={`${patient.givenName} ${patient.familyName}`}
           onStatusChange={() => loadPatientData(patient.id)}
         />
+      )}
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && patient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center space-x-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <TrashIcon className="h-5 w-5 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Delete Patient
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-2">
+              Are you sure you want to permanently delete{" "}
+              <strong>
+                {patient.givenName} {patient.familyName}
+              </strong>
+              ?
+            </p>
+            <p className="text-sm text-red-600 mb-6">
+              This will also delete all visits, vitals, consultations, and
+              medications for this patient. This action cannot be undone.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 inline-flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              >
+                <TrashIcon className="h-4 w-4" />
+                <span>{deleting ? "Deleting..." : "Delete Patient"}</span>
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="flex-1 btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Allergies and Preferences */}

@@ -13,9 +13,14 @@ import {
   UserGroupIcon,
   ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { EmergencyHelp } from "./EmergencyHelp";
 import type { ManagedPatient } from "@/services/patientPortalAuth";
+import { supabase } from "@/lib/supabase";
+import {
+  getPatientProfile,
+  getPatientProfileByEmail,
+} from "@/services/patientService";
 
 interface PatientPortalLayoutProps {
   children: React.ReactNode;
@@ -36,7 +41,13 @@ const navItems = [
 
 function getPortalUserInfo() {
   const str = localStorage.getItem("patient_portal_user");
-  if (!str) return { name: "Patient", managedPatients: [] as ManagedPatient[], portalUserId: "", ownPatientId: "" };
+  if (!str)
+    return {
+      name: "Patient",
+      managedPatients: [] as ManagedPatient[],
+      portalUserId: "",
+      ownPatientId: "",
+    };
   const u = JSON.parse(str);
   return {
     name: u.givenName || "Patient",
@@ -58,18 +69,70 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
 
-  const { name, managedPatients, portalUserId, ownPatientId } = getPortalUserInfo();
+  // portalUserReady gates child rendering until patient_portal_user is populated.
+  // Without this gate, MedicalHistory/Messages read empty localStorage and hard-redirect to login.
+  const [portalUserReady, setPortalUserReady] = useState(() => {
+    const existing = localStorage.getItem("patient_portal_user");
+    if (!existing) return false;
+    try {
+      const parsed = JSON.parse(existing);
+      return !!(parsed.patientId && parsed.id);
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (portalUserReady) return;
+    if (!supabase) {
+      setPortalUserReady(true);
+      return;
+    }
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) {
+        setPortalUserReady(true);
+        return;
+      }
+
+      // Try lookup by auth_uid first, then fall back to email for patients
+      // whose records were created by staff (no auth_uid set yet).
+      let profile = (await getPatientProfile(user.id)).data;
+      if (!profile && user.email) {
+        profile = (await getPatientProfileByEmail(user.id, user.email)).data;
+      }
+
+      if (profile) {
+        const entry = {
+          id: user.id,
+          patientId: profile.id,
+          givenName: profile.givenName,
+          familyName: profile.familyName,
+          email: user.email ?? profile.email ?? "",
+          managedPatients: [],
+        };
+        localStorage.setItem("patient_portal_user", JSON.stringify(entry));
+      }
+      setPortalUserReady(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const { name, managedPatients } = getPortalUserInfo();
   const activeProfile = getActiveProfile();
   const displayName = activeProfile?.givenName || name;
 
   const handleLogout = () => {
-    localStorage.removeItem("patient_session_token");
+    sessionStorage.removeItem("patient_session_token");
     localStorage.removeItem("patient_portal_user");
     localStorage.removeItem("patient_active_profile");
     navigate("/patient");
   };
 
-  const switchProfile = (patientId: string, givenName: string, familyName: string) => {
+  const switchProfile = (
+    patientId: string,
+    givenName: string,
+    familyName: string,
+  ) => {
     localStorage.setItem(
       "patient_active_profile",
       JSON.stringify({ patientId, givenName, familyName }),
@@ -127,14 +190,20 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
               {/* Profile / caregiver switcher */}
               <div className="relative hidden sm:block">
                 <button
-                  onClick={() => hasManagedPatients && setProfileMenuOpen(!profileMenuOpen)}
+                  onClick={() =>
+                    hasManagedPatients && setProfileMenuOpen(!profileMenuOpen)
+                  }
                   className={`flex items-center gap-2 text-sm text-gray-700 px-3 py-2 rounded-lg transition-colors ${
-                    hasManagedPatients ? "hover:bg-gray-100 cursor-pointer" : "cursor-default"
+                    hasManagedPatients
+                      ? "hover:bg-gray-100 cursor-pointer"
+                      : "cursor-default"
                   }`}
                 >
                   <UserCircleIcon className="w-5 h-5" />
                   <span className="max-w-[120px] truncate">{displayName}</span>
-                  {hasManagedPatients && <ChevronDownIcon className="w-4 h-4" />}
+                  {hasManagedPatients && (
+                    <ChevronDownIcon className="w-4 h-4" />
+                  )}
                 </button>
 
                 {profileMenuOpen && hasManagedPatients && (
@@ -142,7 +211,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     <button
                       onClick={switchToSelf}
                       className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2 ${
-                        !activeProfile ? "font-semibold text-blue-700" : "text-gray-700"
+                        !activeProfile
+                          ? "font-semibold text-blue-700"
+                          : "text-gray-700"
                       }`}
                     >
                       <UserCircleIcon className="w-4 h-4" />
@@ -151,7 +222,13 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     {managedPatients.map((mp) => (
                       <button
                         key={mp.patientId}
-                        onClick={() => switchProfile(mp.patientId, mp.givenName, mp.familyName)}
+                        onClick={() =>
+                          switchProfile(
+                            mp.patientId,
+                            mp.givenName,
+                            mp.familyName,
+                          )
+                        }
                         className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2 ${
                           activeProfile?.patientId === mp.patientId
                             ? "font-semibold text-blue-700"
@@ -160,7 +237,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                       >
                         <UserGroupIcon className="w-4 h-4" />
                         {mp.givenName} {mp.familyName}
-                        <span className="ml-auto text-xs text-gray-400">{mp.relationship}</span>
+                        <span className="ml-auto text-xs text-gray-400">
+                          {mp.relationship}
+                        </span>
                       </button>
                     ))}
                     <div className="border-t border-gray-100 mt-1 pt-1">
@@ -238,7 +317,10 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     Switch Profile
                   </p>
                   <button
-                    onClick={() => { switchToSelf(); setMobileMenuOpen(false); }}
+                    onClick={() => {
+                      switchToSelf();
+                      setMobileMenuOpen(false);
+                    }}
                     className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
                   >
                     <UserCircleIcon className="w-5 h-5" />
@@ -247,7 +329,14 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                   {managedPatients.map((mp) => (
                     <button
                       key={mp.patientId}
-                      onClick={() => { switchProfile(mp.patientId, mp.givenName, mp.familyName); setMobileMenuOpen(false); }}
+                      onClick={() => {
+                        switchProfile(
+                          mp.patientId,
+                          mp.givenName,
+                          mp.familyName,
+                        );
+                        setMobileMenuOpen(false);
+                      }}
                       className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
                     >
                       <UserGroupIcon className="w-5 h-5" />
@@ -266,7 +355,10 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 Add patient I care for
               </Link>
               <button
-                onClick={() => { setMobileMenuOpen(false); setEmergencyOpen(true); }}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setEmergencyOpen(true);
+                }}
                 className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 w-full transition-colors"
               >
                 <ExclamationTriangleIcon className="w-5 h-5" />
@@ -287,7 +379,15 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
         )}
       </header>
 
-      <main className="pb-20 md:pb-8">{children}</main>
+      <main className="pb-20 md:pb-8">
+        {portalUserReady ? (
+          children
+        ) : (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
+      </main>
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40">
@@ -321,7 +421,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       </button>
 
       {/* Emergency modal */}
-      {emergencyOpen && <EmergencyHelp onClose={() => setEmergencyOpen(false)} />}
+      {emergencyOpen && (
+        <EmergencyHelp onClose={() => setEmergencyOpen(false)} />
+      )}
     </div>
   );
 }

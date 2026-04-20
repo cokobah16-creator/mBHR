@@ -1,13 +1,4 @@
 import { db, createAuditLog } from "../../db";
-import type {
-  Patient,
-  Vital,
-  Consultation,
-  Dispense,
-  Visit,
-  PatientAllergy,
-  Meta,
-} from "../../db";
 import type { FHIRResource, FHIRBundle } from "./types";
 import {
   adaptDexiePatient,
@@ -224,7 +215,7 @@ export async function exportPatientEHI(
     }
 
     if (includeVitals) {
-      let vitalsQuery = db.vitals.where("patientId").equals(patientId);
+      const vitalsQuery = db.vitals.where("patientId").equals(patientId);
       const vitals = await vitalsQuery.toArray();
 
       const filteredVitals = vitals.filter((v) => {

@@ -10,6 +10,8 @@ import {
   ClockIcon,
   ExclamationTriangleIcon,
   CalendarIcon,
+  BeakerIcon,
+  HeartIcon,
 } from "@heroicons/react/24/outline";
 export function CarePlanManager({ patientId, className = "" }) {
   const { t } = useT();
@@ -24,6 +26,7 @@ export function CarePlanManager({ patientId, className = "" }) {
   });
   useEffect(() => {
     loadCareTasks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
   const loadCareTasks = async () => {
     try {
@@ -53,10 +56,14 @@ export function CarePlanManager({ patientId, className = "" }) {
       const task = {
         id: generateId(),
         patientId,
-        type: newTask.type,
+        type: newTask.type as
+          | "medication_reminder"
+          | "followup_visit"
+          | "lab_test"
+          | "vital_check",
         title: newTask.title,
         description: newTask.description,
-        status: "pending",
+        status: "pending" as const,
         dueDate: new Date(newTask.dueDate),
         createdAt: new Date(),
         _dirty: 1,

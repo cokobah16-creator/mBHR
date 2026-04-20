@@ -5,7 +5,6 @@ import {
   DocumentCheckIcon,
   BellAlertIcon,
   VideoCameraIcon,
-  HeartIcon,
   UserIcon,
   ClipboardDocumentListIcon,
 } from "@heroicons/react/24/outline";

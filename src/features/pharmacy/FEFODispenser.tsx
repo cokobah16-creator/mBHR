@@ -32,6 +32,7 @@ export default function FEFODispenser({
   onCancel,
 }: FEFODispenserProps) {
   const { t } = useT();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [medications, setMedications] = useState<any[]>([]);
   const [batches, setBatches] = useState<StockBatch[]>([]);
   const [selectedMedication, setSelectedMedication] = useState("");
@@ -56,6 +57,7 @@ export default function FEFODispenser({
     if (selectedMedication && requestedQty > 0) {
       calculateFEFOAllocation();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMedication, requestedQty, batches]);
 
   const loadMedications = async () => {

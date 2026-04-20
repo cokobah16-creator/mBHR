@@ -4,7 +4,6 @@ import { useAuthStore } from "@/stores/auth";
 import type { Referral } from "@/types/multiTenant";
 import {
   UserGroupIcon,
-  BuildingOfficeIcon,
   ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
 

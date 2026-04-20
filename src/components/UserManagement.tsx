@@ -1,82 +1,79 @@
-import React, { useState, useEffect } from 'react'
-import { db, User, generateId } from '@/db'
-import { useAuthStore } from '@/stores/auth'
-import { can } from '@/auth/roles'
-import { derivePinHash, newSaltB64 } from '@/utils/pin'
-import { getRoleColor, getRoleDisplayName } from '@/auth/roles'
-import { 
-  UserPlusIcon, 
-  PencilIcon, 
+import React, { useState, useEffect } from "react";
+import { db, User, generateId } from "@/db";
+import { useAuthStore } from "@/stores/auth";
+import { derivePinHash, newSaltB64 } from "@/utils/pin";
+import { getRoleColor, getRoleDisplayName } from "@/auth/roles";
+import { supabase } from "@/lib/supabase";
+import {
+  UserPlusIcon,
+  PencilIcon,
   TrashIcon,
   EyeIcon,
-  EyeSlashIcon
-} from '@heroicons/react/24/outline'
+  EyeSlashIcon,
+} from "@heroicons/react/24/outline";
 
 export function UserManagement() {
-  const { currentUser } = useAuthStore()
-  const [users, setUsers] = useState<User[]>([])
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [editingUser, setEditingUser] = useState<User | null>(null)
-  const [showPins, setShowPins] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const { currentUser } = useAuthStore();
+  const [users, setUsers] = useState<User[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [pendingDeleteUser, setPendingDeleteUser] = useState<User | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [showPins, setShowPins] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    fullName: '',
-    role: 'volunteer' as User['role'],
-    email: '',
-    phone: '',
-    pin: '',
+    fullName: "",
+    role: "volunteer" as User["role"],
+    email: "",
+    phone: "",
+    pin: "",
     adminAccess: false,
-    adminPermanent: false
-  })
-
-  // Only admins can manage users
-  if (!currentUser || !can(currentUser.role, 'users')) {
-    return null
-  }
+    adminPermanent: false,
+  });
 
   useEffect(() => {
-    loadUsers()
-  }, [])
+    loadUsers();
+  }, []);
 
   const loadUsers = async () => {
     try {
-      const allUsers = await db.users.orderBy('createdAt').toArray()
-      setUsers(allUsers)
+      const allUsers = await db.users.orderBy("createdAt").toArray();
+      setUsers(allUsers);
     } catch (error) {
-      console.error('Error loading users:', error)
+      console.error("Error loading users:", error);
     }
-  }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
+    e.preventDefault();
+
     if (!formData.fullName || !formData.pin || formData.pin.length !== 6) {
-      alert('Please fill all fields and ensure PIN is 6 digits')
-      return
+      alert("Please fill all fields and ensure PIN is 6 digits");
+      return;
     }
 
     // Prevent non-admins from granting admin access
-    if (formData.adminAccess && currentUser?.role !== 'admin') {
-      alert('Only admins can grant admin access')
-      return
+    if (formData.adminAccess && currentUser?.role !== "admin") {
+      alert("Only admins can grant admin access");
+      return;
     }
 
     // Prevent making users permanent admin unless current user is permanent admin
     if (formData.adminPermanent && !currentUser?.adminPermanent) {
-      alert('Only permanent admins can create other permanent admins')
-      return
+      alert("Only permanent admins can create other permanent admins");
+      return;
     }
-    setLoading(true)
+    setLoading(true);
     try {
-      const salt = newSaltB64()
-      const pinHash = await derivePinHash(formData.pin, salt)
-      
+      const salt = newSaltB64();
+      const pinHash = await derivePinHash(formData.pin, salt);
+
       if (editingUser) {
         // Prevent editing permanent admin status unless current user is permanent admin
         if (editingUser.adminPermanent && !currentUser?.adminPermanent) {
-          alert('Cannot modify permanent admin users')
-          setLoading(false)
-          return
+          alert("Cannot modify permanent admin users");
+          setLoading(false);
+          return;
         }
 
         // Update existing user
@@ -89,8 +86,8 @@ export function UserManagement() {
           pinSalt: salt,
           adminAccess: formData.adminAccess,
           adminPermanent: formData.adminPermanent,
-          updatedAt: new Date()
-        })
+          updatedAt: new Date(),
+        });
       } else {
         // Create new user
         const newUser: User = {
@@ -105,94 +102,89 @@ export function UserManagement() {
           adminPermanent: formData.adminPermanent,
           isActive: 1,
           createdAt: new Date(),
-          updatedAt: new Date()
-        }
-        
-        await db.users.add(newUser)
+          updatedAt: new Date(),
+        };
+
+        await db.users.add(newUser);
       }
-      
-      await loadUsers()
-      resetForm()
+
+      await loadUsers();
+      resetForm();
     } catch (error) {
-      console.error('Error saving user:', error)
-      alert('Failed to save user')
+      console.error("Error saving user:", error);
+      alert("Failed to save user");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const resetForm = () => {
     setFormData({
-      fullName: '',
-      role: 'volunteer',
-      email: '',
-      phone: '',
-      pin: '',
+      fullName: "",
+      role: "volunteer",
+      email: "",
+      phone: "",
+      pin: "",
       adminAccess: false,
-      adminPermanent: false
-    })
-    setShowAddForm(false)
-    setEditingUser(null)
-  }
+      adminPermanent: false,
+    });
+    setShowAddForm(false);
+    setEditingUser(null);
+  };
 
   const startEdit = (user: User) => {
     setFormData({
       fullName: user.fullName,
       role: user.role,
-      email: user.email || '',
-      phone: user.phone || '',
-      pin: '', // Don't pre-fill PIN for security
+      email: user.email || "",
+      phone: user.phone || "",
+      pin: "", // Don't pre-fill PIN for security
       adminAccess: user.adminAccess || false,
-      adminPermanent: user.adminPermanent || false
-    })
-    setEditingUser(user)
-    setShowAddForm(true)
-  }
+      adminPermanent: user.adminPermanent || false,
+    });
+    setEditingUser(user);
+    setShowAddForm(true);
+  };
 
   const toggleUserStatus = async (user: User) => {
     if (user.id === currentUser?.id) {
-      alert('Cannot deactivate your own account')
-      return
+      alert("Cannot deactivate your own account");
+      return;
     }
-    
+
     if (user.adminPermanent) {
-      alert('Cannot deactivate permanent admin users')
-      return
+      alert("Cannot deactivate permanent admin users");
+      return;
     }
-    
+
     try {
       await db.users.update(user.id, {
         isActive: user.isActive === 1 ? 0 : 1,
-        updatedAt: new Date()
-      })
-      await loadUsers()
+        updatedAt: new Date(),
+      });
+      await loadUsers();
     } catch (error) {
-      console.error('Error toggling user status:', error)
+      console.error("Error toggling user status:", error);
     }
-  }
+  };
 
-  const deleteUser = async (user: User) => {
-    if (user.id === currentUser?.id) {
-      alert('Cannot delete your own account')
-      return
-    }
-    
-    if (user.adminPermanent) {
-      alert('Cannot delete permanent admin users')
-      return
-    }
-    
-    if (!confirm(`Delete user ${user.fullName}? This cannot be undone.`)) {
-      return
-    }
-    
+  const deleteUser = async () => {
+    if (!pendingDeleteUser) return;
+    setDeleting(true);
     try {
-      await db.users.delete(user.id)
-      await loadUsers()
+      await db.users.delete(pendingDeleteUser.id);
+      if (supabase) {
+        await supabase.from("users").delete().eq("id", pendingDeleteUser.id);
+      }
+      setPendingDeleteUser(null);
+      await loadUsers();
     } catch (error) {
-      console.error('Error deleting user:', error)
+      console.error("Error deleting user:", error);
+      alert("Failed to delete user. Please try again.");
+    } finally {
+      setDeleting(false);
     }
-  }
+  };
 
   return (
     <div className="card">
@@ -203,8 +195,12 @@ export function UserManagement() {
             onClick={() => setShowPins(!showPins)}
             className="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-800"
           >
-            {showPins ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-            <span>{showPins ? 'Hide' : 'Show'} PINs</span>
+            {showPins ? (
+              <EyeSlashIcon className="h-4 w-4" />
+            ) : (
+              <EyeIcon className="h-4 w-4" />
+            )}
+            <span>{showPins ? "Hide" : "Show"} PINs</span>
           </button>
           <button
             onClick={() => setShowAddForm(true)}
@@ -220,9 +216,9 @@ export function UserManagement() {
       {showAddForm && (
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
           <h4 className="text-md font-medium text-gray-900 mb-4">
-            {editingUser ? 'Edit User' : 'Add New User'}
+            {editingUser ? "Edit User" : "Add New User"}
           </h4>
-          
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -233,19 +229,26 @@ export function UserManagement() {
                   type="text"
                   required
                   value={formData.fullName}
-                  onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, fullName: e.target.value })
+                  }
                   className="input-field"
                   placeholder="Enter full name"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Role *
                 </label>
                 <select
                   value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as User['role'] })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      role: e.target.value as User["role"],
+                    })
+                  }
                   className="input-field"
                 >
                   <option value="volunteer">Volunteer</option>
@@ -255,7 +258,7 @@ export function UserManagement() {
                   <option value="admin">Admin</option>
                 </select>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Email
@@ -263,12 +266,14 @@ export function UserManagement() {
                 <input
                   type="email"
                   value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, email: e.target.value })
+                  }
                   className="input-field"
                   placeholder="user@example.com"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Phone
@@ -276,12 +281,14 @@ export function UserManagement() {
                 <input
                   type="tel"
                   value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, phone: e.target.value })
+                  }
                   className="input-field"
                   placeholder="+234..."
                 />
               </div>
-              
+
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   PIN (6 digits) *
@@ -290,59 +297,86 @@ export function UserManagement() {
                   type="password"
                   required
                   value={formData.pin}
-                  onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      pin: e.target.value.replace(/\D/g, "").slice(0, 6),
+                    })
+                  }
                   className="input-field"
                   placeholder="Enter 6-digit PIN"
                 />
               </div>
-              
+
               {/* Admin Access Controls */}
-              {currentUser?.role === 'admin' && (
+              {currentUser?.role === "admin" && (
                 <div className="md:col-span-2 space-y-4 border-t pt-4">
-                  <h4 className="text-sm font-medium text-gray-900">Admin Permissions</h4>
-                  
+                  <h4 className="text-sm font-medium text-gray-900">
+                    Admin Permissions
+                  </h4>
+
                   <div className="flex items-center space-x-3">
                     <input
                       type="checkbox"
                       id="adminAccess"
                       checked={formData.adminAccess}
-                      onChange={(e) => setFormData({ ...formData, adminAccess: e.target.checked })}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          adminAccess: e.target.checked,
+                        })
+                      }
                       className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
                     />
-                    <label htmlFor="adminAccess" className="text-sm text-gray-700">
+                    <label
+                      htmlFor="adminAccess"
+                      className="text-sm text-gray-700"
+                    >
                       Grant admin access (can manage users, export data)
                     </label>
                   </div>
-                  
+
                   {currentUser?.adminPermanent && (
                     <div className="flex items-center space-x-3">
                       <input
                         type="checkbox"
                         id="adminPermanent"
                         checked={formData.adminPermanent}
-                        onChange={(e) => setFormData({ ...formData, adminPermanent: e.target.checked })}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            adminPermanent: e.target.checked,
+                          })
+                        }
                         className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
                       />
-                      <label htmlFor="adminPermanent" className="text-sm text-gray-700">
-                        <span className="font-medium text-red-600">Permanent admin</span> (cannot be deleted or demoted)
+                      <label
+                        htmlFor="adminPermanent"
+                        className="text-sm text-gray-700"
+                      >
+                        <span className="font-medium text-red-600">
+                          Permanent admin
+                        </span>{" "}
+                        (cannot be deleted or demoted)
                       </label>
                     </div>
                   )}
-                  
+
                   <p className="text-xs text-gray-500">
-                    Admin access allows user management and data export. Permanent admin status prevents deletion/demotion.
+                    Admin access allows user management and data export.
+                    Permanent admin status prevents deletion/demotion.
                   </p>
                 </div>
               )}
             </div>
-            
+
             <div className="flex space-x-4">
-              <button
-                type="submit"
-                disabled={loading}
-                className="btn-primary"
-              >
-                {loading ? 'Saving...' : editingUser ? 'Update User' : 'Create User'}
+              <button type="submit" disabled={loading} className="btn-primary">
+                {loading
+                  ? "Saving..."
+                  : editingUser
+                    ? "Update User"
+                    : "Create User"}
               </button>
               <button
                 type="button"
@@ -353,6 +387,47 @@ export function UserManagement() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {pendingDeleteUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center space-x-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <TrashIcon className="h-5 w-5 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Delete User
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-2">
+              Are you sure you want to permanently delete{" "}
+              <strong>{pendingDeleteUser.fullName}</strong>?
+            </p>
+            <p className="text-sm text-red-600 mb-6">
+              This action cannot be undone. The user will lose all access
+              immediately.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                onClick={deleteUser}
+                disabled={deleting}
+                className="flex-1 inline-flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              >
+                <TrashIcon className="h-4 w-4" />
+                <span>{deleting ? "Deleting..." : "Delete User"}</span>
+              </button>
+              <button
+                onClick={() => setPendingDeleteUser(null)}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -388,7 +463,7 @@ export function UserManagement() {
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {users.map((user) => (
-              <tr key={user.id} className={user.isActive ? '' : 'opacity-50'}>
+              <tr key={user.id} className={user.isActive ? "" : "opacity-50"}>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div>
                     <div className="text-sm font-medium text-gray-900">
@@ -405,7 +480,9 @@ export function UserManagement() {
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(user.role)}`}>
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(user.role)}`}
+                  >
                     {getRoleDisplayName(user.role)}
                   </span>
                 </td>
@@ -422,7 +499,9 @@ export function UserManagement() {
                       </span>
                     )}
                     {!user.adminAccess && !user.adminPermanent && (
-                      <span className="text-xs text-gray-400">Standard User</span>
+                      <span className="text-xs text-gray-400">
+                        Standard User
+                      </span>
                     )}
                   </div>
                 </td>
@@ -433,50 +512,73 @@ export function UserManagement() {
                 {showPins && (
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
                     {/* Show known PINs for seeded users */}
-                    {user.fullName === 'Kristopher Okobah' ? '070398' :
-                     user.fullName === 'Admin User' ? '123456' :
-                     user.fullName === 'Dr. Sarah Johnson' ? '234567' :
-                     user.fullName === 'Nurse Mary' ? '345678' :
-                     user.fullName === 'Pharmacist John' ? '456789' :
-                     user.fullName === 'Volunteer Mike' ? '567890' : '••••••'}
+                    {user.fullName === "Kristopher Okobah"
+                      ? "070398"
+                      : user.fullName === "Admin User"
+                        ? "123456"
+                        : user.fullName === "Dr. Sarah Johnson"
+                          ? "234567"
+                          : user.fullName === "Nurse Mary"
+                            ? "345678"
+                            : user.fullName === "Pharmacist John"
+                              ? "456789"
+                              : user.fullName === "Volunteer Mike"
+                                ? "567890"
+                                : "••••••"}
                   </td>
                 )}
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    user.isActive === 1
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-red-100 text-red-800'
-                  }`}>
-                    {user.isActive === 1 ? 'Active' : 'Inactive'}
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                      user.isActive === 1
+                        ? "bg-green-100 text-green-800"
+                        : "bg-red-100 text-red-800"
+                    }`}
+                  >
+                    {user.isActive === 1 ? "Active" : "Inactive"}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   <div className="flex space-x-2">
                     <button
                       onClick={() => startEdit(user)}
-                      disabled={user.adminPermanent && !currentUser?.adminPermanent}
+                      disabled={
+                        user.adminPermanent && !currentUser?.adminPermanent
+                      }
                       className="text-blue-600 hover:text-blue-800"
-                      title={user.adminPermanent && !currentUser?.adminPermanent ? 'Cannot edit permanent admin' : 'Edit user'}
+                      title={
+                        user.adminPermanent && !currentUser?.adminPermanent
+                          ? "Cannot edit permanent admin"
+                          : "Edit user"
+                      }
                     >
                       <PencilIcon className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => toggleUserStatus(user)}
-                      className={`${user.isActive === 1 ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'} ${
-                        (user.id === currentUser?.id || user.adminPermanent) ? 'opacity-50 cursor-not-allowed' : ''
+                      className={`${user.isActive === 1 ? "text-red-600 hover:text-red-800" : "text-green-600 hover:text-green-800"} ${
+                        user.id === currentUser?.id || user.adminPermanent
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
                       }`}
-                      disabled={user.id === currentUser?.id || user.adminPermanent}
+                      disabled={
+                        user.id === currentUser?.id || user.adminPermanent
+                      }
                       title={
-                        user.id === currentUser?.id ? 'Cannot deactivate your own account' :
-                        user.adminPermanent ? 'Cannot deactivate permanent admin' :
-                        user.isActive === 1 ? 'Deactivate user' : 'Activate user'
+                        user.id === currentUser?.id
+                          ? "Cannot deactivate your own account"
+                          : user.adminPermanent
+                            ? "Cannot deactivate permanent admin"
+                            : user.isActive === 1
+                              ? "Deactivate user"
+                              : "Activate user"
                       }
                     >
-                      {user.isActive === 1 ? 'Deactivate' : 'Activate'}
+                      {user.isActive === 1 ? "Deactivate" : "Activate"}
                     </button>
                     {user.id !== currentUser?.id && !user.adminPermanent && (
                       <button
-                        onClick={() => deleteUser(user)}
+                        onClick={() => setPendingDeleteUser(user)}
                         className="text-red-600 hover:text-red-800"
                         title="Delete user"
                       >
@@ -491,5 +593,5 @@ export function UserManagement() {
         </table>
       </div>
     </div>
-  )
+  );
 }

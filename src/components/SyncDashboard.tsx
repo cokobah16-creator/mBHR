@@ -1,89 +1,103 @@
-import { useState, useEffect } from 'react'
-import { enhancedSync } from '@/services/enhancedSync'
-import { ArrowPathIcon, CheckCircleIcon, ExclamationTriangleIcon, ClockIcon } from '@heroicons/react/24/outline'
-import { useT } from '@/hooks/useT'
+import { useState, useEffect } from "react";
+import { enhancedSync } from "@/services/enhancedSync";
+import {
+  ArrowPathIcon,
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  ClockIcon,
+} from "@heroicons/react/24/outline";
 
 interface SyncStats {
-  pending: number
-  lastSync: Record<string, Date | null>
-  syncing: boolean
+  pending: number;
+  lastSync: Record<string, Date | null>;
+  syncing: boolean;
 }
 
 export function SyncDashboard() {
-  const { t } = useT()
   const [stats, setStats] = useState<SyncStats>({
     pending: 0,
     lastSync: {},
-    syncing: false
-  })
+    syncing: false,
+  });
   const [syncResult, setSyncResult] = useState<{
-    pushed: number
-    pulled: number
-    conflicts: number
-  } | null>(null)
+    pushed: number;
+    pulled: number;
+    conflicts: number;
+  } | null>(null);
 
   useEffect(() => {
-    loadStats()
-    const interval = setInterval(loadStats, 30000) // Refresh every 30s
-    return () => clearInterval(interval)
-  }, [])
+    loadStats();
+    const interval = setInterval(loadStats, 30000); // Refresh every 30s
+    return () => clearInterval(interval);
+  }, []);
 
   const loadStats = async () => {
-    if (!enhancedSync.isInitialized()) return
+    if (!enhancedSync.isInitialized()) return;
 
-    const pending = await enhancedSync.getPendingChangesCount()
-    const syncing = enhancedSync.isSyncing()
+    const pending = await enhancedSync.getPendingChangesCount();
+    const syncing = enhancedSync.isSyncing();
 
     const tables = [
-      'patients', 'visits', 'vitals', 'consultations', 'dispenses',
-      'inventory', 'queue', 'gameSessions', 'gamificationWallets',
-      'stockBatches', 'careTasks', 'triageRecords',
-      'patientAllergies', 'patientPreferences', 'vitalsRanges'
-    ]
+      "patients",
+      "visits",
+      "vitals",
+      "consultations",
+      "dispenses",
+      "inventory",
+      "queue",
+      "gameSessions",
+      "gamificationWallets",
+      "stockBatches",
+      "careTasks",
+      "triageRecords",
+      "patientAllergies",
+      "patientPreferences",
+      "vitalsRanges",
+    ];
 
-    const lastSync: Record<string, Date | null> = {}
-    tables.forEach(table => {
-      lastSync[table] = enhancedSync.getLastSyncTime(table)
-    })
+    const lastSync: Record<string, Date | null> = {};
+    tables.forEach((table) => {
+      lastSync[table] = enhancedSync.getLastSyncTime(table);
+    });
 
-    setStats({ pending, lastSync, syncing })
-  }
+    setStats({ pending, lastSync, syncing });
+  };
 
   const handleSync = async () => {
-    if (stats.syncing) return
+    if (stats.syncing) return;
 
-    setStats(prev => ({ ...prev, syncing: true }))
-    const result = await enhancedSync.syncAll()
+    setStats((prev) => ({ ...prev, syncing: true }));
+    const result = await enhancedSync.syncAll();
 
     if (result.success) {
       setSyncResult({
         pushed: result.pushed,
         pulled: result.pulled,
-        conflicts: result.conflicts
-      })
-      setTimeout(() => setSyncResult(null), 5000)
+        conflicts: result.conflicts,
+      });
+      setTimeout(() => setSyncResult(null), 5000);
     }
 
-    await loadStats()
-  }
+    await loadStats();
+  };
 
   const formatLastSync = (date: Date | null) => {
-    if (!date) return 'Never'
+    if (!date) return "Never";
 
-    const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
 
-    if (seconds < 60) return 'Just now'
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`
-    return `${Math.floor(seconds / 86400)} days ago`
-  }
+    if (seconds < 60) return "Just now";
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+    return `${Math.floor(seconds / 86400)} days ago`;
+  };
 
   if (!enhancedSync.isInitialized()) {
     return (
       <div className="bg-gray-50 p-4 rounded-lg">
         <p className="text-sm text-gray-600">Sync not configured</p>
       </div>
-    )
+    );
   }
 
   return (
@@ -95,8 +109,10 @@ export function SyncDashboard() {
           disabled={stats.syncing}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <ArrowPathIcon className={`-ml-1 mr-2 h-5 w-5 ${stats.syncing ? 'animate-spin' : ''}`} />
-          {stats.syncing ? 'Syncing...' : 'Sync Now'}
+          <ArrowPathIcon
+            className={`-ml-1 mr-2 h-5 w-5 ${stats.syncing ? "animate-spin" : ""}`}
+          />
+          {stats.syncing ? "Syncing..." : "Sync Now"}
         </button>
       </div>
 
@@ -105,10 +121,13 @@ export function SyncDashboard() {
           <div className="flex">
             <CheckCircleIcon className="h-5 w-5 text-green-400" />
             <div className="ml-3">
-              <p className="text-sm font-medium text-green-800">Sync Completed</p>
+              <p className="text-sm font-medium text-green-800">
+                Sync Completed
+              </p>
               <p className="text-sm text-green-700 mt-1">
                 Pushed: {syncResult.pushed} | Pulled: {syncResult.pulled}
-                {syncResult.conflicts > 0 && ` | Conflicts: ${syncResult.conflicts}`}
+                {syncResult.conflicts > 0 &&
+                  ` | Conflicts: ${syncResult.conflicts}`}
               </p>
             </div>
           </div>
@@ -123,8 +142,12 @@ export function SyncDashboard() {
             </div>
             <div className="ml-5 w-0 flex-1">
               <dl>
-                <dt className="text-sm font-medium text-blue-900 truncate">Pending Changes</dt>
-                <dd className="text-3xl font-semibold text-blue-900">{stats.pending}</dd>
+                <dt className="text-sm font-medium text-blue-900 truncate">
+                  Pending Changes
+                </dt>
+                <dd className="text-3xl font-semibold text-blue-900">
+                  {stats.pending}
+                </dd>
               </dl>
             </div>
           </div>
@@ -137,9 +160,11 @@ export function SyncDashboard() {
             </div>
             <div className="ml-5 w-0 flex-1">
               <dl>
-                <dt className="text-sm font-medium text-green-900 truncate">Status</dt>
+                <dt className="text-sm font-medium text-green-900 truncate">
+                  Status
+                </dt>
                 <dd className="text-sm font-semibold text-green-900">
-                  {stats.syncing ? 'Active' : 'Idle'}
+                  {stats.syncing ? "Active" : "Idle"}
                 </dd>
               </dl>
             </div>
@@ -153,7 +178,9 @@ export function SyncDashboard() {
             </div>
             <div className="ml-5 w-0 flex-1">
               <dl>
-                <dt className="text-sm font-medium text-gray-900 truncate">Last Full Sync</dt>
+                <dt className="text-sm font-medium text-gray-900 truncate">
+                  Last Full Sync
+                </dt>
                 <dd className="text-sm font-semibold text-gray-900">
                   {formatLastSync(stats.lastSync.patients)}
                 </dd>
@@ -167,9 +194,12 @@ export function SyncDashboard() {
         <h3 className="text-sm font-medium text-gray-900 mb-3">Table Status</h3>
         <div className="space-y-2">
           {Object.entries(stats.lastSync).map(([table, date]) => (
-            <div key={table} className="flex items-center justify-between text-sm">
+            <div
+              key={table}
+              className="flex items-center justify-between text-sm"
+            >
               <span className="text-gray-600 capitalize">{table}</span>
-              <span className={`${date ? 'text-gray-900' : 'text-gray-400'}`}>
+              <span className={`${date ? "text-gray-900" : "text-gray-400"}`}>
                 {formatLastSync(date)}
               </span>
             </div>
@@ -190,5 +220,5 @@ export function SyncDashboard() {
         </div>
       )}
     </div>
-  )
+  );
 }

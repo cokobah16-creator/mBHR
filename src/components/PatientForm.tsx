@@ -25,7 +25,9 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const [showPhotoCapture, setShowPhotoCapture] = useState(false);
   const [showDedupeModal, setShowDedupeModal] = useState(false);
   const [dedupeData, setDedupeData] = useState<{
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     patient: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     candidates: any[];
   } | null>(null);
 
@@ -49,6 +51,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     if (hasContact && !watch("portalEnabled")) {
       setValue("portalEnabled", true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watch("phone"), watch("email")]);
 
   const handlePhotoCapture = (photoDataUrl: string) => {

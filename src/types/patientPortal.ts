@@ -55,6 +55,7 @@ export interface PatientPortalAccessLog {
   userAgent?: string;
   success: boolean;
   errorMessage?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;
   createdAt: Date;
 }
@@ -70,6 +71,7 @@ export interface PatientNotification {
   readAt?: Date;
   actionUrl?: string;
   actionLabel?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;
   expiresAt?: Date;
   createdAt: Date;
@@ -128,6 +130,7 @@ export interface PatientDocument {
   uploadedByPatient: boolean;
   uploadedByUserId?: string;
   description?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;

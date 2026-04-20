@@ -40,7 +40,8 @@ export interface LocalPortalUser {
 function getLocalPortalUsers(): LocalPortalUser[] {
   try {
     return JSON.parse(localStorage.getItem(PORTAL_USERS_KEY) || "[]");
-  } catch {
+  } catch (e) {
+    logger.warn("Failed to parse portal users from localStorage:", e);
     return [];
   }
 }
@@ -98,7 +99,7 @@ export async function registerPatientPortalAccount(
   dob: string,
   givenName: string,
   familyName: string,
-  pin?: string,
+  pin: string,
 ): Promise<PatientPortalAuthResponse> {
   try {
     if (!phone && !email) {
@@ -109,6 +110,9 @@ export async function registerPatientPortalAccount(
     }
     if (!dob) {
       return { success: false, error: "Date of birth is required." };
+    }
+    if (!pin || !/^\d{6}$/.test(pin)) {
+      return { success: false, error: "A 6-digit PIN is required." };
     }
 
     const users = getLocalPortalUsers();
@@ -129,7 +133,8 @@ export async function registerPatientPortalAccount(
 
     // --- Try to find existing patient record (staff-registered) before creating new ---
     let patientId: string | null = null;
-    let existingPatientName: { givenName: string; familyName: string } | null = null;
+    let existingPatientName: { givenName: string; familyName: string } | null =
+      null;
 
     // 1. Check Supabase first (the source of truth for staff-registered patients)
     if (supabase && (email || phone)) {
@@ -162,11 +167,20 @@ export async function registerPatientPortalAccount(
             };
           }
           patientId = match.id;
-          existingPatientName = { givenName: match.given_name, familyName: match.family_name };
-          logger.info("Linked registration to existing Supabase patient:", patientId);
+          existingPatientName = {
+            givenName: match.given_name,
+            familyName: match.family_name,
+          };
+          logger.info(
+            "Linked registration to existing Supabase patient:",
+            patientId,
+          );
         }
       } catch (sbError) {
-        logger.warn("Supabase patient lookup failed, falling back to local:", sbError);
+        logger.warn(
+          "Supabase patient lookup failed, falling back to local:",
+          sbError,
+        );
       }
     }
 
@@ -201,8 +215,14 @@ export async function registerPatientPortalAccount(
           };
         }
         patientId = localMatch.id;
-        existingPatientName = { givenName: localMatch.givenName, familyName: localMatch.familyName };
-        logger.info("Linked registration to existing local patient:", patientId);
+        existingPatientName = {
+          givenName: localMatch.givenName,
+          familyName: localMatch.familyName,
+        };
+        logger.info(
+          "Linked registration to existing local patient:",
+          patientId,
+        );
       }
     }
 
@@ -271,7 +291,10 @@ export async function loginPatientPortal(
     if (!contact || !credential) {
       return {
         success: false,
-        error: "Please enter your contact and " + (method === "pin" ? "PIN" : "date of birth") + ".",
+        error:
+          "Please enter your contact and " +
+          (method === "pin" ? "PIN" : "date of birth") +
+          ".",
       };
     }
 
@@ -297,35 +320,55 @@ export async function loginPatientPortal(
           .equalsIgnoreCase(emailNorm)
           .toArray();
 
-        let localPatient = emailMatches[0];
+        let candidates = emailMatches;
 
-        if (!localPatient && normPhone) {
-          const phoneMatches = await db.patients
+        if (candidates.length === 0 && normPhone) {
+          candidates = await db.patients
             .where("phone")
             .equals(normPhone)
             .toArray();
-          localPatient = phoneMatches[0];
+        }
+
+        // Filter by portalEnabled and, for DOB method, by credential up-front.
+        // This prevents the first non-matching duplicate from blocking a valid login.
+        const validCandidates = candidates.filter(
+          (p) =>
+            p.portalEnabled === 1 && (method !== "dob" || p.dob === credential),
+        );
+
+        if (validCandidates.length > 1) {
+          return {
+            success: false,
+            error:
+              "Multiple accounts match these details. Please contact your clinic to resolve duplicates.",
+          };
+        }
+
+        const localPatient = validCandidates[0];
+
+        // If candidates exist but none passed the filter, surface the right error.
+        if (!localPatient && candidates.length > 0) {
+          const anyEnabled = candidates.some((p) => p.portalEnabled === 1);
+          if (!anyEnabled) {
+            return {
+              success: false,
+              error:
+                "Your healthcare provider has not enabled portal access for your account yet. Please ask the clinic to enable it.",
+            };
+          }
+          return {
+            success: false,
+            error:
+              "Date of birth does not match our records. Please use the format YYYY-MM-DD.",
+          };
         }
 
         if (localPatient) {
-          if (!localPatient.portalEnabled) {
-            return {
-              success: false,
-              error: "Your healthcare provider has not enabled portal access for your account yet. Please ask the clinic to enable it.",
-            };
-          }
-
           if (method === "pin") {
             return {
               success: false,
-              error: "No PIN set for this account. Please log in with your date of birth.",
-            };
-          }
-
-          if (localPatient.dob !== credential) {
-            return {
-              success: false,
-              error: "Date of birth does not match our records. Please use the format YYYY-MM-DD.",
+              error:
+                "No PIN set for this account. Please log in with your date of birth.",
             };
           }
 
@@ -339,14 +382,19 @@ export async function loginPatientPortal(
             phone: localPatient.phone || undefined,
             dob: localPatient.dob,
             sessionToken: crypto.randomUUID(),
-            sessionExpiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+            sessionExpiresAt: new Date(
+              Date.now() + SESSION_TTL_MS,
+            ).toISOString(),
             createdAt: new Date().toISOString(),
             managedPatients: [],
           };
 
           users.push(newPortalUser);
           saveLocalPortalUsers(users);
-          logger.info("Auto-created portal session for staff-registered patient:", localPatient.id);
+          logger.info(
+            "Auto-created portal session for staff-registered patient:",
+            localPatient.id,
+          );
           return buildAuthResponse(newPortalUser);
         }
       } catch (dexieErr) {
@@ -357,7 +405,9 @@ export async function loginPatientPortal(
       if (supabase) {
         try {
           const normPhone = normalizePhone(contact);
-          const orClauses: string[] = [`email.eq.${contact.toLowerCase().trim()}`];
+          const orClauses: string[] = [
+            `email.eq.${contact.toLowerCase().trim()}`,
+          ];
           if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
 
           const { data: match } = await supabase
@@ -369,11 +419,12 @@ export async function loginPatientPortal(
           if (match && match.portal_enabled) {
             return {
               success: false,
-              error: "No portal account found. Please register first using the details your clinic has on file.",
+              error:
+                "No portal account found. Please register first using the details your clinic has on file.",
             };
           }
-        } catch {
-          // ignore
+        } catch (e) {
+          logger.debug("Supabase portal hint lookup failed:", e);
         }
       }
 
@@ -387,7 +438,8 @@ export async function loginPatientPortal(
       if (!user.pin) {
         return {
           success: false,
-          error: "No PIN set for this account. Please log in with your date of birth.",
+          error:
+            "No PIN set for this account. Please log in with your date of birth.",
         };
       }
       const inputHash = await hashPIN(credential);
@@ -440,7 +492,7 @@ export async function logout(sessionToken: string): Promise<boolean> {
     user.sessionExpiresAt = undefined;
     saveLocalPortalUsers(users);
   }
-  localStorage.removeItem("patient_session_token");
+  sessionStorage.removeItem("patient_session_token");
   localStorage.removeItem("patient_portal_user");
   localStorage.removeItem("patient_active_profile");
   return true;
@@ -451,7 +503,12 @@ export async function logout(sessionToken: string): Promise<boolean> {
  */
 export async function addManagedPatient(
   portalUserId: string,
-  patient: { givenName: string; familyName: string; dob: string; relationship: string },
+  patient: {
+    givenName: string;
+    familyName: string;
+    dob: string;
+    relationship: string;
+  },
 ): Promise<{ success: boolean; patientId?: string; error?: string }> {
   try {
     const users = getLocalPortalUsers();
@@ -488,7 +545,10 @@ export async function addManagedPatient(
     return { success: true, patientId };
   } catch (error) {
     logger.error("Error in addManagedPatient:", error);
-    return { success: false, error: "Could not add patient. Please try again." };
+    return {
+      success: false,
+      error: "Could not add patient. Please try again.",
+    };
   }
 }
 

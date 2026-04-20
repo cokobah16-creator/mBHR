@@ -8,6 +8,7 @@ import {
 } from "@heroicons/react/24/outline";
 
 export function BulkPortalMigration() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [patients, setPatients] = useState<any[]>([]);
   const [selectedPatients, setSelectedPatients] = useState<Set<string>>(
     new Set(),
@@ -17,6 +18,7 @@ export function BulkPortalMigration() {
   const [results, setResults] = useState<{
     success: number;
     failed: number;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     errors: any[];
   } | null>(null);
 

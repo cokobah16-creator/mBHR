@@ -38,6 +38,7 @@ export const outreachService = {
       return [];
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return data?.map((item: any) => item.organizations).filter(Boolean) || [];
   },
 

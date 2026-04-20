@@ -33,6 +33,7 @@ export function PatientFlagsPanel({
     loadFlags();
     const interval = setInterval(loadFlags, 15000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org_id, site_id, event_id, station]);
 
   const loadFlags = async () => {
