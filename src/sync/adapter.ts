@@ -220,9 +220,10 @@ type Cursor = { ts: string };
 
 async function getCursor(table: Tbl): Promise<string> {
   // settings store shape: { key: string, value: any }
-   
+
   const row = await db.settings
     .get(CURSOR_KEY(table))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .catch(() => undefined as any);
   const ts = row?.value?.ts ?? row?.ts ?? row?.value ?? undefined; // be liberal in what we accept
   if (typeof ts === "string" && ts) return ts;
@@ -245,10 +246,10 @@ type ConflictDetectionResult = {
   remoteData?: any;
 };
 
- 
 async function detectConflict(
   table: Tbl,
   id: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   localData: any,
 ): Promise<ConflictDetectionResult> {
   if (!sb) return { hasConflict: false };

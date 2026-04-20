@@ -232,8 +232,8 @@ class PredictiveQueueSystem {
 
   async optimizeQueueOrder(stage: string): Promise<QueueOptimization[]> {
     const queue = await db.queue
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .where("stage")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .equals(stage as any)
       .and((item) => item.status === "waiting")
       .toArray();
@@ -486,15 +486,15 @@ class PredictiveQueueSystem {
 
   private async getWaitingCount(stage: string): Promise<number> {
     const count1 = await db.queue
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .where("stage")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .equals(stage as any)
       .and((item) => item.status === "waiting")
       .count();
 
     const count2 = await mbhrDb.tickets
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .where("currentStage")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .equals(stage as any)
       .and((t) => t.state === "waiting")
       .count();
@@ -504,15 +504,15 @@ class PredictiveQueueSystem {
 
   private async getInProgressCount(stage: string): Promise<number> {
     const count1 = await db.queue
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .where("stage")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .equals(stage as any)
       .and((item) => item.status === "in_progress")
       .count();
 
     const count2 = await mbhrDb.tickets
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .where("currentStage")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .equals(stage as any)
       .and((t) => t.state === "in_progress")
       .count();
@@ -542,8 +542,8 @@ class PredictiveQueueSystem {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - this.HISTORICAL_DAYS);
 
     const tickets = await mbhrDb.tickets
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .where("currentStage")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .equals(stage as any)
       .filter((t) => new Date(t.createdAt) >= thirtyDaysAgo)
       .toArray();

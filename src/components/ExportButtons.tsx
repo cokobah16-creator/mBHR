@@ -16,26 +16,27 @@ export function ExportButtons() {
     { table: db.patients as any, filename: "patients.csv", label: "Patients" },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     { table: db.vitals as any, filename: "vitals.csv", label: "Vitals" },
-     
+
     {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       table: db.consultations as any,
       filename: "consultations.csv",
       label: "Consultations",
     },
-     
     {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       table: db.dispenses as any,
       filename: "dispenses.csv",
       label: "Dispenses",
     },
-     
     {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       table: db.inventory as any,
       filename: "inventory.csv",
       label: "Inventory",
     },
-     
     {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       table: db.auditLogs as any,
       filename: "audit_logs.csv",
       label: "Audit Logs",

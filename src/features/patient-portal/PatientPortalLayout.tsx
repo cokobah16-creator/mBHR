@@ -13,9 +13,11 @@ import {
   UserGroupIcon,
   ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { EmergencyHelp } from "./EmergencyHelp";
 import type { ManagedPatient } from "@/services/patientPortalAuth";
+import { supabase } from "@/lib/supabase";
+import { getPatientProfile } from "@/services/patientService";
 
 interface PatientPortalLayoutProps {
   children: React.ReactNode;
@@ -63,6 +65,35 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
+
+  // Populate patient_portal_user in localStorage for Supabase-auth sessions
+  // (Supabase login doesn't set it, but MedicalHistory/Messages need it)
+  useEffect(() => {
+    const existing = localStorage.getItem("patient_portal_user");
+    if (existing) {
+      try {
+        const parsed = JSON.parse(existing);
+        if (parsed.patientId && parsed.id) return;
+      } catch {
+        // fall through to fetch
+      }
+    }
+    if (!supabase) return;
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return;
+      const result = await getPatientProfile(user.id);
+      if (!result.data) return;
+      const entry = {
+        id: user.id,
+        patientId: result.data.id,
+        givenName: result.data.givenName,
+        familyName: result.data.familyName,
+        email: user.email ?? result.data.email ?? "",
+        managedPatients: [],
+      };
+      localStorage.setItem("patient_portal_user", JSON.stringify(entry));
+    });
+  }, []);
 
   const { name, managedPatients } = getPortalUserInfo();
   const activeProfile = getActiveProfile();
