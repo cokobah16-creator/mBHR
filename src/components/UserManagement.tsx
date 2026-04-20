@@ -3,6 +3,7 @@ import { db, User, generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { derivePinHash, newSaltB64 } from "@/utils/pin";
 import { getRoleColor, getRoleDisplayName } from "@/auth/roles";
+import { supabase } from "@/lib/supabase";
 import {
   UserPlusIcon,
   PencilIcon,
@@ -16,6 +17,8 @@ export function UserManagement() {
   const [users, setUsers] = useState<User[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [pendingDeleteUser, setPendingDeleteUser] = useState<User | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [showPins, setShowPins] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -165,26 +168,21 @@ export function UserManagement() {
     }
   };
 
-  const deleteUser = async (user: User) => {
-    if (user.id === currentUser?.id) {
-      alert("Cannot delete your own account");
-      return;
-    }
-
-    if (user.adminPermanent) {
-      alert("Cannot delete permanent admin users");
-      return;
-    }
-
-    if (!confirm(`Delete user ${user.fullName}? This cannot be undone.`)) {
-      return;
-    }
-
+  const deleteUser = async () => {
+    if (!pendingDeleteUser) return;
+    setDeleting(true);
     try {
-      await db.users.delete(user.id);
+      await db.users.delete(pendingDeleteUser.id);
+      if (supabase) {
+        await supabase.from("users").delete().eq("id", pendingDeleteUser.id);
+      }
+      setPendingDeleteUser(null);
       await loadUsers();
     } catch (error) {
       console.error("Error deleting user:", error);
+      alert("Failed to delete user. Please try again.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -392,6 +390,47 @@ export function UserManagement() {
         </div>
       )}
 
+      {/* Delete confirmation modal */}
+      {pendingDeleteUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center space-x-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <TrashIcon className="h-5 w-5 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Delete User
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-2">
+              Are you sure you want to permanently delete{" "}
+              <strong>{pendingDeleteUser.fullName}</strong>?
+            </p>
+            <p className="text-sm text-red-600 mb-6">
+              This action cannot be undone. The user will lose all access
+              immediately.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                onClick={deleteUser}
+                disabled={deleting}
+                className="flex-1 inline-flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              >
+                <TrashIcon className="h-4 w-4" />
+                <span>{deleting ? "Deleting..." : "Delete User"}</span>
+              </button>
+              <button
+                onClick={() => setPendingDeleteUser(null)}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Users List */}
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
@@ -539,7 +578,7 @@ export function UserManagement() {
                     </button>
                     {user.id !== currentUser?.id && !user.adminPermanent && (
                       <button
-                        onClick={() => deleteUser(user)}
+                        onClick={() => setPendingDeleteUser(user)}
                         className="text-red-600 hover:text-red-800"
                         title="Delete user"
                       >
