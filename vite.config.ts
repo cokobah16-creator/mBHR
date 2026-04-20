@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const define: Record<string, string> = {};
   const readEnv = (key: string) => env[key]?.trim();
+  const isProduction = mode === "production";
 
   const hasClientSupabaseUrl = Boolean(readEnv("VITE_SUPABASE_URL"));
   const hasClientSupabaseAnonKey = Boolean(readEnv("VITE_SUPABASE_ANON_KEY"));
@@ -109,18 +110,14 @@ export default defineConfig(({ mode }) => {
       minify: "terser",
       terserOptions: {
         compress: {
-          drop_console: process.env.NODE_ENV === "production",
+          drop_console: isProduction,
           drop_debugger: true,
-          pure_funcs:
-            process.env.NODE_ENV === "production"
-              ? ["console.log", "console.info"]
-              : [],
+          pure_funcs: isProduction ? ["console.log", "console.info"] : [],
         },
       },
     },
     esbuild: {
-      drop:
-        process.env.NODE_ENV === "production" ? ["console", "debugger"] : [],
+      drop: isProduction ? ["console", "debugger"] : [],
     },
     plugins: [
       react(),
