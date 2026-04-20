@@ -174,11 +174,8 @@ begin
   if not exists (
     select 1
     from pg_policy p
-    join pg_class c on c.oid = p.polrelid
-    join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public'
-      and c.relname = 'dispenses'
-      and p.polname = 'Allow authenticated access to dispenses'
+    where p.polname = 'Allow authenticated access to dispenses'
+      and p.polrelid = 'public.dispenses'::regclass
   ) then
     create policy "Allow authenticated access to dispenses"
       on dispenses
