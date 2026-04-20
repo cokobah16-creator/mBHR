@@ -21,10 +21,12 @@ export default defineConfig(({ mode }) => {
 
   const define = clientEnvFallbacks.reduce<Record<string, string>>(
     (acc, { clientKey, serverFallbackKey }) => {
-      const hasClientValue = Boolean(readEnv(clientKey));
+      const clientValue = readEnv(clientKey);
       const fallbackValue = readEnv(serverFallbackKey);
 
-      if (!hasClientValue && fallbackValue) {
+      // Never override real Vite client env values. Only map server-side
+      // SUPABASE_* vars when the corresponding VITE_* value is truly absent.
+      if (!clientValue && fallbackValue) {
         acc[`import.meta.env.${clientKey}`] = JSON.stringify(fallbackValue);
       }
 
