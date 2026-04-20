@@ -77,6 +77,7 @@ function rowToProfile(r: Record<string, unknown>): PatientProfile {
 const PATIENT_SELECT =
   "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at";
 
+/** Fetch a patient by their Supabase auth UID (stored as text in auth_uid). */
 export async function getPatientProfile(
   authUid: string,
 ): Promise<ServiceResult<PatientProfile>> {

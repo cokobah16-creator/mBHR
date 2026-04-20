@@ -210,21 +210,18 @@ class RealtimeSyncService {
     callback: SubscriptionCallback,
   ): () => void {
     return this.subscribe({
-      table: "patient_messages",
+      table: "patient_secure_messages",
       filter: `patient_id=eq.${patientId}`,
       callback,
     });
   }
 
   subscribeToNotifications(
-    patientId: string,
-    callback: SubscriptionCallback,
+    _patientId: string,
+    _callback: SubscriptionCallback,
   ): () => void {
-    return this.subscribe({
-      table: "patient_notifications",
-      filter: `patient_id=eq.${patientId}`,
-      callback,
-    });
+    // patient_notifications table does not exist in this schema; no-op.
+    return () => {};
   }
 
   subscribeToQueue(
