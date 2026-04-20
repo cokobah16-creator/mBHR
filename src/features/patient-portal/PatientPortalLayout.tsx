@@ -66,33 +66,45 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
 
-  // Populate patient_portal_user in localStorage for Supabase-auth sessions
-  // (Supabase login doesn't set it, but MedicalHistory/Messages need it)
-  useEffect(() => {
+  // portalUserReady gates child rendering until patient_portal_user is populated.
+  // Without this gate, MedicalHistory/Messages read empty localStorage and hard-redirect to login.
+  const [portalUserReady, setPortalUserReady] = useState(() => {
     const existing = localStorage.getItem("patient_portal_user");
-    if (existing) {
-      try {
-        const parsed = JSON.parse(existing);
-        if (parsed.patientId && parsed.id) return;
-      } catch {
-        // fall through to fetch
-      }
+    if (!existing) return false;
+    try {
+      const parsed = JSON.parse(existing);
+      return !!(parsed.patientId && parsed.id);
+    } catch {
+      return false;
     }
-    if (!supabase) return;
+  });
+
+  useEffect(() => {
+    if (portalUserReady) return;
+    if (!supabase) {
+      setPortalUserReady(true);
+      return;
+    }
     supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) return;
+      if (!user) {
+        setPortalUserReady(true);
+        return;
+      }
       const result = await getPatientProfile(user.id);
-      if (!result.data) return;
-      const entry = {
-        id: user.id,
-        patientId: result.data.id,
-        givenName: result.data.givenName,
-        familyName: result.data.familyName,
-        email: user.email ?? result.data.email ?? "",
-        managedPatients: [],
-      };
-      localStorage.setItem("patient_portal_user", JSON.stringify(entry));
+      if (result.data) {
+        const entry = {
+          id: user.id,
+          patientId: result.data.id,
+          givenName: result.data.givenName,
+          familyName: result.data.familyName,
+          email: user.email ?? result.data.email ?? "",
+          managedPatients: [],
+        };
+        localStorage.setItem("patient_portal_user", JSON.stringify(entry));
+      }
+      setPortalUserReady(true);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const { name, managedPatients } = getPortalUserInfo();
@@ -357,7 +369,15 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
         )}
       </header>
 
-      <main className="pb-20 md:pb-8">{children}</main>
+      <main className="pb-20 md:pb-8">
+        {portalUserReady ? (
+          children
+        ) : (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
+      </main>
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40">
