@@ -72,7 +72,7 @@ export function SecureMessaging() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        setError("Session data missing. Please log in again.");
+        setError("Session not found. Please log in again.");
         setLoading(false);
         return;
       }

@@ -29,7 +29,8 @@ export function MedicalHistory() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        setError("Session not found. Please log in again.");
+        setLoading(false);
         return;
       }
 
