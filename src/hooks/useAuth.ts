@@ -111,6 +111,23 @@ export function useAuth(): UseAuthReturn {
         if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
       }
 
+      // Security guard: never rebind a patient that already belongs to
+      // another auth user, even if their phone/email is matched at sign-up.
+      const { data: linkedPatient } = await supabase
+        .from("patients")
+        .select("id")
+        .or(orClauses.join(","))
+        .not("auth_uid", "is", null)
+        .neq("auth_uid", authData.user.id)
+        .maybeSingle();
+
+      if (linkedPatient) {
+        return {
+          message:
+            "We could not automatically link your clinic profile. Please contact support for identity verification.",
+        };
+      }
+
       const { data: existingPatient } = await supabase
         .from("patients")
         .select("id, auth_uid, dob")
