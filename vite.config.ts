@@ -33,8 +33,10 @@ export default defineConfig(({ mode }) => {
     {},
   );
 
+  const hasDefineReplacements = Object.keys(define).length > 0;
+
   return {
-    define,
+    ...(hasDefineReplacements ? { define } : {}),
     resolve: {
       alias: {
         "@": resolve(__dirname, "./src"),
