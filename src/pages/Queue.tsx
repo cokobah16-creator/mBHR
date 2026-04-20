@@ -39,6 +39,7 @@ interface QueueWithPatient extends QueueItem {
 export function Queue() {
   const { t } = useTranslation();
   const [selectedStage, setSelectedStage] = useState<QueueStage>("vitals");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [stats, setStats] = useState<any>(null);
 
   // Live query for all queue items
@@ -63,10 +64,12 @@ export function Queue() {
 
   useEffect(() => {
     loadQueueWithPatients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageQueueItems]);
 
   useEffect(() => {
     loadStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStage]);
 
   const loadQueueWithPatients = async () => {

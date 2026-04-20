@@ -1,78 +1,76 @@
-import React from 'react'
-import { useT } from '@/hooks/useT'
-import { 
-  UserPlusIcon, 
-  HeartIcon, 
-  DocumentTextIcon, 
+import React from "react";
+import { useT } from "@/hooks/useT";
+import {
+  UserPlusIcon,
+  HeartIcon,
+  DocumentTextIcon,
   BeakerIcon,
-  QueueListIcon 
-} from '@heroicons/react/24/outline'
+  QueueListIcon,
+} from "@heroicons/react/24/outline";
 
 interface SimpleModeProps {
-  onActionSelect: (action: string) => void
+  onActionSelect: (action: string) => void;
 }
 
 export function SimpleMode({ onActionSelect }: SimpleModeProps) {
-  const { t, speak } = useT()
+  const { t, speak } = useT();
 
   const actions = [
     {
-      id: 'register',
+      id: "register",
       icon: UserPlusIcon,
-      color: 'bg-blue-500 hover:bg-blue-600',
-      textKey: 'action.register' as const,
-      audioKey: 'action.register' as const
+      color: "bg-blue-500 hover:bg-blue-600",
+      textKey: "action.register" as const,
+      audioKey: "action.register" as const,
     },
     {
-      id: 'vitals',
+      id: "vitals",
       icon: HeartIcon,
-      color: 'bg-green-500 hover:bg-green-600',
-      textKey: 'action.vitals' as const,
-      audioKey: 'action.vitals' as const
+      color: "bg-green-500 hover:bg-green-600",
+      textKey: "action.vitals" as const,
+      audioKey: "action.vitals" as const,
     },
     {
-      id: 'consult',
+      id: "consult",
       icon: DocumentTextIcon,
-      color: 'bg-purple-500 hover:bg-purple-600',
-      textKey: 'action.consult' as const,
-      audioKey: 'action.consult' as const
+      color: "bg-purple-500 hover:bg-purple-600",
+      textKey: "action.consult" as const,
+      audioKey: "action.consult" as const,
     },
     {
-      id: 'pharmacy',
+      id: "pharmacy",
       icon: BeakerIcon,
-      color: 'bg-orange-500 hover:bg-orange-600',
-      textKey: 'action.pharmacy' as const,
-      audioKey: 'action.pharmacy' as const
+      color: "bg-orange-500 hover:bg-orange-600",
+      textKey: "action.pharmacy" as const,
+      audioKey: "action.pharmacy" as const,
     },
     {
-      id: 'queue',
+      id: "queue",
       icon: QueueListIcon,
-      color: 'bg-indigo-500 hover:bg-indigo-600',
-      textKey: 'action.queue' as const,
-      audioKey: 'action.queue' as const
-    }
-  ]
+      color: "bg-indigo-500 hover:bg-indigo-600",
+      textKey: "action.queue" as const,
+      audioKey: "action.queue" as const,
+    },
+  ];
 
-  const handleActionClick = async (action: typeof actions[0]) => {
+  const handleActionClick = async (action: (typeof actions)[0]) => {
     // Play audio prompt
     try {
-      await speak(action.audioKey)
+      await speak(action.audioKey);
     } catch (error) {
-      console.warn('Audio playback failed:', error)
+      console.warn("Audio playback failed:", error);
     }
-    
-    onActionSelect(action.id)
-  }
+
+    onActionSelect(action.id);
+  };
 
   return (
     <div className="max-w-4xl mx-auto p-6">
       <div className="text-center mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          {t('app.title')}
+          {t("app.title")}
         </h1>
-        <p className="text-lg text-gray-600">
-          {t('simple.chooseAction')}
-        </p>
+        <p className="text-lg text-gray-600">{t("simple.chooseAction")}</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -83,21 +81,20 @@ export function SimpleMode({ onActionSelect }: SimpleModeProps) {
             className={`${action.color} text-white rounded-2xl p-8 text-center transition-all hover:scale-105 transform group touch-target-large shadow-lg`}
           >
             <action.icon className="h-16 w-16 mx-auto mb-4 group-hover:scale-110 transition-transform" />
-            <div className="text-xl font-bold mb-2">
-              {t(action.textKey)}
-            </div>
+            <div className="text-xl font-bold mb-2">{t(action.textKey)}</div>
             <div className="text-sm opacity-90">
-              {t(`${action.textKey}.description` as any)}
+              {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                t(`${action.textKey}.description` as any)
+              }
             </div>
           </button>
         ))}
       </div>
 
       <div className="mt-8 text-center">
-        <p className="text-sm text-gray-500">
-          {t('simple.tapToHear')}
-        </p>
+        <p className="text-sm text-gray-500">{t("simple.tapToHear")}</p>
       </div>
     </div>
-  )
+  );
 }

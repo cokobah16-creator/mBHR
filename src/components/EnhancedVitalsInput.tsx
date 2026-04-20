@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { useFormContext } from "react-hook-form";
-import { db, VitalsRange, epochDay } from "@/db";
+import { db, VitalsRange } from "@/db";
 import {
-  HeartIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
-  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
 
 interface EnhancedVitalsInputProps {
@@ -44,6 +42,7 @@ export function EnhancedVitalsInput({
 
   useEffect(() => {
     loadVitalRange();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metric, patientAge, patientSex]);
 
   useEffect(() => {
@@ -52,6 +51,7 @@ export function EnhancedVitalsInput({
     } else {
       setStatus(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, range]);
 
   const loadVitalRange = async () => {

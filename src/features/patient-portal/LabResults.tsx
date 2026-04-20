@@ -4,7 +4,6 @@ import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
   BeakerIcon,
-  DocumentArrowDownIcon,
   CheckCircleIcon,
   ClockIcon,
 } from "@heroicons/react/24/outline";

@@ -3,9 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
 import { isOnlineSyncEnabled } from "@/sync/adapter";
 import { db } from "@/db";
-import { seed } from "@/db/seed";
 import { derivePinHash } from "@/utils/pin";
-import { HeartIcon } from "@heroicons/react/24/outline";
 
 export default function Login() {
   const [mode, setMode] = useState<"offline" | "online">("offline");
@@ -20,6 +18,7 @@ export default function Login() {
   const { login } = useAuthStore();
 
   // Debug panel state
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [debugUsers, setDebugUsers] = useState<any[]>([]);
   const [computed, setComputed] = useState<string>("");
 
@@ -124,6 +123,7 @@ export default function Login() {
         }
         setErr("Online login not implemented yet");
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (ex: any) {
       console.error("[login] error:", ex);
       setAttempts((a) => a + 1);

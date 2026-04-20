@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useSyncStore, getRetryDelay } from '@/stores/syncStore';
+import React, { useState } from "react";
+import { useSyncStore, getRetryDelay } from "@/stores/syncStore";
 import {
   CloudIcon,
   CloudArrowUpIcon,
@@ -7,8 +7,8 @@ import {
   CheckCircleIcon,
   WifiIcon,
   SignalSlashIcon,
-} from '@heroicons/react/24/outline';
-import { useTranslation } from 'react-i18next';
+} from "@heroicons/react/24/outline";
+import { useTranslation } from "react-i18next";
 
 export function SyncIndicator() {
   const { t } = useTranslation();
@@ -17,7 +17,6 @@ export function SyncIndicator() {
     status,
     pendingCount,
     lastSuccessAt,
-    lastErrorAt,
     retries,
     errorMessage,
     isOnline,
@@ -29,13 +28,13 @@ export function SyncIndicator() {
     }
 
     switch (status) {
-      case 'syncing':
+      case "syncing":
         return (
           <CloudArrowUpIcon className="h-5 w-5 text-blue-500 animate-pulse" />
         );
-      case 'error':
+      case "error":
         return <ExclamationCircleIcon className="h-5 w-5 text-red-500" />;
-      case 'ok':
+      case "ok":
         return <CheckCircleIcon className="h-5 w-5 text-green-500" />;
       default:
         return <CloudIcon className="h-5 w-5 text-gray-400" />;
@@ -43,21 +42,21 @@ export function SyncIndicator() {
   };
 
   const getStatusColor = () => {
-    if (!isOnline) return 'bg-gray-100 border-gray-300';
+    if (!isOnline) return "bg-gray-100 border-gray-300";
     switch (status) {
-      case 'syncing':
-        return 'bg-blue-50 border-blue-300';
-      case 'error':
-        return 'bg-red-50 border-red-300';
-      case 'ok':
-        return 'bg-green-50 border-green-300';
+      case "syncing":
+        return "bg-blue-50 border-blue-300";
+      case "error":
+        return "bg-red-50 border-red-300";
+      case "ok":
+        return "bg-green-50 border-green-300";
       default:
-        return 'bg-gray-50 border-gray-300';
+        return "bg-gray-50 border-gray-300";
     }
   };
 
   const formatTimestamp = (timestamp: number) => {
-    if (!timestamp) return t('messaging.neverSynced') || 'Never';
+    if (!timestamp) return t("messaging.neverSynced") || "Never";
 
     const now = Date.now();
     const diff = now - timestamp;
@@ -85,19 +84,19 @@ export function SyncIndicator() {
           transition-all hover:shadow-md
           focus:outline-none focus:ring-2 focus:ring-primary
         `}
-        title={isOnline ? t('status.online') : t('status.offline')}
+        title={isOnline ? t("status.online") : t("status.offline")}
       >
         {getStatusIcon()}
 
         {!isOnline && (
           <span className="text-xs font-medium text-gray-600">
-            {t('status.offline')}
+            {t("status.offline")}
           </span>
         )}
 
-        {isOnline && status === 'syncing' && (
+        {isOnline && status === "syncing" && (
           <span className="text-xs font-medium text-blue-600">
-            {t('status.syncing')}
+            {t("status.syncing")}
           </span>
         )}
 
@@ -140,7 +139,7 @@ export function SyncIndicator() {
                   <SignalSlashIcon className="h-5 w-5 text-gray-500" />
                 )}
                 <span className="text-sm">
-                  {isOnline ? t('status.online') : t('status.offline')}
+                  {isOnline ? t("status.online") : t("status.offline")}
                 </span>
               </div>
 
@@ -154,8 +153,8 @@ export function SyncIndicator() {
               {pendingCount > 0 && (
                 <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
                   <p className="text-sm text-orange-900">
-                    <strong>{pendingCount}</strong>{' '}
-                    {pendingCount === 1 ? 'operation' : 'operations'} pending
+                    <strong>{pendingCount}</strong>{" "}
+                    {pendingCount === 1 ? "operation" : "operations"} pending
                   </p>
                   {!isOnline && (
                     <p className="text-xs text-orange-700 mt-1">
@@ -168,13 +167,13 @@ export function SyncIndicator() {
               {/* Last Success */}
               {lastSuccessAt > 0 && (
                 <div className="text-sm text-gray-600">
-                  <span className="font-medium">Last sync:</span>{' '}
+                  <span className="font-medium">Last sync:</span>{" "}
                   {formatTimestamp(lastSuccessAt)}
                 </div>
               )}
 
               {/* Error Info */}
-              {status === 'error' && (
+              {status === "error" && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
                   <p className="text-sm font-medium text-red-900">Sync Error</p>
                   {errorMessage && (
@@ -189,7 +188,7 @@ export function SyncIndicator() {
               )}
 
               {/* Success State */}
-              {status === 'ok' && pendingCount === 0 && (
+              {status === "ok" && pendingCount === 0 && (
                 <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
                   <p className="text-sm text-green-900">
                     ✓ All data synchronized

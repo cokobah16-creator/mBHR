@@ -16,13 +16,12 @@ import {
   UserGroupIcon,
   FunnelIcon,
   PlayIcon,
-  PauseIcon,
   CheckCircleIcon,
   XCircleIcon,
   DocumentArrowDownIcon,
   ClockIcon,
 } from "@heroicons/react/24/outline";
-import { db, type Patient } from "@/db";
+import { type Patient } from "@/db";
 import {
   findEligiblePatients,
   bulkEnablePortalAccess,
@@ -70,6 +69,7 @@ export function PortalMigration() {
 
   useEffect(() => {
     loadEligiblePatients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
 
   const loadEligiblePatients = async () => {
@@ -260,6 +260,7 @@ export function PortalMigration() {
             <select
               value={filters.contactMethod}
               onChange={(e) =>
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 setFilters({ ...filters, contactMethod: e.target.value as any })
               }
               className="input-field"

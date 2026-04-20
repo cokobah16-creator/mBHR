@@ -36,7 +36,13 @@ const navItems = [
 
 function getPortalUserInfo() {
   const str = localStorage.getItem("patient_portal_user");
-  if (!str) return { name: "Patient", managedPatients: [] as ManagedPatient[], portalUserId: "", ownPatientId: "" };
+  if (!str)
+    return {
+      name: "Patient",
+      managedPatients: [] as ManagedPatient[],
+      portalUserId: "",
+      ownPatientId: "",
+    };
   const u = JSON.parse(str);
   return {
     name: u.givenName || "Patient",
@@ -58,7 +64,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
 
-  const { name, managedPatients, portalUserId, ownPatientId } = getPortalUserInfo();
+  const { name, managedPatients } = getPortalUserInfo();
   const activeProfile = getActiveProfile();
   const displayName = activeProfile?.givenName || name;
 
@@ -69,7 +75,11 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
     navigate("/patient");
   };
 
-  const switchProfile = (patientId: string, givenName: string, familyName: string) => {
+  const switchProfile = (
+    patientId: string,
+    givenName: string,
+    familyName: string,
+  ) => {
     localStorage.setItem(
       "patient_active_profile",
       JSON.stringify({ patientId, givenName, familyName }),
@@ -127,14 +137,20 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
               {/* Profile / caregiver switcher */}
               <div className="relative hidden sm:block">
                 <button
-                  onClick={() => hasManagedPatients && setProfileMenuOpen(!profileMenuOpen)}
+                  onClick={() =>
+                    hasManagedPatients && setProfileMenuOpen(!profileMenuOpen)
+                  }
                   className={`flex items-center gap-2 text-sm text-gray-700 px-3 py-2 rounded-lg transition-colors ${
-                    hasManagedPatients ? "hover:bg-gray-100 cursor-pointer" : "cursor-default"
+                    hasManagedPatients
+                      ? "hover:bg-gray-100 cursor-pointer"
+                      : "cursor-default"
                   }`}
                 >
                   <UserCircleIcon className="w-5 h-5" />
                   <span className="max-w-[120px] truncate">{displayName}</span>
-                  {hasManagedPatients && <ChevronDownIcon className="w-4 h-4" />}
+                  {hasManagedPatients && (
+                    <ChevronDownIcon className="w-4 h-4" />
+                  )}
                 </button>
 
                 {profileMenuOpen && hasManagedPatients && (
@@ -142,7 +158,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     <button
                       onClick={switchToSelf}
                       className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2 ${
-                        !activeProfile ? "font-semibold text-blue-700" : "text-gray-700"
+                        !activeProfile
+                          ? "font-semibold text-blue-700"
+                          : "text-gray-700"
                       }`}
                     >
                       <UserCircleIcon className="w-4 h-4" />
@@ -151,7 +169,13 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     {managedPatients.map((mp) => (
                       <button
                         key={mp.patientId}
-                        onClick={() => switchProfile(mp.patientId, mp.givenName, mp.familyName)}
+                        onClick={() =>
+                          switchProfile(
+                            mp.patientId,
+                            mp.givenName,
+                            mp.familyName,
+                          )
+                        }
                         className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2 ${
                           activeProfile?.patientId === mp.patientId
                             ? "font-semibold text-blue-700"
@@ -160,7 +184,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                       >
                         <UserGroupIcon className="w-4 h-4" />
                         {mp.givenName} {mp.familyName}
-                        <span className="ml-auto text-xs text-gray-400">{mp.relationship}</span>
+                        <span className="ml-auto text-xs text-gray-400">
+                          {mp.relationship}
+                        </span>
                       </button>
                     ))}
                     <div className="border-t border-gray-100 mt-1 pt-1">
@@ -238,7 +264,10 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     Switch Profile
                   </p>
                   <button
-                    onClick={() => { switchToSelf(); setMobileMenuOpen(false); }}
+                    onClick={() => {
+                      switchToSelf();
+                      setMobileMenuOpen(false);
+                    }}
                     className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
                   >
                     <UserCircleIcon className="w-5 h-5" />
@@ -247,7 +276,14 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                   {managedPatients.map((mp) => (
                     <button
                       key={mp.patientId}
-                      onClick={() => { switchProfile(mp.patientId, mp.givenName, mp.familyName); setMobileMenuOpen(false); }}
+                      onClick={() => {
+                        switchProfile(
+                          mp.patientId,
+                          mp.givenName,
+                          mp.familyName,
+                        );
+                        setMobileMenuOpen(false);
+                      }}
                       className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
                     >
                       <UserGroupIcon className="w-5 h-5" />
@@ -266,7 +302,10 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 Add patient I care for
               </Link>
               <button
-                onClick={() => { setMobileMenuOpen(false); setEmergencyOpen(true); }}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setEmergencyOpen(true);
+                }}
                 className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 w-full transition-colors"
               >
                 <ExclamationTriangleIcon className="w-5 h-5" />
@@ -321,7 +360,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       </button>
 
       {/* Emergency modal */}
-      {emergencyOpen && <EmergencyHelp onClose={() => setEmergencyOpen(false)} />}
+      {emergencyOpen && (
+        <EmergencyHelp onClose={() => setEmergencyOpen(false)} />
+      )}
     </div>
   );
 }

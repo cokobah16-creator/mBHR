@@ -15,7 +15,6 @@ import {
   type BulkExportProgress,
   type BulkExportResult,
 } from "../../services/fhir/dexieExporter";
-import type { BundleValidationResult } from "../../services/fhir/uscore-validator";
 
 interface ExportHistory {
   id: string;

@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { usePatientsStore } from "./patients";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockPatients: Map<string, any> = new Map();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockQueue: any[] = [];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockVisits: any[] = [];
 
 vi.mock("@/db", () => ({
@@ -15,16 +18,19 @@ vi.mock("@/db", () => ({
           ),
         })),
       })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       filter: vi.fn((filterFn: (p: any) => boolean) => ({
         toArray: vi.fn(() => {
           const results = Array.from(mockPatients.values()).filter(filterFn);
           return Promise.resolve(results);
         }),
       })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       add: vi.fn((patient: any) => {
         mockPatients.set(patient.id, patient);
         return Promise.resolve(patient.id);
       }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       update: vi.fn((id: string, updates: any) => {
         const patient = mockPatients.get(id);
         if (patient) {
@@ -35,6 +41,7 @@ vi.mock("@/db", () => ({
       count: vi.fn(() => Promise.resolve(mockPatients.size)),
     },
     queue: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       add: vi.fn((item: any) => {
         mockQueue.push(item);
         return Promise.resolve(item.id);
@@ -42,6 +49,7 @@ vi.mock("@/db", () => ({
       count: vi.fn(() => Promise.resolve(mockQueue.length)),
     },
     visits: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       add: vi.fn((visit: any) => {
         mockVisits.push(visit);
         return Promise.resolve(visit.id);
@@ -50,6 +58,7 @@ vi.mock("@/db", () => ({
   },
   generateId: () => `test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   createAuditLog: vi.fn(() => Promise.resolve()),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   createPatientDraft: vi.fn(async (data: any) => ({
     rec: {
       id: `patient-${Date.now()}`,
@@ -180,6 +189,7 @@ describe("usePatientsStore", () => {
 
   describe("setCurrentPatient", () => {
     it("should set current patient", () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const patient = { id: "p1", givenName: "Test" } as any;
 
       usePatientsStore.getState().setCurrentPatient(patient);
@@ -189,6 +199,7 @@ describe("usePatientsStore", () => {
 
     it("should clear current patient when set to null", () => {
       usePatientsStore.setState({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         currentPatient: { id: "p1" } as any,
       });
 

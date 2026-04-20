@@ -57,6 +57,7 @@ export function AllergyManager({
 
   useEffect(() => {
     loadAllergies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId, showInactive]);
 
   const loadAllergies = async () => {

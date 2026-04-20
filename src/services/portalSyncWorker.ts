@@ -7,7 +7,7 @@
 
 import { db } from "@/db";
 import { supabase } from "@/lib/supabase";
-import { MessageQueue, outboxDb } from "@/db/outbox";
+import { MessageQueue } from "@/db/outbox";
 import * as logger from "@/lib/logger";
 
 let isProcessing = false;
@@ -77,6 +77,7 @@ export async function processPortalInvitationQueue(): Promise<{
           });
 
         succeeded++;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (error: any) {
         failed++;
         logger.error(

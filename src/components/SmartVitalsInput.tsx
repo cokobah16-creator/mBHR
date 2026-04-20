@@ -1,67 +1,73 @@
-import { useState, useEffect } from 'react'
-import { clinicalDecisionSupport } from '@/services/clinicalDecisionSupport'
-import type { VitalsAnalysis } from '@/services/clinicalDecisionSupport'
+import { useState, useEffect } from "react";
+import { clinicalDecisionSupport } from "@/services/clinicalDecisionSupport";
+import type { VitalsAnalysis } from "@/services/clinicalDecisionSupport";
 import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
-  InformationCircleIcon
-} from '@heroicons/react/24/outline'
+  InformationCircleIcon,
+} from "@heroicons/react/24/outline";
 
 interface SmartVitalsInputProps {
   vitals: {
-    heightCm?: number
-    weightKg?: number
-    tempC?: number
-    pulseBpm?: number
-    systolic?: number
-    diastolic?: number
-    spo2?: number
-    bmi?: number
-  }
-  onChange: (field: string, value: number) => void
+    heightCm?: number;
+    weightKg?: number;
+    tempC?: number;
+    pulseBpm?: number;
+    systolic?: number;
+    diastolic?: number;
+    spo2?: number;
+    bmi?: number;
+  };
+  onChange: (field: string, value: number) => void;
 }
 
 export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
-  const [analysis, setAnalysis] = useState<VitalsAnalysis | null>(null)
+  const [analysis, setAnalysis] = useState<VitalsAnalysis | null>(null);
 
   useEffect(() => {
     if (hasAnyVitals()) {
-      analyzeVitals()
+      analyzeVitals();
     }
-  }, [vitals])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vitals]);
 
   const hasAnyVitals = () => {
-    return Object.values(vitals).some(v => v !== undefined && v > 0)
-  }
+    return Object.values(vitals).some((v) => v !== undefined && v > 0);
+  };
 
   const analyzeVitals = () => {
-    const result = clinicalDecisionSupport.analyzeVitals(vitals)
-    setAnalysis(result)
-  }
+    const result = clinicalDecisionSupport.analyzeVitals(vitals);
+    setAnalysis(result);
+  };
 
   const getRiskLevelColor = (level: string) => {
     switch (level) {
-      case 'critical': return 'bg-red-50 border-red-300 text-red-900'
-      case 'high': return 'bg-orange-50 border-orange-300 text-orange-900'
-      case 'moderate': return 'bg-yellow-50 border-yellow-300 text-yellow-900'
-      case 'low': return 'bg-green-50 border-green-300 text-green-900'
-      default: return 'bg-gray-50 border-gray-300 text-gray-900'
+      case "critical":
+        return "bg-red-50 border-red-300 text-red-900";
+      case "high":
+        return "bg-orange-50 border-orange-300 text-orange-900";
+      case "moderate":
+        return "bg-yellow-50 border-yellow-300 text-yellow-900";
+      case "low":
+        return "bg-green-50 border-green-300 text-green-900";
+      default:
+        return "bg-gray-50 border-gray-300 text-gray-900";
     }
-  }
+  };
 
   const getRiskIcon = (level: string) => {
     switch (level) {
-      case 'critical':
-      case 'high':
-        return <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
-      case 'moderate':
-        return <InformationCircleIcon className="h-5 w-5 text-yellow-600" />
-      case 'low':
-        return <CheckCircleIcon className="h-5 w-5 text-green-600" />
+      case "critical":
+      case "high":
+        return <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />;
+      case "moderate":
+        return <InformationCircleIcon className="h-5 w-5 text-yellow-600" />;
+      case "low":
+        return <CheckCircleIcon className="h-5 w-5 text-green-600" />;
       default:
-        return <InformationCircleIcon className="h-5 w-5 text-gray-600" />
+        return <InformationCircleIcon className="h-5 w-5 text-gray-600" />;
     }
-  }
+  };
 
   return (
     <div className="space-y-4">
@@ -72,8 +78,8 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
           </label>
           <input
             type="number"
-            value={vitals.heightCm || ''}
-            onChange={(e) => onChange('heightCm', parseFloat(e.target.value))}
+            value={vitals.heightCm || ""}
+            onChange={(e) => onChange("heightCm", parseFloat(e.target.value))}
             className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
             placeholder="e.g., 170"
           />
@@ -85,8 +91,8 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
           </label>
           <input
             type="number"
-            value={vitals.weightKg || ''}
-            onChange={(e) => onChange('weightKg', parseFloat(e.target.value))}
+            value={vitals.weightKg || ""}
+            onChange={(e) => onChange("weightKg", parseFloat(e.target.value))}
             className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
             placeholder="e.g., 70"
           />
@@ -99,8 +105,8 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
           <input
             type="number"
             step="0.1"
-            value={vitals.tempC || ''}
-            onChange={(e) => onChange('tempC', parseFloat(e.target.value))}
+            value={vitals.tempC || ""}
+            onChange={(e) => onChange("tempC", parseFloat(e.target.value))}
             className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
             placeholder="e.g., 37.0"
           />
@@ -112,8 +118,8 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
           </label>
           <input
             type="number"
-            value={vitals.pulseBpm || ''}
-            onChange={(e) => onChange('pulseBpm', parseFloat(e.target.value))}
+            value={vitals.pulseBpm || ""}
+            onChange={(e) => onChange("pulseBpm", parseFloat(e.target.value))}
             className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
             placeholder="e.g., 80"
           />
@@ -125,8 +131,8 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
           </label>
           <input
             type="number"
-            value={vitals.systolic || ''}
-            onChange={(e) => onChange('systolic', parseFloat(e.target.value))}
+            value={vitals.systolic || ""}
+            onChange={(e) => onChange("systolic", parseFloat(e.target.value))}
             className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
             placeholder="e.g., 120"
           />
@@ -138,8 +144,8 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
           </label>
           <input
             type="number"
-            value={vitals.diastolic || ''}
-            onChange={(e) => onChange('diastolic', parseFloat(e.target.value))}
+            value={vitals.diastolic || ""}
+            onChange={(e) => onChange("diastolic", parseFloat(e.target.value))}
             className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
             placeholder="e.g., 80"
           />
@@ -151,8 +157,8 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
           </label>
           <input
             type="number"
-            value={vitals.spo2 || ''}
-            onChange={(e) => onChange('spo2', parseFloat(e.target.value))}
+            value={vitals.spo2 || ""}
+            onChange={(e) => onChange("spo2", parseFloat(e.target.value))}
             className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
             placeholder="e.g., 98"
           />
@@ -171,7 +177,9 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
       </div>
 
       {analysis && hasAnyVitals() && (
-        <div className={`rounded-lg border p-4 ${getRiskLevelColor(analysis.riskLevel)}`}>
+        <div
+          className={`rounded-lg border p-4 ${getRiskLevelColor(analysis.riskLevel)}`}
+        >
           <div className="flex items-start gap-3">
             {getRiskIcon(analysis.riskLevel)}
             <div className="flex-1">
@@ -187,7 +195,9 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
                   <p className="font-semibold text-red-900 mb-1">URGENT:</p>
                   <ul className="list-disc list-inside space-y-1">
                     {analysis.urgentFlags.map((flag, idx) => (
-                      <li key={idx} className="text-sm text-red-800">{flag}</li>
+                      <li key={idx} className="text-sm text-red-800">
+                        {flag}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -198,7 +208,9 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
                   <p className="font-medium mb-1">Concerns Identified:</p>
                   <ul className="list-disc list-inside space-y-1">
                     {analysis.concerns.map((concern, idx) => (
-                      <li key={idx} className="text-sm">{concern}</li>
+                      <li key={idx} className="text-sm">
+                        {concern}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -209,19 +221,24 @@ export function SmartVitalsInput({ vitals, onChange }: SmartVitalsInputProps) {
                   <p className="font-medium mb-1">Recommendations:</p>
                   <ul className="list-disc list-inside space-y-1">
                     {analysis.recommendations.map((rec, idx) => (
-                      <li key={idx} className="text-sm">{rec}</li>
+                      <li key={idx} className="text-sm">
+                        {rec}
+                      </li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              {analysis.concerns.length === 0 && analysis.urgentFlags.length === 0 && (
-                <p className="text-sm">All vital signs appear within normal ranges.</p>
-              )}
+              {analysis.concerns.length === 0 &&
+                analysis.urgentFlags.length === 0 && (
+                  <p className="text-sm">
+                    All vital signs appear within normal ranges.
+                  </p>
+                )}
             </div>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }

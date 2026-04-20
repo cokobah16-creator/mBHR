@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockOutboundMessages: Map<string, any> = new Map();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockMedicationReminders: any[] = [];
 
 vi.mock("@/db", () => ({
@@ -8,6 +10,7 @@ vi.mock("@/db", () => ({
     outboundMessages: {
       where: vi.fn((field: string) => ({
         equals: vi.fn((value: string) => ({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           filter: vi.fn((filterFn: (msg: any) => boolean) => ({
             limit: vi.fn(() => ({
               toArray: vi.fn(() => {
@@ -32,10 +35,12 @@ vi.mock("@/db", () => ({
           }),
         })),
       })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       add: vi.fn((msg: any) => {
         mockOutboundMessages.set(msg.id, msg);
         return Promise.resolve(msg.id);
       }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       update: vi.fn((id: string, updates: any) => {
         const msg = mockOutboundMessages.get(id);
         if (msg) {
@@ -140,6 +145,7 @@ describe("notificationWorker", () => {
 
   describe("processNow", () => {
     it("should process pending reminders and messages", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (global.fetch as any).mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ success: true, provider: "demo" }),
@@ -187,6 +193,7 @@ describe("SMS delivery logic", () => {
   });
 
   it("should handle successful SMS delivery", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (global.fetch as any).mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -212,6 +219,7 @@ describe("SMS delivery logic", () => {
   });
 
   it("should handle failed SMS delivery", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (global.fetch as any).mockResolvedValueOnce({
       ok: false,
       json: () =>
@@ -234,6 +242,7 @@ describe("SMS delivery logic", () => {
   });
 
   it("should handle demo mode when no provider configured", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (global.fetch as any).mockResolvedValueOnce({
       ok: true,
       json: () =>

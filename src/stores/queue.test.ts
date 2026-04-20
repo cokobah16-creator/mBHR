@@ -1,17 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useQueue } from "./queue";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockTickets: Map<string, any> = new Map();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockCounters: Map<string, any> = new Map();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockMetrics: Map<string, any> = new Map();
 
 vi.mock("@/db/mbhr", () => ({
   db: {
     tickets: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       add: vi.fn((t: any) => {
         mockTickets.set(t.id, t);
         return Promise.resolve(t.id);
       }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       update: vi.fn((id: string, updates: any) => {
         const ticket = mockTickets.get(id);
         if (ticket) {
@@ -22,6 +27,7 @@ vi.mock("@/db/mbhr", () => ({
       where: vi.fn((field: string) => ({
         equals: vi.fn((value: string) => ({
           toArray: vi.fn(() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const results: any[] = [];
             mockTickets.forEach((ticket) => {
               if (ticket[field] === value) {
@@ -35,10 +41,12 @@ vi.mock("@/db/mbhr", () => ({
     },
     daily_counters: {
       get: vi.fn((id: string) => Promise.resolve(mockCounters.get(id))),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       add: vi.fn((counter: any) => {
         mockCounters.set(counter.id, counter);
         return Promise.resolve();
       }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       update: vi.fn((id: string, updates: any) => {
         const counter = mockCounters.get(id);
         if (counter) {
@@ -49,10 +57,12 @@ vi.mock("@/db/mbhr", () => ({
     },
     queue_metrics: {
       get: vi.fn((id: string) => Promise.resolve(mockMetrics.get(id))),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       add: vi.fn((metric: any) => {
         mockMetrics.set(metric.id, metric);
         return Promise.resolve();
       }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       update: vi.fn((id: string, updates: any) => {
         const metric = mockMetrics.get(id);
         if (metric) {

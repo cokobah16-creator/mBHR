@@ -19,6 +19,7 @@ export function MedicalHistory() {
 
   useEffect(() => {
     loadRecords();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
   const loadRecords = async () => {

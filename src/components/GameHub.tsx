@@ -1,109 +1,111 @@
-import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { useAuthStore } from '@/stores/auth'
-import { db } from '@/db'
-import { GamificationService } from '@/services/gamification'
-import { 
-  TrophyIcon, 
+import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useAuthStore } from "@/stores/auth";
+import { db } from "@/db";
+import {
+  TrophyIcon,
   FireIcon,
   StarIcon,
   ClockIcon,
   HeartIcon,
   CubeIcon,
   AcademicCapIcon,
-  ExclamationTriangleIcon
-} from '@heroicons/react/24/outline'
+  ExclamationTriangleIcon,
+} from "@heroicons/react/24/outline";
 
 interface GameHubProps {
-  className?: string
+  className?: string;
 }
 
-export function GameHub({ className = '' }: GameHubProps) {
-  const { currentUser } = useAuthStore()
-  const [wallet, setWallet] = useState<any>(null)
-  const [pendingSessions, setPendingSessions] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+export function GameHub({ className = "" }: GameHubProps) {
+  const { currentUser } = useAuthStore();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [wallet, setWallet] = useState<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [pendingSessions, setPendingSessions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (currentUser) {
-      loadGameData()
+      loadGameData();
     }
-  }, [currentUser])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
 
   const loadGameData = async () => {
-    if (!currentUser) return
+    if (!currentUser) return;
 
     try {
       const [walletData, sessionsData] = await Promise.all([
         db.gamificationWallets.get(currentUser.id),
         db.gameSessions
-          .where('volunteerId')
+          .where("volunteerId")
           .equals(currentUser.id)
-          .and(session => !session.committed && !!session.finishedAt)
-          .toArray()
-      ])
+          .and((session) => !session.committed && !!session.finishedAt)
+          .toArray(),
+      ]);
 
-      setWallet(walletData)
-      setPendingSessions(sessionsData)
+      setWallet(walletData);
+      setPendingSessions(sessionsData);
     } catch (error) {
-      console.error('Error loading game data:', error)
+      console.error("Error loading game data:", error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const games = [
     {
-      id: 'vitals',
-      name: 'Vitals Precision',
-      description: 'Validate vital signs with accuracy bonuses',
+      id: "vitals",
+      name: "Vitals Precision",
+      description: "Validate vital signs with accuracy bonuses",
       icon: HeartIcon,
-      color: 'bg-green-500 hover:bg-green-600',
+      color: "bg-green-500 hover:bg-green-600",
       baseTokens: 8,
       estimatedMinutes: 3,
-      href: '/games/vitals-precision'
+      href: "/games/vitals-precision",
     },
     {
-      id: 'shelf',
-      name: 'Shelf Sleuth',
-      description: 'Verify inventory counts and find discrepancies',
+      id: "shelf",
+      name: "Shelf Sleuth",
+      description: "Verify inventory counts and find discrepancies",
       icon: CubeIcon,
-      color: 'bg-blue-500 hover:bg-blue-600',
+      color: "bg-blue-500 hover:bg-blue-600",
       baseTokens: 12,
       estimatedMinutes: 5,
-      href: '/games/shelf-sleuth'
+      href: "/games/shelf-sleuth",
     },
     {
-      id: 'quiz',
-      name: 'Knowledge Blitz',
-      description: '60-second protocol and procedure quizzes',
+      id: "quiz",
+      name: "Knowledge Blitz",
+      description: "60-second protocol and procedure quizzes",
       icon: AcademicCapIcon,
-      color: 'bg-purple-500 hover:bg-purple-600',
+      color: "bg-purple-500 hover:bg-purple-600",
       baseTokens: 10,
       estimatedMinutes: 1,
-      href: '/games/knowledge-blitz'
+      href: "/games/knowledge-blitz",
     },
     {
-      id: 'triage',
-      name: 'Triage Sprint',
-      description: 'Quick priority assessment challenges',
+      id: "triage",
+      name: "Triage Sprint",
+      description: "Quick priority assessment challenges",
       icon: ExclamationTriangleIcon,
-      color: 'bg-orange-500 hover:bg-orange-600',
+      color: "bg-orange-500 hover:bg-orange-600",
       baseTokens: 15,
       estimatedMinutes: 2,
-      href: '/games/triage-sprint'
+      href: "/games/triage-sprint",
     },
     {
-      id: 'vitals-enhanced',
-      name: 'Enhanced Vitals',
-      description: 'Age/sex-specific vital signs validation',
+      id: "vitals-enhanced",
+      name: "Enhanced Vitals",
+      description: "Age/sex-specific vital signs validation",
       icon: HeartIcon,
-      color: 'bg-emerald-500 hover:bg-emerald-600',
+      color: "bg-emerald-500 hover:bg-emerald-600",
       baseTokens: 12,
       estimatedMinutes: 4,
-      href: '/games/vitals-precision-enhanced'
-    }
-  ]
+      href: "/games/vitals-precision-enhanced",
+    },
+  ];
 
   if (loading) {
     return (
@@ -117,7 +119,7 @@ export function GameHub({ className = '' }: GameHubProps) {
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -128,23 +130,31 @@ export function GameHub({ className = '' }: GameHubProps) {
           <TrophyIcon className="h-8 w-8 text-primary" />
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Game Hub</h1>
-            <p className="text-gray-600">Earn tokens and badges through clinic work</p>
+            <p className="text-gray-600">
+              Earn tokens and badges through clinic work
+            </p>
           </div>
         </div>
-        
+
         {wallet && (
           <div className="flex items-center space-x-6">
             <div className="text-center">
-              <div className="text-2xl font-bold text-primary">{wallet.tokens}</div>
+              <div className="text-2xl font-bold text-primary">
+                {wallet.tokens}
+              </div>
               <div className="text-sm text-gray-600">Tokens</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-orange-600">Level {wallet.level}</div>
+              <div className="text-2xl font-bold text-orange-600">
+                Level {wallet.level}
+              </div>
               <div className="text-sm text-gray-600">Current Level</div>
             </div>
             <div className="text-center flex items-center space-x-1">
               <FireIcon className="h-5 w-5 text-red-500" />
-              <div className="text-xl font-bold text-red-600">{wallet.streakDays}</div>
+              <div className="text-xl font-bold text-red-600">
+                {wallet.streakDays}
+              </div>
               <div className="text-sm text-gray-600">Day Streak</div>
             </div>
           </div>
@@ -161,7 +171,8 @@ export function GameHub({ className = '' }: GameHubProps) {
                 Pending Approval ({pendingSessions.length} sessions)
               </h3>
               <p className="text-sm text-yellow-700">
-                Your completed game sessions are waiting for supervisor approval to mint tokens.
+                Your completed game sessions are waiting for supervisor approval
+                to mint tokens.
               </p>
             </div>
           </div>
@@ -180,7 +191,7 @@ export function GameHub({ className = '' }: GameHubProps) {
               <game.icon className="h-12 w-12 mx-auto mb-4 group-hover:scale-110 transition-transform" />
               <h3 className="text-lg font-bold mb-2">{game.name}</h3>
               <p className="text-sm opacity-90 mb-4">{game.description}</p>
-              
+
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center space-x-1">
                   <ClockIcon className="h-4 w-4" />
@@ -199,14 +210,19 @@ export function GameHub({ className = '' }: GameHubProps) {
       {/* Recent Badges */}
       {wallet?.badges.length > 0 && (
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Badges</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            Recent Badges
+          </h3>
           <div className="flex flex-wrap gap-2">
             {wallet.badges.slice(-6).map((badge: string, index: number) => (
               <span
                 key={index}
                 className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800"
               >
-                🏆 {badge.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                🏆{" "}
+                {badge
+                  .replace("_", " ")
+                  .replace(/\b\w/g, (l) => l.toUpperCase())}
               </span>
             ))}
           </div>
@@ -218,16 +234,19 @@ export function GameHub({ className = '' }: GameHubProps) {
         <div className="card bg-blue-50 border-blue-200">
           <div className="text-center py-8">
             <TrophyIcon className="h-12 w-12 mx-auto text-blue-600 mb-4" />
-            <h3 className="text-lg font-medium text-blue-800 mb-2">Welcome to the Game Hub!</h3>
+            <h3 className="text-lg font-medium text-blue-800 mb-2">
+              Welcome to the Game Hub!
+            </h3>
             <p className="text-blue-700 mb-4">
               Complete your first game to start earning tokens and badges.
             </p>
             <p className="text-sm text-blue-600">
-              All games are based on real clinic work - you're helping patients while having fun!
+              All games are based on real clinic work - you're helping patients
+              while having fun!
             </p>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }

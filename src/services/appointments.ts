@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase } from "../lib/supabase";
 
 export interface Appointment {
   id?: string;
@@ -7,7 +7,14 @@ export interface Appointment {
   appointmentType: string;
   scheduledAt: Date;
   durationMinutes: number;
-  status: 'scheduled' | 'confirmed' | 'arrived' | 'in-progress' | 'completed' | 'no-show' | 'cancelled';
+  status:
+    | "scheduled"
+    | "confirmed"
+    | "arrived"
+    | "in-progress"
+    | "completed"
+    | "no-show"
+    | "cancelled";
   reason?: string;
   notes?: string;
   reminderSent?: boolean;
@@ -21,20 +28,22 @@ export interface WaitlistEntry {
   appointmentType: string;
   preferredDates?: Date[];
   reason?: string;
-  priority: 'routine' | 'urgent';
-  status: 'waiting' | 'scheduled' | 'cancelled';
+  priority: "routine" | "urgent";
+  status: "waiting" | "scheduled" | "cancelled";
 }
 
-export async function createAppointment(appointment: Appointment): Promise<string> {
+export async function createAppointment(
+  appointment: Appointment,
+): Promise<string> {
   const { data, error } = await supabase
-    .from('appointments')
+    .from("appointments")
     .insert({
       patient_id: appointment.patientId,
       provider_id: appointment.providerId,
       appointment_type: appointment.appointmentType,
       scheduled_at: appointment.scheduledAt.toISOString(),
       duration_minutes: appointment.durationMinutes,
-      status: 'scheduled',
+      status: "scheduled",
       reason: appointment.reason,
       notes: appointment.notes,
       created_by: appointment.createdBy,
@@ -48,55 +57,61 @@ export async function createAppointment(appointment: Appointment): Promise<strin
 
 export async function updateAppointmentStatus(
   appointmentId: string,
-  status: Appointment['status']
+  status: Appointment["status"],
 ): Promise<void> {
   const { error } = await supabase
-    .from('appointments')
+    .from("appointments")
     .update({ status })
-    .eq('id', appointmentId);
+    .eq("id", appointmentId);
 
   if (error) throw error;
 }
 
 export async function rescheduleAppointment(
   appointmentId: string,
-  newDateTime: Date
+  newDateTime: Date,
 ): Promise<void> {
   const { error } = await supabase
-    .from('appointments')
+    .from("appointments")
     .update({
       scheduled_at: newDateTime.toISOString(),
-      status: 'scheduled',
+      status: "scheduled",
     })
-    .eq('id', appointmentId);
+    .eq("id", appointmentId);
 
   if (error) throw error;
 }
 
-export async function cancelAppointment(appointmentId: string, reason?: string): Promise<void> {
-  const updates: any = { status: 'cancelled' };
+export async function cancelAppointment(
+  appointmentId: string,
+  reason?: string,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updates: any = { status: "cancelled" };
   if (reason) {
     updates.notes = reason;
   }
 
   const { error } = await supabase
-    .from('appointments')
+    .from("appointments")
     .update(updates)
-    .eq('id', appointmentId);
+    .eq("id", appointmentId);
 
   if (error) throw error;
 }
 
-export async function getPatientAppointments(patientId: string): Promise<Appointment[]> {
+export async function getPatientAppointments(
+  patientId: string,
+): Promise<Appointment[]> {
   const { data, error } = await supabase
-    .from('appointments')
-    .select('*')
-    .eq('patient_id', patientId)
-    .order('scheduled_at', { ascending: false });
+    .from("appointments")
+    .select("*")
+    .eq("patient_id", patientId)
+    .order("scheduled_at", { ascending: false });
 
   if (error) throw error;
 
-  return data.map(a => ({
+  return data.map((a) => ({
     id: a.id,
     patientId: a.patient_id,
     providerId: a.provider_id,
@@ -107,28 +122,32 @@ export async function getPatientAppointments(patientId: string): Promise<Appoint
     reason: a.reason,
     notes: a.notes,
     reminderSent: a.reminder_sent,
-    reminderSentAt: a.reminder_sent_at ? new Date(a.reminder_sent_at) : undefined,
+    reminderSentAt: a.reminder_sent_at
+      ? new Date(a.reminder_sent_at)
+      : undefined,
     createdBy: a.created_by,
   }));
 }
 
-export async function getUpcomingAppointments(providerId?: string): Promise<Appointment[]> {
+export async function getUpcomingAppointments(
+  providerId?: string,
+): Promise<Appointment[]> {
   let query = supabase
-    .from('appointments')
-    .select('*')
-    .in('status', ['scheduled', 'confirmed'])
-    .gte('scheduled_at', new Date().toISOString())
-    .order('scheduled_at', { ascending: true });
+    .from("appointments")
+    .select("*")
+    .in("status", ["scheduled", "confirmed"])
+    .gte("scheduled_at", new Date().toISOString())
+    .order("scheduled_at", { ascending: true });
 
   if (providerId) {
-    query = query.eq('provider_id', providerId);
+    query = query.eq("provider_id", providerId);
   }
 
   const { data, error } = await query;
 
   if (error) throw error;
 
-  return data.map(a => ({
+  return data.map((a) => ({
     id: a.id,
     patientId: a.patient_id,
     providerId: a.provider_id,
@@ -139,12 +158,16 @@ export async function getUpcomingAppointments(providerId?: string): Promise<Appo
     reason: a.reason,
     notes: a.notes,
     reminderSent: a.reminder_sent,
-    reminderSentAt: a.reminder_sent_at ? new Date(a.reminder_sent_at) : undefined,
+    reminderSentAt: a.reminder_sent_at
+      ? new Date(a.reminder_sent_at)
+      : undefined,
     createdBy: a.created_by,
   }));
 }
 
-export async function getTodayAppointments(providerId?: string): Promise<Appointment[]> {
+export async function getTodayAppointments(
+  providerId?: string,
+): Promise<Appointment[]> {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
@@ -152,21 +175,21 @@ export async function getTodayAppointments(providerId?: string): Promise<Appoint
   endOfDay.setHours(23, 59, 59, 999);
 
   let query = supabase
-    .from('appointments')
-    .select('*')
-    .gte('scheduled_at', startOfDay.toISOString())
-    .lte('scheduled_at', endOfDay.toISOString())
-    .order('scheduled_at', { ascending: true });
+    .from("appointments")
+    .select("*")
+    .gte("scheduled_at", startOfDay.toISOString())
+    .lte("scheduled_at", endOfDay.toISOString())
+    .order("scheduled_at", { ascending: true });
 
   if (providerId) {
-    query = query.eq('provider_id', providerId);
+    query = query.eq("provider_id", providerId);
   }
 
   const { data, error } = await query;
 
   if (error) throw error;
 
-  return data.map(a => ({
+  return data.map((a) => ({
     id: a.id,
     patientId: a.patient_id,
     providerId: a.provider_id,
@@ -177,7 +200,9 @@ export async function getTodayAppointments(providerId?: string): Promise<Appoint
     reason: a.reason,
     notes: a.notes,
     reminderSent: a.reminder_sent,
-    reminderSentAt: a.reminder_sent_at ? new Date(a.reminder_sent_at) : undefined,
+    reminderSentAt: a.reminder_sent_at
+      ? new Date(a.reminder_sent_at)
+      : undefined,
     createdBy: a.created_by,
   }));
 }
@@ -185,17 +210,19 @@ export async function getTodayAppointments(providerId?: string): Promise<Appoint
 export async function checkAvailability(
   providerId: string,
   dateTime: Date,
-  durationMinutes: number
+  durationMinutes: number,
 ): Promise<boolean> {
   const startTime = dateTime;
   const endTime = new Date(dateTime.getTime() + durationMinutes * 60000);
 
   const { data, error } = await supabase
-    .from('appointments')
-    .select('id')
-    .eq('provider_id', providerId)
-    .in('status', ['scheduled', 'confirmed', 'in-progress'])
-    .or(`scheduled_at.gte.${startTime.toISOString()},scheduled_at.lt.${endTime.toISOString()}`);
+    .from("appointments")
+    .select("id")
+    .eq("provider_id", providerId)
+    .in("status", ["scheduled", "confirmed", "in-progress"])
+    .or(
+      `scheduled_at.gte.${startTime.toISOString()},scheduled_at.lt.${endTime.toISOString()}`,
+    );
 
   if (error) throw error;
 
@@ -204,14 +231,14 @@ export async function checkAvailability(
 
 export async function addToWaitlist(entry: WaitlistEntry): Promise<string> {
   const { data, error } = await supabase
-    .from('waitlist')
+    .from("waitlist")
     .insert({
       patient_id: entry.patientId,
       appointment_type: entry.appointmentType,
-      preferred_dates: entry.preferredDates?.map(d => d.toISOString()),
+      preferred_dates: entry.preferredDates?.map((d) => d.toISOString()),
       reason: entry.reason,
       priority: entry.priority,
-      status: 'waiting',
+      status: "waiting",
     })
     .select()
     .single();
@@ -222,15 +249,15 @@ export async function addToWaitlist(entry: WaitlistEntry): Promise<string> {
 
 export async function getWaitlist(): Promise<WaitlistEntry[]> {
   const { data, error } = await supabase
-    .from('waitlist')
-    .select('*')
-    .eq('status', 'waiting')
-    .order('priority', { ascending: true })
-    .order('created_at', { ascending: true });
+    .from("waitlist")
+    .select("*")
+    .eq("status", "waiting")
+    .order("priority", { ascending: true })
+    .order("created_at", { ascending: true });
 
   if (error) throw error;
 
-  return data.map(w => ({
+  return data.map((w) => ({
     id: w.id,
     patientId: w.patient_id,
     appointmentType: w.appointment_type,
@@ -243,23 +270,23 @@ export async function getWaitlist(): Promise<WaitlistEntry[]> {
 
 export async function updateWaitlistStatus(
   waitlistId: string,
-  status: WaitlistEntry['status']
+  status: WaitlistEntry["status"],
 ): Promise<void> {
   const { error } = await supabase
-    .from('waitlist')
+    .from("waitlist")
     .update({ status })
-    .eq('id', waitlistId);
+    .eq("id", waitlistId);
 
   if (error) throw error;
 }
 
 export async function scheduleFromWaitlist(
   waitlistId: string,
-  appointmentData: Omit<Appointment, 'id'>
+  appointmentData: Omit<Appointment, "id">,
 ): Promise<string> {
   const appointmentId = await createAppointment(appointmentData);
 
-  await updateWaitlistStatus(waitlistId, 'scheduled');
+  await updateWaitlistStatus(waitlistId, "scheduled");
 
   return appointmentId;
 }
