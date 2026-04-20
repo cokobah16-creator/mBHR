@@ -171,7 +171,8 @@ alter table dispenses enable row level security;
 -- Policy is already created in 20250930060647_old_dream.sql; guard re-creation.
 do $$
 begin
-  if not exists (
+  -- Guard both table and policy creation for environments applying migrations in sequence.
+  if to_regclass('public.dispenses') is not null and not exists (
     select 1
     from pg_policies
     where schemaname = 'public'
