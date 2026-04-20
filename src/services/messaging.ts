@@ -195,21 +195,27 @@ export class MessageService {
 // Default service instance
 let messageService: MessageService | null = null;
 
+export function selectGateway(
+  termiiKey?: string,
+  termiiSender?: string,
+): SMSGateway {
+  if (termiiKey) {
+    return new TermiiGateway(termiiKey, termiiSender);
+  }
+  logger.warn(
+    "[MessageService] VITE_TERMII_API_KEY not set — using mock gateway. Set this env var to enable real SMS delivery.",
+  );
+  return new MockGateway();
+}
+
 export function getMessageService(): MessageService {
   if (!messageService) {
-    const termiiKey = import.meta.env.VITE_TERMII_API_KEY as string | undefined;
-    const termiiSender = import.meta.env.VITE_TERMII_SENDER_ID as
-      | string
-      | undefined;
-    const gateway = termiiKey
-      ? new TermiiGateway(termiiKey, termiiSender)
-      : new MockGateway();
-    messageService = new MessageService(gateway);
-    if (!termiiKey) {
-      logger.warn(
-        "[MessageService] VITE_TERMII_API_KEY not set — using mock gateway. Set this env var to enable real SMS delivery.",
-      );
-    }
+    messageService = new MessageService(
+      selectGateway(
+        import.meta.env.VITE_TERMII_API_KEY as string | undefined,
+        import.meta.env.VITE_TERMII_SENDER_ID as string | undefined,
+      ),
+    );
   }
   return messageService;
 }

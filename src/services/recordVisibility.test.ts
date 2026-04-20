@@ -10,24 +10,28 @@ const { mockFrom, mockSupabase } = vi.hoisted(() => {
   };
 });
 
-const { mockDbVitals, mockDbConsultations, mockDbDispenses } = vi.hoisted(
-  () => {
-    function makeTable() {
-      return {
-        update: vi.fn().mockResolvedValue(undefined),
-        where: vi.fn().mockReturnThis(),
-        equals: vi.fn().mockReturnThis(),
-        and: vi.fn().mockReturnThis(),
-        toArray: vi.fn().mockResolvedValue([]),
-      };
-    }
+const {
+  mockDbVitals,
+  mockDbConsultations,
+  mockDbDispenses,
+  mockCreateAuditLog,
+} = vi.hoisted(() => {
+  function makeTable() {
     return {
-      mockDbVitals: makeTable(),
-      mockDbConsultations: makeTable(),
-      mockDbDispenses: makeTable(),
+      update: vi.fn().mockResolvedValue(undefined),
+      where: vi.fn().mockReturnThis(),
+      equals: vi.fn().mockReturnThis(),
+      and: vi.fn().mockReturnThis(),
+      toArray: vi.fn().mockResolvedValue([]),
     };
-  },
-);
+  }
+  return {
+    mockDbVitals: makeTable(),
+    mockDbConsultations: makeTable(),
+    mockDbDispenses: makeTable(),
+    mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 vi.mock("@/lib/supabase", () => ({ supabase: mockSupabase }));
 vi.mock("@/db", () => ({
@@ -36,6 +40,7 @@ vi.mock("@/db", () => ({
     consultations: mockDbConsultations,
     dispenses: mockDbDispenses,
   },
+  createAuditLog: mockCreateAuditLog,
 }));
 vi.mock("@/lib/logger", () => ({
   log: vi.fn(),
@@ -193,6 +198,66 @@ describe("recordVisibility service", () => {
       expect(result).toBe(true);
       expect(mockDbVitals.update).not.toHaveBeenCalled();
       expect(mockDbConsultations.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── audit log ────────────────────────────────────────────────────────────────
+
+  describe("audit logging", () => {
+    it("writes a 'hide' audit entry when visible=false", async () => {
+      mockFrom.mockReturnValue(makeFromChain());
+
+      await toggleRecordVisibility({
+        recordType: "vitals",
+        recordId: "v1",
+        patientId: "p1",
+        visible: false,
+        reason: "sensitive",
+        performedBy: "dr-audit",
+      });
+
+      expect(mockCreateAuditLog).toHaveBeenCalledOnce();
+      expect(mockCreateAuditLog).toHaveBeenCalledWith(
+        "dr-audit",
+        "hide",
+        "vitals",
+        "v1",
+      );
+    });
+
+    it("writes a 'show' audit entry when visible=true", async () => {
+      mockFrom.mockReturnValue(makeFromChain());
+
+      await toggleRecordVisibility({
+        recordType: "consultations",
+        recordId: "c1",
+        patientId: "p1",
+        visible: true,
+        performedBy: "nurse-1",
+      });
+
+      expect(mockCreateAuditLog).toHaveBeenCalledOnce();
+      expect(mockCreateAuditLog).toHaveBeenCalledWith(
+        "nurse-1",
+        "show",
+        "consultations",
+        "c1",
+      );
+    });
+
+    it("does NOT write audit log when the toggle throws", async () => {
+      mockDbVitals.update.mockRejectedValue(new Error("DB crash"));
+      mockFrom.mockReturnValue(makeFromChain());
+
+      await toggleRecordVisibility({
+        recordType: "vitals",
+        recordId: "v-fail",
+        patientId: "p1",
+        visible: false,
+        performedBy: "dr1",
+      });
+
+      expect(mockCreateAuditLog).not.toHaveBeenCalled();
     });
   });
 
