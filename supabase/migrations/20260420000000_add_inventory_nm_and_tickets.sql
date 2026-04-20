@@ -171,7 +171,7 @@ CREATE POLICY "Allow authenticated access to prescriptions"
 -- dispenses already exists from an earlier migration. Explicitly evolve the
 -- table shape here so upgraded and fresh databases converge on the same schema.
 
-ALTER TABLE IF EXISTS dispenses
+ALTER TABLE dispenses
   ADD COLUMN IF NOT EXISTS prescription_id text,
   ADD COLUMN IF NOT EXISTS item_id text,
   ADD COLUMN IF NOT EXISTS batch_id text;
