@@ -178,6 +178,9 @@ interface PatientMessagesPanelProps {
 export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
   const { currentUser } = useAuthStore();
   const [threads, setThreads] = useState<PatientThread[]>([]);
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
+    null,
+  );
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("inbox");
   const [loading, setLoading] = useState(true);
@@ -188,6 +191,11 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
 
   // Compose state
   const [patientSearch, setPatientSearch] = useState("");
+  const [patientResults, setPatientResults] = useState<PatientSearchResult[]>(
+    [],
+  );
+  const [selectedPatient, setSelectedPatient] =
+    useState<PatientSearchResult | null>(null);
   const [patientResults, setPatientResults] = useState<PatientSearchResult[]>([]);
   const [selectedPatient, setSelectedPatient] = useState<PatientSearchResult | null>(null);
   const [composeSubject, setComposeSubject] = useState("");
@@ -196,6 +204,9 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
 
   const loadMessages = useCallback(async () => {
     if (!supabase) {
+      setLoadError(
+        "Messaging service is not configured. Please check your database connection.",
+      );
       setLoadError("Messaging service is not configured. Please check your database connection.");
       setLoading(false);
       return;
@@ -222,6 +233,14 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
       const threadList: PatientThread[] = [];
       for (const [patient_id, msgs] of threadMap) {
         const sorted = [...msgs].sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        );
+        const patientMsg = msgs.find((m) => m.from_patient);
+        const patient_name = patientMsg?.from_name || "Unknown Patient";
+        const unread_count = msgs.filter(
+          (m) => m.from_patient && !m.read,
+        ).length;
           (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
         );
         const patientMsg = msgs.find((m) => m.from_patient);
@@ -244,6 +263,9 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
 
       setThreads(threadList);
     } catch (err) {
+      setLoadError(
+        err instanceof Error ? err.message : "Failed to load messages",
+      );
       setLoadError(err instanceof Error ? err.message : "Failed to load messages");
     } finally {
       setLoading(false);
@@ -316,6 +338,8 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
   };
 
   const sendReply = async () => {
+    if (!replyBody.trim() || !selectedThread || !currentUser || !supabase)
+      return;
     if (!replyBody.trim() || !selectedThread || !currentUser || !supabase) return;
 
     setSending(true);
@@ -346,6 +370,14 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
   };
 
   const sendNewMessage = async () => {
+    if (
+      !selectedPatient ||
+      !composeSubject.trim() ||
+      !composeBody.trim() ||
+      !currentUser ||
+      !supabase
+    )
+      return;
     if (!selectedPatient || !composeSubject.trim() || !composeBody.trim() || !currentUser || !supabase) return;
 
     setSending(true);
@@ -453,6 +485,8 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
     setError("");
   };
 
+  const selectedThread =
+    threads.find((t) => t.patient_id === selectedPatientId) ?? null;
   const selectedThread = threads.find((t) => t.patient_id === selectedPatientId) ?? null;
   const totalUnread = threads.reduce((sum, t) => sum + t.unread_count, 0);
 
@@ -598,6 +632,11 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
                 <MagnifyingGlassIcon className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
                 <input
                   type="text"
+                  value={
+                    selectedPatient
+                      ? `${selectedPatient.given_name} ${selectedPatient.family_name}`
+                      : patientSearch
+                  }
                   value={selectedPatient ? `${selectedPatient.given_name} ${selectedPatient.family_name}` : patientSearch}
                   onChange={(e) => {
                     setSelectedPatient(null);
@@ -612,6 +651,9 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
                   {searching ? (
                     <p className="text-xs text-gray-500 p-3">Searching...</p>
                   ) : patientResults.length === 0 ? (
+                    <p className="text-xs text-gray-500 p-3">
+                      No patients found
+                    </p>
                     <p className="text-xs text-gray-500 p-3">No patients found</p>
                   ) : (
                     patientResults.map((p) => (
@@ -712,6 +754,12 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
             <div className="flex gap-2">
               <button
                 onClick={sendNewMessage}
+                disabled={
+                  sending ||
+                  !selectedPatient ||
+                  !composeSubject.trim() ||
+                  !composeBody.trim()
+                }
                 disabled={sending || !selectedPatient || !composeSubject.trim() || !composeBody.trim()}
                 className="flex-1 flex items-center justify-center gap-2 py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors text-sm"
               >
@@ -754,6 +802,9 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
                     <div className="flex items-center gap-2">
                       <UserCircleIcon className="h-5 w-5 text-gray-400" />
                       <span className="font-medium text-sm text-gray-900">
+                        {msg.from_patient
+                          ? msg.from_name
+                          : `${msg.from_name} (Staff)`}
                         {msg.from_patient ? msg.from_name : `${msg.from_name} (Staff)`}
                       </span>
                     </div>
@@ -761,6 +812,12 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
                       {formatNigerianDate(msg.created_at)}
                     </span>
                   </div>
+                  <p className="text-xs font-medium text-gray-500 mb-1">
+                    {msg.subject}
+                  </p>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                    {msg.body}
+                  </p>
                   <p className="text-xs font-medium text-gray-500 mb-1">{msg.subject}</p>
                   <p className="text-sm text-gray-700 whitespace-pre-wrap">{msg.body}</p>
                 </div>
@@ -791,6 +848,9 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
           <div className="flex flex-col items-center justify-center flex-1 text-gray-500">
             <InboxIcon className="h-12 w-12 mx-auto mb-3 text-gray-300" />
             <p className="font-medium">No patient messages yet</p>
+            <p className="text-sm mt-1 mb-4">
+              Messages from patients will appear here
+            </p>
             <p className="text-sm mt-1 mb-4">Messages from patients will appear here</p>
             <button
               onClick={() => setViewMode("compose")}
@@ -846,6 +906,9 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
                   <UserCircleIcon className="h-10 w-10 text-gray-400 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-0.5">
+                      <span
+                        className={`font-medium text-sm ${thread.unread_count > 0 ? "text-gray-900" : "text-gray-700"}`}
+                      >
                       <span className={`font-medium text-sm ${thread.unread_count > 0 ? "text-gray-900" : "text-gray-700"}`}>
                         {thread.patient_name}
                       </span>
@@ -853,6 +916,12 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
                         {formatNigerianDate(thread.latest_message.created_at)}
                       </span>
                     </div>
+                    <p className="text-sm text-gray-600 truncate">
+                      {thread.latest_message.subject}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {thread.latest_message.body}
+                    </p>
                     <p className="text-sm text-gray-600 truncate">{thread.latest_message.subject}</p>
                     <p className="text-xs text-gray-500 truncate">{thread.latest_message.body}</p>
                   </div>

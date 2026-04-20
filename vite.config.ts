@@ -4,6 +4,24 @@ import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "path";
 
 export default defineConfig(({ mode }) => {
+  // loadEnv reads .env / .env.[mode] files; the empty prefix loads all vars.
+  const env = loadEnv(mode, process.cwd(), "");
+
+  // Map bare Supabase env vars (Vercel integration) → VITE_ names so the
+  // Supabase client can find them at runtime.  We only inject a define entry
+  // when the VITE_-prefixed name is NOT already present in the .env file –
+  // if it is, Vite exposes it to the client natively and adding a define
+  // would override it with an empty string on any machine where process.env
+  // lacks the bare name.
+  const defines: Record<string, string> = {};
+  if (!env.VITE_SUPABASE_URL && process.env.SUPABASE_URL) {
+    defines["import.meta.env.VITE_SUPABASE_URL"] = JSON.stringify(
+      process.env.SUPABASE_URL,
+    );
+  }
+  if (!env.VITE_SUPABASE_ANON_KEY && process.env.SUPABASE_ANON_KEY) {
+    defines["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
+      process.env.SUPABASE_ANON_KEY,
   const env = loadEnv(mode, process.cwd(), "");
   const define: Record<string, string> = {};
   const readEnv = (key: string) => env[key]?.trim();
@@ -26,6 +44,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    define: defines,
     define,
     resolve: {
       alias: {
@@ -110,6 +129,12 @@ export default defineConfig(({ mode }) => {
       minify: "terser",
       terserOptions: {
         compress: {
+          drop_console: process.env.NODE_ENV === "production",
+          drop_debugger: true,
+          pure_funcs:
+            process.env.NODE_ENV === "production"
+              ? ["console.log", "console.info"]
+              : [],
           drop_console: isProduction,
           drop_debugger: true,
           pure_funcs: isProduction ? ["console.log", "console.info"] : [],
@@ -117,6 +142,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     esbuild: {
+      drop:
+        process.env.NODE_ENV === "production" ? ["console", "debugger"] : [],
       drop: isProduction ? ["console", "debugger"] : [],
     },
     plugins: [

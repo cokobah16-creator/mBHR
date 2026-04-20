@@ -35,7 +35,7 @@ export interface UseAuthReturn {
 }
 
 export function useAuth(): UseAuthReturn {
-  const [user,    setUser]    = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -52,14 +52,64 @@ export function useAuth(): UseAuthReturn {
       setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-    });
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, newSession) => {
+        setSession(newSession);
+        setUser(newSession?.user ?? null);
+      },
+    );
 
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  const login = useCallback(
+    async (email: string, password: string): Promise<AuthError | null> => {
+      if (!supabase)
+        return {
+          message: "Supabase is not configured — running in offline mode.",
+        };
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) return { message: error.message };
+      return null;
+    },
+    [],
+  );
+
+  const signup = useCallback(
+    async (data: SignUpData): Promise<AuthError | null> => {
+      if (!supabase)
+        return {
+          message: "Supabase is not configured — running in offline mode.",
+        };
+
+      // 1. Create the Supabase auth user
+      const { data: authData, error: signUpError } = await supabase.auth.signUp(
+        {
+          email: data.email,
+          password: data.password,
+          options: {
+            data: { full_name: `${data.givenName} ${data.familyName}`.trim() },
+          },
+        },
+      );
+
+      if (signUpError) return { message: signUpError.message };
+      if (!authData.user)
+        return { message: "Sign-up succeeded but no user was returned." };
+
+      // 2. Look for an existing staff-registered patient with this email or phone.
+      //    If one exists, stamp auth_uid onto it so the portal can find their
+      //    clinical records (vitals, consults, dispenses) via getPatientProfile().
+      const orClauses: string[] = [
+        `email.eq.${data.email.toLowerCase().trim()}`,
+      ];
+      if (data.phone) {
+        const normPhone = normalizePhone(data.phone);
+        if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
+      }
   const login = useCallback(async (email: string, password: string): Promise<AuthError | null> => {
     if (!supabase) return { message: "Supabase is not configured — running in offline mode." };
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -107,19 +157,55 @@ export function useAuth(): UseAuthReturn {
       .or(orClauses.join(","))
       .maybeSingle();
 
-    if (existingPatient) {
-      // Link the new auth user to the pre-existing clinic patient record.
-      const { error: linkError } = await supabase
+      const { data: existingPatient } = await supabase
         .from("patients")
-        .update({ auth_uid: authData.user.id })
-        .eq("id", existingPatient.id);
+        .select("id, auth_uid, dob")
+        .or(orClauses.join(","))
+        .is("auth_uid", null)
+        .maybeSingle();
 
-      if (linkError) {
-        return { message: `Account created but could not link to your clinic record: ${linkError.message}` };
+      if (existingPatient) {
+        // Verify DOB when both sides have it — prevents linking via phone alone.
+        if (
+          existingPatient.dob &&
+          data.dob &&
+          existingPatient.dob !== data.dob
+        ) {
+          // DOB mismatch: don't link; create a fresh row instead.
+        } else {
+          // Conditional update: only succeeds if auth_uid is still NULL (race safety).
+          const { error: linkError } = await supabase
+            .from("patients")
+            .update({ auth_uid: authData.user.id })
+            .eq("id", existingPatient.id)
+            .is("auth_uid", null);
+
+          if (!linkError) return null;
+          // If the conditional update found no rows (already linked by a race),
+          // fall through and create a fresh row.
+        }
       }
-      return null;
-    }
 
+      // 3. No existing clinic record — create a fresh patient row for self-registered users.
+      const { error: insertError } = await supabase.from("patients").insert({
+        id: crypto.randomUUID(),
+        auth_uid: authData.user.id,
+        given_name: data.givenName,
+        family_name: data.familyName,
+        email: data.email,
+        phone: data.phone ?? null,
+        dob: data.dob ?? null,
+        sex: "other",
+        address: "",
+        state: "",
+        lga: "",
+      });
+
+      if (insertError) {
+        return {
+          message: `Account created but profile save failed: ${insertError.message}`,
+        };
+      }
     // 3. No existing clinic record — create a fresh patient row for self-registered users.
     const { error: insertError } = await supabase.from("patients").insert({
       id:           crypto.randomUUID(),
@@ -141,8 +227,10 @@ export function useAuth(): UseAuthReturn {
       return { message: `Account created but profile save failed: ${insertError.message}` };
     }
 
-    return null;
-  }, []);
+      return null;
+    },
+    [],
+  );
 
   const logout = useCallback(async () => {
     if (supabase) await supabase.auth.signOut();

@@ -19,6 +19,7 @@ const offlineSchema = z.object({
   credential: z
     .string()
     .regex(
+      /^\d{4}-\d{2}-\d{2}$/,
       /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/,
       "Please enter your date of birth as YYYY-MM-DD (e.g. 1990-01-15)",
     ),
