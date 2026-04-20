@@ -6,7 +6,7 @@
       - `id` (uuid, primary key)
       - `conflict_type` (text) - 'sync_conflict', 'duplicate', 'data_quality'
       - `entity_type` (text) - 'patients', 'vitals', 'consultations', etc.
-      - `entity_id` (uuid) - The primary record involved
+      - `entity_id` (text) - The primary record involved (supports legacy text IDs and UUIDs)
       - `candidate_ids` (uuid[]) - Related records (for duplicates)
       - `status` (text) - 'pending', 'resolved', 'ignored', 'auto_resolved'
       - `priority` (text) - 'low', 'medium', 'high', 'critical'
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS conflict_resolutions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   conflict_type text NOT NULL CHECK (conflict_type IN ('sync_conflict', 'duplicate', 'data_quality')),
   entity_type text NOT NULL,
-  entity_id uuid NOT NULL,
+  entity_id text NOT NULL,
   candidate_ids uuid[] DEFAULT '{}',
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved', 'ignored', 'auto_resolved', 'needs_approval')),
   priority text NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'critical')),
