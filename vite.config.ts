@@ -1,9 +1,21 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "path";
 
 export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+
+  // Keep Vercel/Supabase integration compatibility: when only SUPABASE_*
+  // vars are present, promote them to VITE_* so existing client code using
+  // import.meta.env.VITE_SUPABASE_* continues to work without define overrides.
+  if (!process.env.VITE_SUPABASE_URL && env.SUPABASE_URL) {
+    process.env.VITE_SUPABASE_URL = env.SUPABASE_URL;
+  }
+  if (!process.env.VITE_SUPABASE_ANON_KEY && env.SUPABASE_ANON_KEY) {
+    process.env.VITE_SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY;
+  }
+
   return {
     resolve: {
       alias: {
