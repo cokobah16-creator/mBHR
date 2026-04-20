@@ -75,17 +75,58 @@ export interface StockMoveNM {
   id: string
   itemId: string
   qtyDelta: number
-  reason: string
+  reason: 'restock' | 'consume' | 'adjust'
+  actorId?: string
+  note?: string
   createdAt: string
+  approvedBy?: string
+  approvedAt?: string
 }
 
 export interface StockMoveRx {
   id: string
   itemId: string
-  batchId: string
+  batchId?: string
   qtyDelta: number
-  reason: string
+  reason: 'receipt' | 'dispense' | 'adjust'
+  actorId?: string
   createdAt: string
+}
+
+export interface RestockSession {
+  id: string
+  volunteerId: string
+  startedAt: string
+  finishedAt?: string
+  deltas: Array<{ itemId: string; qty: number }>
+  tokensEarned: number
+  committed: boolean
+}
+
+export interface AlertNM {
+  id: string
+  itemId: string
+  level: 'low' | 'critical'
+  triggeredAt: string
+  clearedAt?: string
+}
+
+export interface StageEvent {
+  id: string
+  ticketId: string
+  stage: string
+  startedAt?: string
+  finishedAt?: string
+  actorId?: string
+}
+
+export interface Notification {
+  id: string
+  ticketId: string
+  channel: string
+  payload: Record<string, unknown>
+  sentAt?: string
+  status: string
 }
 
 export interface Prescription {
@@ -127,10 +168,13 @@ class MBHRDB extends Dexie {
   stock_moves_rx!: Table<StockMoveRx, string>
   prescriptions!: Table<Prescription, string>
   dispenses!: Table<Dispense, string>
+  restock_sessions!: Table<RestockSession, string>
+  alerts_nm!: Table<AlertNM, string>
+  stage_events!: Table<StageEvent, string>
+  notifications!: Table<Notification, string>
 
   constructor() {
     super('mbhr')
-    // Keep indexes minimal and compatible with the screens we added
     this.version(1).stores({
       tickets: 'id, number, currentStage, state, createdAt',
       inventory_nm: 'id, itemName, updatedAt, reorderThreshold',
@@ -142,7 +186,24 @@ class MBHRDB extends Dexie {
       stock_moves_nm: 'id, itemId, createdAt',
       stock_moves_rx: 'id, itemId, batchId, createdAt',
       prescriptions: 'id, patientId, status, createdAt',
-      dispenses: 'id, prescriptionId, patientId, dispensedAt'
+      dispenses: 'id, prescriptionId, patientId, dispensedAt',
+    })
+    this.version(2).stores({
+      tickets: 'id, number, currentStage, state, createdAt',
+      inventory_nm: 'id, itemName, updatedAt, reorderThreshold',
+      pharmacy_items: 'id, medName, updatedAt',
+      pharmacy_batches: 'id, itemId, expiryDate',
+      gamification: 'id, volunteerId, updatedAt',
+      queue_metrics: 'id, stage, updatedAt',
+      daily_counters: 'id, siteId, dateStr, category',
+      stock_moves_nm: 'id, itemId, createdAt',
+      stock_moves_rx: 'id, itemId, batchId, createdAt',
+      prescriptions: 'id, patientId, status, createdAt',
+      dispenses: 'id, prescriptionId, patientId, dispensedAt',
+      restock_sessions: 'id, volunteerId, startedAt',
+      alerts_nm: 'id, itemId, triggeredAt',
+      stage_events: 'id, ticketId, stage',
+      notifications: 'id, ticketId, status',
     })
   }
 }
