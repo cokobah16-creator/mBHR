@@ -113,13 +113,20 @@ export function useAuth(): UseAuthReturn {
 
       // Security guard: never rebind a patient that already belongs to
       // another auth user, even if their phone/email is matched at sign-up.
-      const { data: linkedPatient } = await supabase
+      const { data: linkedPatient, error: linkedPatientError } = await supabase
         .from("patients")
         .select("id")
         .or(orClauses.join(","))
         .not("auth_uid", "is", null)
         .neq("auth_uid", authData.user.id)
         .maybeSingle();
+
+      if (linkedPatientError) {
+        return {
+          message:
+            "We could not automatically verify your clinic profile. Please contact support for identity verification.",
+        };
+      }
 
       if (linkedPatient) {
         return {
