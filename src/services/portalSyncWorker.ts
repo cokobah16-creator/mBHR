@@ -61,22 +61,17 @@ export async function processPortalInvitationQueue(): Promise<{
           continue;
         }
 
-        // Production: Call actual SMS/Email service
-        // TODO: Implement actual SMS/Email delivery
-        // For now, mark as sent
-        await MessageQueue.markSent(message.id);
-
-        await db.patients
-          .where("id")
-          .equals(message.patientId)
-          .modify((patient) => {
-            if (patient.portalInvitation) {
-              patient.portalInvitation.lastStatus = "sent";
-              patient._dirty = 1;
-            }
-          });
-
-        succeeded++;
+        // Production: SMS/Email gateway not yet wired up.
+        // Hold the message in the queue (mark failed) so it retries when a
+        // provider (e.g. Termii, Twilio) is integrated here.
+        logger.warn(
+          `[portal-sync] No SMS/Email provider configured — message ${message.id} held for retry`,
+        );
+        await MessageQueue.markFailed(
+          message.id,
+          "SMS/Email provider not configured",
+        );
+        failed++;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (error: any) {
         failed++;
