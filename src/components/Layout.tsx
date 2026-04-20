@@ -10,7 +10,6 @@ import { LanguageSelector } from "@/components/LanguageSelector";
 import { AccessibilityControls } from "@/components/AccessibilityControls";
 import { SyncButton } from "@/components/SyncButton";
 import { can } from "@/auth/roles";
-import type { ElementType } from "react";
 import {
   HomeIcon,
   UserGroupIcon,
@@ -114,19 +113,6 @@ function PharmacyOverlay({ onClose }: { onClose: () => void }) {
     </main>
   );
 }
-
-// Fallback icon for nav items missing icons
-const FallbackIcon = (props: React.SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 24 24" fill="none" {...props}>
-    <circle cx="12" cy="12" r="9" stroke="currentColor" />
-  </svg>
-);
-
-type NavItem = {
-  name: string;
-  href: string;
-  icon: ElementType;
-};
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -301,7 +287,7 @@ export function Layout({ children }: LayoutProps) {
                     <p className="text-sm font-medium">
                       {currentUser.fullName}
                     </p>
-                    <p className="text-xs opacity-75 capitalize">
+                    <p className="text-xs text-white/90 capitalize">
                       {currentUser.role}
                     </p>
                   </div>
