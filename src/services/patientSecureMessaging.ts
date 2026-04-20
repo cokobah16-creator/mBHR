@@ -56,7 +56,7 @@ async function loadPatientNameMap(patientIds: string[]) {
   return map;
 }
 
-export async function getDoctorMessageInbox(staffId: string): Promise<{
+export async function getDoctorMessageInbox(_staffId: string): Promise<{
   messages: PatientSecureMessage[];
   patientNames: Map<string, string>;
 }> {
@@ -65,7 +65,6 @@ export async function getDoctorMessageInbox(staffId: string): Promise<{
   const { data, error } = await supabase
     .from("patient_secure_messages")
     .select("*")
-    .or(`staff_id.eq.${staffId},and(staff_id.is.null,from_patient.eq.true)`)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -78,15 +77,14 @@ export async function getDoctorMessageInbox(staffId: string): Promise<{
   return { messages, patientNames };
 }
 
-export async function getDoctorUnreadCount(staffId: string): Promise<number> {
+export async function getDoctorUnreadCount(_staffId: string): Promise<number> {
   if (!supabase) return 0;
 
   const { count, error } = await supabase
     .from("patient_secure_messages")
     .select("id", { count: "exact", head: true })
     .eq("from_patient", true)
-    .eq("read", false)
-    .or(`staff_id.eq.${staffId},staff_id.is.null`);
+    .eq("read", false);
 
   if (error) throw error;
   return count || 0;
