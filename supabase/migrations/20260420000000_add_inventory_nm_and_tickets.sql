@@ -180,9 +180,14 @@ DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'dispenses_prescription_id_fkey'
-      AND conrelid = 'dispenses'::regclass
+    FROM pg_constraint c
+    JOIN pg_attribute a
+      ON a.attrelid = c.conrelid
+     AND a.attnum = ANY (c.conkey)
+    WHERE c.contype = 'f'
+      AND c.conrelid = 'dispenses'::regclass
+      AND a.attname = 'prescription_id'
+      AND c.confrelid = 'prescriptions'::regclass
   ) THEN
     ALTER TABLE dispenses
       ADD CONSTRAINT dispenses_prescription_id_fkey
@@ -191,9 +196,14 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'dispenses_item_id_fkey'
-      AND conrelid = 'dispenses'::regclass
+    FROM pg_constraint c
+    JOIN pg_attribute a
+      ON a.attrelid = c.conrelid
+     AND a.attnum = ANY (c.conkey)
+    WHERE c.contype = 'f'
+      AND c.conrelid = 'dispenses'::regclass
+      AND a.attname = 'item_id'
+      AND c.confrelid = 'pharmacy_items'::regclass
   ) THEN
     ALTER TABLE dispenses
       ADD CONSTRAINT dispenses_item_id_fkey
@@ -202,9 +212,14 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'dispenses_batch_id_fkey'
-      AND conrelid = 'dispenses'::regclass
+    FROM pg_constraint c
+    JOIN pg_attribute a
+      ON a.attrelid = c.conrelid
+     AND a.attnum = ANY (c.conkey)
+    WHERE c.contype = 'f'
+      AND c.conrelid = 'dispenses'::regclass
+      AND a.attname = 'batch_id'
+      AND c.confrelid = 'pharmacy_batches'::regclass
   ) THEN
     ALTER TABLE dispenses
       ADD CONSTRAINT dispenses_batch_id_fkey
