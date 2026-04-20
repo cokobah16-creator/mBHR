@@ -168,12 +168,24 @@ create table if not exists dispenses (
 );
 
 alter table dispenses enable row level security;
-create policy "Allow authenticated access to dispenses"
-  on dispenses
-  for all
-  to authenticated
-  using (true)
-  with check (true);
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'dispenses'
+      and policyname = 'Allow authenticated access to dispenses'
+  ) then
+    create policy "Allow authenticated access to dispenses"
+      on dispenses
+      for all
+      to authenticated
+      using (true)
+      with check (true);
+  end if;
+end
+$$;
 
 create table if not exists stock_moves_rx (
   id text primary key,
