@@ -122,7 +122,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const displayName = activeProfile?.givenName || name;
 
   const handleLogout = () => {
-    localStorage.removeItem("patient_session_token");
+    sessionStorage.removeItem("patient_session_token");
     localStorage.removeItem("patient_portal_user");
     localStorage.removeItem("patient_active_profile");
     navigate("/patient");

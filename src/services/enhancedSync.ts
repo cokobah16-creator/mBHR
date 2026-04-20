@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/db";
 import { queryCache } from "@/utils/queryCache";
 import logger from "@/lib/logger";
+import { getErrorMessage } from "@/utils/errors";
 
 interface SyncResult {
   success: boolean;
@@ -21,7 +22,7 @@ interface TableSyncConfig {
   hasDirtyFlag: boolean;
 }
 
-class EnhancedSync {
+export class EnhancedSync {
   private client: SupabaseClient | null = null;
   private syncing = false;
   private lastSyncTimes: Map<string, Date> = new Map();
@@ -656,15 +657,14 @@ class EnhancedSync {
       queryCache.invalidatePattern(new RegExp(`^${config.localTable}:`));
 
       return { success: true, pushed, pulled, conflicts };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error(`Sync failed for ${config.localTable}`, error);
       return {
         success: false,
         pushed,
         pulled,
         conflicts,
-        error: error.message,
+        error: getErrorMessage(error),
       };
     }
   }

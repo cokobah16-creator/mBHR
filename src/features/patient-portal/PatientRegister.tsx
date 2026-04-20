@@ -39,25 +39,32 @@ const onlineSchema = z
     path: ["confirmPassword"],
   });
 
-// Offline: DOB is the login credential — no password fields
-const offlineSchema = z.object({
-  fullName: z.string().min(2, "Full name is required"),
-  email: z.string().email("Please enter a valid email address"),
-  phone: z
-    .string()
-    .regex(/^\+?[\d\s-]{7,}$/, "Invalid phone number")
-    .optional()
-    .or(z.literal("")),
-  dateOfBirth: z
-    .string()
-    .regex(
-      /^\d{4}-\d{2}-\d{2}$/,
-      "Please enter your date of birth as YYYY-MM-DD",
-    ),
-  consentGiven: z
-    .boolean()
-    .refine((v) => v === true, "You must accept the terms to continue"),
-});
+// Offline: PIN is the login credential — 6-digit required
+const offlineSchema = z
+  .object({
+    fullName: z.string().min(2, "Full name is required"),
+    email: z.string().email("Please enter a valid email address"),
+    phone: z
+      .string()
+      .regex(/^\+?[\d\s-]{7,}$/, "Invalid phone number")
+      .optional()
+      .or(z.literal("")),
+    dateOfBirth: z
+      .string()
+      .regex(
+        /^\d{4}-\d{2}-\d{2}$/,
+        "Please enter your date of birth as YYYY-MM-DD",
+      ),
+    pin: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
+    confirmPin: z.string(),
+    consentGiven: z
+      .boolean()
+      .refine((v) => v === true, "You must accept the terms to continue"),
+  })
+  .refine((d) => d.pin === d.confirmPin, {
+    message: "PINs do not match",
+    path: ["confirmPin"],
+  });
 
 const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
 type RegistrationForm = z.infer<typeof schema>;
@@ -91,6 +98,8 @@ export function PatientRegister() {
           email: prefillEmail,
           phone: prefillPhone,
           dateOfBirth: "",
+          pin: "",
+          confirmPin: "",
           consentGiven: false,
         },
   });
@@ -154,16 +163,18 @@ export function PatientRegister() {
     const givenName = parts[0] ?? data.fullName;
     const familyName = parts.slice(1).join(" ") || "";
 
-    // dateOfBirth is required in offline mode (enforced by offlineSchema)
+    // dateOfBirth and pin are required in offline mode (enforced by offlineSchema)
+    const offlineData = data as z.infer<typeof offlineSchema>;
     const result = await registerPatientPortalAccount(
       data.phone || undefined,
       data.email,
       data.dateOfBirth!,
       givenName,
       familyName,
+      offlineData.pin,
     );
     if (result.success && result.sessionToken) {
-      localStorage.setItem("patient_session_token", result.sessionToken);
+      sessionStorage.setItem("patient_session_token", result.sessionToken);
       localStorage.setItem(
         "patient_portal_user",
         JSON.stringify(result.portalUser),
@@ -215,10 +226,9 @@ export function PatientRegister() {
                     Offline mode
                   </p>
                   <p className="text-xs text-yellow-700">
-                    Your account will be stored on this device only. Email
-                    invitations are not available — you can register directly
-                    here. Your <strong>date of birth</strong> will be used to
-                    log in, so make sure to enter it correctly.
+                    Your account will be stored on this device only. You will
+                    create a <strong>6-digit PIN</strong> to log in — remember
+                    it, as it cannot be reset without staff assistance.
                   </p>
                 </div>
               )}
@@ -329,35 +339,102 @@ export function PatientRegister() {
                   )}
                 </div>
 
-                {/* Offline: DOB is the login credential — shown prominently and required */}
+                {/* Offline: collect DOB for record-matching; PIN is the login credential */}
                 {!isSupabaseEnabled && (
-                  <div>
-                    <label
-                      htmlFor="dateOfBirth"
-                      className="block text-sm font-medium text-gray-700 mb-2"
-                    >
-                      Date of Birth *{" "}
-                      <span className="text-xs font-normal text-blue-600">
-                        (used to log in)
-                      </span>
-                    </label>
-                    <input
-                      {...form.register("dateOfBirth")}
-                      type="date"
-                      id="dateOfBirth"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      disabled={loading}
-                      autoComplete="bday"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">
-                      You will use this date of birth every time you log in.
-                    </p>
-                    {form.formState.errors.dateOfBirth && (
-                      <p className="mt-1 text-xs text-red-600">
-                        {form.formState.errors.dateOfBirth.message}
+                  <>
+                    <div>
+                      <label
+                        htmlFor="dateOfBirth"
+                        className="block text-sm font-medium text-gray-700 mb-2"
+                      >
+                        Date of Birth *
+                      </label>
+                      <input
+                        {...form.register("dateOfBirth")}
+                        type="date"
+                        id="dateOfBirth"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        disabled={loading}
+                        autoComplete="bday"
+                      />
+                      {form.formState.errors.dateOfBirth && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {form.formState.errors.dateOfBirth.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="pin"
+                        className="block text-sm font-medium text-gray-700 mb-2"
+                      >
+                        6-Digit PIN *{" "}
+                        <span className="text-xs font-normal text-blue-600">
+                          (used to log in)
+                        </span>
+                      </label>
+                      <input
+                        {...form.register("pin" as keyof RegistrationForm)}
+                        type="password"
+                        id="pin"
+                        inputMode="numeric"
+                        placeholder="••••••"
+                        maxLength={6}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent tracking-widest"
+                        disabled={loading}
+                        autoComplete="new-password"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        Choose 6 digits you can remember. You will enter this
+                        every time you log in.
                       </p>
-                    )}
-                  </div>
+                      {form.formState.errors[
+                        "pin" as keyof RegistrationForm
+                      ] && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {
+                            form.formState.errors[
+                              "pin" as keyof RegistrationForm
+                            ]?.message as string
+                          }
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="confirmPin"
+                        className="block text-sm font-medium text-gray-700 mb-2"
+                      >
+                        Confirm PIN *
+                      </label>
+                      <input
+                        {...form.register(
+                          "confirmPin" as keyof RegistrationForm,
+                        )}
+                        type="password"
+                        id="confirmPin"
+                        inputMode="numeric"
+                        placeholder="••••••"
+                        maxLength={6}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent tracking-widest"
+                        disabled={loading}
+                        autoComplete="new-password"
+                      />
+                      {form.formState.errors[
+                        "confirmPin" as keyof RegistrationForm
+                      ] && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {
+                            form.formState.errors[
+                              "confirmPin" as keyof RegistrationForm
+                            ]?.message as string
+                          }
+                        </p>
+                      )}
+                    </div>
+                  </>
                 )}
 
                 {/* Password fields only shown in online (Supabase) mode */}

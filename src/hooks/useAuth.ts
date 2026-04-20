@@ -46,11 +46,14 @@ export function useAuth(): UseAuthReturn {
     }
 
     // Prime from existing session immediately (no network call)
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      setLoading(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        setSession(data.session);
+        setUser(data.session?.user ?? null);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, newSession) => {
@@ -198,8 +201,8 @@ export function useAuth(): UseAuthReturn {
 
   const logout = useCallback(async () => {
     if (supabase) await supabase.auth.signOut();
-    // Clear legacy localStorage keys from the old offline auth system
-    localStorage.removeItem("patient_session_token");
+    // Clear legacy session keys from the old offline auth system
+    sessionStorage.removeItem("patient_session_token");
     localStorage.removeItem("patient_portal_user");
     localStorage.removeItem("patient_active_profile");
   }, []);

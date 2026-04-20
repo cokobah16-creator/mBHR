@@ -2,6 +2,7 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/db";
 import { queryCache } from "@/utils/queryCache";
+import { getErrorMessage } from "@/utils/errors";
 
 interface SyncStatus {
   lastSync: Date | null;
@@ -136,13 +137,13 @@ class SupabaseSync {
       });
 
       return { success: true };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
+       
+    } catch (error: unknown) {
       this.updateStatus({
         status: "error",
-        errorMessage: error.message || "Sync failed",
+        errorMessage: getErrorMessage(error),
       });
-      return { success: false, error: error.message };
+      return { success: false, error: getErrorMessage(error) };
     }
   }
 
@@ -291,13 +292,13 @@ class SupabaseSync {
       });
 
       return { success: true };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
+       
+    } catch (error: unknown) {
       this.updateStatus({
         status: "error",
-        errorMessage: error.message,
+        errorMessage: getErrorMessage(error),
       });
-      return { success: false, error: error.message };
+      return { success: false, error: getErrorMessage(error) };
     }
   }
 

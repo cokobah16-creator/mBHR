@@ -215,16 +215,10 @@ const localTableMap: Record<Tbl, string> = {
 const DEFAULT_TS = "1970-01-01T00:00:00.000Z";
 const CURSOR_KEY = (t: Tbl) => `sync_cursor:${t}`;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type Cursor = { ts: string };
-
 async function getCursor(table: Tbl): Promise<string> {
   // settings store shape: { key: string, value: any }
 
-  const row = await db.settings
-    .get(CURSOR_KEY(table))
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .catch(() => undefined as any);
+  const row = await db.settings.get(CURSOR_KEY(table)).catch(() => undefined);
   const ts = row?.value?.ts ?? row?.ts ?? row?.value ?? undefined; // be liberal in what we accept
   if (typeof ts === "string" && ts) return ts;
   return DEFAULT_TS;
@@ -280,8 +274,6 @@ async function detectConflict(
     // Detect field-level conflicts
     const conflicts: ConflictField[] = [];
     const dbMap = mapToDB[table];
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _fieldMap = mapFromDB[table];
 
     for (const [appKey, dbKey] of Object.entries(dbMap)) {
       const localVal = localData[appKey];
@@ -317,8 +309,7 @@ async function detectConflict(
       localData,
       remoteData,
     };
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  } catch (_err) {
+  } catch {
     return { hasConflict: false };
   }
 }
@@ -335,7 +326,10 @@ export async function pushChanges() {
       .where("_dirty")
       .equals(1)
       .toArray()
-      .catch(() => []);
+      .catch((e: unknown) => {
+        console.error(`[sync] failed to read dirty records for ${t}:`, e);
+        return [];
+      });
     if (!dirty?.length) continue;
 
     for (const record of dirty) {

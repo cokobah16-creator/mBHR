@@ -40,7 +40,8 @@ export interface LocalPortalUser {
 function getLocalPortalUsers(): LocalPortalUser[] {
   try {
     return JSON.parse(localStorage.getItem(PORTAL_USERS_KEY) || "[]");
-  } catch {
+  } catch (e) {
+    logger.warn("Failed to parse portal users from localStorage:", e);
     return [];
   }
 }
@@ -98,7 +99,7 @@ export async function registerPatientPortalAccount(
   dob: string,
   givenName: string,
   familyName: string,
-  pin?: string,
+  pin: string,
 ): Promise<PatientPortalAuthResponse> {
   try {
     if (!phone && !email) {
@@ -109,6 +110,9 @@ export async function registerPatientPortalAccount(
     }
     if (!dob) {
       return { success: false, error: "Date of birth is required." };
+    }
+    if (!pin || !/^\d{6}$/.test(pin)) {
+      return { success: false, error: "A 6-digit PIN is required." };
     }
 
     const users = getLocalPortalUsers();
@@ -419,8 +423,8 @@ export async function loginPatientPortal(
                 "No portal account found. Please register first using the details your clinic has on file.",
             };
           }
-        } catch {
-          // ignore
+        } catch (e) {
+          logger.debug("Supabase portal hint lookup failed:", e);
         }
       }
 
@@ -488,7 +492,7 @@ export async function logout(sessionToken: string): Promise<boolean> {
     user.sessionExpiresAt = undefined;
     saveLocalPortalUsers(users);
   }
-  localStorage.removeItem("patient_session_token");
+  sessionStorage.removeItem("patient_session_token");
   localStorage.removeItem("patient_portal_user");
   localStorage.removeItem("patient_active_profile");
   return true;

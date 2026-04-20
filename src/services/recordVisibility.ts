@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { db } from "@/db";
+import { db, createAuditLog } from "@/db";
 import * as logger from "@/lib/logger";
 
 export type RecordType =
@@ -96,6 +96,12 @@ export async function toggleRecordVisibility(
       }
     }
 
+    await createAuditLog(
+      input.performedBy,
+      input.visible ? "show" : "hide",
+      input.recordType,
+      input.recordId,
+    );
     logger.log(`Record ${input.recordId} visibility set to ${input.visible}`);
     return true;
   } catch (error) {
@@ -211,9 +217,7 @@ export async function getVisibilityLog(
   }
 }
 
-export async function getPatientVisibilityStats(
-  patientId: string,
-): Promise<{
+export async function getPatientVisibilityStats(patientId: string): Promise<{
   total: number;
   hidden: number;
   byType: Record<RecordType, { total: number; hidden: number }>;
