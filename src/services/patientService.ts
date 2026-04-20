@@ -387,7 +387,7 @@ export async function addVisit(
 
   // If there are notes/diagnosis, create a consultation record too
   if (visit.notes || visit.diagnosis) {
-    const { error: consultError } = await supabase
+    const { data: consultationRow, error: consultError } = await supabase
       .from("consultations")
       .insert({
         id: crypto.randomUUID(),
@@ -399,11 +399,15 @@ export async function addVisit(
         soap_assessment: visit.diagnosis ?? "",
         soap_plan: "",
         provisional_dx: [],
-      });
-    if (consultError) {
+      })
+      .select("id")
+      .single();
+    if (consultError || !consultationRow) {
+      const consultationFailureReason =
+        consultError?.message ?? "No consultation row returned";
       logger.error(
         "[patientService] addVisit (consultation):",
-        consultError.message,
+        consultationFailureReason,
       );
       // Best-effort rollback so we do not leave a visit without its clinical note.
       const { error: rollbackError } = await supabase
@@ -419,13 +423,13 @@ export async function addVisit(
 
         return {
           data: null,
-          error: `Consultation save failed and visit cleanup failed: ${consultError.message}. Cleanup error: ${rollbackError.message}`,
+          error: `Consultation save failed and visit cleanup failed: ${consultationFailureReason}. Cleanup error: ${rollbackError.message}`,
         };
       }
 
       return {
         data: null,
-        error: `Consultation save failed; visit was rolled back: ${consultError.message}`,
+        error: `Consultation save failed; visit was rolled back: ${consultationFailureReason}`,
       };
     }
   }
