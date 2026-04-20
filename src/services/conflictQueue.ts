@@ -154,6 +154,13 @@ function getFieldPHISensitivity(field: string): PHISensitivity {
   return PHI_FIELDS[field] || "none";
 }
 
+class InvalidDuplicateScanPatientError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidDuplicateScanPatientError";
+  }
+}
+
 function calculateOverallPHISensitivity(
   fields: ConflictField[],
 ): PHISensitivity {
@@ -796,6 +803,9 @@ export class ConflictQueueService {
       try {
         const dob = new Date(patient.dob);
         const hasValidDob = Number.isFinite(dob.getTime());
+        if (!hasValidDob || !patient.givenName || !patient.familyName) {
+          throw new InvalidDuplicateScanPatientError(
+            "Patient record is missing required duplicate-scan fields",
         const hasGivenName = Boolean(patient.givenName);
         const hasFamilyName = Boolean(patient.familyName);
         if (!hasValidDob || !hasGivenName || !hasFamilyName) {
@@ -841,6 +851,13 @@ export class ConflictQueueService {
           }
         }
       } catch (error) {
+        if (error instanceof InvalidDuplicateScanPatientError) {
+          skippedRecords++;
+          logger.warn("Skipping patient with invalid duplicate-scan data", {
+            patientId: patient.id,
+            hasValidDob: Number.isFinite(new Date(patient.dob).getTime()),
+            hasGivenName: Boolean(patient.givenName),
+            hasFamilyName: Boolean(patient.familyName),
         if (error instanceof DuplicateScanValidationError) {
           skippedRecords++;
           logger.warn("Skipping patient with invalid duplicate-scan data", {
