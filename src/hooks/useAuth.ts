@@ -115,36 +115,28 @@ export function useAuth(): UseAuthReturn {
         .from("patients")
         .select("id, auth_uid, dob")
         .or(orClauses.join(","))
+        .is("auth_uid", null)
         .maybeSingle();
 
       if (existingPatient) {
-        // Guard: if the row is already linked to a different auth user, don't
-        // overwrite it — that would let a phone-match hijack another patient's record.
+        // Verify DOB when both sides have it — prevents linking via phone alone.
         if (
-          existingPatient.auth_uid &&
-          existingPatient.auth_uid !== authData.user.id
+          existingPatient.dob &&
+          data.dob &&
+          existingPatient.dob !== data.dob
         ) {
-          // Fall through to create a fresh, unlinked patient row for this registrant.
+          // DOB mismatch: don't link; create a fresh row instead.
         } else {
-          // Verify DOB when both sides have it — prevents linking via phone alone.
-          if (
-            existingPatient.dob &&
-            data.dob &&
-            existingPatient.dob !== data.dob
-          ) {
-            // DOB mismatch: don't link; create a fresh row instead.
-          } else {
-            // Conditional update: only succeeds if auth_uid is still NULL (race safety).
-            const { error: linkError } = await supabase
-              .from("patients")
-              .update({ auth_uid: authData.user.id })
-              .eq("id", existingPatient.id)
-              .is("auth_uid", null);
+          // Conditional update: only succeeds if auth_uid is still NULL (race safety).
+          const { error: linkError } = await supabase
+            .from("patients")
+            .update({ auth_uid: authData.user.id })
+            .eq("id", existingPatient.id)
+            .is("auth_uid", null);
 
-            if (!linkError) return null;
-            // If the conditional update found no rows (already linked by a race),
-            // fall through and create a fresh row.
-          }
+          if (!linkError) return null;
+          // If the conditional update found no rows (already linked by a race),
+          // fall through and create a fresh row.
         }
       }
 
