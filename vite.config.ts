@@ -17,6 +17,15 @@ export default defineConfig(({ mode }) => {
     define["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
       env.SUPABASE_ANON_KEY,
     );
+
+  // Keep Vercel/Supabase integration compatibility: when only SUPABASE_*
+  // vars are present, promote them to VITE_* so existing client code using
+  // import.meta.env.VITE_SUPABASE_* continues to work without define overrides.
+  if (!process.env.VITE_SUPABASE_URL && env.SUPABASE_URL) {
+    process.env.VITE_SUPABASE_URL = env.SUPABASE_URL;
+  }
+  if (!process.env.VITE_SUPABASE_ANON_KEY && env.SUPABASE_ANON_KEY) {
+    process.env.VITE_SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY;
   }
 
   return {
