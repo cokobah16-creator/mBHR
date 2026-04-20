@@ -385,8 +385,16 @@ export async function addVisit(
     return { data: null, error: visitError.message };
   }
 
+  const hasClinicalNote = [visit.notes, visit.diagnosis].some((entry) => {
+    if (typeof entry === "string") return entry.trim().length > 0;
+    return entry != null;
+  });
+
   // If there are notes/diagnosis, create a consultation record too
-  if (visit.notes || visit.diagnosis) {
+  if (hasClinicalNote) {
+    const soapSubjective = visit.notes?.trim() ?? "";
+    const soapAssessment = visit.diagnosis?.trim() ?? "";
+
     const { error: consultError } = await supabase
       .from("consultations")
       .insert({
@@ -394,9 +402,9 @@ export async function addVisit(
         patient_id: patientId,
         visit_id: visitId,
         provider_name: "Staff (portal)",
-        soap_subjective: visit.notes ?? "",
+        soap_subjective: soapSubjective,
         soap_objective: "",
-        soap_assessment: visit.diagnosis ?? "",
+        soap_assessment: soapAssessment,
         soap_plan: "",
         provisional_dx: [],
       });
@@ -409,7 +417,8 @@ export async function addVisit(
       const { error: rollbackError } = await supabase
         .from("visits")
         .delete()
-        .eq("id", visitId);
+        .eq("id", visitId)
+        .eq("patient_id", patientId);
 
       if (rollbackError) {
         logger.error(
