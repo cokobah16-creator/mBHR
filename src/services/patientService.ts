@@ -510,20 +510,25 @@ export async function addVisit(
         provisional_dx: [],
       });
   if (hasConsultationContent) {
-    const { error: consultError } = await supabase.from("consultations").insert({
-      id: crypto.randomUUID(),
-      patient_id: patientId,
-      visit_id: visitId,
-      provider_name: "Staff (portal)",
-      soap_subjective: visit.notes ?? "",
-      soap_objective: "",
-      soap_assessment: visit.diagnosis ?? "",
-      soap_plan: "",
-      provisional_dx: [],
-    });
+    const { data: consultRow, error: consultError } = await supabase
+      .from("consultations")
+      .insert({
+        id: crypto.randomUUID(),
+        patient_id: patientId,
+        visit_id: visitId,
+        provider_name: "Staff (portal)",
+        soap_subjective: visit.notes ?? "",
+        soap_objective: "",
+        soap_assessment: visit.diagnosis ?? "",
+        soap_plan: "",
+        provisional_dx: [],
+      })
+      .select("id")
+      .single();
 
-    if (consultError) {
-      logger.error("[patientService] addVisit (consultation):", consultError.message);
+    if (consultError || !consultRow?.id) {
+      const consultFailureMessage = consultError?.message ?? "No consultation row was returned after insert";
+      logger.error("[patientService] addVisit (consultation):", consultFailureMessage);
 
       // Best-effort rollback to avoid reporting a successful visit when clinical
       // notes failed to persist.
@@ -541,13 +546,13 @@ export async function addVisit(
 
         return {
           data: null,
-          error: `Consultation save failed and visit cleanup failed: ${consultError.message}. Cleanup error: ${rollbackError.message}`,
+          error: `Consultation save failed and visit cleanup failed: ${consultFailureMessage}. Cleanup error: ${rollbackError.message}`,
         };
       }
 
       return {
         data: null,
-        error: `Consultation save failed; visit was rolled back: ${consultError.message}`,
+        error: `Consultation save failed; visit was rolled back: ${consultFailureMessage}`,
       };
     }
   }
