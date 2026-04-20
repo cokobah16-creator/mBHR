@@ -31,6 +31,7 @@ import {
 } from "@/services/portalEnrollment";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useToast } from "@/stores/toast";
+import { getErrorMessage } from "@/utils/errors";
 
 interface PortalStatusCardProps {
   patientId: string;
@@ -115,12 +116,12 @@ export function PortalStatusCard({
           body: result.error || "Failed to update portal access",
         });
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
+       
+    } catch (error: unknown) {
       pushToast({
         id: crypto.randomUUID(),
         title: "Error",
-        body: error.message || "An error occurred",
+        body: getErrorMessage(error),
       });
     } finally {
       setToggling(false);
@@ -155,12 +156,12 @@ export function PortalStatusCard({
           body: result.error || "Failed to send invitation",
         });
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
+       
+    } catch (error: unknown) {
       pushToast({
         id: crypto.randomUUID(),
         title: "Error",
-        body: error.message || "Failed to send invitation",
+        body: getErrorMessage(error),
       });
     } finally {
       setSending(false);

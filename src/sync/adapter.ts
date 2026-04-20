@@ -215,9 +215,6 @@ const localTableMap: Record<Tbl, string> = {
 const DEFAULT_TS = "1970-01-01T00:00:00.000Z";
 const CURSOR_KEY = (t: Tbl) => `sync_cursor:${t}`;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type Cursor = { ts: string };
-
 async function getCursor(table: Tbl): Promise<string> {
   // settings store shape: { key: string, value: any }
 
@@ -277,8 +274,6 @@ async function detectConflict(
     // Detect field-level conflicts
     const conflicts: ConflictField[] = [];
     const dbMap = mapToDB[table];
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _fieldMap = mapFromDB[table];
 
     for (const [appKey, dbKey] of Object.entries(dbMap)) {
       const localVal = localData[appKey];
@@ -314,8 +309,7 @@ async function detectConflict(
       localData,
       remoteData,
     };
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  } catch (_err) {
+  } catch {
     return { hasConflict: false };
   }
 }

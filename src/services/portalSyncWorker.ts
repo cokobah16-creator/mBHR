@@ -9,6 +9,7 @@ import { db } from "@/db";
 import { supabase } from "@/lib/supabase";
 import { MessageQueue } from "@/db/outbox";
 import * as logger from "@/lib/logger";
+import { getErrorMessage } from "@/utils/errors";
 
 let isProcessing = false;
 let syncIntervalId: number | null = null;
@@ -72,17 +73,13 @@ export async function processPortalInvitationQueue(): Promise<{
           "SMS/Email provider not configured",
         );
         failed++;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (error: any) {
+      } catch (error: unknown) {
         failed++;
         logger.error(
           `Failed to process invitation for patient ${message.patientId}:`,
           error,
         );
-        await MessageQueue.markFailed(
-          message.id,
-          error.message || "Unknown error",
-        );
+        await MessageQueue.markFailed(message.id, getErrorMessage(error));
 
         // Update patient invitation status
         await db.patients
@@ -91,8 +88,7 @@ export async function processPortalInvitationQueue(): Promise<{
           .modify((patient) => {
             if (patient.portalInvitation) {
               patient.portalInvitation.lastStatus = "failed";
-              patient.portalInvitation.failureReason =
-                error.message || "Unknown error";
+              patient.portalInvitation.failureReason = getErrorMessage(error);
               patient._dirty = 1;
             }
           });

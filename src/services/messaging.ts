@@ -76,8 +76,8 @@ export class MockGateway implements SMSGateway {
       payload: message.payload,
     });
 
-    // Simulate random success/failure for testing
-    const success = Math.random() > 0.1; // 90% success rate
+    // Simulate random success/failure for testing (~90% success rate)
+    const success = crypto.getRandomValues(new Uint8Array(1))[0] > 25;
 
     return success
       ? { success: true, messageId: `mock_${Date.now()}` }

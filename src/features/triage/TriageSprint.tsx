@@ -142,10 +142,13 @@ export default function TriageSprint() {
     if (!currentUser) return;
 
     try {
-      // Shuffle cases and take 3
-      const shuffled = [...triageCases]
-        .sort(() => Math.random() - 0.5)
-        .slice(0, 3);
+      // Shuffle cases and take 3 — Fisher-Yates with crypto RNG
+      const shuffled = [...triageCases];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      shuffled.splice(3);
 
       const session = await GamificationService.startSession(
         "triage",
