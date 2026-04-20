@@ -172,10 +172,12 @@ do $$
 begin
   if not exists (
     select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'dispenses'
-      and policyname = 'Allow authenticated access to dispenses'
+    from pg_policy p
+    join pg_class c on c.oid = p.polrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = 'dispenses'
+      and p.polname = 'Allow authenticated access to dispenses'
   ) then
     create policy "Allow authenticated access to dispenses"
       on dispenses

@@ -6,14 +6,19 @@ import { resolve } from "path";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const define: Record<string, string> = {};
+  const hasValue = (value?: string) =>
+    Boolean(value && value.trim().length > 0);
 
-  if (!env.VITE_SUPABASE_URL && env.SUPABASE_URL) {
+  if (!hasValue(env.VITE_SUPABASE_URL) && hasValue(env.SUPABASE_URL)) {
     define["import.meta.env.VITE_SUPABASE_URL"] = JSON.stringify(
       env.SUPABASE_URL,
     );
   }
 
-  if (!env.VITE_SUPABASE_ANON_KEY && env.SUPABASE_ANON_KEY) {
+  if (
+    !hasValue(env.VITE_SUPABASE_ANON_KEY) &&
+    hasValue(env.SUPABASE_ANON_KEY)
+  ) {
     define["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
       env.SUPABASE_ANON_KEY,
     );
