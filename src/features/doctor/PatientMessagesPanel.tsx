@@ -46,7 +46,10 @@ interface PatientMessagesPanelProps {
   onUnreadChange?: (count: number) => void;
 }
 
-export function PatientMessagesPanel({ onClose, onUnreadChange }: PatientMessagesPanelProps) {
+export function PatientMessagesPanel({
+  onClose,
+  onUnreadChange,
+}: PatientMessagesPanelProps) {
   const { currentUser } = useAuthStore();
   const [threads, setThreads] = useState<PatientThread[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
@@ -78,12 +81,18 @@ export function PatientMessagesPanel({ onClose, onUnreadChange }: PatientMessage
       setLoading(false);
       return;
     }
+    if (!currentUser?.id) {
+      setThreads([]);
+      setLoading(false);
+      return;
+    }
 
     setLoadError("");
     try {
       const { data, error: fetchError } = await supabase
         .from("patient_secure_messages")
         .select("*")
+        .or(`staff_id.eq.${currentUser.id},staff_id.is.null`)
         .order("created_at", { ascending: false });
 
       if (fetchError) throw fetchError;
@@ -131,7 +140,7 @@ export function PatientMessagesPanel({ onClose, onUnreadChange }: PatientMessage
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     loadMessages();
@@ -216,7 +225,7 @@ export function PatientMessagesPanel({ onClose, onUnreadChange }: PatientMessage
           from_patient: false,
           from_name: currentUser.fullName,
           staff_id: currentUser.id,
-          read: true,
+          read: false,
         });
 
       if (insertError) throw insertError;
@@ -251,7 +260,7 @@ export function PatientMessagesPanel({ onClose, onUnreadChange }: PatientMessage
           from_patient: false,
           from_name: currentUser.fullName,
           staff_id: currentUser.id,
-          read: true,
+          read: false,
         });
 
       if (insertError) throw insertError;
