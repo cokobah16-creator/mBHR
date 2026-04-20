@@ -11,20 +11,20 @@ export default defineConfig(({ command, mode }) => {
   const isBuild = command === "build";
 
   // Map bare Supabase env vars (Vercel integration) → VITE_ names so the
-  // Supabase client can find them at runtime.  We only inject a define entry
-  // when the VITE_-prefixed name is NOT already present in the .env file –
+  // Supabase client can find them at runtime. We only inject a define entry
+  // when the VITE_-prefixed name is NOT already present in the loaded env –
   // if it is, Vite exposes it to the client natively and adding a define
-  // would override it with an empty string on any machine where process.env
-  // lacks the bare name.
+  // would override it with an empty string on any machine where the loaded env
+  // object lacks the bare name.
   const defines: Record<string, string> = {};
-  if (!env.VITE_SUPABASE_URL && process.env.SUPABASE_URL) {
+  if (!env.VITE_SUPABASE_URL && env.SUPABASE_URL) {
     defines["import.meta.env.VITE_SUPABASE_URL"] = JSON.stringify(
-      process.env.SUPABASE_URL,
+      env.SUPABASE_URL,
     );
   }
-  if (!env.VITE_SUPABASE_ANON_KEY && process.env.SUPABASE_ANON_KEY) {
+  if (!env.VITE_SUPABASE_ANON_KEY && env.SUPABASE_ANON_KEY) {
     defines["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
-      process.env.SUPABASE_ANON_KEY,
+      env.SUPABASE_ANON_KEY,
     );
   }
 
