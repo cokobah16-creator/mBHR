@@ -4,6 +4,21 @@ import { patientDeduplication } from "./patientDeduplication";
 import logger from "@/lib/logger";
 import { getRequiredApproverRole, type Role } from "@/auth/roles";
 
+class DuplicateScanValidationError extends Error {
+  constructor(
+    message: string,
+    readonly context: {
+      patientId: string;
+      hasValidDob: boolean;
+      hasGivenName: boolean;
+      hasFamilyName: boolean;
+    },
+  ) {
+    super(message);
+    this.name = "DuplicateScanValidationError";
+  }
+}
+
 export type ConflictType = "sync_conflict" | "duplicate" | "data_quality";
 export type ConflictStatus =
   | "pending"
@@ -791,6 +806,12 @@ export class ConflictQueueService {
         if (!hasValidDob || !patient.givenName || !patient.familyName) {
           throw new InvalidDuplicateScanPatientError(
             "Patient record is missing required duplicate-scan fields",
+        const hasGivenName = Boolean(patient.givenName);
+        const hasFamilyName = Boolean(patient.familyName);
+        if (!hasValidDob || !hasGivenName || !hasFamilyName) {
+          throw new DuplicateScanValidationError(
+            "Invalid duplicate-scan patient data",
+            { patientId: patient.id, hasValidDob, hasGivenName, hasFamilyName },
           );
         }
 
@@ -837,6 +858,13 @@ export class ConflictQueueService {
             hasValidDob: Number.isFinite(new Date(patient.dob).getTime()),
             hasGivenName: Boolean(patient.givenName),
             hasFamilyName: Boolean(patient.familyName),
+        if (error instanceof DuplicateScanValidationError) {
+          skippedRecords++;
+          logger.warn("Skipping patient with invalid duplicate-scan data", {
+            patientId: error.context.patientId,
+            hasValidDob: error.context.hasValidDob,
+            hasGivenName: error.context.hasGivenName,
+            hasFamilyName: error.context.hasFamilyName,
           });
           continue;
         }
