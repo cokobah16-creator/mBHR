@@ -14,7 +14,6 @@ import { seedDemo } from "./db/seedMbhr";
 import { seedGamificationData } from "./db/gamification";
 import { db } from "./db/index";
 import { safeOpenDb } from "./db/safeOpen";
-import { runMigrations } from "./db/migrations/migration-runner";
 import { log, error } from "@/lib/logger";
 
 if (import.meta.env.VITE_SENTRY_DSN) {
@@ -31,7 +30,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     tracesSampleRate: import.meta.env.MODE === "production" ? 0.1 : 1.0,
     replaysSessionSampleRate: 0.1,
     replaysOnErrorSampleRate: 1.0,
-    beforeSend(event, hint) {
+    beforeSend(event, _hint) {
       if (import.meta.env.MODE !== "production") {
         console.log("Sentry event:", event);
       }
@@ -89,6 +88,7 @@ function renderFatal(msg: string) {
     await seedDemo();
     await seedGamificationData();
     log("[seed] done");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     error("[seed] failed", e);
     // Don't fail the app if seeding fails, just log it

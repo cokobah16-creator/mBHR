@@ -155,7 +155,10 @@ interface SessionStatusProps {
   userType: "staff" | "patient";
 }
 
-export function SessionStatus({ timeRemaining, userType }: SessionStatusProps) {
+export function SessionStatus({
+  timeRemaining,
+  userType: _userType,
+}: SessionStatusProps) {
   const hours = Math.floor(timeRemaining / 3600);
   const minutes = Math.floor((timeRemaining % 3600) / 60);
 

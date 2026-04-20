@@ -418,6 +418,7 @@ CREATE POLICY "Patients can send messages"
     )
     AND sender_type = 'patient'
     AND sender_id = auth.uid()::uuid
+    AND sender_id = auth.uid()
   );
 
 CREATE POLICY "Patients can update own messages"
@@ -452,6 +453,7 @@ CREATE POLICY "Staff can send messages to patients"
     )
     AND sender_type = 'staff'
     AND sender_id = auth.uid()::uuid
+    AND sender_id = auth.uid()
   );
 
 -- ============================================================================

@@ -1,17 +1,18 @@
-import { useState, useEffect } from 'react'
-import { clinicalDecisionSupport } from '@/services/clinicalDecisionSupport'
-import type { SOAPSuggestion } from '@/services/clinicalDecisionSupport'
-import { LightBulbIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { useState, useEffect } from "react";
+import { clinicalDecisionSupport } from "@/services/clinicalDecisionSupport";
+import type { SOAPSuggestion } from "@/services/clinicalDecisionSupport";
+import { LightBulbIcon, SparklesIcon } from "@heroicons/react/24/outline";
 
 interface SmartSOAPInputProps {
-  section: 'subjective' | 'objective' | 'assessment' | 'plan'
-  value: string
-  onChange: (value: string) => void
-  label: string
-  placeholder?: string
-  patientAge?: number
-  patientSex?: string
-  vitalSigns?: any
+  section: "subjective" | "objective" | "assessment" | "plan";
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  placeholder?: string;
+  patientAge?: number;
+  patientSex?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  vitalSigns?: any;
 }
 
 export function SmartSOAPInput({
@@ -22,46 +23,48 @@ export function SmartSOAPInput({
   placeholder,
   patientAge,
   patientSex,
-  vitalSigns
+  vitalSigns,
 }: SmartSOAPInputProps) {
-  const [suggestions, setSuggestions] = useState<SOAPSuggestion | null>(null)
-  const [showSuggestions, setShowSuggestions] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
+  const [suggestions, setSuggestions] = useState<SOAPSuggestion | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     if (value.length > 10) {
-      generateSuggestions()
+      generateSuggestions();
     }
-  }, [value])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
 
   const generateSuggestions = async () => {
     try {
-      setIsGenerating(true)
+      setIsGenerating(true);
       const result = clinicalDecisionSupport.generateSOAPSuggestions({
         section,
         partialText: value,
         patientAge,
         patientSex,
-        vitalSigns
-      })
-      setSuggestions(result)
+        vitalSigns,
+      });
+      setSuggestions(result);
     } catch (error) {
-      console.error('Failed to generate suggestions:', error)
+      console.error("Failed to generate suggestions:", error);
     } finally {
-      setIsGenerating(false)
+      setIsGenerating(false);
     }
-  }
+  };
 
   const applySuggestion = (suggestion: string) => {
-    const currentValue = value.trim()
+    const currentValue = value.trim();
     const newValue = currentValue
       ? `${currentValue}\n${suggestion}`
-      : suggestion
-    onChange(newValue)
-    setShowSuggestions(false)
-  }
+      : suggestion;
+    onChange(newValue);
+    setShowSuggestions(false);
+  };
 
-  const hasRelevantSuggestions = suggestions && suggestions.suggestions.length > 0
+  const hasRelevantSuggestions =
+    suggestions && suggestions.suggestions.length > 0;
 
   return (
     <div className="space-y-2">
@@ -76,7 +79,7 @@ export function SmartSOAPInput({
             className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
           >
             <SparklesIcon className="h-4 w-4" />
-            {showSuggestions ? 'Hide' : 'Show'} AI Suggestions
+            {showSuggestions ? "Hide" : "Show"} AI Suggestions
           </button>
         )}
       </div>
@@ -115,7 +118,7 @@ export function SmartSOAPInput({
 
           {suggestions.keywords.length > 0 && (
             <div className="text-xs text-blue-700">
-              Based on: {suggestions.keywords.join(', ')}
+              Based on: {suggestions.keywords.join(", ")}
             </div>
           )}
 
@@ -132,5 +135,5 @@ export function SmartSOAPInput({
         </div>
       )}
     </div>
-  )
+  );
 }

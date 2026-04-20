@@ -1,11 +1,4 @@
-import {
-  db,
-  QueueItem,
-  Patient,
-  generateId,
-  epochDay,
-  bumpDailyCount,
-} from "@/db";
+import { db, QueueItem, Patient, generateId, epochDay } from "@/db";
 import { supabase } from "@/lib/supabase";
 import logger from "@/lib/logger";
 
@@ -384,7 +377,8 @@ export class QueueManagement {
   async setupRealtimeSync(stage: QueueStage): Promise<void> {
     if (!supabase) return;
 
-    const channel = supabase
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _channel = supabase
       .channel(`queue:${stage}`)
       .on(
         "postgres_changes",

@@ -1,6 +1,5 @@
 import React, { useEffect, useState, startTransition } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { db, Patient, Visit, Vital, Consultation, Dispense } from "@/db";
@@ -33,7 +32,6 @@ import {
 export function PatientDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { t } = useTranslation();
   const user = useAuthStore((s) => s.currentUser);
 
   const [patient, setPatient] = useState<Patient | null>(null);

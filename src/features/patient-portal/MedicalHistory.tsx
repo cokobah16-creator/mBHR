@@ -19,6 +19,7 @@ export function MedicalHistory() {
 
   useEffect(() => {
     loadRecords();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
   const loadRecords = async () => {
@@ -34,9 +35,8 @@ export function MedicalHistory() {
 
       const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId || !portalUser.id) {
-        localStorage.removeItem("patient_portal_user");
-        localStorage.removeItem("patient_session_token");
-        window.location.href = "/patient/login";
+        setError("Session data incomplete. Please log in again.");
+        setLoading(false);
         return;
       }
 

@@ -54,6 +54,7 @@ export function DataSharingPreferences({ patientId }: Props) {
   useEffect(() => {
     loadPreferences();
     loadAccessLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
   const loadPreferences = async () => {

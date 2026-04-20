@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { epochDay, normPhone, nameKeyOf } from "./index";
 
 describe("Database Helper Functions", () => {
@@ -69,6 +69,7 @@ describe("Database Helper Functions", () => {
 });
 
 describe("Patient Deduplication Logic", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mockPatients = new Map<string, any>();
 
   beforeEach(() => {
@@ -148,7 +149,8 @@ describe("Patient Deduplication Logic", () => {
 
       const newPatientPhoneN = "08099999999";
       const newPatientNameKey = nameKeyOf("Jane", "Smith");
-      const newPatientDobDay = epochDay(new Date("1990-01-15"));
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const _newPatientDobDay = epochDay(new Date("1990-01-15"));
 
       const isDuplicateByPhone = patient1.phoneN === newPatientPhoneN;
       const isDuplicateByName = patient1.nameKey === newPatientNameKey;
@@ -177,7 +179,8 @@ describe("Patient Deduplication Logic", () => {
         address: "123 Main St",
       };
 
-      const loser = {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const _loser = {
         id: "p2",
         givenName: "Jon",
         familyName: "Doe",

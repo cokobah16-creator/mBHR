@@ -6,11 +6,11 @@ import { z } from "zod";
 import { ArrowRightIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
-import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
+import { getPatientProfile } from "@/services/patientService";
 
 const onlineSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
-  email:      z.string().email("Please enter a valid email address"),
   credential: z.string().min(6, "Password must be at least 6 characters"),
 });
 
@@ -19,7 +19,7 @@ const offlineSchema = z.object({
   credential: z
     .string()
     .regex(
-      /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/,
+      /^\d{4}-\d{2}-\d{2}$/,
       "Please enter your date of birth as YYYY-MM-DD (e.g. 1990-01-15)",
     ),
 });
@@ -60,6 +60,26 @@ export function PatientLogin() {
       }
       return;
     }
+    // Populate patient_portal_user so Medical History / Messages can find the patient ID
+    if (supabase) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const profileRes = await getPatientProfile(user.id);
+          if (profileRes.data) {
+            localStorage.setItem("patient_portal_user", JSON.stringify({
+              id: user.id,
+              patientId: profileRes.data.id,
+              givenName: profileRes.data.givenName,
+              familyName: profileRes.data.familyName,
+              email: profileRes.data.email,
+            }));
+          }
+        }
+      } catch {
+        // Non-fatal: Medical History / Messages will show an error if patientId is missing
+      }
+    }
     navigate("/patient/dashboard");
   };
 
@@ -69,7 +89,6 @@ export function PatientLogin() {
       data.credential,
       "dob",
     ).catch(() => null);
-    const result = await loginPatientPortal(data.email, data.credential, "dob").catch(() => null);
     if (result?.success && result.sessionToken) {
       localStorage.setItem("patient_session_token", result.sessionToken);
       localStorage.setItem(
@@ -125,10 +144,6 @@ export function PatientLogin() {
                 Data is stored on this device only. Email invitations are not
                 available without an internet connection — register directly
                 using the link below.
-              <p className="text-xs text-yellow-800 font-medium mb-1">Running in offline mode</p>
-              <p className="text-xs text-yellow-700">
-                Data is stored on this device only. Email invitations are not available without an
-                internet connection — register directly using the link below.
               </p>
             </div>
           )}
@@ -171,7 +186,6 @@ export function PatientLogin() {
                 htmlFor="credential"
                 className="block text-sm font-medium text-gray-700 mb-2"
               >
-              <label htmlFor="credential" className="block text-sm font-medium text-gray-700 mb-2">
                 {isSupabaseEnabled ? "Password" : "Date of Birth"}
               </label>
               <input

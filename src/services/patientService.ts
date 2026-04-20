@@ -10,6 +10,7 @@ import * as logger from "@/lib/logger";
 
 export interface PatientProfile {
   id: string;
+  id: string; // text pk
   authUid: string | null;
   givenName: string;
   familyName: string;
@@ -53,6 +54,8 @@ export interface Visit {
   status: string;
   diagnosis: string | null;
   notes: string | null;
+  diagnosis: string | null; // from consultations.soap_assessment
+  notes: string | null; // from consultations.soap_subjective
 }
 
 export interface ServiceResult<T> {
@@ -363,9 +366,6 @@ export async function addVisit(
 
   const visitId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
-  const hasConsultationContent = Boolean(
-    visit.notes?.trim() || visit.diagnosis?.trim(),
-  );
 
   const { error: visitError } = await supabase.from("visits").insert({
     id: visitId,
@@ -382,6 +382,9 @@ export async function addVisit(
 
   if (hasConsultationContent) {
     const { error: consultationError } = await supabase
+  // If there are notes/diagnosis, create a consultation record too
+  if (visit.notes || visit.diagnosis) {
+    const { data: consultationRow, error: consultError } = await supabase
       .from("consultations")
       .insert({
         id: crypto.randomUUID(),

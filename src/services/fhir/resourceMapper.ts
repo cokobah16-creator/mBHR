@@ -504,7 +504,7 @@ export function createBundle(
 }
 
 export function createCapabilityStatement(
-  baseUrl: string,
+  _baseUrl: string,
 ): FHIRCapabilityStatement {
   return {
     resourceType: "CapabilityStatement",

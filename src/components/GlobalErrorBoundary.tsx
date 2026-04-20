@@ -1,5 +1,8 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import React, { Component, ErrorInfo, ReactNode } from "react";
+import {
+  ExclamationTriangleIcon,
+  ArrowPathIcon,
+} from "@heroicons/react/24/outline";
 
 interface Props {
   children: ReactNode;
@@ -30,7 +33,7 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error('GlobalErrorBoundary caught error:', error, errorInfo);
+    console.error("GlobalErrorBoundary caught error:", error, errorInfo);
 
     this.setState({
       error,
@@ -38,7 +41,7 @@ export class GlobalErrorBoundary extends Component<Props, State> {
     });
 
     if (import.meta.env.DEV) {
-      console.error('Error details:', {
+      console.error("Error details:", {
         message: error.message,
         stack: error.stack,
         componentStack: errorInfo.componentStack,
@@ -86,7 +89,8 @@ export class GlobalErrorBoundary extends Component<Props, State> {
             </h1>
 
             <p className="text-gray-600 text-center mb-8">
-              The application encountered an unexpected error. Your data is safe.
+              The application encountered an unexpected error. Your data is
+              safe.
             </p>
 
             {/* Error Message (non-PHI, dev only) */}
@@ -129,12 +133,13 @@ export class GlobalErrorBoundary extends Component<Props, State> {
             {/* Help Text */}
             <div className="mt-8 pt-6 border-t border-gray-200">
               <p className="text-sm text-gray-600 text-center">
-                If this problem persists, please contact your system administrator.
+                If this problem persists, please contact your system
+                administrator.
               </p>
               {!import.meta.env.DEV && (
                 <p className="text-xs text-gray-500 text-center mt-2">
-                  Your offline data is preserved and will sync when the application
-                  restarts.
+                  Your offline data is preserved and will sync when the
+                  application restarts.
                 </p>
               )}
             </div>
@@ -149,8 +154,9 @@ export class GlobalErrorBoundary extends Component<Props, State> {
 
 // Hook for programmatic error reporting (placeholder)
 export function useErrorReport() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reportError = (error: Error, context?: Record<string, any>) => {
-    console.error('Error reported:', error, context);
+    console.error("Error reported:", error, context);
 
     // Placeholder for future integration with Sentry, LogRocket, etc.
     // Example:

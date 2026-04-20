@@ -153,7 +153,9 @@ describe("useAuthStore", () => {
   describe("logout", () => {
     it("should clear authentication state", async () => {
       useAuthStore.setState({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         currentUser: { id: "user-1", fullName: "Test User" } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         currentSession: { id: "session-1" } as any,
         isAuthenticated: true,
         sessionExpiresAt: Date.now() + 1000000,
@@ -173,6 +175,7 @@ describe("useAuthStore", () => {
 
   describe("setCurrentUser", () => {
     it("should set current user", () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const user = { id: "user-1", fullName: "Test User" } as any;
 
       useAuthStore.getState().setCurrentUser(user);
@@ -182,6 +185,7 @@ describe("useAuthStore", () => {
 
     it("should clear current user when set to null", () => {
       useAuthStore.setState({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         currentUser: { id: "user-1" } as any,
       });
 
@@ -257,7 +261,9 @@ describe("useAuthStore", () => {
       useAuthStore.setState({
         isAuthenticated: true,
         sessionExpiresAt: now - 1000,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         currentUser: { id: "test" } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         currentSession: { id: "session" } as any,
       });
 

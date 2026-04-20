@@ -1,94 +1,94 @@
-import React, { useEffect, useState } from 'react'
-import { db, InventoryItem, generateId } from '@/db'
-import { useAuthStore } from '@/stores/auth'
-import { 
-  CubeIcon, 
-  PlusIcon, 
+import React, { useEffect, useState } from "react";
+import { db, InventoryItem, generateId } from "@/db";
+import {
+  CubeIcon,
+  PlusIcon,
   ExclamationTriangleIcon,
-  PencilIcon
-} from '@heroicons/react/24/outline'
+  PencilIcon,
+} from "@heroicons/react/24/outline";
 
 export function Inventory() {
-  const { currentUser } = useAuthStore()
-  const [inventory, setInventory] = useState<InventoryItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [formData, setFormData] = useState({
-    itemName: '',
-    unit: '',
+    itemName: "",
+    unit: "",
     onHandQty: 0,
-    reorderThreshold: 0
-  })
+    reorderThreshold: 0,
+  });
 
   useEffect(() => {
-    loadInventory()
-  }, [])
+    loadInventory();
+  }, []);
 
   const loadInventory = async () => {
     try {
-      console.log('Loading inventory...')
-      const items = await db.inventory.orderBy('itemName').toArray()
-      console.log('Loaded inventory items:', items.length)
-      setInventory(items)
+      console.log("Loading inventory...");
+      const items = await db.inventory.orderBy("itemName").toArray();
+      console.log("Loaded inventory items:", items.length);
+      setInventory(items);
     } catch (error) {
-      console.error('Error loading inventory:', error)
+      console.error("Error loading inventory:", error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
+    e.preventDefault();
+
     try {
       if (editingItem) {
         // Update existing item
         await db.inventory.update(editingItem.id, {
           ...formData,
-          updatedAt: new Date()
-        })
+          updatedAt: new Date(),
+        });
       } else {
         // Add new item
         const newItem: InventoryItem = {
           id: generateId(),
           ...formData,
-          updatedAt: new Date()
-        }
-        await db.inventory.add(newItem)
+          updatedAt: new Date(),
+        };
+        await db.inventory.add(newItem);
       }
-      
-      await loadInventory()
-      resetForm()
+
+      await loadInventory();
+      resetForm();
     } catch (error) {
-      console.error('Error saving inventory item:', error)
-      alert('Failed to save inventory item. Please try again.')
+      console.error("Error saving inventory item:", error);
+      alert("Failed to save inventory item. Please try again.");
     }
-  }
+  };
 
   const resetForm = () => {
     setFormData({
-      itemName: '',
-      unit: '',
+      itemName: "",
+      unit: "",
       onHandQty: 0,
-      reorderThreshold: 0
-    })
-    setShowAddForm(false)
-    setEditingItem(null)
-  }
+      reorderThreshold: 0,
+    });
+    setShowAddForm(false);
+    setEditingItem(null);
+  };
 
   const startEdit = (item: InventoryItem) => {
     setFormData({
       itemName: item.itemName,
       unit: item.unit,
       onHandQty: item.onHandQty,
-      reorderThreshold: item.reorderThreshold
-    })
-    setEditingItem(item)
-    setShowAddForm(true)
-  }
+      reorderThreshold: item.reorderThreshold,
+    });
+    setEditingItem(item);
+    setShowAddForm(true);
+  };
 
-  const lowStockItems = inventory.filter(item => item.onHandQty <= item.reorderThreshold)
+  const lowStockItems = inventory.filter(
+    (item) => item.onHandQty <= item.reorderThreshold,
+  );
 
   if (loading) {
     return (
@@ -98,7 +98,7 @@ export function Inventory() {
           <p className="mt-4 text-gray-600">Loading inventory...</p>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -108,15 +108,13 @@ export function Inventory() {
         <div className="flex items-center space-x-3">
           <CubeIcon className="h-8 w-8 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Inventory
-            </h1>
+            <h1 className="text-2xl font-bold text-gray-900">Inventory</h1>
             <p className="text-gray-600">
               Manage medication and supply inventory
             </p>
           </div>
         </div>
-        
+
         <button
           onClick={() => setShowAddForm(true)}
           className="btn-primary inline-flex items-center space-x-2"
@@ -136,7 +134,7 @@ export function Inventory() {
             </h3>
           </div>
           <div className="text-sm text-yellow-700">
-            {lowStockItems.map(item => item.itemName).join(', ')}
+            {lowStockItems.map((item) => item.itemName).join(", ")}
           </div>
         </div>
       )}
@@ -145,9 +143,9 @@ export function Inventory() {
       {showAddForm && (
         <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            {editingItem ? 'Edit Item' : 'Add New Item'}
+            {editingItem ? "Edit Item" : "Add New Item"}
           </h3>
-          
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -158,12 +156,14 @@ export function Inventory() {
                   type="text"
                   required
                   value={formData.itemName}
-                  onChange={(e) => setFormData({ ...formData, itemName: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, itemName: e.target.value })
+                  }
                   className="input-field"
                   placeholder="e.g., Paracetamol 500mg"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Unit *
@@ -172,12 +172,14 @@ export function Inventory() {
                   type="text"
                   required
                   value={formData.unit}
-                  onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, unit: e.target.value })
+                  }
                   className="input-field"
                   placeholder="e.g., tablets, bottles, boxes"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Quantity on Hand *
@@ -187,11 +189,16 @@ export function Inventory() {
                   required
                   min="0"
                   value={formData.onHandQty}
-                  onChange={(e) => setFormData({ ...formData, onHandQty: parseInt(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      onHandQty: parseInt(e.target.value) || 0,
+                    })
+                  }
                   className="input-field"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Reorder Threshold *
@@ -201,15 +208,20 @@ export function Inventory() {
                   required
                   min="0"
                   value={formData.reorderThreshold}
-                  onChange={(e) => setFormData({ ...formData, reorderThreshold: parseInt(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      reorderThreshold: parseInt(e.target.value) || 0,
+                    })
+                  }
                   className="input-field"
                 />
               </div>
             </div>
-            
+
             <div className="flex space-x-4">
               <button type="submit" className="btn-primary">
-                {editingItem ? 'Update Item' : 'Add Item'}
+                {editingItem ? "Update Item" : "Add Item"}
               </button>
               <button
                 type="button"
@@ -225,13 +237,19 @@ export function Inventory() {
 
       {/* Inventory List */}
       <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Current Inventory</h3>
-        
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+          Current Inventory
+        </h3>
+
         {inventory.length === 0 ? (
           <div className="text-center py-8">
             <CubeIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No inventory items</h3>
-            <p className="text-gray-600 mb-6">Add your first inventory item to get started</p>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              No inventory items
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Add your first inventory item to get started
+            </p>
             <button
               onClick={() => setShowAddForm(true)}
               className="btn-primary"
@@ -310,5 +328,5 @@ export function Inventory() {
         )}
       </div>
     </div>
-  )
+  );
 }

@@ -72,13 +72,15 @@ export function SecureMessaging() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        setError("Session data missing. Please log in again.");
+        setLoading(false);
         return;
       }
 
       const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId) {
-        window.location.href = "/patient/login";
+        setError("Session data incomplete. Please log in again.");
+        setLoading(false);
         return;
       }
 

@@ -35,7 +35,7 @@ interface Payment {
 
 export function BillingPayments() {
   const [bills, setBills] = useState<Bill[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
+  const [, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");

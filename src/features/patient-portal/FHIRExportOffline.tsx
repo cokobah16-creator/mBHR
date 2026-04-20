@@ -70,6 +70,7 @@ export function FHIRExportOffline({ patientId }: Props) {
 
   useEffect(() => {
     loadPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
   async function loadPreview() {
