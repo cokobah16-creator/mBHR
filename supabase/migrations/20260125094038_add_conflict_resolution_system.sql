@@ -89,10 +89,6 @@ CREATE TABLE IF NOT EXISTS conflict_audit_logs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Ensure FK column stays UUID-compatible with conflict_resolutions.id
-ALTER TABLE conflict_audit_logs
-  ALTER COLUMN conflict_id TYPE uuid USING conflict_id::uuid;
-
 -- Auto Resolution Rules Table
 CREATE TABLE IF NOT EXISTS auto_resolution_rules (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -112,8 +108,8 @@ CREATE TABLE IF NOT EXISTS auto_resolution_rules (
 
 -- Add columns to conflict_resolutions if created by earlier migration without them
 ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS entity_type text;
-ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS entity_id text;
-ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 5;
+ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS entity_id uuid;
+ALTER TABLE conflict_resolutions ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'medium';
 
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_conflict_resolutions_status ON conflict_resolutions(status);
