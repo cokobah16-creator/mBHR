@@ -15,6 +15,7 @@ import { seedGamificationData } from "./db/gamification";
 import { db } from "./db/index";
 import { safeOpenDb } from "./db/safeOpen";
 import { log, error } from "@/lib/logger";
+import { runMigrations } from "@/db/migrations/migration-runner";
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
@@ -82,10 +83,9 @@ function renderFatal(msg: string) {
     await safeOpenDb();
     log("[db] opened OK");
 
-    // Run database migrations (disabled until meta table exists)
-    // log('[migrations] checking for pending migrations…')
-    // await runMigrations()
-    // log('[migrations] complete')
+    log("[migrations] checking for pending migrations…");
+    await runMigrations();
+    log("[migrations] complete");
 
     // Check if database is working
     const patientCount = await db.patients.count();
