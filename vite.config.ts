@@ -5,6 +5,18 @@ import { resolve } from "path";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  const define: Record<string, string> = {};
+
+  if (!env.VITE_SUPABASE_URL && env.SUPABASE_URL) {
+    define["import.meta.env.VITE_SUPABASE_URL"] = JSON.stringify(
+      env.SUPABASE_URL,
+    );
+  }
+
+  if (!env.VITE_SUPABASE_ANON_KEY && env.SUPABASE_ANON_KEY) {
+    define["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
+      env.SUPABASE_ANON_KEY,
+    );
 
   // Keep Vercel/Supabase integration compatibility: when only SUPABASE_*
   // vars are present, promote them to VITE_* so existing client code using
@@ -17,6 +29,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    ...(Object.keys(define).length ? { define } : {}),
     resolve: {
       alias: {
         "@": resolve(__dirname, "./src"),
