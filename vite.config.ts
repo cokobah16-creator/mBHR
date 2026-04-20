@@ -5,25 +5,33 @@ import { resolve } from "path";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const define: Record<string, string> = {};
   const readEnv = (key: string) => env[key]?.trim();
   const isProduction = mode === "production";
 
-  const hasClientSupabaseUrl = Boolean(readEnv("VITE_SUPABASE_URL"));
-  const hasClientSupabaseAnonKey = Boolean(readEnv("VITE_SUPABASE_ANON_KEY"));
-  const serverSupabaseUrl = readEnv("SUPABASE_URL");
-  const serverSupabaseAnonKey = readEnv("SUPABASE_ANON_KEY");
+  const clientEnvFallbacks = [
+    {
+      clientKey: "VITE_SUPABASE_URL",
+      serverFallbackKey: "SUPABASE_URL",
+    },
+    {
+      clientKey: "VITE_SUPABASE_ANON_KEY",
+      serverFallbackKey: "SUPABASE_ANON_KEY",
+    },
+  ] as const;
 
-  if (!hasClientSupabaseUrl && serverSupabaseUrl) {
-    define["import.meta.env.VITE_SUPABASE_URL"] =
-      JSON.stringify(serverSupabaseUrl);
-  }
+  const define = clientEnvFallbacks.reduce<Record<string, string>>(
+    (acc, { clientKey, serverFallbackKey }) => {
+      const hasClientValue = Boolean(readEnv(clientKey));
+      const fallbackValue = readEnv(serverFallbackKey);
 
-  if (!hasClientSupabaseAnonKey && serverSupabaseAnonKey) {
-    define["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
-      serverSupabaseAnonKey,
-    );
-  }
+      if (!hasClientValue && fallbackValue) {
+        acc[`import.meta.env.${clientKey}`] = JSON.stringify(fallbackValue);
+      }
+
+      return acc;
+    },
+    {},
+  );
 
   return {
     define,
