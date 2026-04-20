@@ -16,12 +16,7 @@ const onlineSchema = z.object({
 
 const offlineSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
-  credential: z
-    .string()
-    .regex(
-      /^\d{4}-\d{2}-\d{2}$/,
-      "Please enter your date of birth as YYYY-MM-DD (e.g. 1990-01-15)",
-    ),
+  credential: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
 });
 
 const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
@@ -63,17 +58,22 @@ export function PatientLogin() {
     // Populate patient_portal_user so Medical History / Messages can find the patient ID
     if (supabase) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         if (user) {
           const profileRes = await getPatientProfile(user.id);
           if (profileRes.data) {
-            localStorage.setItem("patient_portal_user", JSON.stringify({
-              id: user.id,
-              patientId: profileRes.data.id,
-              givenName: profileRes.data.givenName,
-              familyName: profileRes.data.familyName,
-              email: profileRes.data.email,
-            }));
+            localStorage.setItem(
+              "patient_portal_user",
+              JSON.stringify({
+                id: user.id,
+                patientId: profileRes.data.id,
+                givenName: profileRes.data.givenName,
+                familyName: profileRes.data.familyName,
+                email: profileRes.data.email,
+              }),
+            );
           }
         }
       } catch {
@@ -87,10 +87,10 @@ export function PatientLogin() {
     const result = await loginPatientPortal(
       data.email,
       data.credential,
-      "dob",
+      "pin",
     ).catch(() => null);
     if (result?.success && result.sessionToken) {
-      localStorage.setItem("patient_session_token", result.sessionToken);
+      sessionStorage.setItem("patient_session_token", result.sessionToken);
       localStorage.setItem(
         "patient_portal_user",
         JSON.stringify(result.portalUser),
@@ -131,7 +131,7 @@ export function PatientLogin() {
             <p className="text-gray-600">
               {isSupabaseEnabled
                 ? "Sign in with your email and password."
-                : "Sign in with your email and date of birth."}
+                : "Sign in with your email and 6-digit PIN."}
             </p>
           </div>
 
@@ -186,21 +186,22 @@ export function PatientLogin() {
                 htmlFor="credential"
                 className="block text-sm font-medium text-gray-700 mb-2"
               >
-                {isSupabaseEnabled ? "Password" : "Date of Birth"}
+                {isSupabaseEnabled ? "Password" : "6-Digit PIN"}
               </label>
               <input
                 {...form.register("credential")}
-                type={isSupabaseEnabled ? "password" : "text"}
+                type="password"
                 id="credential"
-                placeholder={isSupabaseEnabled ? "Your password" : "YYYY-MM-DD"}
+                inputMode={isSupabaseEnabled ? undefined : "numeric"}
+                placeholder={isSupabaseEnabled ? "Your password" : "••••••"}
+                maxLength={isSupabaseEnabled ? undefined : 6}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={loading}
-                autoComplete={isSupabaseEnabled ? "current-password" : "bday"}
+                autoComplete="current-password"
               />
               {!isSupabaseEnabled && (
                 <p className="mt-1 text-xs text-gray-500">
-                  Use the same date of birth you entered when you registered
-                  (e.g. 1990-01-15)
+                  Enter the 6-digit PIN you chose when you registered.
                 </p>
               )}
               {form.formState.errors.credential && (

@@ -47,9 +47,9 @@ const Pharmacy = lazy(() =>
 );
 const PharmacyMenu = lazy(() => import("@/pages/PharmacyMenu"));
 const PharmacyReports = lazy(() => import("@/pages/PharmacyReports"));
-const PharmacyStock = lazy(() => import('@/features/pharmacy/PharmacyStock'))
-const RxForm = lazy(() => import('@/features/pharmacy/RxForm'))
-const Dispense = lazy(() => import('@/features/pharmacy/Dispense'))
+const PharmacyStock = lazy(() => import("@/features/pharmacy/PharmacyStock"));
+const RxForm = lazy(() => import("@/features/pharmacy/RxForm"));
+const Dispense = lazy(() => import("@/features/pharmacy/Dispense"));
 const SMSReminders = lazy(() => import("@/pages/SMSReminders"));
 
 // Labs and appointments (Sprint 5 features)
@@ -303,8 +303,8 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // 2. Offline fallback: validate legacy localStorage session token
-      const sessionToken = localStorage.getItem("patient_session_token");
+      // 2. Offline fallback: validate session token (stored in sessionStorage for XSS safety)
+      const sessionToken = sessionStorage.getItem("patient_session_token");
       const portalUser = localStorage.getItem("patient_portal_user");
 
       if (!sessionToken || !portalUser) {
@@ -320,7 +320,7 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
         const result = await validateAndRefreshPatientSession(sessionToken);
 
         if (!result.valid) {
-          localStorage.removeItem("patient_session_token");
+          sessionStorage.removeItem("patient_session_token");
           localStorage.removeItem("patient_portal_user");
           setIsValid(false);
           setIsValidating(false);
@@ -334,7 +334,7 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
           "[PatientProtectedRoute] Exception during validation:",
           err,
         );
-        localStorage.removeItem("patient_session_token");
+        sessionStorage.removeItem("patient_session_token");
         localStorage.removeItem("patient_portal_user");
         setIsValid(false);
         setIsValidating(false);
@@ -471,7 +471,9 @@ function App() {
                     <Route
                       path="/staff/patients"
                       element={
-                        <RequireRoles roles={["doctor", "nurse", "admin", "volunteer"]}>
+                        <RequireRoles
+                          roles={["doctor", "nurse", "admin", "volunteer"]}
+                        >
                           <StaffPatientDashboard />
                         </RequireRoles>
                       }
@@ -514,21 +516,30 @@ function App() {
                         </RequireRoles>
                       }
                     />
-                    <Route path="/rx/stock" element={
-                      <RequireRoles roles={['pharmacist', 'admin']}>
-                        <PharmacyStock />
-                      </RequireRoles>
-                    } />
-                    <Route path="/rx/new" element={
-                      <RequireRoles roles={['doctor', 'nurse', 'admin']}>
-                        <RxForm />
-                      </RequireRoles>
-                    } />
-                    <Route path="/rx/dispense" element={
-                      <RequireRoles roles={['pharmacist', 'admin']}>
-                        <Dispense />
-                      </RequireRoles>
-                    } />
+                    <Route
+                      path="/rx/stock"
+                      element={
+                        <RequireRoles roles={["pharmacist", "admin"]}>
+                          <PharmacyStock />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/rx/new"
+                      element={
+                        <RequireRoles roles={["doctor", "nurse", "admin"]}>
+                          <RxForm />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/rx/dispense"
+                      element={
+                        <RequireRoles roles={["pharmacist", "admin"]}>
+                          <Dispense />
+                        </RequireRoles>
+                      }
+                    />
                     <Route
                       path="/tickets/queue"
                       element={

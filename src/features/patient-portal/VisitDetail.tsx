@@ -36,7 +36,7 @@ export function VisitDetail() {
       const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId || !portalUser.id) {
         localStorage.removeItem("patient_portal_user");
-        localStorage.removeItem("patient_session_token");
+        sessionStorage.removeItem("patient_session_token");
         window.location.href = "/patient/login";
         return;
       }

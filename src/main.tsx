@@ -49,16 +49,31 @@ window.addEventListener("unhandledrejection", (ev) =>
 
 function renderFatal(msg: string) {
   const el = document.getElementById("root");
-  if (el) {
-    el.innerHTML = `
-      <div style="font-family: system-ui; padding:24px; max-width:720px; margin:40px auto;">
-        <h1 style="margin:0 0 12px;color:#0A7A3B;">Med Bridge Health Reach</h1>
-        <h2 style="margin:0 0 16px;">Startup error</h2>
-        <p style="margin:0 0 8px;">${msg}</p>
-        <p style="color:#555">Open the browser console for details.</p>
-      </div>
-    `;
-  }
+  if (!el) return;
+
+  const container = document.createElement("div");
+  container.style.cssText =
+    "font-family:system-ui;padding:24px;max-width:720px;margin:40px auto";
+
+  const h1 = document.createElement("h1");
+  h1.style.cssText = "margin:0 0 12px;color:#0A7A3B";
+  h1.textContent = "Med Bridge Health Reach";
+
+  const h2 = document.createElement("h2");
+  h2.style.cssText = "margin:0 0 16px";
+  h2.textContent = "Startup error";
+
+  const p1 = document.createElement("p");
+  p1.style.cssText = "margin:0 0 8px";
+  p1.textContent = msg;
+
+  const p2 = document.createElement("p");
+  p2.style.color = "#555";
+  p2.textContent = "Open the browser console for details.";
+
+  container.append(h1, h2, p1, p2);
+  el.textContent = "";
+  el.appendChild(container);
 }
 
 (async () => {
