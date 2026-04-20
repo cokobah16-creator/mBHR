@@ -8,6 +8,8 @@ import { derivePinHash } from "@/utils/pin";
 export default function Login() {
   const [mode, setMode] = useState<"offline" | "online">("offline");
   const [pin, setPin] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [attempts, setAttempts] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -15,7 +17,7 @@ export default function Login() {
 
   const onlineAvailable = isOnlineSyncEnabled();
   const navigate = useNavigate();
-  const { login } = useAuthStore();
+  const { login, loginOnline } = useAuthStore();
 
   // Debug panel state
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,10 +120,16 @@ export default function Login() {
       } else {
         // Online mode
         if (!onlineAvailable) {
-          setErr("Online login not available");
+          setErr("Online login not available — Supabase is not configured");
           return;
         }
-        setErr("Online login not implemented yet");
+        const success = await loginOnline(email, password);
+        if (success) {
+          startTransition(() => navigate("/dashboard"));
+        } else {
+          setErr("Invalid email or password");
+          setAttempts((a) => a + 1);
+        }
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (ex: any) {
@@ -208,11 +216,32 @@ export default function Login() {
           )}
 
           {mode === "online" && (
-            <div className="text-sm text-gray-600">
-              Online login will use Supabase auth when configured. (Set{" "}
-              <code>VITE_SUPABASE_URL</code> and
-              <code> VITE_SUPABASE_ANON_KEY</code>.)
-            </div>
+            <>
+              <div>
+                <label className="block text-sm font-medium">Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full border rounded px-3 py-2 mt-1"
+                  placeholder="staff@example.com"
+                  required
+                  autoComplete="email"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full border rounded px-3 py-2 mt-1"
+                  placeholder="Your password"
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+            </>
           )}
 
           {err && <div className="text-sm text-red-600">{err}</div>}
