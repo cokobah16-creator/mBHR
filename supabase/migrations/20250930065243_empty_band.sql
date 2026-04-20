@@ -168,28 +168,8 @@ create table if not exists dispenses (
 );
 
 alter table dispenses enable row level security;
--- Policy is intentionally not re-created here because it already exists in
--- 20250930060647_old_dream.sql for the same table and role.
--- Policy is already created in 20250930060647_old_dream.sql; guard re-creation.
-do $$
-begin
-  -- Guard both table and policy creation for environments applying migrations in sequence.
-  if to_regclass('public.dispenses') is not null and not exists (
-    select 1
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'dispenses'
-      and policyname = 'Allow authenticated access to dispenses'
-  ) then
-    create policy "Allow authenticated access to dispenses"
-      on dispenses
-      for all
-      to authenticated
-      using (true)
-      with check (true);
-  end if;
-end
-$$;
+-- Policy "Allow authenticated access to dispenses" is created in
+-- 20250930060647_old_dream.sql and must not be created again here.
 
 create table if not exists stock_moves_rx (
   id text primary key,
