@@ -463,11 +463,6 @@ export async function getVisits(
 
 export async function addVisit(
   patientId: string,
-  visit: {
-    notes?: string | null;
-    diagnosis?: string | null;
-    siteName?: string;
-  },
   visit: { notes?: string | null; diagnosis?: string | null; siteName?: string },
 ): Promise<ServiceResult<Visit>> {
   if (!supabase) return { data: null, error: "Supabase not configured" };
@@ -478,54 +473,37 @@ export async function addVisit(
     visit.notes?.trim() || visit.diagnosis?.trim(),
   );
 
-  // Create the visit row
   const { error: visitError } = await supabase.from("visits").insert({
     id: visitId,
     patient_id: patientId,
     started_at: startedAt,
     site_name: visit.siteName ?? "Portal entry",
     status: "closed",
-
-  // Create the visit row
-  const { error: visitError } = await supabase.from("visits").insert({
-    id:         visitId,
-    patient_id: patientId,
-    started_at: new Date().toISOString(),
-    site_name:  visit.siteName ?? "Portal entry",
-    status:     "closed",
   });
+
   if (visitError) {
     logger.error("[patientService] addVisit (visit):", visitError.message);
     return { data: null, error: visitError.message };
   }
 
-  // If there are notes/diagnosis, create a consultation record too
-  if (visit.notes || visit.diagnosis) {
-    const { data: consultationRow, error: consultError } = await supabase
   if (hasConsultationContent) {
-    const { error: consultError } = await supabase
-      .from("consultations")
-      .insert({
-        id: crypto.randomUUID(),
-        patient_id: patientId,
-        visit_id: visitId,
-        provider_name: "Staff (portal)",
-        soap_subjective: visit.notes ?? "",
-        soap_objective: "",
-        soap_assessment: visit.diagnosis ?? "",
-        soap_plan: "",
-        provisional_dx: [],
-      })
-      .select("id")
-      .single();
-    if (consultError || !consultationRow) {
-      const consultationFailureReason =
-        consultError?.message ?? "No consultation row returned";
-      logger.error(
-        "[patientService] addVisit (consultation):",
-        consultationFailureReason,
-      );
-      // Best-effort rollback so we do not leave a visit without its clinical note.
+    const { error: consultError } = await supabase.from("consultations").insert({
+      id: crypto.randomUUID(),
+      patient_id: patientId,
+      visit_id: visitId,
+      provider_name: "Staff (portal)",
+      soap_subjective: visit.notes ?? "",
+      soap_objective: "",
+      soap_assessment: visit.diagnosis ?? "",
+      soap_plan: "",
+      provisional_dx: [],
+    });
+
+    if (consultError) {
+      logger.error("[patientService] addVisit (consultation):", consultError.message);
+
+      // Best-effort rollback to avoid reporting a successful visit when clinical
+      // notes failed to persist.
       const { error: rollbackError } = await supabase
         .from("visits")
         .delete()
@@ -540,28 +518,14 @@ export async function addVisit(
 
         return {
           data: null,
-          error: `Consultation save failed and visit cleanup failed: ${consultationFailureReason}. Cleanup error: ${rollbackError.message}`,
+          error: `Consultation save failed and visit cleanup failed: ${consultError.message}. Cleanup error: ${rollbackError.message}`,
         };
       }
 
       return {
         data: null,
-        error: `Consultation save failed; visit was rolled back: ${consultationFailureReason}`,
+        error: `Consultation save failed; visit was rolled back: ${consultError.message}`,
       };
-    const { error: consultError } = await supabase.from("consultations").insert({
-      id:               crypto.randomUUID(),
-      patient_id:       patientId,
-      visit_id:         visitId,
-      provider_name:    "Staff (portal)",
-      soap_subjective:  visit.notes      ?? "",
-      soap_objective:   "",
-      soap_assessment:  visit.diagnosis  ?? "",
-      soap_plan:        "",
-      provisional_dx:   [],
-    });
-    if (consultError) {
-      logger.error("[patientService] addVisit (consultation):", consultError.message);
-      return { data: null, error: `Visit was saved but clinical notes failed: ${consultError.message}` };
     }
   }
 
@@ -574,13 +538,6 @@ export async function addVisit(
       status: "closed",
       diagnosis: visit.diagnosis ?? null,
       notes: visit.notes ?? null,
-      id:        visitId,
-      patientId,
-      startedAt: new Date().toISOString(),
-      siteName:  visit.siteName ?? "Portal entry",
-      status:    "closed",
-      diagnosis: visit.diagnosis ?? null,
-      notes:     visit.notes    ?? null,
     },
     error: null,
   };
