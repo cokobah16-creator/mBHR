@@ -525,6 +525,28 @@ export async function addVisit(
         "[patientService] addVisit (consultation):",
         consultationFailureReason,
       );
+      // Roll back the inserted visit so we do not leave partial writes.
+      const { data: rollbackRows, error: rollbackError } = await supabase
+        .from("visits")
+        .delete()
+        .eq("id", visitId)
+        .select("id");
+
+      const rollbackRemovedVisit = (rollbackRows ?? []).some(
+        (row) => row.id === visitId,
+      );
+
+      if (rollbackError || !rollbackRemovedVisit) {
+        const cleanupMessage = rollbackError
+          ? rollbackError.message
+          : "No visit rows were deleted during rollback.";
+        logger.error(
+          "[patientService] addVisit (rollback visit):",
+          cleanupMessage,
+        );
+        return {
+          data: null,
+          error: `Consultation save failed and visit cleanup failed: ${consultError.message}. Cleanup error: ${cleanupMessage}`,
       // Best-effort rollback so we do not leave a visit without its clinical note.
       const { error: rollbackError } = await supabase
         .from("visits")
@@ -546,6 +568,7 @@ export async function addVisit(
 
       return {
         data: null,
+        error: `Consultation save failed; visit was rolled back: ${consultError.message}`,
         error: `Consultation save failed; visit was rolled back: ${consultationFailureReason}`,
       };
     const { error: consultError } = await supabase.from("consultations").insert({
