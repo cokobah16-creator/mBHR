@@ -3,7 +3,7 @@
 
   1. New Tables
     - `conflict_resolutions` - Tracks all detected conflicts and their resolution status
-      - `id` (uuid, primary key)
+      - `id` (text, primary key)
       - `conflict_type` (text) - 'sync_conflict', 'duplicate', 'data_quality'
       - `entity_type` (text) - 'patients', 'vitals', 'consultations', etc.
       - `entity_id` (uuid) - The primary record involved
@@ -22,7 +22,7 @@
 
     - `conflict_audit_logs` - Detailed audit trail for compliance
       - `id` (uuid, primary key)
-      - `conflict_id` (uuid, references conflict_resolutions)
+      - `conflict_id` (text, references conflict_resolutions)
       - `action` (text) - 'created', 'viewed', 'resolved', 'approved', 'appealed'
       - `actor_id` (uuid)
       - `actor_role` (text)
@@ -56,7 +56,7 @@
 
 -- Conflict Resolutions Table
 CREATE TABLE IF NOT EXISTS conflict_resolutions (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id text PRIMARY KEY,
   conflict_type text NOT NULL CHECK (conflict_type IN ('sync_conflict', 'duplicate', 'data_quality')),
   entity_type text NOT NULL,
   entity_id uuid NOT NULL,
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS conflict_resolutions (
 -- Conflict Audit Logs Table (append-only for compliance)
 CREATE TABLE IF NOT EXISTS conflict_audit_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  conflict_id uuid NOT NULL REFERENCES conflict_resolutions(id) ON DELETE CASCADE,
+  conflict_id text NOT NULL REFERENCES conflict_resolutions(id) ON DELETE CASCADE,
   action text NOT NULL CHECK (action IN ('created', 'viewed', 'resolved', 'approved', 'rejected', 'appealed', 'auto_resolved')),
   actor_id uuid REFERENCES auth.users(id),
   actor_role text,
