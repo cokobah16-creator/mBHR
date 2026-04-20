@@ -4,10 +4,7 @@ import type {
   FHIRBundleEntry,
   FHIROperationOutcome,
 } from "./types";
-import type {
-  ValidationResult,
-  BundleValidationResult,
-} from "./uscore-validator";
+import type { BundleValidationResult } from "./uscore-validator";
 import { validateBundle } from "./uscore-validator";
 
 export interface BundleOptions {

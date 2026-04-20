@@ -3,6 +3,7 @@ export interface Organization {
   name: string;
   slug: string;
   logo_url?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   settings: Record<string, any>;
   subscription_tier: string;
   is_active: boolean;
@@ -100,6 +101,7 @@ export interface PatientFlag {
   to_user_id?: string;
   priority: "urgent" | "high" | "normal" | "low";
   message: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: Record<string, any>;
   status: "open" | "acknowledged" | "resolved" | "cancelled";
   resolved_at?: string;
@@ -232,6 +234,7 @@ export interface ConsultationReview {
   review_type: "routine" | "requested" | "teaching" | "quality_assurance";
   review_status: "pending" | "approved" | "modified" | "flagged";
   feedback?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   modifications?: Record<string, any>;
   teaching_points?: string;
   reviewed_at?: string;
@@ -253,6 +256,7 @@ export interface ProtocolLibrary {
     | "maternal"
     | "general";
   protocol_content: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   algorithm?: Record<string, any>;
   medications?: Array<{
     name: string;

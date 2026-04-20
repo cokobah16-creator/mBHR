@@ -43,9 +43,10 @@ type ViewMode = "inbox" | "conversation" | "compose";
 
 interface PatientMessagesPanelProps {
   onClose?: () => void;
+  onUnreadChange?: (count: number) => void;
 }
 
-export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
+export function PatientMessagesPanel({ onClose, onUnreadChange }: PatientMessagesPanelProps) {
   const { currentUser } = useAuthStore();
   const [threads, setThreads] = useState<PatientThread[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
@@ -283,6 +284,10 @@ export function PatientMessagesPanel({ onClose }: PatientMessagesPanelProps) {
   const selectedThread =
     threads.find((t) => t.patient_id === selectedPatientId) ?? null;
   const totalUnread = threads.reduce((sum, t) => sum + t.unread_count, 0);
+
+  useEffect(() => {
+    onUnreadChange?.(totalUnread);
+  }, [totalUnread, onUnreadChange]);
 
   const headerSubtitle =
     viewMode === "compose"

@@ -4,7 +4,6 @@ import {
   WifiIcon,
   CloudArrowUpIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 

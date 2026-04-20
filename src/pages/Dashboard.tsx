@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback, memo } from "react";
 import { Link } from "react-router-dom";
-import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth";
 import { db } from "@/db";
 import { can } from "@/auth/roles";
@@ -34,6 +33,7 @@ const StatCard = memo(
     value,
     colorClass,
   }: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     icon: any;
     label: string;
     value: number;
@@ -55,7 +55,6 @@ const StatCard = memo(
 StatCard.displayName = "StatCard";
 
 export function Dashboard() {
-  const { t } = useTranslation();
   const { currentUser } = useAuthStore();
   const [stats, setStats] = useState({
     totalPatients: 0,
@@ -112,7 +111,8 @@ export function Dashboard() {
   }, [loadStats]);
 
   // Memoize quick actions based on user role
-  const quickActions = useMemo(() => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _quickActions = useMemo(() => {
     const actions = [
       {
         name: "Register Patient",

@@ -33,6 +33,7 @@ export interface Setting {
 
 export interface Meta {
   key: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   value: any;
   updatedAt: number;
 }
@@ -203,6 +204,7 @@ export interface ConflictResolution {
   candidateIds: string[];
   resolvedBy?: string;
   resolvedAt?: Date;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   resolution?: any;
 }
 
@@ -595,7 +597,9 @@ export class MBHRDatabase extends Dexie {
           .table("users")
           .toCollection()
           .modify((user) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             if (typeof (user as any).isActive === "undefined") {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               (user as any).isActive = 1;
             }
           });
@@ -628,7 +632,9 @@ export class MBHRDatabase extends Dexie {
           .table("users")
           .toCollection()
           .modify((user) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             if (typeof (user as any).isActive === "boolean") {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               (user as any).isActive = (user as any).isActive ? 1 : 0;
             }
           });
@@ -661,13 +667,18 @@ export class MBHRDatabase extends Dexie {
           .table("users")
           .toCollection()
           .modify((user) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             if (typeof (user as any).adminAccess === "undefined") {
               // Set adminAccess based on role - admins get true, others get false
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               (user as any).adminAccess = (user as any).role === "admin";
             }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             if (typeof (user as any).adminPermanent === "undefined") {
               // Set adminPermanent = true for Kristopher Okobah, false for others
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               (user as any).adminPermanent =
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 (user as any).fullName === "Kristopher Okobah";
             }
           });
@@ -712,6 +723,7 @@ export class MBHRDatabase extends Dexie {
       .upgrade(async (tx) => {
         // Normalize date fields to ISO strings and ensure committed is boolean
         const table = tx.table("gameSessions");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await table.toCollection().modify((obj: any) => {
           // Ensure committed is boolean
           if (typeof obj.committed !== "boolean") {
@@ -776,6 +788,7 @@ export class MBHRDatabase extends Dexie {
         await tx
           .table("patients")
           .toCollection()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .modify((patient: any) => {
             if (!patient.phoneN) {
               patient.phoneN = normPhone(patient.phone || "");
@@ -947,6 +960,7 @@ export class MBHRDatabase extends Dexie {
         await tx
           .table("patients")
           .toCollection()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .modify((patient: any) => {
             // Normalize email to lowercase if it exists
             if (patient.email) {
@@ -1024,6 +1038,7 @@ export class MBHRDatabase extends Dexie {
         await tx
           .table("patients")
           .toCollection()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .modify((patient: any) => {
             if (patient.portalEnabled === undefined) {
               patient.portalEnabled = 0;
@@ -1098,6 +1113,7 @@ export class MBHRDatabase extends Dexie {
         await tx
           .table("vitals")
           .toCollection()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .modify((vital: any) => {
             if (vital.portalVisible === undefined) {
               vital.portalVisible = true;
@@ -1106,6 +1122,7 @@ export class MBHRDatabase extends Dexie {
         await tx
           .table("consultations")
           .toCollection()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .modify((consult: any) => {
             if (consult.portalVisible === undefined) {
               consult.portalVisible = true;
@@ -1114,6 +1131,7 @@ export class MBHRDatabase extends Dexie {
         await tx
           .table("dispenses")
           .toCollection()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .modify((dispense: any) => {
             if (dispense.portalVisible === undefined) {
               dispense.portalVisible = true;

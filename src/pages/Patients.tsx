@@ -1,66 +1,73 @@
-import React, { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
-import { db, Patient } from '@/db'
-import { 
-  MagnifyingGlassIcon, 
-  UserPlusIcon, 
+import React, { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { db, Patient } from "@/db";
+import {
+  MagnifyingGlassIcon,
+  UserPlusIcon,
   UserIcon,
   PhoneIcon,
-  MapPinIcon
-} from '@heroicons/react/24/outline'
+  MapPinIcon,
+} from "@heroicons/react/24/outline";
 
 export function Patients() {
-  const { t } = useTranslation()
-  const navigate = useNavigate()
-  const [patients, setPatients] = useState<Patient[]>([])
-  const [filteredPatients, setFilteredPatients] = useState<Patient[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
-  const [loading, setLoading] = useState(true)
+  const navigate = useNavigate();
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [filteredPatients, setFilteredPatients] = useState<Patient[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadPatients()
-  }, [])
+    loadPatients();
+  }, []);
 
   useEffect(() => {
     if (searchQuery.trim()) {
-      const filtered = patients.filter(patient => 
-        patient.givenName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        patient.familyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        patient.phone.includes(searchQuery)
-      )
-      setFilteredPatients(filtered)
+      const filtered = patients.filter(
+        (patient) =>
+          patient.givenName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          patient.familyName
+            .toLowerCase()
+            .includes(searchQuery.toLowerCase()) ||
+          patient.phone.includes(searchQuery),
+      );
+      setFilteredPatients(filtered);
     } else {
-      setFilteredPatients(patients)
+      setFilteredPatients(patients);
     }
-  }, [searchQuery, patients])
+  }, [searchQuery, patients]);
 
   const loadPatients = async () => {
     try {
-      console.log('Loading patients...')
-      const patientsData = await db.patients.orderBy('createdAt').reverse().toArray()
-      console.log('Loaded patients:', patientsData.length)
-      setPatients(patientsData)
-      setFilteredPatients(patientsData)
+      console.log("Loading patients...");
+      const patientsData = await db.patients
+        .orderBy("createdAt")
+        .reverse()
+        .toArray();
+      console.log("Loaded patients:", patientsData.length);
+      setPatients(patientsData);
+      setFilteredPatients(patientsData);
     } catch (error) {
-      console.error('Error loading patients:', error)
+      console.error("Error loading patients:", error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const getPatientAge = (dob: string) => {
-    const birthDate = new Date(dob)
-    const today = new Date()
-    let age = today.getFullYear() - birthDate.getFullYear()
-    const monthDiff = today.getMonth() - birthDate.getMonth()
-    
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--
+    const birthDate = new Date(dob);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && today.getDate() < birthDate.getDate())
+    ) {
+      age--;
     }
-    
-    return age
-  }
+
+    return age;
+  };
 
   if (loading) {
     return (
@@ -70,7 +77,7 @@ export function Patients() {
           <p className="mt-4 text-gray-600">Loading patients...</p>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -115,13 +122,12 @@ export function Patients() {
           <div className="text-center py-12">
             <UserIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">
-              {searchQuery ? 'No patients found' : 'No patients registered'}
+              {searchQuery ? "No patients found" : "No patients registered"}
             </h3>
             <p className="text-gray-600 mb-6">
-              {searchQuery 
-                ? 'Try adjusting your search terms'
-                : 'Get started by registering your first patient'
-              }
+              {searchQuery
+                ? "Try adjusting your search terms"
+                : "Get started by registering your first patient"}
             </p>
             {!searchQuery && (
               <Link to="/register" className="btn-primary">
@@ -148,7 +154,8 @@ export function Patients() {
                   ) : (
                     <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-gray-200 flex items-center justify-center">
                       <span className="text-lg sm:text-xl font-medium text-gray-600">
-                        {patient.givenName[0]}{patient.familyName[0]}
+                        {patient.givenName[0]}
+                        {patient.familyName[0]}
                       </span>
                     </div>
                   )}
@@ -164,20 +171,22 @@ export function Patients() {
                       {patient.sex}
                     </span>
                   </div>
-                  
+
                   <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-6 space-y-1 sm:space-y-0 text-sm text-gray-600">
                     <div className="flex items-center space-x-1">
                       <span>Age: {getPatientAge(patient.dob)}</span>
                     </div>
-                    
+
                     <div className="flex items-center space-x-1">
                       <PhoneIcon className="h-4 w-4" />
                       <span>{patient.phone}</span>
                     </div>
-                    
+
                     <div className="flex items-center space-x-1">
                       <MapPinIcon className="h-4 w-4" />
-                      <span>{patient.state}, {patient.lga}</span>
+                      <span>
+                        {patient.state}, {patient.lga}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -195,5 +204,5 @@ export function Patients() {
         )}
       </div>
     </div>
-  )
+  );
 }

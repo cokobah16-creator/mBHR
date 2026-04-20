@@ -79,6 +79,7 @@ export function HealthDataExport({ patientId }: Props) {
 
   useEffect(() => {
     loadPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
   async function loadPreview() {
@@ -173,7 +174,8 @@ export function HealthDataExport({ patientId }: Props) {
       URL.revokeObjectURL(url);
 
       setExportComplete(true);
-    } catch (err) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_err) {
       setDataSource("local");
       await handleOfflineExport();
     } finally {

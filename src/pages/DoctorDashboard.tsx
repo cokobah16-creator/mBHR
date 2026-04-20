@@ -7,9 +7,6 @@ import { queueManagement } from "@/services/queueManagement";
 import { getFlagColor } from "@/utils/vitals";
 import { getDoctorUnreadCount } from "@/services/patientSecureMessaging";
 import { PatientMessagesPanel } from "@/features/doctor/PatientMessagesPanel";
-import { palaverRoom } from "@/services/palaverRoom";
-import { PalaverRoom } from "@/features/doctor/PalaverRoom";
-import { PatientMessagesPanel } from "@/features/doctor/PatientMessagesPanel";
 import { supabase } from "@/lib/supabase";
 import {
   UserIcon,
@@ -40,8 +37,6 @@ export function DoctorDashboard() {
   const [showPatientMessages, setShowPatientMessages] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [unreadPatientMessages, setUnreadPatientMessages] = useState(0);
-  const [initialLoadDone, setInitialLoadDone] = useState(false);
-
   const userId = currentUser?.id;
 
   const loadUnreadCount = useCallback(async () => {

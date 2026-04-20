@@ -111,22 +111,45 @@ export function useAuth(): UseAuthReturn {
         if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
       }
 
+      // Security guard: never rebind a patient that already belongs to
+      // another auth user, even if their phone/email is matched at sign-up.
+      const { data: linkedPatient } = await supabase
+        .from("patients")
+        .select("id")
+        .or(orClauses.join(","))
+        .not("auth_uid", "is", null)
+        .neq("auth_uid", authData.user.id)
+        .maybeSingle();
+
+      if (linkedPatient) {
+        return {
+          message:
+            "We could not automatically link your clinic profile. Please contact support for identity verification.",
+        };
+      }
+      const normalizedEmail = data.email.toLowerCase().trim();
+
       const { data: existingPatient } = await supabase
         .from("patients")
-        .select("id, auth_uid, dob")
+        .select("id, auth_uid, dob, email, phone")
         .or(orClauses.join(","))
         .is("auth_uid", null)
         .maybeSingle();
 
       if (existingPatient) {
-        // Verify DOB when both sides have it — prevents linking via phone alone.
-        if (
-          existingPatient.dob &&
-          data.dob &&
-          existingPatient.dob !== data.dob
-        ) {
-          // DOB mismatch: don't link; create a fresh row instead.
-        } else {
+        const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
+        const matchedByEmail =
+          !!existingPatient.email &&
+          existingPatient.email.toLowerCase().trim() === normalizedEmail;
+        const matchedByPhone =
+          !!normalizedPhone && existingPatient.phone === normalizedPhone;
+        const dobMatches =
+          !!existingPatient.dob &&
+          !!data.dob &&
+          existingPatient.dob === data.dob;
+        const canLinkPatient = matchedByEmail || (matchedByPhone && dobMatches);
+
+        if (canLinkPatient) {
           // Conditional update: only succeeds if auth_uid is still NULL (race safety).
           const { error: linkError } = await supabase
             .from("patients")

@@ -20,6 +20,7 @@ import { useToast } from "@/stores/toast";
 export default function EmailDiagnostics() {
   const [testing, setTesting] = useState(false);
   const [testEmail, setTestEmail] = useState("cokobah16@gmail.com");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [testResult, setTestResult] = useState<any>(null);
   const [edgeFunctionUrl, setEdgeFunctionUrl] = useState("");
   const { push: pushToast } = useToast();
@@ -78,6 +79,7 @@ export default function EmailDiagnostics() {
           });
         }
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       setTestResult({
         success: false,

@@ -3,9 +3,12 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { resolve } from "path";
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   // loadEnv reads .env / .env.[mode] files; the empty prefix loads all vars.
   const env = loadEnv(mode, process.cwd(), "");
+  // `command` is "build" for every vite build invocation regardless of --mode,
+  // so staging/preview builds correctly strip console output and debugger calls.
+  const isBuild = command === "build";
 
   // Map bare Supabase env vars (Vercel integration) → VITE_ names so the
   // Supabase client can find them at runtime.  We only inject a define entry
@@ -22,30 +25,11 @@ export default defineConfig(({ mode }) => {
   if (!env.VITE_SUPABASE_ANON_KEY && process.env.SUPABASE_ANON_KEY) {
     defines["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
       process.env.SUPABASE_ANON_KEY,
-  const env = loadEnv(mode, process.cwd(), "");
-  const define: Record<string, string> = {};
-  const readEnv = (key: string) => env[key]?.trim();
-  const isProduction = mode === "production";
-
-  const hasClientSupabaseUrl = Boolean(readEnv("VITE_SUPABASE_URL"));
-  const hasClientSupabaseAnonKey = Boolean(readEnv("VITE_SUPABASE_ANON_KEY"));
-  const serverSupabaseUrl = readEnv("SUPABASE_URL");
-  const serverSupabaseAnonKey = readEnv("SUPABASE_ANON_KEY");
-
-  if (!hasClientSupabaseUrl && serverSupabaseUrl) {
-    define["import.meta.env.VITE_SUPABASE_URL"] =
-      JSON.stringify(serverSupabaseUrl);
-  }
-
-  if (!hasClientSupabaseAnonKey && serverSupabaseAnonKey) {
-    define["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
-      serverSupabaseAnonKey,
     );
   }
 
   return {
     define: defines,
-    define,
     resolve: {
       alias: {
         "@": resolve(__dirname, "./src"),
@@ -129,22 +113,14 @@ export default defineConfig(({ mode }) => {
       minify: "terser",
       terserOptions: {
         compress: {
-          drop_console: process.env.NODE_ENV === "production",
+          drop_console: isBuild,
           drop_debugger: true,
-          pure_funcs:
-            process.env.NODE_ENV === "production"
-              ? ["console.log", "console.info"]
-              : [],
-          drop_console: isProduction,
-          drop_debugger: true,
-          pure_funcs: isProduction ? ["console.log", "console.info"] : [],
+          pure_funcs: isBuild ? ["console.log", "console.info"] : [],
         },
       },
     },
     esbuild: {
-      drop:
-        process.env.NODE_ENV === "production" ? ["console", "debugger"] : [],
-      drop: isProduction ? ["console", "debugger"] : [],
+      drop: isBuild ? ["console", "debugger"] : [],
     },
     plugins: [
       react(),

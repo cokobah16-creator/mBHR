@@ -46,19 +46,14 @@ export function VitalsForm({
   const [loading, setLoading] = useState(false);
   const [bmi, setBmi] = useState<number | null>(null);
   const [flags, setFlags] = useState<string[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [patient, setPatient] = useState<any>(null);
 
   const methods = useForm<VitalsFormData>({
     resolver: zodResolver(vitalsSchema),
   });
 
-  const {
-    register,
-    handleSubmit,
-    watch,
-    control,
-    formState: { errors },
-  } = methods;
+  const { handleSubmit, watch } = methods;
 
   const watchedValues = watch();
 

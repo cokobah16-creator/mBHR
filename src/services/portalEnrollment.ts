@@ -8,12 +8,9 @@
 import { db, type Patient, type PortalInvitation } from "@/db";
 import { supabase } from "@/lib/supabase";
 import { normalizePhone } from "@/utils/phone";
-import { requestOTP } from "./patientPortalAuth";
-import { MessageQueue, outboxDb } from "@/db/outbox";
 import * as logger from "@/lib/logger";
 
 const RATE_LIMIT_MS = Number(import.meta.env.VITE_INVITE_RATE_MS || 60000); // Default 60 seconds
-const MAX_RETRIES = 3;
 
 export interface PortalEnrollmentOptions {
   sendInviteNow?: boolean;
@@ -111,6 +108,7 @@ export async function enablePortalAccess(
     }
 
     return { success: true };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     logger.error("Error enabling portal access:", error);
     return {
@@ -135,6 +133,7 @@ export async function disablePortalAccess(
 
     logger.info("Portal access disabled for patient:", patientId);
     return { success: true };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     logger.error("Error disabling portal access:", error);
     return {
@@ -149,7 +148,12 @@ export async function disablePortalAccess(
  */
 export async function sendPortalInvitation(
   patientId: string,
-): Promise<{ success: boolean; error?: string; demoOTP?: string; registrationUrl?: string }> {
+): Promise<{
+  success: boolean;
+  error?: string;
+  demoOTP?: string;
+  registrationUrl?: string;
+}> {
   try {
     const patient = await db.patients.get(patientId);
     if (!patient) {
@@ -230,7 +234,10 @@ export async function sendPortalInvitation(
               portalInvitation: { ...invitation, lastStatus: "sent" },
               _dirty: 1,
             });
-            logger.info("Portal invitation email sent via edge function to:", patient.email);
+            logger.info(
+              "Portal invitation email sent via edge function to:",
+              patient.email,
+            );
             return { success: true, registrationUrl };
           }
           logger.warn("Edge function email failed:", fnError);
@@ -252,7 +259,10 @@ export async function sendPortalInvitation(
               portalInvitation: { ...invitation, lastStatus: "sent" },
               _dirty: 1,
             });
-            logger.info("Portal invitation SMS sent via edge function to:", patient.phone);
+            logger.info(
+              "Portal invitation SMS sent via edge function to:",
+              patient.phone,
+            );
             return { success: true, registrationUrl };
           }
           logger.warn("Edge function SMS failed:", fnError);
@@ -275,9 +285,9 @@ export async function sendPortalInvitation(
     return {
       success: true,
       registrationUrl,
-      demoOTP:
-        `No email service configured. Share this registration link with the patient: ${registrationUrl}`,
+      demoOTP: `No email service configured. Share this registration link with the patient: ${registrationUrl}`,
     };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     logger.error("Error sending portal invitation:", error);
 
@@ -423,6 +433,7 @@ export async function linkAuthUserToPatient(
 
     logger.info("Auth user linked to patient:", { authUid, patientId });
     return { success: true };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     logger.error("Error linking auth user to patient:", error);
     return { success: false, error: error.message || "Failed to link account" };
@@ -442,7 +453,7 @@ export async function findEligiblePatients(
   } = {},
 ): Promise<Patient[]> {
   try {
-    let query = db.patients.where("portalEnabled").equals(0);
+    const query = db.patients.where("portalEnabled").equals(0);
 
     const patients = await query.toArray();
 
@@ -515,6 +526,7 @@ export async function bulkEnablePortalAccess(
               error: result.error || "Unknown error",
             });
           }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (error: any) {
           results.failed++;
           results.errors.push({

@@ -36,7 +36,8 @@ export function PatientDedupeModal({
     try {
       await mergePatients(selectedWinner, newPatient.id!, currentUser.id);
       onResolve("merge", selectedWinner);
-    } catch (error) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_error) {
       alert("Failed to merge patients");
     } finally {
       setLoading(false);

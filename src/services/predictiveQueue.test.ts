@@ -68,6 +68,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
   });
 
   it("should predict wait times for all stages", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -75,6 +76,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -85,6 +87,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.queue_metrics.get as any).mockResolvedValue({
       avgServiceSec: 300,
     });
@@ -99,6 +102,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
   });
 
   it("should identify bottlenecks correctly", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -106,6 +110,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -116,6 +121,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.queue_metrics.get as any).mockResolvedValue({
       avgServiceSec: 360,
     });
@@ -130,6 +136,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
   });
 
   it("should provide recommendations for high wait times", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -137,6 +144,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -147,6 +155,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.queue_metrics.get as any).mockResolvedValue({
       avgServiceSec: 300,
     });
@@ -160,6 +169,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
   });
 
   it("should calculate confidence scores", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -167,6 +177,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -184,6 +195,7 @@ describe("Predictive Queue - Wait Time Predictions", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.queue_metrics.get as any).mockResolvedValue({
       avgServiceSec: 240,
     });
@@ -203,6 +215,7 @@ describe("Predictive Queue - Staffing Recommendations", () => {
   });
 
   it("should recommend staffing based on queue volume", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -210,6 +223,7 @@ describe("Predictive Queue - Staffing Recommendations", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -217,6 +231,7 @@ describe("Predictive Queue - Staffing Recommendations", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.queue_metrics.get as any).mockResolvedValue({
       avgServiceSec: 300,
     });
@@ -234,8 +249,10 @@ describe("Predictive Queue - Staffing Recommendations", () => {
   });
 
   it("should identify understaffing situations", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         and: vi.fn((filterFn: any) => ({
           count: vi.fn().mockResolvedValue(
             // Return 40 for waiting status, 0 for in_progress status
@@ -244,6 +261,7 @@ describe("Predictive Queue - Staffing Recommendations", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -251,6 +269,7 @@ describe("Predictive Queue - Staffing Recommendations", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.queue_metrics.get as any).mockResolvedValue({
       avgServiceSec: 300,
     });
@@ -262,6 +281,7 @@ describe("Predictive Queue - Staffing Recommendations", () => {
   });
 
   it("should not recommend changes for optimal staffing", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -269,6 +289,7 @@ describe("Predictive Queue - Staffing Recommendations", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -276,6 +297,7 @@ describe("Predictive Queue - Staffing Recommendations", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.queue_metrics.get as any).mockResolvedValue({
       avgServiceSec: 240,
     });
@@ -320,6 +342,7 @@ describe("Predictive Queue - Queue Optimization", () => {
       },
     ];
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -327,12 +350,14 @@ describe("Predictive Queue - Queue Optimization", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.patients.get as any).mockResolvedValue({
       id: "p1",
       givenName: "John",
       familyName: "Doe",
       dob: "1950-01-01",
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.vitals.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         reverse: vi.fn(() => ({
@@ -344,6 +369,7 @@ describe("Predictive Queue - Queue Optimization", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.patientAllergies.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -368,25 +394,26 @@ describe("Predictive Queue - Queue Optimization", () => {
 
     const criticalVitals = [{ tempC: 40.5, systolic: 190, spo2: 85 }];
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
-          toArray: vi
-            .fn()
-            .mockResolvedValue([
-              {
-                id: "1",
-                patientId: "p1",
-                stage: "vitals",
-                status: "waiting",
-                position: 5,
-                updatedAt: new Date(),
-              },
-            ]),
+          toArray: vi.fn().mockResolvedValue([
+            {
+              id: "1",
+              patientId: "p1",
+              stage: "vitals",
+              status: "waiting",
+              position: 5,
+              updatedAt: new Date(),
+            },
+          ]),
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.patients.get as any).mockResolvedValue(mockPatient);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.vitals.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         reverse: vi.fn(() => ({
@@ -396,6 +423,7 @@ describe("Predictive Queue - Queue Optimization", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.patientAllergies.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -427,6 +455,7 @@ describe("Predictive Queue - Historical Patterns", () => {
         createdAt: new Date(Date.now() - i * 60 * 60000).toISOString(),
       }));
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         filter: vi.fn(() => ({
@@ -462,6 +491,7 @@ describe("Predictive Queue - Historical Patterns", () => {
         };
       });
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         filter: vi.fn(() => ({
@@ -483,6 +513,7 @@ describe("Predictive Queue - Queue Metrics", () => {
   });
 
   it("should calculate queue metrics", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         filter: vi.fn(() => ({
@@ -517,6 +548,7 @@ describe("Predictive Queue - Queue Metrics", () => {
         createdAt: new Date(Date.now() - i * 30000).toISOString(),
       }));
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         filter: vi.fn(() => ({
@@ -539,6 +571,7 @@ describe("Predictive Queue - Queue Metrics", () => {
         createdAt: new Date(Date.now() - i * 45000).toISOString(),
       }));
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         filter: vi.fn(() => ({
@@ -560,6 +593,7 @@ describe("Predictive Queue - Report Generation", () => {
   });
 
   it("should generate comprehensive queue reports", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (db.queue.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -567,6 +601,7 @@ describe("Predictive Queue - Report Generation", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.tickets.where as any).mockReturnValue({
       equals: vi.fn(() => ({
         and: vi.fn(() => ({
@@ -585,6 +620,7 @@ describe("Predictive Queue - Report Generation", () => {
         })),
       })),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mbhrDb.queue_metrics.get as any).mockResolvedValue({
       avgServiceSec: 240,
     });

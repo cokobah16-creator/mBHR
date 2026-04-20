@@ -13,6 +13,7 @@ export function ManageAccount() {
   const [activeTab, setActiveTab] = useState<
     "profile" | "notifications" | "security"
   >("profile");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [portalUser, setPortalUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
