@@ -10,7 +10,6 @@ import { isSupabaseEnabled } from "@/lib/supabaseClient";
 
 const onlineSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
-  email:      z.string().email("Please enter a valid email address"),
   credential: z.string().min(6, "Password must be at least 6 characters"),
 });
 
@@ -20,7 +19,6 @@ const offlineSchema = z.object({
     .string()
     .regex(
       /^\d{4}-\d{2}-\d{2}$/,
-      /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/,
       "Please enter your date of birth as YYYY-MM-DD (e.g. 1990-01-15)",
     ),
 });
@@ -70,7 +68,6 @@ export function PatientLogin() {
       data.credential,
       "dob",
     ).catch(() => null);
-    const result = await loginPatientPortal(data.email, data.credential, "dob").catch(() => null);
     if (result?.success && result.sessionToken) {
       localStorage.setItem("patient_session_token", result.sessionToken);
       localStorage.setItem(
@@ -126,10 +123,6 @@ export function PatientLogin() {
                 Data is stored on this device only. Email invitations are not
                 available without an internet connection — register directly
                 using the link below.
-              <p className="text-xs text-yellow-800 font-medium mb-1">Running in offline mode</p>
-              <p className="text-xs text-yellow-700">
-                Data is stored on this device only. Email invitations are not available without an
-                internet connection — register directly using the link below.
               </p>
             </div>
           )}
@@ -172,7 +165,6 @@ export function PatientLogin() {
                 htmlFor="credential"
                 className="block text-sm font-medium text-gray-700 mb-2"
               >
-              <label htmlFor="credential" className="block text-sm font-medium text-gray-700 mb-2">
                 {isSupabaseEnabled ? "Password" : "Date of Birth"}
               </label>
               <input
