@@ -161,11 +161,10 @@ export async function syncPortalActivityFromSupabase(): Promise<{
       }
 
       // Update local records with Supabase data
+      const localById = new Map(patientsWithPortal.map((p) => [p.id, p]));
       for (const supabasePatient of supabasePatients || []) {
         try {
-          const localPatient = patientsWithPortal.find(
-            (p) => p.id === supabasePatient.id,
-          );
+          const localPatient = localById.get(supabasePatient.id);
           if (!localPatient) continue;
 
           // Check if there are updates

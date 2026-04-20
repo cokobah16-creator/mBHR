@@ -1,5 +1,6 @@
 // src/sync/mbhrAdapter.ts
 import { db as mbhrDb } from "@/db/mbhr";
+import * as logger from "@/lib/logger";
 
 export const isOnlineSyncEnabled = () =>
   localStorage.getItem("mbhr-sync") === "on";
@@ -24,11 +25,14 @@ async function pushTable<T extends { updatedAt?: string; createdAt?: string }>(
   const { error } = await supabase
     .from(remoteName)
     .upsert(rows.map(mapToRemote), { onConflict: "id" });
-  if (error) console.error(`[sync] push ${remoteName} failed`, error);
+  if (error) logger.error(`[sync] push ${remoteName} failed`, error);
 }
 
 export async function syncNow() {
-  if (!supabase) return console.log("[sync] supabase client not set — skipped");
+  if (!supabase) {
+    logger.info("[sync] supabase client not set — skipped");
+    return;
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await pushTable(mbhrDb.inventory_nm, "inventory_nm", (x: any) => ({
@@ -183,5 +187,5 @@ export async function syncNow() {
     seq: x.seq,
   }));
 
-  console.log("[sync] done");
+  logger.info("[sync] done");
 }

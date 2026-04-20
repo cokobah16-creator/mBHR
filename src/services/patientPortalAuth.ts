@@ -40,7 +40,8 @@ export interface LocalPortalUser {
 function getLocalPortalUsers(): LocalPortalUser[] {
   try {
     return JSON.parse(localStorage.getItem(PORTAL_USERS_KEY) || "[]");
-  } catch {
+  } catch (e) {
+    logger.warn("Failed to parse portal users from localStorage:", e);
     return [];
   }
 }
@@ -422,8 +423,8 @@ export async function loginPatientPortal(
                 "No portal account found. Please register first using the details your clinic has on file.",
             };
           }
-        } catch {
-          // ignore
+        } catch (e) {
+          logger.debug("Supabase portal hint lookup failed:", e);
         }
       }
 
