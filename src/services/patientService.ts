@@ -487,7 +487,7 @@ export async function addVisit(
   }
 
   if (hasConsultationContent) {
-    const { data: consultationRow, error: consultationError } = await supabase
+    const { error: consultationError } = await supabase
       .from("consultations")
       .insert({
         id: crypto.randomUUID(),
@@ -499,14 +499,10 @@ export async function addVisit(
         soap_assessment: visit.diagnosis?.trim() ?? "",
         soap_plan: "",
         provisional_dx: [],
-      })
-      .select("id")
-      .single();
+      });
 
-    if (consultationError || !consultationRow?.id) {
-      const consultationFailureMessage =
-        consultationError?.message ??
-        "No consultation row was returned after insert";
+    if (consultationError) {
+      const consultationFailureMessage = consultationError.message;
       logger.error(
         "[patientService] addVisit (consultation):",
         consultationFailureMessage,
