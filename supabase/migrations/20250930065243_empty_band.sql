@@ -170,17 +170,12 @@ create table if not exists dispenses (
 alter table dispenses enable row level security;
 do $$
 begin
-  if exists (
+  if not exists (
     select 1
     from pg_policy p
-    join pg_class c on c.oid = p.polrelid
-    join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public'
-      and c.relname = 'dispenses'
-      and p.polname = 'Allow authenticated access to dispenses'
+    where p.polname = 'Allow authenticated access to dispenses'
+      and p.polrelid = 'public.dispenses'::regclass
   ) then
-    raise notice 'Skipping policy "Allow authenticated access to dispenses" because it already exists';
-  else
     create policy "Allow authenticated access to dispenses"
       on dispenses
       for all
