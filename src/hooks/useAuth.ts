@@ -46,11 +46,14 @@ export function useAuth(): UseAuthReturn {
     }
 
     // Prime from existing session immediately (no network call)
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      setLoading(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        setSession(data.session);
+        setUser(data.session?.user ?? null);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, newSession) => {

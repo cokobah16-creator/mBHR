@@ -221,10 +221,7 @@ type Cursor = { ts: string };
 async function getCursor(table: Tbl): Promise<string> {
   // settings store shape: { key: string, value: any }
 
-  const row = await db.settings
-    .get(CURSOR_KEY(table))
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .catch(() => undefined as any);
+  const row = await db.settings.get(CURSOR_KEY(table)).catch(() => undefined);
   const ts = row?.value?.ts ?? row?.ts ?? row?.value ?? undefined; // be liberal in what we accept
   if (typeof ts === "string" && ts) return ts;
   return DEFAULT_TS;
@@ -335,7 +332,10 @@ export async function pushChanges() {
       .where("_dirty")
       .equals(1)
       .toArray()
-      .catch(() => []);
+      .catch((e: unknown) => {
+        console.error(`[sync] failed to read dirty records for ${t}:`, e);
+        return [];
+      });
     if (!dirty?.length) continue;
 
     for (const record of dirty) {

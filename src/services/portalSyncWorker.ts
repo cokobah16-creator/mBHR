@@ -243,12 +243,12 @@ export function startPortalSyncWorker(intervalSeconds: number = 30): void {
   logger.info(`Starting portal sync worker (every ${intervalSeconds}s)`);
 
   // Run initial sync
-  runPortalSync();
+  runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
 
   // Set up periodic sync
   syncIntervalId = window.setInterval(() => {
     if (navigator.onLine) {
-      runPortalSync();
+      runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
     } else {
       logger.info("Offline, skipping scheduled portal sync");
     }
@@ -276,7 +276,7 @@ export function stopPortalSyncWorker(): void {
  */
 function handleOnline() {
   logger.info("Connection restored, running portal sync...");
-  runPortalSync();
+  runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
 }
 
 /**
