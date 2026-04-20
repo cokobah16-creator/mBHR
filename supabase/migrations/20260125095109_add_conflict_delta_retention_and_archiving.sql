@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS conflict_change_deltas (
   created_at timestamptz DEFAULT now()
 );
 
+-- Ensure FK column stays UUID-compatible with conflict_resolutions.id
+ALTER TABLE conflict_change_deltas
+  ALTER COLUMN conflict_id TYPE uuid USING conflict_id::uuid;
+
 COMMENT ON TABLE conflict_change_deltas IS 'Indefinite retention of field-level changes for AI training and compliance audits';
 COMMENT ON COLUMN conflict_change_deltas.phi_field IS 'Whether this field contains Protected Health Information';
 COMMENT ON COLUMN conflict_change_deltas.change_type IS 'Type of change: merge (combined values), override (replaced), correction (fixed error), auto_resolve (system decision)';

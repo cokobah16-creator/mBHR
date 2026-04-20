@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS conflict_audit_logs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Ensure FK column stays UUID-compatible with conflict_resolutions.id
+ALTER TABLE conflict_audit_logs
+  ALTER COLUMN conflict_id TYPE uuid USING conflict_id::uuid;
+
 -- Auto Resolution Rules Table
 CREATE TABLE IF NOT EXISTS auto_resolution_rules (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
