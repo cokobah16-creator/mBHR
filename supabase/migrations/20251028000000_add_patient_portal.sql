@@ -417,6 +417,7 @@ CREATE POLICY "Patients can send messages"
       SELECT patient_id FROM patient_portal_users WHERE id = auth.uid()
     )
     AND sender_type = 'patient'
+    AND sender_id = auth.uid()::uuid
     AND sender_id = auth.uid()
   );
 
@@ -451,6 +452,7 @@ CREATE POLICY "Staff can send messages to patients"
       SELECT id FROM app_users WHERE role IN ('admin', 'doctor', 'nurse', 'chw')
     )
     AND sender_type = 'staff'
+    AND sender_id = auth.uid()::uuid
     AND sender_id = auth.uid()
   );
 

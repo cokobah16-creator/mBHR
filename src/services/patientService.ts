@@ -8,10 +8,8 @@
 import { supabase } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 
-// ─── Domain types (camelCase for the app) ─────────────────────────────────────
-
 export interface PatientProfile {
-  id: string; // text pk
+  id: string;
   authUid: string | null;
   givenName: string;
   familyName: string;
@@ -22,7 +20,6 @@ export interface PatientProfile {
   createdAt: string;
 }
 
-/** Vitals row from the existing `vitals` table */
 export interface Vital {
   id: string;
   patientId: string;
@@ -38,7 +35,6 @@ export interface Vital {
   takenAt: string;
 }
 
-/** Maps to the `dispenses` table (medications dispensed to a patient) */
 export interface Medication {
   id: string;
   patientId: string;
@@ -49,23 +45,20 @@ export interface Medication {
   dispensedAt: string;
 }
 
-/** Maps to `visits` joined with the latest `consultations` row for that visit */
 export interface Visit {
   id: string;
   patientId: string;
   startedAt: string;
   siteName: string | null;
   status: string;
-  diagnosis: string | null; // from consultations.soap_assessment
-  notes: string | null; // from consultations.soap_subjective
+  diagnosis: string | null;
+  notes: string | null;
 }
 
 export interface ServiceResult<T> {
   data: T | null;
   error: string | null;
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function rowToProfile(r: Record<string, unknown>): PatientProfile {
   return {
@@ -81,7 +74,8 @@ function rowToProfile(r: Record<string, unknown>): PatientProfile {
   };
 }
 
-// ─── Patient profile ──────────────────────────────────────────────────────────
+const PATIENT_SELECT =
+  "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at";
 
 const PATIENT_SELECT =
   "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at";
@@ -102,8 +96,50 @@ export async function getPatientProfile(
     logger.error("[patientService] getPatientProfile:", error.message);
     return { data: null, error: error.message };
   }
-  if (!data)
+
+  if (!data) {
     return { data: null, error: "No patient profile found for this account." };
+  }
+
+  return { data: rowToProfile(data), error: null };
+}
+
+/**
+ * Fetch a patient by email (RLS allows access when auth.email() matches).
+ * Used as a fallback when auth_uid is not yet set on the patient row.
+ * If found, links the row to the auth account by setting auth_uid.
+ */
+export async function getPatientProfileByEmail(
+  authUid: string,
+  email: string,
+): Promise<ServiceResult<PatientProfile>> {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+
+  const { data, error } = await supabase
+    .from("patients")
+    .select(PATIENT_SELECT)
+    .eq("email", email.toLowerCase())
+    .maybeSingle();
+
+  if (error) {
+    logger.error("[patientService] getPatientProfileByEmail:", error.message);
+    return { data: null, error: error.message };
+  }
+  if (!data)
+    return { data: null, error: "No patient profile found for this email." };
+
+  // Link auth_uid for future lookups (best-effort, ignore failure)
+  if (!data.auth_uid) {
+    supabase
+      .from("patients")
+      .update({ auth_uid: authUid })
+      .eq("id", data.id)
+      .then(({ error: updateError }) => {
+        if (updateError) {
+          logger.error("[patientService] linkAuthUid:", updateError.message);
+        }
+      });
+  }
 
   return { data: rowToProfile(data), error: null };
 }
@@ -178,10 +214,9 @@ export async function updatePatientProfile(
     logger.error("[patientService] updatePatientProfile:", error.message);
     return { data: null, error: error.message };
   }
+
   return { data: rowToProfile(data), error: null };
 }
-
-// ─── Vitals ───────────────────────────────────────────────────────────────────
 
 export async function getVitals(
   patientId: string,
@@ -251,7 +286,9 @@ export async function addVital(
       taken_at: new Date().toISOString(),
       flags: [],
     })
-    .select()
+    .select(
+      "id, patient_id, visit_id, height_cm, weight_kg, temp_c, pulse_bpm, systolic, diastolic, spo2, bmi, taken_at",
+    )
     .single();
 
   if (error) {
@@ -277,8 +314,6 @@ export async function addVital(
     error: null,
   };
 }
-
-// ─── Medications (dispenses) ──────────────────────────────────────────────────
 
 export async function getMedications(
   patientId: string,
@@ -332,7 +367,9 @@ export async function addMedication(
       dispensed_by: "staff",
       dispensed_at: new Date().toISOString(),
     })
-    .select()
+    .select(
+      "id, patient_id, visit_id, item_name, dosage, directions, dispensed_at",
+    )
     .single();
 
   if (error) {
@@ -353,8 +390,6 @@ export async function addMedication(
     error: null,
   };
 }
-
-// ─── Visits ───────────────────────────────────────────────────────────────────
 
 export async function getVisits(
   patientId: string,
@@ -386,6 +421,7 @@ export async function getVisits(
       const consult = Array.isArray(v.consultations)
         ? v.consultations[0]
         : v.consultations;
+
       return {
         id: v.id,
         patientId: v.patient_id,
@@ -413,7 +449,6 @@ export async function addVisit(
   const visitId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
 
-  // Create the visit row
   const { error: visitError } = await supabase.from("visits").insert({
     id: visitId,
     patient_id: patientId,
@@ -421,6 +456,7 @@ export async function addVisit(
     site_name: visit.siteName ?? "Portal entry",
     status: "closed",
   });
+
   if (visitError) {
     logger.error("[patientService] addVisit (visit):", visitError.message);
     return { data: null, error: visitError.message };
@@ -428,29 +464,27 @@ export async function addVisit(
 
   // If there are notes/diagnosis, create a consultation record too
   if (visit.notes || visit.diagnosis) {
-    const { data: consultationRow, error: consultError } = await supabase
+    const { error: consultError } = await supabase
       .from("consultations")
       .insert({
         id: crypto.randomUUID(),
         patient_id: patientId,
         visit_id: visitId,
         provider_name: "Staff (portal)",
-        soap_subjective: visit.notes ?? "",
+        soap_subjective: visit.notes?.trim() ?? "",
         soap_objective: "",
-        soap_assessment: visit.diagnosis ?? "",
+        soap_assessment: visit.diagnosis?.trim() ?? "",
         soap_plan: "",
         provisional_dx: [],
-      })
-      .select("id")
-      .single();
-    if (consultError || !consultationRow) {
-      const consultationFailureReason =
-        consultError?.message ?? "No consultation row returned";
+      });
+
+    if (consultError) {
+      const consultationFailureMessage = consultError.message;
       logger.error(
         "[patientService] addVisit (consultation):",
-        consultationFailureReason,
+        consultationFailureMessage,
       );
-      // Best-effort rollback so we do not leave a visit without its clinical note.
+
       const { error: rollbackError } = await supabase
         .from("visits")
         .delete()
@@ -461,16 +495,15 @@ export async function addVisit(
           "[patientService] addVisit (rollback visit):",
           rollbackError.message,
         );
-
         return {
           data: null,
-          error: `Consultation save failed and visit cleanup failed: ${consultationFailureReason}. Cleanup error: ${rollbackError.message}`,
+          error: `Consultation save failed and visit cleanup failed: ${consultationFailureMessage}. Cleanup error: ${rollbackError.message}`,
         };
       }
 
       return {
         data: null,
-        error: `Consultation save failed; visit was rolled back: ${consultationFailureReason}`,
+        error: `Consultation save failed; visit was rolled back: ${consultationFailureMessage}`,
       };
     }
   }
@@ -489,8 +522,6 @@ export async function addVisit(
   };
 }
 
-// ─── Staff helpers ────────────────────────────────────────────────────────────
-
 export async function getAllPatients(): Promise<
   ServiceResult<PatientProfile[]>
 > {
@@ -508,5 +539,8 @@ export async function getAllPatients(): Promise<
     return { data: null, error: error.message };
   }
 
-  return { data: (data || []).map(rowToProfile), error: null };
+  return {
+    data: (data || []).map((row) => rowToProfile(row)),
+    error: null,
+  };
 }
