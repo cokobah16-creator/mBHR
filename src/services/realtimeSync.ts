@@ -90,7 +90,6 @@ class RealtimeSyncService {
 
       const channel = client
         .channel(channelKey)
-        // @ts-expect-error Supabase realtime types have overload resolution issues with postgres_changes
         .on("postgres_changes", pgConfig, handlePayload)
         .subscribe((status) => {
           if (status === "SUBSCRIBED") {
