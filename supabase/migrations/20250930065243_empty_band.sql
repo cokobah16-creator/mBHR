@@ -170,7 +170,7 @@ create table if not exists dispenses (
 alter table dispenses enable row level security;
 do $$
 begin
-  if not exists (
+  if exists (
     select 1
     from pg_policy p
     join pg_class c on c.oid = p.polrelid
@@ -179,6 +179,8 @@ begin
       and c.relname = 'dispenses'
       and p.polname = 'Allow authenticated access to dispenses'
   ) then
+    raise notice 'Skipping policy "Allow authenticated access to dispenses" because it already exists';
+  else
     create policy "Allow authenticated access to dispenses"
       on dispenses
       for all

@@ -19,8 +19,21 @@ export default defineConfig(({ mode }) => {
     !hasValue(env.VITE_SUPABASE_ANON_KEY) &&
     hasValue(env.SUPABASE_ANON_KEY)
   ) {
+  const readEnv = (key: string) => env[key]?.trim();
+
+  const hasClientSupabaseUrl = Boolean(readEnv("VITE_SUPABASE_URL"));
+  const hasClientSupabaseAnonKey = Boolean(readEnv("VITE_SUPABASE_ANON_KEY"));
+  const serverSupabaseUrl = readEnv("SUPABASE_URL");
+  const serverSupabaseAnonKey = readEnv("SUPABASE_ANON_KEY");
+
+  if (!hasClientSupabaseUrl && serverSupabaseUrl) {
+    define["import.meta.env.VITE_SUPABASE_URL"] =
+      JSON.stringify(serverSupabaseUrl);
+  }
+
+  if (!hasClientSupabaseAnonKey && serverSupabaseAnonKey) {
     define["import.meta.env.VITE_SUPABASE_ANON_KEY"] = JSON.stringify(
-      env.SUPABASE_ANON_KEY,
+      serverSupabaseAnonKey,
     );
   }
 
