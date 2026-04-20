@@ -406,6 +406,7 @@ export async function addVisit(
         consultError.message,
       );
       // Best-effort rollback so we do not leave a visit without its clinical note.
+
       const { error: rollbackError } = await supabase
         .from("visits")
         .delete()
@@ -415,6 +416,13 @@ export async function addVisit(
           "[patientService] addVisit (rollback visit):",
           rollbackError.message,
         );
+          "[patientService] addVisit (rollback):",
+          rollbackError.message,
+        );
+        return {
+          data: null,
+          error: `Consultation save failed and visit cleanup failed: ${consultError.message}. Cleanup error: ${rollbackError.message}`,
+        };
       }
 
       return {
@@ -422,6 +430,7 @@ export async function addVisit(
         error: rollbackError
           ? `Failed to save clinical notes (${consultError.message}) and failed to roll back visit (${rollbackError.message}).`
           : `Failed to save clinical notes: ${consultError.message}`,
+        error: `Consultation save failed; visit was rolled back: ${consultError.message}`,
       };
     }
   }
