@@ -10,7 +10,8 @@ import {
 } from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
 import { registerPatientPortalAccount } from "@/services/patientPortalAuth";
-import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
+import { getPatientProfile } from "@/services/patientService";
 
 // Online: password-based auth via Supabase
 const onlineSchema = z
@@ -87,11 +88,6 @@ export function PatientRegister() {
       password:   data.password,
       givenName,
       familyName,
-      phone:      data.phone        || undefined,
-      dob:        data.dateOfBirth  || undefined,
-      password:   (data as z.infer<typeof onlineSchema>).password,
-      givenName,
-      familyName,
       phone:      data.phone       || undefined,
       dob:        data.dateOfBirth || undefined,
     });
@@ -103,6 +99,26 @@ export function PatientRegister() {
         setError(authError.message);
       }
       return;
+    }
+    // Populate patient_portal_user so Medical History / Messages can find the patient ID
+    if (supabase) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const profileRes = await getPatientProfile(user.id);
+          if (profileRes.data) {
+            localStorage.setItem("patient_portal_user", JSON.stringify({
+              id: user.id,
+              patientId: profileRes.data.id,
+              givenName: profileRes.data.givenName,
+              familyName: profileRes.data.familyName,
+              email: profileRes.data.email,
+            }));
+          }
+        }
+      } catch {
+        // Non-fatal: Medical History / Messages will show an error if patientId is missing
+      }
     }
     setStep("success");
     setTimeout(() => navigate("/patient/dashboard"), 1800);
