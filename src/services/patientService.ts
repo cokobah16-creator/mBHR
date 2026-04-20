@@ -8,11 +8,8 @@
 import { supabase } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 
-// ─── Domain types (camelCase for the app) ─────────────────────────────────────
-
 export interface PatientProfile {
-  id: string; // text pk
-  id: string;           // text pk
+  id: string;
   authUid: string | null;
   givenName: string;
   familyName: string;
@@ -23,7 +20,6 @@ export interface PatientProfile {
   createdAt: string;
 }
 
-/** Vitals row from the existing `vitals` table */
 export interface Vital {
   id: string;
   patientId: string;
@@ -39,7 +35,6 @@ export interface Vital {
   takenAt: string;
 }
 
-/** Maps to the `dispenses` table (medications dispensed to a patient) */
 export interface Medication {
   id: string;
   patientId: string;
@@ -50,25 +45,20 @@ export interface Medication {
   dispensedAt: string;
 }
 
-/** Maps to `visits` joined with the latest `consultations` row for that visit */
 export interface Visit {
   id: string;
   patientId: string;
   startedAt: string;
   siteName: string | null;
   status: string;
-  diagnosis: string | null; // from consultations.soap_assessment
-  notes: string | null; // from consultations.soap_subjective
-  diagnosis: string | null;    // from consultations.soap_assessment
-  notes: string | null;        // from consultations.soap_subjective
+  diagnosis: string | null;
+  notes: string | null;
 }
 
 export interface ServiceResult<T> {
   data: T | null;
   error: string | null;
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function rowToProfile(r: Record<string, unknown>): PatientProfile {
   return {
@@ -84,31 +74,9 @@ function rowToProfile(r: Record<string, unknown>): PatientProfile {
   };
 }
 
-// ─── Patient profile ──────────────────────────────────────────────────────────
-
-/** Fetch a patient by their Supabase auth UID (stored as text in auth_uid). */
 export async function getPatientProfile(
   authUid: string,
 ): Promise<ServiceResult<PatientProfile>> {
-
-function rowToProfile(r: Record<string, unknown>): PatientProfile {
-  return {
-    id:         r.id           as string,
-    authUid:    r.auth_uid     as string | null,
-    givenName:  r.given_name   as string,
-    familyName: r.family_name  as string,
-    email:      r.email        as string | null,
-    phone:      r.phone        as string | null,
-    dob:        r.dob          as string | null,
-    sex:        r.sex          as string | null,
-    createdAt:  r.created_at   as string,
-  };
-}
-
-// ─── Patient profile ──────────────────────────────────────────────────────────
-
-/** Fetch a patient by their Supabase auth UID (stored as text in auth_uid). */
-export async function getPatientProfile(authUid: string): Promise<ServiceResult<PatientProfile>> {
   if (!supabase) return { data: null, error: "Supabase not configured" };
 
   const { data, error } = await supabase
@@ -116,7 +84,6 @@ export async function getPatientProfile(authUid: string): Promise<ServiceResult<
     .select(
       "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at",
     )
-    .select("id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at")
     .eq("auth_uid", authUid)
     .maybeSingle();
 
@@ -124,9 +91,10 @@ export async function getPatientProfile(authUid: string): Promise<ServiceResult<
     logger.error("[patientService] getPatientProfile:", error.message);
     return { data: null, error: error.message };
   }
-  if (!data)
+
+  if (!data) {
     return { data: null, error: "No patient profile found for this account." };
-  if (!data) return { data: null, error: "No patient profile found for this account." };
+  }
 
   return { data: rowToProfile(data), error: null };
 }
@@ -147,15 +115,6 @@ export async function updatePatientProfile(
     payload.family_name = updates.familyName;
   if (updates.phone !== undefined) payload.phone = updates.phone;
   if (updates.dob !== undefined) payload.dob = updates.dob;
-  updates: Partial<Pick<PatientProfile, "givenName" | "familyName" | "phone" | "dob">>,
-): Promise<ServiceResult<PatientProfile>> {
-  if (!supabase) return { data: null, error: "Supabase not configured" };
-
-  const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (updates.givenName  !== undefined) payload.given_name  = updates.givenName;
-  if (updates.familyName !== undefined) payload.family_name = updates.familyName;
-  if (updates.phone      !== undefined) payload.phone       = updates.phone;
-  if (updates.dob        !== undefined) payload.dob         = updates.dob;
 
   const { data, error } = await supabase
     .from("patients")
@@ -164,17 +123,15 @@ export async function updatePatientProfile(
     .select(
       "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at",
     )
-    .select("id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at")
     .single();
 
   if (error) {
     logger.error("[patientService] updatePatientProfile:", error.message);
     return { data: null, error: error.message };
   }
+
   return { data: rowToProfile(data), error: null };
 }
-
-// ─── Vitals ───────────────────────────────────────────────────────────────────
 
 export async function getVitals(
   patientId: string,
@@ -186,7 +143,6 @@ export async function getVitals(
     .select(
       "id, patient_id, visit_id, height_cm, weight_kg, temp_c, pulse_bpm, systolic, diastolic, spo2, bmi, taken_at",
     )
-    .select("id, patient_id, visit_id, height_cm, weight_kg, temp_c, pulse_bpm, systolic, diastolic, spo2, bmi, taken_at")
     .eq("patient_id", patientId)
     .order("taken_at", { ascending: false });
 
@@ -209,18 +165,6 @@ export async function getVitals(
       spo2: v.spo2,
       bmi: v.bmi,
       takenAt: v.taken_at,
-      id:        v.id,
-      patientId: v.patient_id,
-      visitId:   v.visit_id,
-      heightCm:  v.height_cm,
-      weightKg:  v.weight_kg,
-      tempC:     v.temp_c,
-      pulseBpm:  v.pulse_bpm,
-      systolic:  v.systolic,
-      diastolic: v.diastolic,
-      spo2:      v.spo2,
-      bmi:       v.bmi,
-      takenAt:   v.taken_at,
     })),
     error: null,
   };
@@ -256,17 +200,10 @@ export async function addVital(
       height_cm: vital.heightCm ?? null,
       taken_at: new Date().toISOString(),
       flags: [],
-      systolic:   vital.bloodPressureSystolic  ?? null,
-      diastolic:  vital.bloodPressureDiastolic ?? null,
-      weight_kg:  vital.weightKg  ?? null,
-      temp_c:     vital.tempC     ?? null,
-      pulse_bpm:  vital.pulseBpm  ?? null,
-      spo2:       vital.spo2      ?? null,
-      height_cm:  vital.heightCm  ?? null,
-      taken_at:   new Date().toISOString(),
-      flags:      [],
     })
-    .select()
+    .select(
+      "id, patient_id, visit_id, height_cm, weight_kg, temp_c, pulse_bpm, systolic, diastolic, spo2, bmi, taken_at",
+    )
     .single();
 
   if (error) {
@@ -288,24 +225,10 @@ export async function addVital(
       spo2: data.spo2,
       bmi: data.bmi,
       takenAt: data.taken_at,
-      id:        data.id,
-      patientId: data.patient_id,
-      visitId:   data.visit_id,
-      heightCm:  data.height_cm,
-      weightKg:  data.weight_kg,
-      tempC:     data.temp_c,
-      pulseBpm:  data.pulse_bpm,
-      systolic:  data.systolic,
-      diastolic: data.diastolic,
-      spo2:      data.spo2,
-      bmi:       data.bmi,
-      takenAt:   data.taken_at,
     },
     error: null,
   };
 }
-
-// ─── Medications (dispenses) ──────────────────────────────────────────────────
 
 export async function getMedications(
   patientId: string,
@@ -317,7 +240,6 @@ export async function getMedications(
     .select(
       "id, patient_id, visit_id, item_name, dosage, directions, dispensed_at",
     )
-    .select("id, patient_id, visit_id, item_name, dosage, directions, dispensed_at")
     .eq("patient_id", patientId)
     .order("dispensed_at", { ascending: false });
 
@@ -334,12 +256,6 @@ export async function getMedications(
       itemName: m.item_name,
       dosage: m.dosage,
       directions: m.directions,
-      id:          m.id,
-      patientId:   m.patient_id,
-      visitId:     m.visit_id,
-      itemName:    m.item_name,
-      dosage:      m.dosage,
-      directions:  m.directions,
       dispensedAt: m.dispensed_at,
     })),
     error: null,
@@ -363,15 +279,12 @@ export async function addMedication(
       dosage: med.dosage ?? null,
       directions: med.instructions ?? null,
       qty: 1,
-      patient_id:   patientId,
-      item_name:    med.name,
-      dosage:       med.dosage       ?? null,
-      directions:   med.instructions ?? null,
-      qty:          1,
       dispensed_by: "staff",
       dispensed_at: new Date().toISOString(),
     })
-    .select()
+    .select(
+      "id, patient_id, visit_id, item_name, dosage, directions, dispensed_at",
+    )
     .single();
 
   if (error) {
@@ -387,19 +300,11 @@ export async function addMedication(
       itemName: data.item_name,
       dosage: data.dosage,
       directions: data.directions,
-      id:          data.id,
-      patientId:   data.patient_id,
-      visitId:     data.visit_id,
-      itemName:    data.item_name,
-      dosage:      data.dosage,
-      directions:  data.directions,
       dispensedAt: data.dispensed_at,
     },
     error: null,
   };
 }
-
-// ─── Visits ───────────────────────────────────────────────────────────────────
 
 export async function getVisits(
   patientId: string,
@@ -420,13 +325,6 @@ export async function getVisits(
       referencedTable: "consultations",
       ascending: false,
     });
-    .select(`
-      id, patient_id, started_at, site_name, status,
-      consultations ( soap_assessment, soap_subjective, created_at )
-    `)
-    .eq("patient_id", patientId)
-    .order("started_at", { ascending: false })
-    .order("created_at", { referencedTable: "consultations", ascending: false });
 
   if (error) {
     logger.error("[patientService] getVisits:", error.message);
@@ -438,6 +336,7 @@ export async function getVisits(
       const consult = Array.isArray(v.consultations)
         ? v.consultations[0]
         : v.consultations;
+
       return {
         id: v.id,
         patientId: v.patient_id,
@@ -446,15 +345,6 @@ export async function getVisits(
         status: v.status,
         diagnosis: consult?.soap_assessment ?? null,
         notes: consult?.soap_subjective ?? null,
-      const consult = Array.isArray(v.consultations) ? v.consultations[0] : v.consultations;
-      return {
-        id:         v.id,
-        patientId:  v.patient_id,
-        startedAt:  v.started_at,
-        siteName:   v.site_name,
-        status:     v.status,
-        diagnosis:  consult?.soap_assessment ?? null,
-        notes:      consult?.soap_subjective ?? null,
       };
     }),
     error: null,
@@ -463,7 +353,11 @@ export async function getVisits(
 
 export async function addVisit(
   patientId: string,
-  visit: { notes?: string | null; diagnosis?: string | null; siteName?: string },
+  visit: {
+    notes?: string | null;
+    diagnosis?: string | null;
+    siteName?: string;
+  },
 ): Promise<ServiceResult<Visit>> {
   if (!supabase) return { data: null, error: "Supabase not configured" };
 
@@ -508,13 +402,10 @@ export async function addVisit(
         consultationFailureMessage,
       );
 
-      // Best-effort rollback to avoid reporting a successful visit when clinical
-      // notes failed to persist.
       const { error: rollbackError } = await supabase
         .from("visits")
         .delete()
-        .eq("id", visitId)
-        .eq("patient_id", patientId);
+        .eq("id", visitId);
 
       if (rollbackError) {
         logger.error(
@@ -549,8 +440,6 @@ export async function addVisit(
   };
 }
 
-// ─── Staff helpers ────────────────────────────────────────────────────────────
-
 export async function getAllPatients(): Promise<
   ServiceResult<PatientProfile[]>
 > {
@@ -561,7 +450,6 @@ export async function getAllPatients(): Promise<
     .select(
       "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at",
     )
-    .select("id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -569,5 +457,8 @@ export async function getAllPatients(): Promise<
     return { data: null, error: error.message };
   }
 
-  return { data: (data || []).map(rowToProfile), error: null };
+  return {
+    data: (data || []).map((row) => rowToProfile(row)),
+    error: null,
+  };
 }
