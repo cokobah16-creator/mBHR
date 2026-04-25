@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
 import {
@@ -10,6 +11,7 @@ import {
 import { UpdatePHR } from "./UpdatePHR";
 
 export function ManageAccount() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<
     "profile" | "notifications" | "security"
   >("profile");
@@ -35,7 +37,7 @@ export function ManageAccount() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
 

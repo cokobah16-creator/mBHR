@@ -9,10 +9,13 @@ import { db } from "@/db";
 import { supabase } from "@/lib/supabase";
 import { normalizePhone } from "@/utils/phone";
 import * as logger from "@/lib/logger";
+import { derivePinHash, newSaltB64, verifyPin } from "@/utils/pin";
 import type { PatientPortalAuthResponse } from "@/types/patientPortal";
 
 const PORTAL_USERS_KEY = "mbhr_portal_users";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 export interface ManagedPatient {
   patientId: string;
@@ -30,11 +33,14 @@ export interface LocalPortalUser {
   phone?: string;
   dob: string;
   pin?: string;
+  pinSalt?: string;
   sessionToken?: string;
   sessionExpiresAt?: string;
   createdAt: string;
   isCaregiverAccount?: boolean;
   managedPatients?: ManagedPatient[];
+  failedLoginAttempts?: number;
+  lockedUntil?: string;
 }
 
 function getLocalPortalUsers(): LocalPortalUser[] {
@@ -54,12 +60,12 @@ function normalize(value: string | undefined): string {
   return (value || "").trim().toLowerCase();
 }
 
-async function hashPIN(pin: string): Promise<string> {
-  const data = new TextEncoder().encode("mbhr_pin_salt_" + pin);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+async function hashPINWithSalt(
+  pin: string,
+): Promise<{ hash: string; salt: string }> {
+  const salt = newSaltB64();
+  const hash = await derivePinHash(pin, salt);
+  return { hash, salt };
 }
 
 function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
@@ -249,7 +255,9 @@ export async function registerPatientPortalAccount(
     // Use existing patient's name if we found a match
     const resolvedName = existingPatientName || { givenName, familyName };
 
-    const hashedPin = pin ? await hashPIN(pin) : undefined;
+    const { hash: hashedPin, salt: pinSalt } = pin
+      ? await hashPINWithSalt(pin)
+      : { hash: undefined, salt: undefined };
 
     const portalUser: LocalPortalUser = {
       id: crypto.randomUUID(),
@@ -260,6 +268,7 @@ export async function registerPatientPortalAccount(
       phone: phone || undefined,
       dob,
       pin: hashedPin,
+      pinSalt,
       sessionToken: crypto.randomUUID(),
       sessionExpiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       createdAt: now.toISOString(),
@@ -434,6 +443,19 @@ export async function loginPatientPortal(
       };
     }
 
+    // Brute-force lockout check
+    if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+      const mins = Math.ceil(
+        (new Date(user.lockedUntil).getTime() - Date.now()) / 60000,
+      );
+      return {
+        success: false,
+        error: `Account temporarily locked. Try again in ${mins} minute${mins !== 1 ? "s" : ""}.`,
+      };
+    }
+
+    let credentialValid = false;
+
     if (method === "pin") {
       if (!user.pin) {
         return {
@@ -442,19 +464,44 @@ export async function loginPatientPortal(
             "No PIN set for this account. Please log in with your date of birth.",
         };
       }
-      const inputHash = await hashPIN(credential);
-      if (inputHash !== user.pin) {
-        return { success: false, error: "Incorrect PIN." };
+      if (user.pinSalt) {
+        credentialValid = await verifyPin(credential, user.pin, user.pinSalt);
+      } else {
+        // Legacy SHA-256 hash — accept once then prompt re-registration
+        const { derivePinHash: sha256Fallback } = await import("@/utils/pin");
+        const legacyHash = await sha256Fallback(credential, "");
+        credentialValid = legacyHash === user.pin;
       }
     } else {
-      if (user.dob !== credential) {
-        return {
-          success: false,
-          error: "Date of birth does not match our records.",
-        };
-      }
+      credentialValid = user.dob === credential;
     }
 
+    if (!credentialValid) {
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      if (user.failedLoginAttempts >= MAX_LOGIN_ATTEMPTS) {
+        user.lockedUntil = new Date(
+          Date.now() + LOCKOUT_DURATION_MS,
+        ).toISOString();
+        user.failedLoginAttempts = 0;
+        saveLocalPortalUsers(users);
+        return {
+          success: false,
+          error: `Too many failed attempts. Account locked for 15 minutes.`,
+        };
+      }
+      saveLocalPortalUsers(users);
+      const remaining = MAX_LOGIN_ATTEMPTS - user.failedLoginAttempts;
+      return {
+        success: false,
+        error:
+          method === "pin"
+            ? `Incorrect PIN. ${remaining} attempt${remaining !== 1 ? "s" : ""} remaining.`
+            : "Date of birth does not match our records.",
+      };
+    }
+
+    user.failedLoginAttempts = 0;
+    user.lockedUntil = undefined;
     user.sessionToken = crypto.randomUUID();
     user.sessionExpiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
     saveLocalPortalUsers(users);

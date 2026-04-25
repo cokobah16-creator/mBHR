@@ -66,6 +66,7 @@ export default function PharmacyStock() {
     isControlled: false,
   });
 
+  const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
   const [batchForm, setBatchForm] = useState({
     lotNumber: "",
     qtyOnHand: 0,
@@ -213,6 +214,9 @@ export default function PharmacyStock() {
       return;
     }
 
+    if (isSubmittingBatch) return;
+    setIsSubmittingBatch(true);
+
     try {
       await mbhrDb.transaction(
         "rw",
@@ -247,6 +251,8 @@ export default function PharmacyStock() {
     } catch (error) {
       console.error("Error adding batch:", error);
       alert("Failed to add batch");
+    } finally {
+      setIsSubmittingBatch(false);
     }
   };
 

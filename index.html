@@ -34,6 +34,101 @@
     <title>Med Bridge Health Reach</title>
   </head>
   <body>
+    <!-- Nigeria Loader — shows while React boots, removed on first render -->
+    <div id="nldr" role="status" aria-label="Loading Med Bridge Health Reach">
+    <style>
+    #nldr{position:fixed;inset:0;display:grid;place-items:center;background:#F2EEE6;z-index:9999;transition:opacity .4s ease}
+    #nldr.nldr-out{opacity:0;pointer-events:none}
+    @keyframes nldr-s{to{transform:rotate(360deg)}}
+    @keyframes nldr-r{to{transform:rotate(-360deg)}}
+    @keyframes nldr-p{0%,100%{opacity:.55}50%{opacity:1}}
+    .nldr-mp{transform-origin:100px 100px;animation:nldr-s 7.14s linear infinite}
+    .nldr-ro{transform-origin:100px 100px;animation:nldr-r 9s linear infinite}
+    .nldr-ri{transform-origin:100px 100px;animation:nldr-s 6s linear infinite}
+    .nldr-rm{transform-origin:100px 100px;animation:nldr-r 14s linear infinite}
+    .nldr-st{transform-origin:100px 100px;animation:nldr-s 2.4s cubic-bezier(.6,.05,.4,.95) infinite}
+    .nldr-sc{transform-origin:100px 100px;animation:nldr-r 3.2s cubic-bezier(.6,.05,.4,.95) infinite}
+    .nldr-pu{animation:nldr-p 2.4s ease-in-out infinite}
+    </style>
+    <svg viewBox="0 0 200 200" width="200" height="200" overflow="visible" aria-hidden="true">
+      <defs>
+        <mask id="nldr-wm">
+          <rect x="0" y="0" width="200" height="200" fill="white"/>
+          <circle cx="100" cy="100" r="56" fill="black"/>
+        </mask>
+        <clipPath id="nldr-cp"></clipPath>
+      </defs>
+      <!-- Whirl rings -->
+      <g mask="url(#nldr-wm)">
+        <circle class="nldr-ro nldr-pu" cx="100" cy="100" r="94" fill="none" stroke="rgba(0,135,83,.20)" stroke-width=".75" stroke-dasharray="1 6"/>
+        <circle class="nldr-st" cx="100" cy="100" r="86" fill="none" stroke="rgba(0,135,83,.55)" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="60 240 30 270"/>
+        <circle class="nldr-sc" cx="100" cy="100" r="78" fill="none" stroke="#008753" stroke-width=".6" stroke-linecap="round" stroke-dasharray="2 10 18 14 4 16"/>
+        <circle class="nldr-rm" cx="100" cy="100" r="70" fill="none" stroke="rgba(0,135,83,.10)" stroke-width="2" stroke-dasharray="4 3"/>
+        <circle class="nldr-ri" cx="100" cy="100" r="64" fill="none" stroke="rgba(0,135,83,.20)" stroke-width=".6" stroke-dasharray=".6 4" stroke-linecap="round"/>
+        <g class="nldr-st"><g transform="translate(100,100)">
+          <line x1="92" y1="0" x2="98" y2="0" stroke="#008753" stroke-width=".9" stroke-linecap="round"/>
+          <line transform="rotate(60)"  x1="92" y1="0" x2="97" y2="0" stroke="rgba(0,135,83,.55)" stroke-width=".8" stroke-linecap="round"/>
+          <line transform="rotate(120)" x1="92" y1="0" x2="96" y2="0" stroke="rgba(0,135,83,.20)" stroke-width=".7" stroke-linecap="round"/>
+          <line transform="rotate(180)" x1="92" y1="0" x2="98" y2="0" stroke="#008753" stroke-width=".9" stroke-linecap="round"/>
+          <line transform="rotate(240)" x1="92" y1="0" x2="97" y2="0" stroke="rgba(0,135,83,.55)" stroke-width=".8" stroke-linecap="round"/>
+          <line transform="rotate(300)" x1="92" y1="0" x2="96" y2="0" stroke="rgba(0,135,83,.20)" stroke-width=".7" stroke-linecap="round"/>
+        </g></g>
+      </g>
+      <!-- Backdrop disc -->
+      <circle cx="100" cy="100" r="55" fill="rgba(0,135,83,.10)"/>
+      <!-- Nigeria map — paths injected by JS below -->
+      <g id="nldr-map" class="nldr-mp"></g>
+      <!-- Center dot -->
+      <circle cx="100" cy="100" r=".9" fill="#008753"/>
+    </svg>
+    <script>
+    (function(){
+      var NS="http://www.w3.org/2000/svg";
+      var FB=[[2.69,6.26],[2.74,7.87],[2.85,9.04],[3.55,11.66],[3.9,12.4],[4.29,13.1],[5.42,13.86],[6.82,13.32],[7.32,13.1],[8.5,13.3],[9.75,13.1],[11.05,13.39],[12.3,13.2],[13.1,13.45],[14.07,13.08],[14.59,12.85],[14.63,11.7],[14.18,11.24],[13.57,10.8],[13.4,10.2],[13.04,9.64],[12.83,8.94],[12.37,8.3],[11.94,7.78],[11.5,6.9],[10.84,6.82],[10.1,6.82],[9.5,6.45],[9.05,6.13],[8.57,5.06],[8.13,4.66],[7.4,4.4],[6.7,4.3],[6.0,4.3],[5.3,4.86],[4.4,5.4],[3.6,5.2],[3.0,5.5],[2.69,6.26]];
+
+      function mkProj(feats,sz,pad){
+        var xn=1/0,xx=-1/0,yn=1/0,yx=-1/0;
+        function each(g,fn){if(!g)return;var R=g.type==="Polygon"?g.coordinates:g.type==="MultiPolygon"?g.coordinates.reduce(function(a,p){return a.concat(p)},[]):[];R.forEach(function(r){r.forEach(fn)});}
+        feats.forEach(function(f){each(f.geometry,function(c){if(c[0]<xn)xn=c[0];if(c[0]>xx)xx=c[0];if(c[1]<yn)yn=c[1];if(c[1]>yx)yx=c[1];});});
+        var lat0=(yn+yx)/2,kx=Math.cos(lat0*Math.PI/180),w=(xx-xn)*kx,h=yx-yn,u=sz-pad*2,sc=Math.min(u/w,u/h),cx=sz/2,cy=sz/2,mx=(xn+xx)/2,my=(yn+yx)/2;
+        return function(c){return[cx+(c[0]-mx)*kx*sc,cy-(c[1]-my)*sc];};
+      }
+      function r2p(ring,proj){var d="";for(var i=0;i<ring.length;i++){var p=proj(ring[i]);d+=(i?"L":"M")+p[0].toFixed(2)+" "+p[1].toFixed(2);}return d+"Z";}
+      function g2p(g,proj){if(!g)return"";var R=g.type==="Polygon"?g.coordinates:g.type==="MultiPolygon"?g.coordinates.reduce(function(a,p){return a.concat(p)},[]):[];return R.map(function(r){return r2p(r,proj)}).join(" ");}
+
+      function render(feats){
+        var proj=mkProj(feats,200,18);
+        var xn=1/0,xx=-1/0,yn=1/0,yx=-1/0;
+        var paths=feats.map(function(f){
+          if(f.geometry){var R=f.geometry.type==="Polygon"?f.geometry.coordinates:f.geometry.type==="MultiPolygon"?f.geometry.coordinates.reduce(function(a,p){return a.concat(p)},[]):[];R.forEach(function(r){r.forEach(function(c){var p=proj(c);if(p[0]<xn)xn=p[0];if(p[0]>xx)xx=p[0];if(p[1]<yn)yn=p[1];if(p[1]>yx)yx=p[1];});});}
+          return g2p(f.geometry,proj);
+        });
+        var cp=document.getElementById("nldr-cp"),mg=document.getElementById("nldr-map");
+        while(cp.firstChild)cp.removeChild(cp.firstChild);
+        while(mg.firstChild)mg.removeChild(mg.firstChild);
+        paths.forEach(function(d){var el=document.createElementNS(NS,"path");el.setAttribute("d",d);cp.appendChild(el);});
+        var sw=(xx-xn)/3,yA=yn-2,hA=(yx-yn)+4;
+        var sg=document.createElementNS(NS,"g");sg.setAttribute("clip-path","url(#nldr-cp)");
+        [[xn,"#008753"],[xn+sw,"#FFFFFF"],[xn+2*sw,"#008753"]].forEach(function(pair){var r=document.createElementNS(NS,"rect");r.setAttribute("x",pair[0]);r.setAttribute("y",yA);r.setAttribute("width",sw);r.setAttribute("height",hA);r.setAttribute("fill",pair[1]);sg.appendChild(r);});
+        mg.appendChild(sg);
+        paths.forEach(function(d){var el=document.createElementNS(NS,"path");el.setAttribute("d",d);el.setAttribute("fill","none");el.setAttribute("stroke","#008753");el.setAttribute("stroke-opacity","0.55");el.setAttribute("stroke-width","0.55");el.setAttribute("stroke-linejoin","round");el.setAttribute("vector-effect","non-scaling-stroke");mg.appendChild(el);});
+        paths.forEach(function(d){var el=document.createElementNS(NS,"path");el.setAttribute("d",d);el.setAttribute("fill","none");el.setAttribute("stroke","#008753");el.setAttribute("stroke-width","0.9");el.setAttribute("stroke-linejoin","round");el.setAttribute("vector-effect","non-scaling-stroke");mg.appendChild(el);});
+      }
+
+      // Render fallback silhouette immediately
+      render([{geometry:{type:"Polygon",coordinates:[FB]}}]);
+
+      // Try CDN for real state outlines (upgrades the fallback if fetch succeeds)
+      var SRCS=["https://cdn.jsdelivr.net/gh/iamspruce/intro-d3@main/data/nigeria_state_boundaries.geojson","https://cdn.statically.io/gh/iamspruce/intro-d3/main/data/nigeria_state_boundaries.geojson"];
+      (function tryFetch(i){if(i>=SRCS.length)return;fetch(SRCS[i],{cache:"force-cache"}).then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(d){if(d&&d.features&&d.features.length)render(d.features);}).catch(function(){tryFetch(i+1);});})(0);
+
+      // Self-remove when React mounts
+      var root=document.getElementById("root");
+      if(root)new MutationObserver(function(_,obs){if(root.children.length){var ldr=document.getElementById("nldr");if(ldr){ldr.classList.add("nldr-out");setTimeout(function(){ldr.parentNode&&ldr.parentNode.removeChild(ldr);},400);}obs.disconnect();}}).observe(root,{childList:true});
+    })();
+    </script>
+    </div>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

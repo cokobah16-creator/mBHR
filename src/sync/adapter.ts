@@ -466,9 +466,15 @@ export async function processOperationsQueue(): Promise<ConflictData[]> {
   return detectedConflicts;
 }
 
+let syncInProgress = false;
+
 export async function syncNow() {
   if (!isOnlineSyncEnabled()) return { success: false, conflicts: [] };
+  if (syncInProgress) {
+    return { success: false, conflicts: [], error: "Sync already in progress" };
+  }
 
+  syncInProgress = true;
   const syncStore = useSyncStore.getState();
   syncStore.setStatus("syncing");
 
@@ -493,6 +499,8 @@ export async function syncNow() {
     syncStore.setLastErrorAt(Date.now(), message);
     syncStore.setStatus("error");
     return { success: false, conflicts: [], error: message };
+  } finally {
+    syncInProgress = false;
   }
 }
 
