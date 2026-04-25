@@ -134,4 +134,11 @@ function renderFatal(msg: string) {
       </I18nextProvider>
     </React.StrictMode>,
   );
+
+  // Backup teardown: removes #nldr even if nigeria-loader.js failed to load
+  const nldrEl = document.getElementById("nldr");
+  if (nldrEl) {
+    nldrEl.classList.add("nldr-out");
+    setTimeout(() => nldrEl.parentNode?.removeChild(nldrEl), 400);
+  }
 })();

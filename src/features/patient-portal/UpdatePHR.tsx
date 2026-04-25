@@ -24,6 +24,7 @@ export function UpdatePHR() {
 
   useEffect(() => {
     loadPHR();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadPHR = async () => {

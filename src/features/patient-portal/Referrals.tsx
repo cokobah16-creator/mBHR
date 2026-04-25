@@ -34,6 +34,7 @@ export function Referrals() {
 
   useEffect(() => {
     loadReferrals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadReferrals = async () => {

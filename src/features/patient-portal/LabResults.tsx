@@ -32,6 +32,7 @@ export function LabResults() {
 
   useEffect(() => {
     loadLabResults();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadLabResults = async () => {
