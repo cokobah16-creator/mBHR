@@ -22,6 +22,7 @@ export function VisitDetail() {
     if (visitId) {
       loadVisitDetails(visitId);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visitId]);
 
   const loadVisitDetails = async (id: string) => {

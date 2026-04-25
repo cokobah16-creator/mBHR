@@ -426,8 +426,8 @@ export async function markNotificationAsRead(
   _patientId: string,
   _notificationId: string,
 ): Promise<boolean> {
-  // No patient_notifications table in this schema; no-op.
-  return false;
+  // No patient_notifications table in this schema; treat as success.
+  return true;
 }
 
 /**

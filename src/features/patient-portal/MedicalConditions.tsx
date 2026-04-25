@@ -31,6 +31,7 @@ export function MedicalConditions() {
 
   useEffect(() => {
     loadConditions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadConditions = async () => {

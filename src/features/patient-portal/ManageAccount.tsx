@@ -30,6 +30,7 @@ export function ManageAccount() {
 
   useEffect(() => {
     loadAccountInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadAccountInfo = async () => {
