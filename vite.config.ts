@@ -113,14 +113,17 @@ export default defineConfig(({ command, mode }) => {
       minify: "terser",
       terserOptions: {
         compress: {
-          drop_console: isBuild,
+          drop_console: false,
           drop_debugger: true,
-          pure_funcs: isBuild ? ["console.log", "console.info"] : [],
+          pure_funcs: isBuild
+            ? ["console.log", "console.info", "console.debug"]
+            : [],
         },
       },
     },
     esbuild: {
-      drop: isBuild ? ["console", "debugger"] : [],
+      drop: isBuild ? ["debugger"] : [],
+      pure: isBuild ? ["console.log", "console.info", "console.debug"] : [],
     },
     plugins: [
       react(),
