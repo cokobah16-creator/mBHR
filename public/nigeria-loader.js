@@ -211,17 +211,56 @@
 
   // Self-remove when React mounts
   var root = document.getElementById("root");
-  if (root)
-    new MutationObserver(function (_, obs) {
+  var removed = false;
+  function removeLoader() {
+    if (removed) return;
+    removed = true;
+    var ldr = document.getElementById("nldr");
+    if (ldr) {
+      ldr.classList.add("nldr-out");
+      setTimeout(function () {
+        ldr.parentNode && ldr.parentNode.removeChild(ldr);
+      }, 400);
+    }
+  }
+  if (root) {
+    var obs = new MutationObserver(function () {
       if (root.children.length) {
-        var ldr = document.getElementById("nldr");
-        if (ldr) {
-          ldr.classList.add("nldr-out");
-          setTimeout(function () {
-            ldr.parentNode && ldr.parentNode.removeChild(ldr);
-          }, 400);
-        }
+        removeLoader();
         obs.disconnect();
       }
-    }).observe(root, { childList: true });
+    });
+    obs.observe(root, { childList: true });
+  }
+
+  // Failsafe: if React hasn't mounted in 20s, surface a startup error
+  // so users aren't trapped behind a spinning loader forever.
+  setTimeout(function () {
+    if (removed) return;
+    if (root && root.children.length) {
+      removeLoader();
+      return;
+    }
+    var ldr = document.getElementById("nldr");
+    if (!ldr) return;
+    var msg = document.createElement("div");
+    msg.style.cssText =
+      "position:absolute;left:50%;top:62%;transform:translateX(-50%);" +
+      "font-family:system-ui,-apple-system,sans-serif;color:#1a1a1a;" +
+      "text-align:center;max-width:360px;padding:0 24px";
+    msg.innerHTML =
+      '<p style="margin:0 0 8px;font-weight:600">Taking longer than expected…</p>' +
+      '<p style="margin:0 0 16px;color:#555;font-size:14px">' +
+      "If this keeps loading, try refreshing or clearing site data." +
+      "</p>" +
+      '<button id="nldr-reload" style="background:#008753;color:#fff;border:0;' +
+      'padding:10px 20px;border-radius:8px;font-size:14px;cursor:pointer">' +
+      "Reload</button>";
+    ldr.appendChild(msg);
+    var btn = document.getElementById("nldr-reload");
+    if (btn)
+      btn.addEventListener("click", function () {
+        location.reload();
+      });
+  }, 20000);
 })();
