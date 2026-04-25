@@ -135,10 +135,20 @@ function renderFatal(msg: string) {
     </React.StrictMode>,
   );
 
-  // Backup teardown: removes #nldr even if nigeria-loader.js failed to load
+  // Backup teardown: removes #nldr when React mounts, even if nigeria-loader.js
+  // failed to execute. Uses MutationObserver so #nldr is only removed after
+  // #root has children — preserving the 20-second failsafe UX if React throws
+  // before mounting anything.
   const nldrEl = document.getElementById("nldr");
-  if (nldrEl) {
-    nldrEl.classList.add("nldr-out");
-    setTimeout(() => nldrEl.parentNode?.removeChild(nldrEl), 400);
+  const rootEl = document.getElementById("root");
+  if (nldrEl && rootEl) {
+    const obs = new MutationObserver(() => {
+      if (rootEl.children.length) {
+        nldrEl.classList.add("nldr-out");
+        setTimeout(() => nldrEl.parentNode?.removeChild(nldrEl), 400);
+        obs.disconnect();
+      }
+    });
+    obs.observe(rootEl, { childList: true });
   }
 })();

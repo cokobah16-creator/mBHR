@@ -59,7 +59,7 @@ interface OperationsQueueActions {
   setProcessing: (processing: boolean) => void;
 }
 
-const generateId = () => crypto.randomUUID();
+const generateId = () => `op_${crypto.randomUUID()}`;
 
 const MAX_COMPLETED_OPS = 100;
 
