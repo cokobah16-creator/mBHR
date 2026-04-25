@@ -46,6 +46,10 @@ interface PatientMessagesPanelProps {
   onUnreadChange?: (count: number) => void;
 }
 
+export function PatientMessagesPanel({
+  onClose,
+  onUnreadChange,
+}: PatientMessagesPanelProps) {
 export function PatientMessagesPanel({ onClose, onUnreadChange }: PatientMessagesPanelProps) {
   const { currentUser } = useAuthStore();
   const [threads, setThreads] = useState<PatientThread[]>([]);
