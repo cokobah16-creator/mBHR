@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
@@ -29,6 +30,7 @@ const QUICK_MESSAGES = [
 ];
 
 export function SecureMessaging() {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -141,8 +143,7 @@ export function SecureMessaging() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        setError("Session expired. Please refresh the page and log in again.");
-        setSending(false);
+        navigate("/patient/login", { replace: true });
         return;
       }
 

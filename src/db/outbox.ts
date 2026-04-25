@@ -145,8 +145,8 @@ export class MessageQueue {
     template: string,
     payload: Record<string, string | number>,
   ): string {
-    return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-      return String(payload[key] || match);
+    return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+      return key in payload ? String(payload[key]) : "";
     });
   }
 

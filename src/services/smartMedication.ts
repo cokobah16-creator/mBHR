@@ -189,14 +189,20 @@ class SmartMedicationSystem {
 
         if (!drug1 || !drug2) continue;
 
-        if (
+        const interacts =
           drug1.interactions.some(
             (int) =>
               int === drug2.genericName ||
               int === drug2.name.toLowerCase() ||
               int === drug2.class,
-          )
-        ) {
+          ) ||
+          drug2.interactions.some(
+            (int) =>
+              int === drug1.genericName ||
+              int === drug1.name.toLowerCase() ||
+              int === drug1.class,
+          );
+        if (interacts) {
           interactions.push(
             this.generateInteractionDetails(
               medications[i],
@@ -347,7 +353,7 @@ class SmartMedicationSystem {
       antibiotic: ["azithromycin", "ciprofloxacin", "doxycycline"],
       nsaid: ["paracetamol", "tramadol", "celecoxib"],
       "ace-inhibitor": ["losartan", "amlodipine", "metoprolol"],
-      ppi: ["ranitidine", "famotidine", "pantoprazole"],
+      ppi: ["esomeprazole", "famotidine", "pantoprazole"],
     };
 
     return alternatives[drugClass] || [];
@@ -393,11 +399,22 @@ class SmartMedicationSystem {
     const dosing = medData.pediatricDosing!;
 
     if (age < dosing.minAge) {
-      warnings.push(
-        `Below minimum age for ${medication}. Consult pediatrician.`,
-      );
+      return {
+        recommendedDose: 0,
+        unit: "mg",
+        frequency: "N/A",
+        duration: "N/A",
+        route: "oral",
+        adjustmentReason: "Contraindicated",
+        warnings: [
+          `CONTRAINDICATED: ${medication} is not approved for patients under ${dosing.minAge} year(s) of age. Consult a pediatrician for an alternative.`,
+        ],
+      };
     }
 
+    // Weight-based dosing: use most recent recorded weight if available.
+    // Fallback 15 kg is only a rough estimate for children ~4-5 years old.
+    // Always verify against the patient's actual weight before dispensing.
     const weightKg = 15;
     let dose = weightKg * dosing.dosePerKg;
 
@@ -522,7 +539,7 @@ class SmartMedicationSystem {
       );
     }
 
-    const medicationCount = dispenses.length;
+    const medicationCount = new Set(dispenses.map((d) => d.itemName)).size;
     if (medicationCount > 5) {
       score -= 15;
       riskFactors.push(

@@ -83,7 +83,7 @@ export function AppointmentRequest() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
 
@@ -91,7 +91,7 @@ export function AppointmentRequest() {
       if (!portalUser.patientId) {
         localStorage.removeItem("patient_portal_user");
         sessionStorage.removeItem("patient_session_token");
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
 

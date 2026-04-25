@@ -70,6 +70,17 @@ export async function validateQHINRequest(
     };
   }
 
+  // Validate the API key against the stored hash
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(apiKey);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", keyData);
+  const computedHash = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  if (computedHash !== partner.apiKeyHash) {
+    return { valid: false, error: "Invalid API key for QHIN" };
+  }
+
   return { valid: true, partner };
 }
 

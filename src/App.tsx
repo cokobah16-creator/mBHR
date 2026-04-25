@@ -9,7 +9,11 @@ import { useAuthStore } from "@/stores/auth";
 import { seedDemo } from "@/db/seedMbhr";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { Home } from "@/pages/Home";
-import { startPortalSyncWorker } from "@/services/portalSyncWorker";
+import {
+  startPortalSyncWorker,
+  stopPortalSyncWorker,
+} from "@/services/portalSyncWorker";
+import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { AuthCallback } from "@/components/AuthCallback";
 
@@ -288,10 +292,13 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
   const [isValid, setIsValid] = React.useState(false);
 
   React.useEffect(() => {
+    let mounted = true;
+
     const validateSession = async () => {
       // 1. If Supabase is configured, trust the Supabase session first
       if (isSupabaseEnabled && supabase) {
         const { data } = await supabase.auth.getSession();
+        if (!mounted) return;
         if (data.session) {
           setIsValid(true);
           setIsValidating(false);
@@ -308,6 +315,7 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
       const portalUser = localStorage.getItem("patient_portal_user");
 
       if (!sessionToken || !portalUser) {
+        if (!mounted) return;
         setIsValid(false);
         setIsValidating(false);
         return;
@@ -318,6 +326,7 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
           await import("@/utils/sessionManager");
 
         const result = await validateAndRefreshPatientSession(sessionToken);
+        if (!mounted) return;
 
         if (!result.valid) {
           sessionStorage.removeItem("patient_session_token");
@@ -334,6 +343,7 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
           "[PatientProtectedRoute] Exception during validation:",
           err,
         );
+        if (!mounted) return;
         sessionStorage.removeItem("patient_session_token");
         localStorage.removeItem("patient_portal_user");
         setIsValid(false);
@@ -342,6 +352,9 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
     };
 
     validateSession();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   if (isValidating) {
@@ -368,365 +381,374 @@ function App() {
 
     // Start background portal sync worker
     startPortalSyncWorker();
+    return () => stopPortalSyncWorker();
   }, []);
 
   return (
-    <ErrorBoundary>
-      <PWAInstallPrompt />
-      <Routes>
-        {/* Public Routes - Must be defined before catch-all */}
-        <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
+    <GlobalErrorBoundary>
+      <ErrorBoundary>
+        <PWAInstallPrompt />
+        <Routes>
+          {/* Public Routes - Must be defined before catch-all */}
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<Login />} />
 
-        {/* Supabase auth email-confirmation redirect */}
-        <Route path="/auth/callback" element={<AuthCallback />} />
+          {/* Supabase auth email-confirmation redirect */}
+          <Route path="/auth/callback" element={<AuthCallback />} />
 
-        {/* Patient Portal Routes */}
-        <Route path="/patient" element={<PatientPortalLanding />} />
-        <Route path="/patient/login" element={<PatientLogin />} />
-        <Route path="/patient/register" element={<PatientRegister />} />
-        <Route
-          path="/patient/*"
-          element={
-            <PatientProtectedRoute>
-              <Suspense
-                fallback={
-                  <div className="min-h-screen flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                      <p className="mt-4 text-gray-600">Loading...</p>
+          {/* Patient Portal Routes */}
+          <Route path="/patient" element={<PatientPortalLanding />} />
+          <Route path="/patient/login" element={<PatientLogin />} />
+          <Route path="/patient/register" element={<PatientRegister />} />
+          <Route
+            path="/patient/*"
+            element={
+              <PatientProtectedRoute>
+                <Suspense
+                  fallback={
+                    <div className="min-h-screen flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                        <p className="mt-4 text-gray-600">Loading...</p>
+                      </div>
                     </div>
-                  </div>
-                }
-              >
-                <PatientPortalLayout>
-                  <Routes>
-                    <Route path="/dashboard" element={<PatientDashboard />} />
-                    <Route
-                      path="/medical-history"
-                      element={<MedicalHistory />}
-                    />
-                    <Route path="/visit/:visitId" element={<VisitDetail />} />
-                    <Route
-                      path="/appointments"
-                      element={<AppointmentRequest />}
-                    />
-                    <Route
-                      path="/appointments/request"
-                      element={<AppointmentRequest />}
-                    />
-                    <Route path="/billing" element={<BillingPayments />} />
-                    <Route path="/forms" element={<PreVisitForms />} />
-                    <Route
-                      path="/prescriptions"
-                      element={<PrescriptionRefills />}
-                    />
-                    <Route path="/telehealth" element={<Telehealth />} />
-                    <Route path="/update-phr" element={<UpdatePHR />} />
-                    <Route path="/messages" element={<SecureMessaging />} />
-                    <Route path="/account" element={<ManageAccount />} />
-                    <Route path="/lab-results" element={<LabResults />} />
-                    <Route path="/conditions" element={<MedicalConditions />} />
-                    <Route path="/documents" element={<DocumentUpload />} />
-                    <Route path="/referrals" element={<Referrals />} />
-                    <Route
-                      path="/export"
-                      element={<HealthDataExportWrapper />}
-                    />
-                    <Route
-                      path="/data-sharing"
-                      element={<DataSharingWrapper />}
-                    />
-                    <Route path="/outreach" element={<OutreachFinder />} />
-                    <Route path="/caregiver/add" element={<CaregiverSetup />} />
-                    <Route
-                      path="/"
-                      element={<Navigate to="/patient/dashboard" replace />}
-                    />
-                  </Routes>
-                </PatientPortalLayout>
-              </Suspense>
-            </PatientProtectedRoute>
-          }
-        />
+                  }
+                >
+                  <PatientPortalLayout>
+                    <Routes>
+                      <Route path="/dashboard" element={<PatientDashboard />} />
+                      <Route
+                        path="/medical-history"
+                        element={<MedicalHistory />}
+                      />
+                      <Route path="/visit/:visitId" element={<VisitDetail />} />
+                      <Route
+                        path="/appointments"
+                        element={<AppointmentRequest />}
+                      />
+                      <Route
+                        path="/appointments/request"
+                        element={<AppointmentRequest />}
+                      />
+                      <Route path="/billing" element={<BillingPayments />} />
+                      <Route path="/forms" element={<PreVisitForms />} />
+                      <Route
+                        path="/prescriptions"
+                        element={<PrescriptionRefills />}
+                      />
+                      <Route path="/telehealth" element={<Telehealth />} />
+                      <Route path="/update-phr" element={<UpdatePHR />} />
+                      <Route path="/messages" element={<SecureMessaging />} />
+                      <Route path="/account" element={<ManageAccount />} />
+                      <Route path="/lab-results" element={<LabResults />} />
+                      <Route
+                        path="/conditions"
+                        element={<MedicalConditions />}
+                      />
+                      <Route path="/documents" element={<DocumentUpload />} />
+                      <Route path="/referrals" element={<Referrals />} />
+                      <Route
+                        path="/export"
+                        element={<HealthDataExportWrapper />}
+                      />
+                      <Route
+                        path="/data-sharing"
+                        element={<DataSharingWrapper />}
+                      />
+                      <Route path="/outreach" element={<OutreachFinder />} />
+                      <Route
+                        path="/caregiver/add"
+                        element={<CaregiverSetup />}
+                      />
+                      <Route
+                        path="/"
+                        element={<Navigate to="/patient/dashboard" replace />}
+                      />
+                    </Routes>
+                  </PatientPortalLayout>
+                </Suspense>
+              </PatientProtectedRoute>
+            }
+          />
 
-        {/* Staff Routes - catch-all for authenticated routes */}
-        <Route
-          path="*"
-          element={
-            <ProtectedRoute>
-              <Suspense
-                fallback={
-                  <div className="min-h-screen flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                      <p className="mt-4 text-gray-600">Loading...</p>
+          {/* Staff Routes - catch-all for authenticated routes */}
+          <Route
+            path="*"
+            element={
+              <ProtectedRoute>
+                <Suspense
+                  fallback={
+                    <div className="min-h-screen flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+                        <p className="mt-4 text-gray-600">Loading...</p>
+                      </div>
                     </div>
-                  </div>
-                }
-              >
-                <Layout>
-                  <Routes>
-                    <Route path="/dashboard" element={<Dashboard />} />
-                    <Route
-                      path="/staff/patients"
-                      element={
-                        <RequireRoles
-                          roles={["doctor", "nurse", "admin", "volunteer"]}
-                        >
-                          <StaffPatientDashboard />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/doctor/dashboard"
-                      element={
-                        <RequireRoles roles={["doctor", "admin"]}>
-                          <DoctorDashboard />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route path="/register" element={<Register />} />
-                    <Route path="/patients" element={<Patients />} />
-                    <Route path="/patients/:id" element={<PatientDetail />} />
-                    <Route path="/queue" element={<Queue />} />
-                    <Route path="/inventory" element={<Inventory />} />
-                    <Route path="/users" element={<Users />} />
-                    <Route path="/vitals" element={<Vitals />} />
-                    <Route path="/vitals/:visitId" element={<Vitals />} />
-                    <Route path="/consult" element={<Consult />} />
-                    <Route path="/consult/:visitId" element={<Consult />} />
-                    <Route path="/pharmacy" element={<Pharmacy />} />
-                    <Route path="/pharmacy/:visitId" element={<Pharmacy />} />
+                  }
+                >
+                  <Layout>
+                    <Routes>
+                      <Route path="/dashboard" element={<Dashboard />} />
+                      <Route
+                        path="/staff/patients"
+                        element={
+                          <RequireRoles
+                            roles={["doctor", "nurse", "admin", "volunteer"]}
+                          >
+                            <StaffPatientDashboard />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/doctor/dashboard"
+                        element={
+                          <RequireRoles roles={["doctor", "admin"]}>
+                            <DoctorDashboard />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route path="/register" element={<Register />} />
+                      <Route path="/patients" element={<Patients />} />
+                      <Route path="/patients/:id" element={<PatientDetail />} />
+                      <Route path="/queue" element={<Queue />} />
+                      <Route path="/inventory" element={<Inventory />} />
+                      <Route path="/users" element={<Users />} />
+                      <Route path="/vitals" element={<Vitals />} />
+                      <Route path="/vitals/:visitId" element={<Vitals />} />
+                      <Route path="/consult" element={<Consult />} />
+                      <Route path="/consult/:visitId" element={<Consult />} />
+                      <Route path="/pharmacy" element={<Pharmacy />} />
+                      <Route path="/pharmacy/:visitId" element={<Pharmacy />} />
 
-                    {/* New MBHR Features */}
-                    <Route
-                      path="/inv/game"
-                      element={
-                        <RequireRoles roles={["volunteer", "nurse", "admin"]}>
-                          <RestockGame />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/inv/prizes"
-                      element={
-                        <RequireRoles roles={["volunteer", "nurse", "admin"]}>
-                          <PrizeShop />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/rx/stock"
-                      element={
-                        <RequireRoles roles={["pharmacist", "admin"]}>
-                          <PharmacyStock />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/rx/new"
-                      element={
-                        <RequireRoles roles={["doctor", "nurse", "admin"]}>
-                          <RxForm />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/rx/dispense"
-                      element={
-                        <RequireRoles roles={["pharmacist", "admin"]}>
-                          <Dispense />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/tickets/queue"
-                      element={
-                        <RequireRoles roles={["nurse", "doctor", "admin"]}>
-                          <QueueBoard />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/tickets/issue"
-                      element={
-                        <RequireRoles
-                          roles={["volunteer", "nurse", "doctor", "admin"]}
-                        >
-                          <TicketIssuer />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/inv/leaderboard"
-                      element={
-                        <RequireRoles roles={["volunteer", "nurse", "admin"]}>
-                          <Leaderboard />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route path="/display" element={<PublicDisplay />} />
-                    <Route path="/quests" element={<QuestBoard />} />
-                    <Route
-                      path="/games/queue-maestro"
-                      element={
-                        <RequireRoles roles={["volunteer", "nurse", "admin"]}>
-                          <QueueMaestro />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route path="/games" element={<GameHub />} />
-                    <Route
-                      path="/games/vitals-precision"
-                      element={
-                        <RequireRoles roles={["volunteer", "nurse", "admin"]}>
-                          <VitalsPrecisionGame />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/games/knowledge-blitz"
-                      element={
-                        <RequireRoles roles={["volunteer", "nurse", "admin"]}>
-                          <KnowledgeBlitz />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/games/triage-sprint"
-                      element={
-                        <RequireRoles roles={["nurse", "doctor", "admin"]}>
-                          <TriageSprint />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/games/vitals-precision-enhanced"
-                      element={
-                        <RequireRoles roles={["volunteer", "nurse", "admin"]}>
-                          <VitalsPrecisionGame />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/analytics"
-                      element={
-                        <RequireRoles roles={["admin"]}>
-                          <AnalyticsDashboard />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/admin/approvals"
-                      element={
-                        <RequireRoles roles={["admin"]}>
-                          <ApprovalInbox />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/admin/portal-dashboard"
-                      element={
-                        <RequireRoles roles={["admin"]}>
-                          <PortalDashboard />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/admin/portal-migration"
-                      element={
-                        <RequireRoles roles={["admin"]}>
-                          <PortalMigration />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/admin/bulk-portal-migration"
-                      element={
-                        <RequireRoles roles={["admin"]}>
-                          <BulkPortalMigration />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/admin/email-diagnostics"
-                      element={
-                        <RequireRoles roles={["admin"]}>
-                          <EmailDiagnostics />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/admin/conflicts"
-                      element={
-                        <RequireRoles roles={["admin", "doctor", "nurse"]}>
-                          <ConflictDashboard />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/simple/register"
-                      element={<SimpleRegister />}
-                    />
-                    <Route path="/pharmacy" element={<PharmacyMenu />} />
-                    <Route
-                      path="/pharmacy/reports"
-                      element={
-                        <RequireRoles roles={["pharmacist", "admin"]}>
-                          <PharmacyReports />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/pharmacy/sms-reminders"
-                      element={
-                        <RequireRoles roles={["pharmacist", "admin"]}>
-                          <SMSReminders />
-                        </RequireRoles>
-                      }
-                    />
-                    {/* Temporarily disabled - corrupted file
+                      {/* New MBHR Features */}
+                      <Route
+                        path="/inv/game"
+                        element={
+                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                            <RestockGame />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/inv/prizes"
+                        element={
+                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                            <PrizeShop />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/rx/stock"
+                        element={
+                          <RequireRoles roles={["pharmacist", "admin"]}>
+                            <PharmacyStock />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/rx/new"
+                        element={
+                          <RequireRoles roles={["doctor", "nurse", "admin"]}>
+                            <RxForm />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/rx/dispense"
+                        element={
+                          <RequireRoles roles={["pharmacist", "admin"]}>
+                            <Dispense />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/tickets/queue"
+                        element={
+                          <RequireRoles roles={["nurse", "doctor", "admin"]}>
+                            <QueueBoard />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/tickets/issue"
+                        element={
+                          <RequireRoles
+                            roles={["volunteer", "nurse", "doctor", "admin"]}
+                          >
+                            <TicketIssuer />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/inv/leaderboard"
+                        element={
+                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                            <Leaderboard />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route path="/display" element={<PublicDisplay />} />
+                      <Route path="/quests" element={<QuestBoard />} />
+                      <Route
+                        path="/games/queue-maestro"
+                        element={
+                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                            <QueueMaestro />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route path="/games" element={<GameHub />} />
+                      <Route
+                        path="/games/vitals-precision"
+                        element={
+                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                            <VitalsPrecisionGame />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/games/knowledge-blitz"
+                        element={
+                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                            <KnowledgeBlitz />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/games/triage-sprint"
+                        element={
+                          <RequireRoles roles={["nurse", "doctor", "admin"]}>
+                            <TriageSprint />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/games/vitals-precision-enhanced"
+                        element={
+                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                            <VitalsPrecisionGame />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/analytics"
+                        element={
+                          <RequireRoles roles={["admin"]}>
+                            <AnalyticsDashboard />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/approvals"
+                        element={
+                          <RequireRoles roles={["admin"]}>
+                            <ApprovalInbox />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/portal-dashboard"
+                        element={
+                          <RequireRoles roles={["admin"]}>
+                            <PortalDashboard />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/portal-migration"
+                        element={
+                          <RequireRoles roles={["admin"]}>
+                            <PortalMigration />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/bulk-portal-migration"
+                        element={
+                          <RequireRoles roles={["admin"]}>
+                            <BulkPortalMigration />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/email-diagnostics"
+                        element={
+                          <RequireRoles roles={["admin"]}>
+                            <EmailDiagnostics />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/conflicts"
+                        element={
+                          <RequireRoles roles={["admin", "doctor", "nurse"]}>
+                            <ConflictDashboard />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/simple/register"
+                        element={<SimpleRegister />}
+                      />
+                      <Route path="/pharmacy" element={<PharmacyMenu />} />
+                      <Route
+                        path="/pharmacy/reports"
+                        element={
+                          <RequireRoles roles={["pharmacist", "admin"]}>
+                            <PharmacyReports />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/pharmacy/sms-reminders"
+                        element={
+                          <RequireRoles roles={["pharmacist", "admin"]}>
+                            <SMSReminders />
+                          </RequireRoles>
+                        }
+                      />
+                      {/* Temporarily disabled - corrupted file
                     <Route path="/pharmacy/enhanced/:visitId" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
                         <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
                       </RequireRoles>
                     } />
                     */}
-                    <Route
-                      path="/labs"
-                      element={
-                        <RequireRoles roles={["doctor", "nurse", "admin"]}>
-                          <LabResultsDashboard userId="" />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/appointments"
-                      element={
-                        <RequireRoles
-                          roles={["doctor", "nurse", "volunteer", "admin"]}
-                        >
-                          <AppointmentCalendar createdBy="" />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/triage/quick"
-                      element={
-                        <RequireRoles roles={["nurse", "doctor", "admin"]}>
-                          <QuickTriage onComplete={() => {}} />
-                        </RequireRoles>
-                      }
-                    />
-                  </Routes>
-                </Layout>
-              </Suspense>
-            </ProtectedRoute>
-          }
-        />
-      </Routes>
-    </ErrorBoundary>
+                      <Route
+                        path="/labs"
+                        element={
+                          <RequireRoles roles={["doctor", "nurse", "admin"]}>
+                            <LabResultsDashboard userId="" />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/appointments"
+                        element={
+                          <RequireRoles
+                            roles={["doctor", "nurse", "volunteer", "admin"]}
+                          >
+                            <AppointmentCalendar createdBy="" />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/triage/quick"
+                        element={
+                          <RequireRoles roles={["nurse", "doctor", "admin"]}>
+                            <QuickTriage onComplete={() => {}} />
+                          </RequireRoles>
+                        }
+                      />
+                    </Routes>
+                  </Layout>
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </ErrorBoundary>
+    </GlobalErrorBoundary>
   );
 }
 

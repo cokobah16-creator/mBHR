@@ -38,12 +38,11 @@ export function Patients() {
 
   const loadPatients = async () => {
     try {
-      console.log("Loading patients...");
       const patientsData = await db.patients
         .orderBy("createdAt")
         .reverse()
         .toArray();
-      console.log("Loaded patients:", patientsData.length);
+      console.log(`Loaded ${patientsData.length} patients`);
       setPatients(patientsData);
       setFilteredPatients(patientsData);
     } catch (error) {

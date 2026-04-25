@@ -54,6 +54,7 @@ export class SessionManager {
   private sessionCreatedAt: number = Date.now();
   private onWarningCallback?: (timeRemaining: number) => void;
   private onExpireCallback?: () => void;
+  private boundHandleActivity: () => void;
 
   constructor(
     userType: "staff" | "patient",
@@ -64,6 +65,8 @@ export class SessionManager {
     this.config = SESSION_CONFIGS[userType];
     this.onWarningCallback = onWarning;
     this.onExpireCallback = onExpire;
+    // Store stable bound reference so addEventListener/removeEventListener match
+    this.boundHandleActivity = this.handleActivity.bind(this);
 
     // Load saved session times
     this.loadSessionTimes();
@@ -102,7 +105,7 @@ export class SessionManager {
   private setupActivityListeners() {
     const events = ["mousedown", "keydown", "scroll", "touchstart", "click"];
     events.forEach((event) => {
-      window.addEventListener(event, this.handleActivity.bind(this), {
+      window.addEventListener(event, this.boundHandleActivity, {
         passive: true,
       });
     });
@@ -228,10 +231,10 @@ export class SessionManager {
       this.activityCheckInterval = null;
     }
 
-    // Remove event listeners
+    // Remove event listeners using the same stable reference registered in setupActivityListeners
     const events = ["mousedown", "keydown", "scroll", "touchstart", "click"];
     events.forEach((event) => {
-      window.removeEventListener(event, this.handleActivity.bind(this));
+      window.removeEventListener(event, this.boundHandleActivity);
     });
 
     // Clear storage
@@ -261,7 +264,9 @@ export async function validateAndRefreshPatientSession(
       return {
         valid: true,
         needsRefresh: false,
-        expiresAt: user.sessionExpiresAt ? new Date(user.sessionExpiresAt) : undefined,
+        expiresAt: user.sessionExpiresAt
+          ? new Date(user.sessionExpiresAt)
+          : undefined,
       };
     }
 

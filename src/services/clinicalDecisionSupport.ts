@@ -80,7 +80,7 @@ class ClinicalDecisionSupportService {
         concerns.push("Fever present");
         recommendations.push("Monitor temperature, consider antipyretics");
         score += 2;
-      } else if (vitals.tempC < 36.0) {
+      } else if (vitals.tempC < 35.0) {
         concerns.push("Hypothermia detected");
         recommendations.push("Warming measures needed");
         urgentFlags.push("Temperature critically low");
@@ -89,7 +89,7 @@ class ClinicalDecisionSupportService {
     }
 
     if (vitals.systolic && vitals.diastolic) {
-      if (vitals.systolic >= 180 || vitals.diastolic >= 120) {
+      if (vitals.systolic >= 180 && vitals.diastolic >= 120) {
         concerns.push("Hypertensive crisis");
         recommendations.push("URGENT: Immediate medical intervention required");
         urgentFlags.push("Blood pressure dangerously high");
@@ -130,8 +130,17 @@ class ClinicalDecisionSupportService {
       }
     }
 
-    if (vitals.spo2) {
-      if (vitals.spo2 < 90) {
+    if (vitals.spo2 !== undefined && vitals.spo2 !== null) {
+      if (vitals.spo2 === 0) {
+        concerns.push(
+          "SpO2 reading is zero — likely probe-off or sensor error",
+        );
+        recommendations.push(
+          "URGENT: Recheck SpO2 probe placement immediately; treat as critical until confirmed",
+        );
+        urgentFlags.push("SpO2 = 0 — verify sensor or treat as critical");
+        score += 4;
+      } else if (vitals.spo2 < 90) {
         concerns.push("Severe hypoxemia");
         recommendations.push("URGENT: Oxygen therapy required immediately");
         urgentFlags.push("Oxygen saturation critically low");
@@ -153,6 +162,12 @@ class ClinicalDecisionSupportService {
       } else if (vitals.bmi < 18.5) {
         concerns.push("Underweight");
         recommendations.push("Nutritional counseling recommended");
+        score += 1;
+      } else if (vitals.bmi >= 25 && vitals.bmi < 30) {
+        concerns.push("Overweight");
+        recommendations.push(
+          "Lifestyle counseling — diet and physical activity advice recommended",
+        );
         score += 1;
       } else if (vitals.bmi >= 35) {
         concerns.push("Class II Obesity");

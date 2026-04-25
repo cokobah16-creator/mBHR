@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   CalendarIcon,
   HeartIcon,
@@ -336,6 +336,7 @@ function SupabaseDashboard() {
 // ─── Offline (legacy) dashboard ───────────────────────────────────────────────
 
 function OfflineDashboard() {
+  const navigate = useNavigate();
   const [data, setData] = useState<PatientDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -350,19 +351,30 @@ function OfflineDashboard() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
       const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId || !portalUser.id) {
         localStorage.removeItem("patient_portal_user");
         sessionStorage.removeItem("patient_session_token");
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
       const activeProfileStr = localStorage.getItem("patient_active_profile");
-      const activePatientId = activeProfileStr
+      const rawActivePatientId = activeProfileStr
         ? JSON.parse(activeProfileStr).patientId
+        : portalUser.patientId;
+
+      // Validate that the requested patient is owned by this portal user (IDOR guard)
+      const ownedPatientIds: string[] = [
+        portalUser.patientId,
+        ...(portalUser.managedPatients || []).map(
+          (m: { patientId: string }) => m.patientId,
+        ),
+      ];
+      const activePatientId = ownedPatientIds.includes(rawActivePatientId)
+        ? rawActivePatientId
         : portalUser.patientId;
 
       const dashboardData = await getPatientDashboard(
