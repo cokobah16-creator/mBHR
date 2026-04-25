@@ -11,7 +11,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { registerPatientPortalAccount } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
-import { getPatientProfile } from "@/services/patientService";
+import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
 
 // Online: password-based auth via Supabase
 const onlineSchema = z
@@ -136,7 +136,10 @@ export function PatientRegister() {
           data: { user },
         } = await supabase.auth.getUser();
         if (user) {
-          const profileRes = await getPatientProfile(user.id);
+          let profileRes = await getPatientProfile(user.id);
+          if (!profileRes.data && user.email) {
+            profileRes = await getPatientProfileByEmail(user.id, user.email);
+          }
           if (profileRes.data) {
             localStorage.setItem(
               "patient_portal_user",

@@ -19,6 +19,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import {
   getPatientProfile,
+  getPatientProfileByEmail,
   getVitals,
   getMedications,
   getVisits,
@@ -129,7 +130,11 @@ function SupabaseDashboard() {
     setError("");
     try {
       // Load profile first so we have the patientId for subsequent queries
-      const profileRes = await getPatientProfile(user.id);
+      let profileRes = await getPatientProfile(user.id);
+      // Fallback: look up by email and auto-link auth_uid when lookup by uid fails
+      if ((profileRes.error || !profileRes.data) && user.email) {
+        profileRes = await getPatientProfileByEmail(user.id, user.email);
+      }
       if (profileRes.error || !profileRes.data) {
         setError(
           "Could not load your profile. Make sure your account is set up.",
