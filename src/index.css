@@ -2,9 +2,59 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Nigeria Loader animation keyframes */
+@keyframes nldr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes nldr-spin-r {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+@keyframes nldr-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.nldr-ro {
+  transform-origin: 50% 50%;
+  animation: nldr-spin-r 9s linear infinite;
+}
+.nldr-ri {
+  transform-origin: 50% 50%;
+  animation: nldr-spin 6s linear infinite;
+}
+.nldr-rm {
+  transform-origin: 50% 50%;
+  animation: nldr-spin-r 14s linear infinite;
+}
+.nldr-st {
+  transform-origin: 50% 50%;
+  animation: nldr-spin 2.4s cubic-bezier(0.6, 0.05, 0.4, 0.95) infinite;
+}
+.nldr-sc {
+  transform-origin: 50% 50%;
+  animation: nldr-spin-r 3.2s cubic-bezier(0.6, 0.05, 0.4, 0.95) infinite;
+}
+.nldr-pu {
+  animation: nldr-pulse 2.4s ease-in-out infinite;
+}
+
 @layer base {
   html {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family:
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-size-adjust: 100%;
@@ -52,28 +102,28 @@
   .btn-primary {
     @apply bg-primary text-white px-6 py-3 rounded-lg font-medium hover:bg-primary/90 transition-colors min-h-12 text-lg;
   }
-  
+
   .btn-secondary {
     @apply bg-gray-200 text-gray-800 px-6 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors min-h-12 text-lg;
   }
-  
+
   .input-field {
     @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent min-h-12 text-lg;
   }
-  
+
   .card {
     @apply bg-white rounded-lg shadow-md p-6 border border-gray-100;
   }
-  
+
   .touch-target {
     @apply min-h-12 min-w-12;
   }
-  
+
   /* Additional utility classes for new features */
   .btn {
     @apply px-3 py-2 rounded-lg border shadow-sm hover:bg-gray-50 transition-colors;
   }
-  
+
   .input {
     @apply px-3 py-2 rounded-lg border w-full focus:ring-2 focus:ring-primary focus:border-transparent;
   }
@@ -81,7 +131,7 @@
 
 @layer utilities {
   .text-shadow {
-    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
 
   /* Sticky sidebar utility */
@@ -105,34 +155,34 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  
+
   .large-targets .touch-target {
     @apply min-h-16 min-w-16;
   }
-  
+
   .large-targets .btn-primary,
   .large-targets .btn-secondary {
     @apply min-h-16 text-xl px-8 py-4;
   }
-  
+
   .large-targets .input-field {
     @apply min-h-16 text-xl px-6 py-4;
   }
-  
+
   .touch-target-large {
     @apply min-h-16 min-w-16;
   }
-  
+
   /* Simple mode enhancements */
   .simple-mode .btn-primary,
   .simple-mode .btn-secondary {
     @apply text-xl px-8 py-6 min-h-20;
   }
-  
+
   .simple-mode .input-field {
     @apply text-xl px-6 py-4 min-h-16;
   }
-  
+
   .simple-mode .card {
     @apply p-8 rounded-2xl;
   }
@@ -143,11 +193,11 @@
   .dark {
     @apply bg-gray-900 text-white;
   }
-  
+
   .dark .card {
     @apply bg-gray-800 border-gray-700;
   }
-  
+
   .dark .input-field {
     @apply bg-gray-800 border-gray-600 text-white;
   }
