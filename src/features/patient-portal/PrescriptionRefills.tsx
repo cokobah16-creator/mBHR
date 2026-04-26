@@ -459,7 +459,8 @@ export function PrescriptionRefills() {
         <div className="divide-y divide-gray-200">
           {prescriptions.map((prescription) => {
             const statusInfo = getStatusInfo(prescription.status);
-            const StatusIcon = statusInfo.icon;
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const _StatusIcon = statusInfo.icon;
             const daysUntilRefill = getDaysUntilRefill(prescription);
 
             return (

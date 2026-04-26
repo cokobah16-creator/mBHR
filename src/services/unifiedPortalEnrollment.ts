@@ -259,16 +259,22 @@ export async function bulkEnrollPatients(patientIds: string[]): Promise<{
   failed: number;
   errors: Array<{ patientId: string; error: string }>;
 }> {
+  if (patientIds.length === 0) return { success: 0, failed: 0, errors: [] };
+
   let success = 0;
   let failed = 0;
   const errors: Array<{ patientId: string; error: string }> = [];
 
+  const { data: patients } = await supabase
+    .from("patients")
+    .select("*")
+    .in("id", patientIds);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const found = new Map((patients ?? []).map((p: any) => [p.id, p]));
+
   for (const patientId of patientIds) {
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("id", patientId)
-      .single();
+    const patient = found.get(patientId);
 
     if (!patient) {
       failed++;

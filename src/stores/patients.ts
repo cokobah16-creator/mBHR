@@ -42,7 +42,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
         .orderBy("createdAt")
         .reverse()
         .toArray();
-      console.log("Loaded patients from database:", patients.length, patients);
+      console.log(`Loaded ${patients.length} patients from database`);
       set({ patients });
     } catch (error) {
       console.error("Error loading patients:", error);
@@ -98,7 +98,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       };
 
       await db.patients.add(patient);
-      console.log("Patient added to database:", patient);
+      console.log("Patient added to database:", patient.id);
 
       // Bump daily count
       await bumpDailyCount(epochDay(new Date()), "registrations");

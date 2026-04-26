@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
@@ -19,6 +20,7 @@ interface Document {
 }
 
 export function DocumentUpload() {
+  const navigate = useNavigate();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -31,6 +33,7 @@ export function DocumentUpload() {
 
   useEffect(() => {
     loadDocuments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadDocuments = async () => {
@@ -40,7 +43,7 @@ export function DocumentUpload() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
 
@@ -79,7 +82,7 @@ export function DocumentUpload() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
 

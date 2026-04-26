@@ -1,30 +1,51 @@
-import React, { useEffect, useState } from 'react'
-import { useGam } from '@/stores/gamification'
-import { GiftIcon, StarIcon } from '@heroicons/react/24/outline'
+import React, { useEffect, useState } from "react";
+import { useGam } from "@/stores/gamification";
+import { GiftIcon, StarIcon } from "@heroicons/react/24/outline";
 
 const PRIZES = [
-  { id: 'sticker', name: 'Volunteer Sticker Pack', cost: 50, description: 'Cool stickers for your gear' },
-  { id: 'cap', name: 'MBHR Baseball Cap', cost: 300, description: 'Official volunteer cap' },
-  { id: 'lunch', name: 'Free Lunch Voucher', cost: 500, description: 'Enjoy a meal on us!' },
-  { id: 'tshirt', name: 'Premium T-Shirt', cost: 800, description: 'High-quality volunteer shirt' }
-]
+  {
+    id: "sticker",
+    name: "Volunteer Sticker Pack",
+    cost: 50,
+    description: "Cool stickers for your gear",
+  },
+  {
+    id: "cap",
+    name: "MBHR Baseball Cap",
+    cost: 300,
+    description: "Official volunteer cap",
+  },
+  {
+    id: "lunch",
+    name: "Free Lunch Voucher",
+    cost: 500,
+    description: "Enjoy a meal on us!",
+  },
+  {
+    id: "tshirt",
+    name: "Premium T-Shirt",
+    cost: 800,
+    description: "High-quality volunteer shirt",
+  },
+];
 
 export default function PrizeShop() {
-  const { wallet, spendTokens, ensureWallet } = useGam()
-  const [badges, setBadges] = useState<string[]>([])
+  const { wallet, spendTokens, ensureWallet } = useGam();
+  const [badges] = useState<string[]>([]);
 
   useEffect(() => {
-    ensureWallet('demo-volunteer')
-  }, [])
+    ensureWallet("demo-volunteer");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  async function redeem(prize: typeof PRIZES[0]) {
-    const success = await spendTokens('demo-volunteer', prize.cost)
+  async function redeem(prize: (typeof PRIZES)[0]) {
+    const success = await spendTokens("demo-volunteer", prize.cost);
     if (!success) {
-      alert('Not enough tokens! Keep restocking to earn more.')
-      return
+      alert("Not enough tokens! Keep restocking to earn more.");
+      return;
     }
-    
-    alert(`🎉 Redeemed ${prize.name}! Check with admin to collect your prize.`)
+
+    alert(`🎉 Redeemed ${prize.name}! Check with admin to collect your prize.`);
   }
 
   return (
@@ -42,7 +63,9 @@ export default function PrizeShop() {
               <span className="text-white font-bold text-sm">T</span>
             </div>
             <div>
-              <div className="text-lg font-bold text-green-800">{wallet} Tokens</div>
+              <div className="text-lg font-bold text-green-800">
+                {wallet} Tokens
+              </div>
               <div className="text-sm text-green-600">Available to spend</div>
             </div>
           </div>
@@ -57,9 +80,12 @@ export default function PrizeShop() {
             {badges.length === 0 ? (
               <span className="text-sm text-purple-600">No badges yet</span>
             ) : (
-              badges.map(badge => (
-                <span key={badge} className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
-                  {badge.replace('_', ' ')}
+              badges.map((badge) => (
+                <span
+                  key={badge}
+                  className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium"
+                >
+                  {badge.replace("_", " ")}
                 </span>
               ))
             )}
@@ -69,29 +95,40 @@ export default function PrizeShop() {
 
       {/* Prizes */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {PRIZES.map(prize => {
-          const canAfford = wallet >= prize.cost
+        {PRIZES.map((prize) => {
+          const canAfford = wallet >= prize.cost;
           return (
-            <div key={prize.id} className={`card transition-all hover:shadow-md ${
-              canAfford ? 'border-green-200 hover:border-green-300' : 'border-gray-200 opacity-75'
-            }`}>
+            <div
+              key={prize.id}
+              className={`card transition-all hover:shadow-md ${
+                canAfford
+                  ? "border-green-200 hover:border-green-300"
+                  : "border-gray-200 opacity-75"
+              }`}
+            >
               <div className="text-center">
                 <div className="w-12 h-12 bg-gray-100 rounded-full mx-auto mb-3 flex items-center justify-center">
                   <GiftIcon className="h-6 w-6 text-gray-600" />
                 </div>
-                <div className="font-medium text-gray-900 mb-1">{prize.name}</div>
-                <div className="text-sm text-gray-600 mb-3">{prize.description}</div>
-                <div className="text-lg font-bold text-primary mb-3">{prize.cost} tokens</div>
-                <button 
-                  className={`w-full ${canAfford ? 'btn-primary' : 'btn-secondary opacity-50 cursor-not-allowed'}`}
+                <div className="font-medium text-gray-900 mb-1">
+                  {prize.name}
+                </div>
+                <div className="text-sm text-gray-600 mb-3">
+                  {prize.description}
+                </div>
+                <div className="text-lg font-bold text-primary mb-3">
+                  {prize.cost} tokens
+                </div>
+                <button
+                  className={`w-full ${canAfford ? "btn-primary" : "btn-secondary opacity-50 cursor-not-allowed"}`}
                   onClick={() => canAfford && redeem(prize)}
                   disabled={!canAfford}
                 >
-                  {canAfford ? 'Redeem' : 'Need more tokens'}
+                  {canAfford ? "Redeem" : "Need more tokens"}
                 </button>
               </div>
             </div>
-          )
+          );
         })}
       </div>
 
@@ -106,5 +143,5 @@ export default function PrizeShop() {
         </div>
       </div>
     </div>
-  )
+  );
 }

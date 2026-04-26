@@ -60,6 +60,7 @@ export function PortalDashboard() {
 
   useEffect(() => {
     filterPatients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, statusFilter, patients]);
 
   const loadData = async () => {
@@ -328,6 +329,7 @@ export function PortalDashboard() {
             </div>
             <select
               value={statusFilter}
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               onChange={(e) => setStatusFilter(e.target.value as any)}
               className="input-field"
             >

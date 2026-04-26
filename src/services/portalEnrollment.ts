@@ -8,12 +8,10 @@
 import { db, type Patient, type PortalInvitation } from "@/db";
 import { supabase } from "@/lib/supabase";
 import { normalizePhone } from "@/utils/phone";
-import { requestOTP } from "./patientPortalAuth";
-import { MessageQueue, outboxDb } from "@/db/outbox";
 import * as logger from "@/lib/logger";
+import { getErrorMessage } from "@/utils/errors";
 
 const RATE_LIMIT_MS = Number(import.meta.env.VITE_INVITE_RATE_MS || 60000); // Default 60 seconds
-const MAX_RETRIES = 3;
 
 export interface PortalEnrollmentOptions {
   sendInviteNow?: boolean;
@@ -111,11 +109,12 @@ export async function enablePortalAccess(
     }
 
     return { success: true };
-  } catch (error: any) {
+     
+  } catch (error: unknown) {
     logger.error("Error enabling portal access:", error);
     return {
       success: false,
-      error: error.message || "Failed to enable portal access",
+      error: getErrorMessage(error) || "Failed to enable portal access",
     };
   }
 }
@@ -135,11 +134,12 @@ export async function disablePortalAccess(
 
     logger.info("Portal access disabled for patient:", patientId);
     return { success: true };
-  } catch (error: any) {
+     
+  } catch (error: unknown) {
     logger.error("Error disabling portal access:", error);
     return {
       success: false,
-      error: error.message || "Failed to disable portal access",
+      error: getErrorMessage(error) || "Failed to disable portal access",
     };
   }
 }
@@ -147,9 +147,12 @@ export async function disablePortalAccess(
 /**
  * Send portal invitation to a patient
  */
-export async function sendPortalInvitation(
-  patientId: string,
-): Promise<{ success: boolean; error?: string; demoOTP?: string }> {
+export async function sendPortalInvitation(patientId: string): Promise<{
+  success: boolean;
+  error?: string;
+  demoOTP?: string;
+  registrationUrl?: string;
+}> {
   try {
     const patient = await db.patients.get(patientId);
     if (!patient) {
@@ -192,76 +195,99 @@ export async function sendPortalInvitation(
       _dirty: 1,
     });
 
-    // Queue the invitation message for offline-first delivery
-    if (import.meta.env.DEV) {
-      // In development, log the OTP to console
-      logger.info(
-        `[DEV] Portal invitation for ${patient.givenName} ${patient.familyName}`,
-      );
-      logger.info(`[DEV] Contact: ${patient.email || patient.phone}`);
-      logger.info(`[DEV] Patient can login at /patient/login`);
+    const patientName = `${patient.givenName} ${patient.familyName}`;
+    const contact = patient.email || patient.phone!;
 
-      // Mark as sent immediately in dev mode
-      await db.patients.update(patientId, {
-        portalInvitation: { ...invitation, lastStatus: "sent" },
-        _dirty: 1,
-      });
+    // Build a pre-filled registration URL so patients land with their contact ready
+    const registrationUrl = patient.email
+      ? `${window.location.origin}/patient/register?email=${encodeURIComponent(patient.email)}`
+      : patient.phone
+        ? `${window.location.origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
+        : `${window.location.origin}/patient/register`;
+    const loginUrl = `${window.location.origin}/patient/login`;
 
-      return {
-        success: true,
-        demoOTP: "(Check Supabase for OTP or use test mode)",
-      };
-    }
+    // --- Send via Supabase edge function (email preferred, SMS fallback) ---
+    if (supabase) {
+      try {
+        if (patient.email) {
+          const { error: fnError } = await supabase.functions.invoke(
+            "send-otp-email",
+            {
+              body: {
+                email: patient.email,
+                subject: "Your mBHR Patient Portal is Ready",
+                message:
+                  `Hi ${patient.givenName},\n\n` +
+                  `Your patient portal has been set up by your healthcare provider.\n\n` +
+                  `Click the link below to create your account — your email will be pre-filled:\n\n` +
+                  `${registrationUrl}\n\n` +
+                  `You will be asked to enter your date of birth to complete registration.\n\n` +
+                  `Already registered? Log in here: ${loginUrl}\n\n` +
+                  `Med Bridge Health Reach`,
+              },
+            },
+          );
 
-    // Production: Send OTP directly via email
-    if (patient.email) {
-      const otpResult = await requestOTP({
-        email: patient.email,
-        purpose: "registration",
-      });
+          if (!fnError) {
+            await db.patients.update(patientId, {
+              portalInvitation: { ...invitation, lastStatus: "sent" },
+              _dirty: 1,
+            });
+            logger.info(
+              "Portal invitation email sent via edge function to:",
+              patient.email,
+            );
+            return { success: true, registrationUrl };
+          }
+          logger.warn("Edge function email failed:", fnError);
+        } else if (patient.phone) {
+          const { error: fnError } = await supabase.functions.invoke(
+            "send-otp-sms",
+            {
+              body: {
+                phone: normalizePhone(patient.phone) || patient.phone,
+                message:
+                  `Hi ${patient.givenName}, your mBHR patient portal is ready. ` +
+                  `Register at: ${registrationUrl} — use your phone number and date of birth.`,
+              },
+            },
+          );
 
-      if (otpResult.success) {
-        await db.patients.update(patientId, {
-          portalInvitation: { ...invitation, lastStatus: "sent" },
-          _dirty: 1,
-        });
-        logger.info("Portal invitation email sent to:", patient.email);
-        return { success: true };
-      } else {
-        await db.patients.update(patientId, {
-          portalInvitation: {
-            ...invitation,
-            lastStatus: "failed",
-            failureReason: otpResult.error,
-          },
-          _dirty: 1,
-        });
-        return {
-          success: false,
-          error: otpResult.error || "Failed to send email",
-        };
+          if (!fnError) {
+            await db.patients.update(patientId, {
+              portalInvitation: { ...invitation, lastStatus: "sent" },
+              _dirty: 1,
+            });
+            logger.info(
+              "Portal invitation SMS sent via edge function to:",
+              patient.phone,
+            );
+            return { success: true, registrationUrl };
+          }
+          logger.warn("Edge function SMS failed:", fnError);
+        }
+      } catch (edgeFnError) {
+        logger.warn("Supabase edge function call failed:", edgeFnError);
       }
     }
 
-    // Fallback to SMS queue for phone numbers
-    const templateKey = "portal.invitation";
-    await MessageQueue.queueMessage(
-      patientId,
-      patient.phone!,
-      templateKey,
-      {
-        patientName: `${patient.givenName} ${patient.familyName}`,
-        portalUrl: `${window.location.origin}/patient/login`,
-      },
-      {
-        channel: "sms",
-        locale: "en",
-      },
+    // --- Offline fallback: mark as sent and return a pre-filled registration link ---
+    await db.patients.update(patientId, {
+      portalInvitation: { ...invitation, lastStatus: "sent" },
+      _dirty: 1,
+    });
+
+    logger.info(
+      `[Portal Invitation] ${patientName} (${contact}) → ${registrationUrl}`,
     );
 
-    logger.info("Portal invitation queued for patient:", patientId);
-    return { success: true };
-  } catch (error: any) {
+    return {
+      success: true,
+      registrationUrl,
+      demoOTP: `No email service configured. Share this registration link with the patient: ${registrationUrl}`,
+    };
+     
+  } catch (error: unknown) {
     logger.error("Error sending portal invitation:", error);
 
     // Update invitation status to failed
@@ -271,7 +297,7 @@ export async function sendPortalInvitation(
         portalInvitation: {
           ...patient.portalInvitation,
           lastStatus: "failed",
-          failureReason: error.message || "Unknown error",
+          failureReason: getErrorMessage(error) || "Unknown error",
         },
         _dirty: 1,
       });
@@ -279,7 +305,7 @@ export async function sendPortalInvitation(
 
     return {
       success: false,
-      error: error.message || "Failed to send invitation",
+      error: getErrorMessage(error) || "Failed to send invitation",
     };
   }
 }
@@ -406,9 +432,13 @@ export async function linkAuthUserToPatient(
 
     logger.info("Auth user linked to patient:", { authUid, patientId });
     return { success: true };
-  } catch (error: any) {
+     
+  } catch (error: unknown) {
     logger.error("Error linking auth user to patient:", error);
-    return { success: false, error: error.message || "Failed to link account" };
+    return {
+      success: false,
+      error: getErrorMessage(error) || "Failed to link account",
+    };
   }
 }
 
@@ -425,7 +455,7 @@ export async function findEligiblePatients(
   } = {},
 ): Promise<Patient[]> {
   try {
-    let query = db.patients.where("portalEnabled").equals(0);
+    const query = db.patients.where("portalEnabled").equals(0);
 
     const patients = await query.toArray();
 
@@ -498,11 +528,12 @@ export async function bulkEnablePortalAccess(
               error: result.error || "Unknown error",
             });
           }
-        } catch (error: any) {
+           
+        } catch (error: unknown) {
           results.failed++;
           results.errors.push({
             patientId,
-            error: error.message || "Unknown error",
+            error: getErrorMessage(error) || "Unknown error",
           });
         }
 

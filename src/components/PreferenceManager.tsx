@@ -1,53 +1,57 @@
-import { useState, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import { useState, useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import {
   createOrUpdatePreference,
   getPatientPreference,
-  type CreatePreferenceInput
-} from '../services/preferences'
-import type { PatientPreference } from '../db'
-import { Cog6ToothIcon } from '@heroicons/react/24/outline'
+  type CreatePreferenceInput,
+} from "../services/preferences";
+import type { PatientPreference } from "../db";
+import { Cog6ToothIcon } from "@heroicons/react/24/outline";
 
 const preferenceSchema = z.object({
   preferredLanguage: z.string().optional(),
-  communicationChannel: z.enum(['sms', 'whatsapp', 'call', 'in-person']).optional().or(z.literal('')),
+  communicationChannel: z
+    .enum(["sms", "whatsapp", "call", "in-person"])
+    .optional()
+    .or(z.literal("")),
   bestContactTime: z.string().optional(),
   dietaryRestrictions: z.string().optional(),
   religiousCultural: z.string().optional(),
   appointmentReminders: z.boolean(),
   medicationReminders: z.boolean(),
-  notes: z.string().optional()
-})
+  notes: z.string().optional(),
+});
 
-type PreferenceFormData = z.infer<typeof preferenceSchema>
+type PreferenceFormData = z.infer<typeof preferenceSchema>;
 
 interface PreferenceManagerProps {
-  patientId: string
+  patientId: string;
 }
 
 export function PreferenceManager({ patientId }: PreferenceManagerProps) {
-  const [preference, setPreference] = useState<PatientPreference | null>(null)
-  const [isEditing, setIsEditing] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [preference, setPreference] = useState<PatientPreference | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<PreferenceFormData>({
+  const { register, handleSubmit, reset } = useForm<PreferenceFormData>({
     resolver: zodResolver(preferenceSchema),
     defaultValues: {
       appointmentReminders: true,
-      medicationReminders: true
-    }
-  })
+      medicationReminders: true,
+    },
+  });
 
   useEffect(() => {
-    loadPreference()
-  }, [patientId])
+    loadPreference();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patientId]);
 
   const loadPreference = async () => {
-    setLoading(true)
-    const data = await getPatientPreference(patientId)
-    setPreference(data || null)
+    setLoading(true);
+    const data = await getPatientPreference(patientId);
+    setPreference(data || null);
     if (data) {
       reset({
         preferredLanguage: data.preferredLanguage || undefined,
@@ -57,11 +61,11 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
         religiousCultural: data.religiousCultural || undefined,
         appointmentReminders: data.appointmentReminders === 1,
         medicationReminders: data.medicationReminders === 1,
-        notes: data.notes || undefined
-      })
+        notes: data.notes || undefined,
+      });
     }
-    setLoading(false)
-  }
+    setLoading(false);
+  };
 
   const onSubmit = async (data: PreferenceFormData) => {
     const input: CreatePreferenceInput = {
@@ -73,16 +77,16 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
       religiousCultural: data.religiousCultural,
       appointmentReminders: data.appointmentReminders ? 1 : 0,
       medicationReminders: data.medicationReminders ? 1 : 0,
-      notes: data.notes
-    }
+      notes: data.notes,
+    };
 
-    await createOrUpdatePreference(input)
-    setIsEditing(false)
-    loadPreference()
-  }
+    await createOrUpdatePreference(input);
+    setIsEditing(false);
+    loadPreference();
+  };
 
   if (loading) {
-    return <div className="text-center py-4">Loading preferences...</div>
+    return <div className="text-center py-4">Loading preferences...</div>;
   }
 
   if (!isEditing && !preference) {
@@ -104,7 +108,7 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
           </button>
         </div>
       </div>
-    )
+    );
   }
 
   if (!isEditing && preference) {
@@ -127,35 +131,47 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {preference.preferredLanguage && (
               <div>
-                <span className="text-sm font-medium text-gray-600">Language:</span>
+                <span className="text-sm font-medium text-gray-600">
+                  Language:
+                </span>
                 <p className="mt-1">{preference.preferredLanguage}</p>
               </div>
             )}
 
             {preference.communicationChannel && (
               <div>
-                <span className="text-sm font-medium text-gray-600">Communication:</span>
-                <p className="mt-1 capitalize">{preference.communicationChannel}</p>
+                <span className="text-sm font-medium text-gray-600">
+                  Communication:
+                </span>
+                <p className="mt-1 capitalize">
+                  {preference.communicationChannel}
+                </p>
               </div>
             )}
 
             {preference.bestContactTime && (
               <div>
-                <span className="text-sm font-medium text-gray-600">Best Contact Time:</span>
+                <span className="text-sm font-medium text-gray-600">
+                  Best Contact Time:
+                </span>
                 <p className="mt-1">{preference.bestContactTime}</p>
               </div>
             )}
 
             {preference.dietaryRestrictions && (
               <div>
-                <span className="text-sm font-medium text-gray-600">Dietary Restrictions:</span>
+                <span className="text-sm font-medium text-gray-600">
+                  Dietary Restrictions:
+                </span>
                 <p className="mt-1">{preference.dietaryRestrictions}</p>
               </div>
             )}
 
             {preference.religiousCultural && (
               <div className="md:col-span-2">
-                <span className="text-sm font-medium text-gray-600">Religious/Cultural Considerations:</span>
+                <span className="text-sm font-medium text-gray-600">
+                  Religious/Cultural Considerations:
+                </span>
                 <p className="mt-1">{preference.religiousCultural}</p>
               </div>
             )}
@@ -190,7 +206,7 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
           )}
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -202,20 +218,30 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
         </h3>
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="bg-gray-50 p-4 rounded-lg border space-y-4">
+      <form
+        onSubmit={handleSubmit(onSubmit)}
+        className="bg-gray-50 p-4 rounded-lg border space-y-4"
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm font-medium mb-1">Preferred Language</label>
+            <label className="block text-sm font-medium mb-1">
+              Preferred Language
+            </label>
             <input
-              {...register('preferredLanguage')}
+              {...register("preferredLanguage")}
               className="w-full px-3 py-2 border rounded"
               placeholder="e.g., English, Hausa, Yoruba"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Communication Channel</label>
-            <select {...register('communicationChannel')} className="w-full px-3 py-2 border rounded">
+            <label className="block text-sm font-medium mb-1">
+              Communication Channel
+            </label>
+            <select
+              {...register("communicationChannel")}
+              className="w-full px-3 py-2 border rounded"
+            >
               <option value="">Not specified</option>
               <option value="sms">SMS</option>
               <option value="whatsapp">WhatsApp</option>
@@ -225,18 +251,22 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Best Contact Time</label>
+            <label className="block text-sm font-medium mb-1">
+              Best Contact Time
+            </label>
             <input
-              {...register('bestContactTime')}
+              {...register("bestContactTime")}
               className="w-full px-3 py-2 border rounded"
               placeholder="e.g., Morning, Evening"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Dietary Restrictions</label>
+            <label className="block text-sm font-medium mb-1">
+              Dietary Restrictions
+            </label>
             <input
-              {...register('dietaryRestrictions')}
+              {...register("dietaryRestrictions")}
               className="w-full px-3 py-2 border rounded"
               placeholder="e.g., Vegetarian, Allergies"
             />
@@ -244,9 +274,11 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">Religious/Cultural Considerations</label>
+          <label className="block text-sm font-medium mb-1">
+            Religious/Cultural Considerations
+          </label>
           <input
-            {...register('religiousCultural')}
+            {...register("religiousCultural")}
             className="w-full px-3 py-2 border rounded"
             placeholder="Any special considerations"
           />
@@ -256,7 +288,7 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              {...register('appointmentReminders')}
+              {...register("appointmentReminders")}
               className="h-4 w-4"
             />
             <span className="text-sm">Send appointment reminders</span>
@@ -265,7 +297,7 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              {...register('medicationReminders')}
+              {...register("medicationReminders")}
               className="h-4 w-4"
             />
             <span className="text-sm">Send medication reminders</span>
@@ -273,9 +305,11 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">Additional Notes</label>
+          <label className="block text-sm font-medium mb-1">
+            Additional Notes
+          </label>
           <textarea
-            {...register('notes')}
+            {...register("notes")}
             className="w-full px-3 py-2 border rounded"
             rows={3}
             placeholder="Any other preferences or notes"
@@ -292,18 +326,20 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
           <button
             type="button"
             onClick={() => {
-              setIsEditing(false)
+              setIsEditing(false);
               if (preference) {
                 reset({
                   preferredLanguage: preference.preferredLanguage || undefined,
-                  communicationChannel: preference.communicationChannel || undefined,
+                  communicationChannel:
+                    preference.communicationChannel || undefined,
                   bestContactTime: preference.bestContactTime || undefined,
-                  dietaryRestrictions: preference.dietaryRestrictions || undefined,
+                  dietaryRestrictions:
+                    preference.dietaryRestrictions || undefined,
                   religiousCultural: preference.religiousCultural || undefined,
                   appointmentReminders: preference.appointmentReminders === 1,
                   medicationReminders: preference.medicationReminders === 1,
-                  notes: preference.notes || undefined
-                })
+                  notes: preference.notes || undefined,
+                });
               }
             }}
             className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
@@ -313,5 +349,5 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
         </div>
       </form>
     </div>
-  )
+  );
 }

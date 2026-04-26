@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { db, User, Session, generateId } from "@/db";
 import { verifyPin } from "@/utils/pin";
 import * as logger from "@/lib/logger";
+import { supabase } from "@/lib/supabase";
 
 interface AuthState {
   currentUser: User | null;
@@ -103,29 +104,85 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      loginOnline: async (_email: string, _password: string) => {
+      loginOnline: async (email: string, password: string) => {
         const state = get();
 
-        // Check lockout
-        if (state.checkLockout()) {
+        if (state.checkLockout()) return false;
+        if (!supabase) {
+          logger.error("Supabase not configured");
           return false;
         }
 
         try {
-          const { supabaseSync } = await import("@/services/supabaseSync");
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
 
-          if (!supabaseSync.isInitialized()) {
-            logger.error("Supabase not configured");
+          if (error || !data.user) {
+            logger.error("Online login error:", error?.message);
+            state.incrementFailedAttempts();
             return false;
           }
 
-          // NOTE: Supabase auth login requires email/password authentication
-          // Current implementation uses offline PIN-based auth which is more suitable for field operations
-          // To enable online auth, implement: supabase.auth.signInWithPassword({ email, password })
-          logger.info(
-            "Online login with Supabase auth not enabled - using offline PIN auth",
-          );
-          return false;
+          // Find the matching staff user record by email (case-insensitive)
+          const normalizedEmail = email.toLowerCase();
+          let user = await db.users
+            .filter(
+              (u) =>
+                u.isActive === 1 && u.email?.toLowerCase() === normalizedEmail,
+            )
+            .first();
+
+          // If not found locally, build a minimal user record from Supabase data
+          if (!user) {
+            const { data: staffRow } = await supabase
+              .from("staff_roles")
+              .select("role, full_name")
+              .eq("auth_user_id", data.user.id)
+              .maybeSingle();
+
+            const newUser: User = {
+              id: data.user.id,
+              fullName:
+                staffRow?.full_name ??
+                data.user.user_metadata?.full_name ??
+                email.split("@")[0],
+              role: (staffRow?.role as User["role"]) ?? "volunteer",
+              email: data.user.email ?? email,
+              pinHash: "",
+              pinSalt: "",
+              adminAccess: staffRow?.role === "admin",
+              adminPermanent: false,
+              isActive: 1,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            };
+            await db.users.put(newUser);
+            user = newUser;
+          }
+
+          const session: Session = {
+            id: generateId(),
+            userId: user.id,
+            createdAt: new Date(),
+            deviceKey: generateId(),
+            lastSeenAt: new Date(),
+          };
+          await db.sessions.add(session);
+
+          const now = Date.now();
+          set({
+            currentUser: user,
+            currentSession: session,
+            isAuthenticated: true,
+            failedAttempts: 0,
+            lockoutUntil: null,
+            sessionExpiresAt: now + STAFF_SESSION_DURATION,
+            lastActivityAt: now,
+          });
+
+          return true;
         } catch (error) {
           logger.error("Online login error:", error);
           state.incrementFailedAttempts();

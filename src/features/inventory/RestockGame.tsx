@@ -1,85 +1,99 @@
-// @ts-nocheck
-import React, { useEffect, useMemo, useState } from 'react'
-import { db as mbhrDb, ulid } from '@/db/mbhr'
-import { useGam } from '@/stores/gamification'
-import { useAuthStore } from '@/stores/auth'
-import { can } from '@/auth/roles'
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import React, { useEffect, useMemo, useState } from "react";
+import { db as mbhrDb, ulid } from "@/db/mbhr";
+import { useGam } from "@/stores/gamification";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
-type Delta = Record<string, number>
+type Delta = Record<string, number>;
 
 export default function RestockGame() {
-  const { currentUser } = useAuthStore()
-  const { addTokens, ensureWallet, wallet } = useGam()
-  const [items, setItems] = useState<any[]>([])
-  const [deltas, setDeltas] = useState<Delta>({})
-  const [tokens, setTokens] = useState(0)
+  const { currentUser } = useAuthStore();
+  const { addTokens, ensureWallet, wallet } = useGam();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [items, setItems] = useState<any[]>([]);
+  const [deltas, setDeltas] = useState<Delta>({});
+  const [tokens, setTokens] = useState(0);
+
+  useEffect(() => {
+    mbhrDb.inventory_nm.orderBy("itemName").toArray().then(setItems);
+    ensureWallet("demo-volunteer");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const low = useMemo(
+    () => items.filter((i) => i.onHandQty <= i.reorderThreshold),
+    [items],
+  );
 
   // Only admins can access the restock game
-  if (!currentUser || !can(currentUser.role, 'inventory')) {
+  if (!currentUser || !can(currentUser.role, "inventory")) {
     return (
       <div className="p-4 space-y-6">
         <div className="flex items-center space-x-3">
           <h2 className="text-2xl font-bold text-gray-900">Restock Game</h2>
           <span className="text-sm text-gray-600">(Non-medical supplies)</span>
         </div>
-        
+
         <div className="text-center py-12">
           <ExclamationTriangleIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Access Restricted</h3>
-          <p className="text-gray-600">Only administrators can access the restock game.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">
+            Access Restricted
+          </h3>
+          <p className="text-gray-600">
+            Only administrators can access the restock game.
+          </p>
           <p className="text-sm text-gray-500 mt-2">
-            This feature allows direct inventory modifications and requires admin privileges.
+            This feature allows direct inventory modifications and requires
+            admin privileges.
           </p>
         </div>
       </div>
-    )
+    );
   }
 
-  useEffect(() => {
-    mbhrDb.inventory_nm.orderBy('itemName').toArray().then(setItems)
-    ensureWallet('demo-volunteer')
-  }, [])
-
-  const low = useMemo(
-    () => items.filter(i => i.onHandQty <= i.reorderThreshold),
-    [items]
-  )
-
   function tap(id: string, amount: number) {
-    setDeltas(d => ({ ...d, [id]: (d[id] || 0) + amount }))
-    setTokens(t => t + Math.max(1, Math.floor(amount / 2)))
+    setDeltas((d) => ({ ...d, [id]: (d[id] || 0) + amount }));
+    setTokens((t) => t + Math.max(1, Math.floor(amount / 2)));
   }
 
   async function commit() {
-    const now = new Date().toISOString()
-    await mbhrDb.transaction('rw', mbhrDb.inventory_nm, mbhrDb.stock_moves_nm, async () => {
-      for (const [itemId, qty] of Object.entries(deltas)) {
-        if (qty <= 0) continue
-        const item = await mbhrDb.inventory_nm.get(itemId)
-        if (!item) continue
-        await mbhrDb.stock_moves_nm.add({
-          id: ulid(),
-          itemId,
-          qtyDelta: qty,
-          reason: 'restock',
-          createdAt: now
-        })
-        await mbhrDb.inventory_nm.update(itemId, {
-          onHandQty: item.onHandQty + qty,
-          updatedAt: now
-        })
-        await refreshAlertsFor(itemId)
-      }
-    })
-    
+    const now = new Date().toISOString();
+    await mbhrDb.transaction(
+      "rw",
+      mbhrDb.inventory_nm,
+      mbhrDb.stock_moves_nm,
+      async () => {
+        for (const [itemId, qty] of Object.entries(deltas)) {
+          if (qty <= 0) continue;
+          const item = await mbhrDb.inventory_nm.get(itemId);
+          if (!item) continue;
+          await mbhrDb.stock_moves_nm.add({
+            id: ulid(),
+            itemId,
+            qtyDelta: qty,
+            reason: "restock",
+            createdAt: now,
+          });
+          await mbhrDb.inventory_nm.update(itemId, {
+            onHandQty: item.onHandQty + qty,
+            updatedAt: now,
+          });
+        }
+      },
+    );
+
     // Award tokens and badges
-    await addTokens('demo-volunteer', tokens, tokens >= 50 ? 'swift_stocker' : undefined)
-    
-    setDeltas({})
-    setTokens(0)
-    setItems(await mbhrDb.inventory_nm.orderBy('itemName').toArray())
-    alert('Restock committed ✅')
+    await addTokens(
+      "demo-volunteer",
+      tokens,
+      tokens >= 50 ? "swift_stocker" : undefined,
+    );
+
+    setDeltas({});
+    setTokens(0);
+    setItems(await mbhrDb.inventory_nm.orderBy("itemName").toArray());
+    alert("Restock committed ✅");
   }
 
   return (
@@ -92,13 +106,17 @@ export default function RestockGame() {
         <div className="text-sm font-medium text-green-800">
           Session tokens: {tokens} • Wallet: {wallet}
         </div>
-        <div className="text-xs text-green-600">Tap items to restock and earn tokens!</div>
+        <div className="text-xs text-green-600">
+          Tap items to restock and earn tokens!
+        </div>
       </div>
 
       {low.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
           <div className="text-lg font-medium">🎉 All items well stocked!</div>
-          <div className="text-sm">No low-stock items need restocking right now.</div>
+          <div className="text-sm">
+            No low-stock items need restocking right now.
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -106,24 +124,27 @@ export default function RestockGame() {
             <div key={it.id} className="card border-l-4 border-l-orange-500">
               <div className="font-medium text-gray-900">{it.itemName}</div>
               <div className="text-sm text-gray-600 mb-3">
-                On hand: <span className="font-semibold text-orange-600">{it.onHandQty}</span> • 
-                Threshold: {it.reorderThreshold} {it.unit}
+                On hand:{" "}
+                <span className="font-semibold text-orange-600">
+                  {it.onHandQty}
+                </span>{" "}
+                • Threshold: {it.reorderThreshold} {it.unit}
               </div>
               <div className="flex gap-2 mb-2">
-                <button 
-                  className="btn-secondary text-sm px-3 py-1" 
+                <button
+                  className="btn-secondary text-sm px-3 py-1"
                   onClick={() => tap(it.id, 1)}
                 >
                   Tap +1
                 </button>
-                <button 
-                  className="btn-secondary text-sm px-3 py-1" 
+                <button
+                  className="btn-secondary text-sm px-3 py-1"
                   onClick={() => tap(it.id, 5)}
                 >
                   +5
                 </button>
-                <button 
-                  className="btn-secondary text-sm px-3 py-1" 
+                <button
+                  className="btn-secondary text-sm px-3 py-1"
                   onClick={() => tap(it.id, 10)}
                 >
                   Hold +10
@@ -140,21 +161,24 @@ export default function RestockGame() {
       )}
 
       <div className="flex gap-3 pt-4 border-t">
-        <button 
-          className="btn-primary" 
-          disabled={Object.keys(deltas).length === 0} 
+        <button
+          className="btn-primary"
+          disabled={Object.keys(deltas).length === 0}
           onClick={commit}
         >
           Finish & Commit Restock
         </button>
-        <button 
-          className="btn-secondary" 
-          onClick={() => { setDeltas({}); setTokens(0) }}
+        <button
+          className="btn-secondary"
+          onClick={() => {
+            setDeltas({});
+            setTokens(0);
+          }}
           disabled={Object.keys(deltas).length === 0}
         >
           Clear Pending
         </button>
       </div>
     </div>
-  )
+  );
 }

@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react'
-import { volunteerEngagement } from '@/services/volunteerEngagement'
-import type { VolunteerProfile, Quest, LeaderboardEntry, TeamChallenge } from '@/services/volunteerEngagement'
+import { useState, useEffect } from "react";
+import { volunteerEngagement } from "@/services/volunteerEngagement";
+import type {
+  VolunteerProfile,
+  Quest,
+  LeaderboardEntry,
+  TeamChallenge,
+} from "@/services/volunteerEngagement";
 import {
   TrophyIcon,
   SparklesIcon,
@@ -9,82 +14,95 @@ import {
   UserGroupIcon,
   AcademicCapIcon,
   HeartIcon,
-  ChartBarIcon
-} from '@heroicons/react/24/outline'
-import { useAuthStore } from '@/stores/auth'
+  ChartBarIcon,
+} from "@heroicons/react/24/outline";
+import { useAuthStore } from "@/stores/auth";
 
 export function VolunteerDashboard() {
-  const { currentUser } = useAuthStore()
-  const [profile, setProfile] = useState<VolunteerProfile | null>(null)
-  const [dailyQuests, setDailyQuests] = useState<Quest[]>([])
-  const [weeklyQuests, setWeeklyQuests] = useState<Quest[]>([])
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
-  const [teamChallenges, setTeamChallenges] = useState<TeamChallenge[]>([])
-  const [loading, setLoading] = useState(true)
+  const { currentUser } = useAuthStore();
+  const [profile, setProfile] = useState<VolunteerProfile | null>(null);
+  const [dailyQuests, setDailyQuests] = useState<Quest[]>([]);
+  const [weeklyQuests, setWeeklyQuests] = useState<Quest[]>([]);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [teamChallenges, setTeamChallenges] = useState<TeamChallenge[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (currentUser) {
-      loadDashboard()
+      loadDashboard();
     }
-  }, [currentUser])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
 
   const loadDashboard = async () => {
-    if (!currentUser) return
+    if (!currentUser) return;
 
     try {
-      setLoading(true)
+      setLoading(true);
       const [prof, daily, weekly, board, challenges] = await Promise.all([
         volunteerEngagement.getVolunteerProfile(currentUser.id),
         volunteerEngagement.getDailyQuests(currentUser.id),
         volunteerEngagement.getWeeklyQuests(),
-        volunteerEngagement.getLeaderboard('weekly'),
-        volunteerEngagement.getTeamChallenges()
-      ])
+        volunteerEngagement.getLeaderboard("weekly"),
+        volunteerEngagement.getTeamChallenges(),
+      ]);
 
-      setProfile(prof)
-      setDailyQuests(daily)
-      setWeeklyQuests(weekly)
-      setLeaderboard(board.entries.slice(0, 10))
-      setTeamChallenges(challenges)
+      setProfile(prof);
+      setDailyQuests(daily);
+      setWeeklyQuests(weekly);
+      setLeaderboard(board.entries.slice(0, 10));
+      setTeamChallenges(challenges);
     } catch (error) {
-      console.error('Failed to load volunteer dashboard:', error)
+      console.error("Failed to load volunteer dashboard:", error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
-      case 'legendary': return 'text-yellow-500 bg-yellow-50 border-yellow-500'
-      case 'epic': return 'text-purple-500 bg-purple-50 border-purple-500'
-      case 'rare': return 'text-blue-500 bg-blue-50 border-blue-500'
-      case 'uncommon': return 'text-green-500 bg-green-50 border-green-500'
-      default: return 'text-gray-500 bg-gray-50 border-gray-300'
+      case "legendary":
+        return "text-yellow-500 bg-yellow-50 border-yellow-500";
+      case "epic":
+        return "text-purple-500 bg-purple-50 border-purple-500";
+      case "rare":
+        return "text-blue-500 bg-blue-50 border-blue-500";
+      case "uncommon":
+        return "text-green-500 bg-green-50 border-green-500";
+      default:
+        return "text-gray-500 bg-gray-50 border-gray-300";
     }
-  }
+  };
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
-      case 'expert': return 'bg-red-500'
-      case 'hard': return 'bg-orange-500'
-      case 'medium': return 'bg-yellow-500'
-      default: return 'bg-green-500'
+      case "expert":
+        return "bg-red-500";
+      case "hard":
+        return "bg-orange-500";
+      case "medium":
+        return "bg-yellow-500";
+      default:
+        return "bg-green-500";
     }
-  }
+  };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
-    )
+    );
   }
 
-  if (!profile) return null
+  if (!profile) return null;
 
-  const nextLevelXP = (profile.level + 1) * 1000
-  const currentLevelXP = profile.level * 1000
-  const progressToNextLevel = ((profile.experiencePoints - currentLevelXP) / (nextLevelXP - currentLevelXP)) * 100
+  const nextLevelXP = (profile.level + 1) * 1000;
+  const currentLevelXP = profile.level * 1000;
+  const progressToNextLevel =
+    ((profile.experiencePoints - currentLevelXP) /
+      (nextLevelXP - currentLevelXP)) *
+    100;
 
   return (
     <div className="space-y-6">
@@ -98,7 +116,8 @@ export function VolunteerDashboard() {
               </span>
             </div>
             <p className="text-blue-100 mb-4">
-              Level {profile.level} • {profile.experiencePoints.toLocaleString()} XP
+              Level {profile.level} •{" "}
+              {profile.experiencePoints.toLocaleString()} XP
             </p>
 
             <div className="w-full max-w-md">
@@ -116,9 +135,13 @@ export function VolunteerDashboard() {
           </div>
 
           <div className="text-right">
-            <div className="text-4xl font-bold mb-1">{profile.patientsHelped}</div>
+            <div className="text-4xl font-bold mb-1">
+              {profile.patientsHelped}
+            </div>
             <div className="text-blue-100">Patients Helped</div>
-            <div className="text-2xl font-bold mt-3">{profile.totalHours.toFixed(1)}h</div>
+            <div className="text-2xl font-bold mt-3">
+              {profile.totalHours.toFixed(1)}h
+            </div>
             <div className="text-blue-100">Hours Contributed</div>
           </div>
         </div>
@@ -129,7 +152,9 @@ export function VolunteerDashboard() {
           <div className="flex items-center gap-3 mb-2">
             <TrophyIcon className="h-8 w-8 text-yellow-500" />
             <div>
-              <div className="text-2xl font-bold text-gray-900">{profile.badges.length}</div>
+              <div className="text-2xl font-bold text-gray-900">
+                {profile.badges.length}
+              </div>
               <div className="text-sm text-gray-600">Badges Earned</div>
             </div>
           </div>
@@ -139,7 +164,9 @@ export function VolunteerDashboard() {
           <div className="flex items-center gap-3 mb-2">
             <SparklesIcon className="h-8 w-8 text-blue-500" />
             <div>
-              <div className="text-2xl font-bold text-gray-900">{profile.skills.length}</div>
+              <div className="text-2xl font-bold text-gray-900">
+                {profile.skills.length}
+              </div>
               <div className="text-sm text-gray-600">Skills Mastered</div>
             </div>
           </div>
@@ -178,19 +205,30 @@ export function VolunteerDashboard() {
 
             <div className="space-y-3">
               {dailyQuests.map((quest) => (
-                <div key={quest.id} className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors">
+                <div
+                  key={quest.id}
+                  className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors"
+                >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-semibold text-gray-900">{quest.title}</h3>
-                        <span className={`px-2 py-0.5 rounded text-xs text-white ${getDifficultyColor(quest.difficulty)}`}>
+                        <h3 className="font-semibold text-gray-900">
+                          {quest.title}
+                        </h3>
+                        <span
+                          className={`px-2 py-0.5 rounded text-xs text-white ${getDifficultyColor(quest.difficulty)}`}
+                        >
                           {quest.difficulty}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-600">{quest.description}</p>
+                      <p className="text-sm text-gray-600">
+                        {quest.description}
+                      </p>
                     </div>
                     <div className="text-right ml-4">
-                      <div className="text-lg font-bold text-blue-600">+{quest.rewardXP} XP</div>
+                      <div className="text-lg font-bold text-blue-600">
+                        +{quest.rewardXP} XP
+                      </div>
                       {quest.rewardBadges && (
                         <div className="text-xs text-gray-500">+ Badge</div>
                       )}
@@ -201,13 +239,19 @@ export function VolunteerDashboard() {
                     {quest.objectives.map((obj, idx) => (
                       <div key={idx}>
                         <div className="flex items-center justify-between text-sm mb-1">
-                          <span className="text-gray-700">{obj.description}</span>
-                          <span className="font-medium">{obj.current}/{obj.target}</span>
+                          <span className="text-gray-700">
+                            {obj.description}
+                          </span>
+                          <span className="font-medium">
+                            {obj.current}/{obj.target}
+                          </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
                             className="bg-blue-600 rounded-full h-2 transition-all"
-                            style={{ width: `${(obj.current / obj.target) * 100}%` }}
+                            style={{
+                              width: `${(obj.current / obj.target) * 100}%`,
+                            }}
                           ></div>
                         </div>
                       </div>
@@ -226,25 +270,38 @@ export function VolunteerDashboard() {
 
             <div className="space-y-3">
               {weeklyQuests.map((quest) => (
-                <div key={quest.id} className="border border-purple-200 bg-purple-50 rounded-lg p-4">
+                <div
+                  key={quest.id}
+                  className="border border-purple-200 bg-purple-50 rounded-lg p-4"
+                >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex-1">
-                      <h3 className="font-semibold text-gray-900 mb-1">{quest.title}</h3>
-                      <p className="text-sm text-gray-600">{quest.description}</p>
+                      <h3 className="font-semibold text-gray-900 mb-1">
+                        {quest.title}
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        {quest.description}
+                      </p>
                     </div>
-                    <div className="text-lg font-bold text-purple-600">+{quest.rewardXP} XP</div>
+                    <div className="text-lg font-bold text-purple-600">
+                      +{quest.rewardXP} XP
+                    </div>
                   </div>
 
                   {quest.objectives.map((obj, idx) => (
                     <div key={idx}>
                       <div className="flex items-center justify-between text-sm mb-1">
                         <span className="text-gray-700">{obj.description}</span>
-                        <span className="font-medium">{obj.current}/{obj.target}</span>
+                        <span className="font-medium">
+                          {obj.current}/{obj.target}
+                        </span>
                       </div>
                       <div className="w-full bg-purple-200 rounded-full h-2">
                         <div
                           className="bg-purple-600 rounded-full h-2 transition-all"
-                          style={{ width: `${(obj.current / obj.target) * 100}%` }}
+                          style={{
+                            width: `${(obj.current / obj.target) * 100}%`,
+                          }}
                         ></div>
                       </div>
                     </div>
@@ -262,11 +319,18 @@ export function VolunteerDashboard() {
 
             <div className="space-y-4">
               {teamChallenges.map((challenge) => (
-                <div key={challenge.id} className="border border-green-200 bg-green-50 rounded-lg p-4">
+                <div
+                  key={challenge.id}
+                  className="border border-green-200 bg-green-50 rounded-lg p-4"
+                >
                   <div className="flex items-start justify-between mb-3">
                     <div>
-                      <h3 className="font-semibold text-gray-900">{challenge.name}</h3>
-                      <p className="text-sm text-gray-600 mt-1">{challenge.description}</p>
+                      <h3 className="font-semibold text-gray-900">
+                        {challenge.name}
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1">
+                        {challenge.description}
+                      </p>
                     </div>
                     <span className="px-2 py-1 bg-green-600 text-white rounded text-xs font-medium">
                       {challenge.status}
@@ -276,12 +340,16 @@ export function VolunteerDashboard() {
                   <div className="mb-3">
                     <div className="flex items-center justify-between text-sm mb-1">
                       <span className="text-gray-700">Team Progress</span>
-                      <span className="font-medium">{challenge.currentProgress}/{challenge.targetGoal}</span>
+                      <span className="font-medium">
+                        {challenge.currentProgress}/{challenge.targetGoal}
+                      </span>
                     </div>
                     <div className="w-full bg-green-200 rounded-full h-3">
                       <div
                         className="bg-green-600 rounded-full h-3 transition-all"
-                        style={{ width: `${(challenge.currentProgress / challenge.targetGoal) * 100}%` }}
+                        style={{
+                          width: `${(challenge.currentProgress / challenge.targetGoal) * 100}%`,
+                        }}
                       ></div>
                     </div>
                   </div>
@@ -292,10 +360,15 @@ export function VolunteerDashboard() {
                   </div>
 
                   <div className="mt-3 pt-3 border-t border-green-200">
-                    <p className="text-xs font-medium text-gray-700 mb-1">Rewards:</p>
+                    <p className="text-xs font-medium text-gray-700 mb-1">
+                      Rewards:
+                    </p>
                     <div className="flex flex-wrap gap-1">
                       {challenge.rewards.map((reward, idx) => (
-                        <span key={idx} className="px-2 py-1 bg-white rounded text-xs text-gray-700">
+                        <span
+                          key={idx}
+                          className="px-2 py-1 bg-white rounded text-xs text-gray-700"
+                        >
                           {reward}
                         </span>
                       ))}
@@ -322,7 +395,9 @@ export function VolunteerDashboard() {
                   title={badge.description}
                 >
                   <div className="text-3xl mb-1">{badge.icon}</div>
-                  <div className="text-xs font-medium truncate">{badge.name}</div>
+                  <div className="text-xs font-medium truncate">
+                    {badge.name}
+                  </div>
                 </div>
               ))}
 
@@ -344,26 +419,39 @@ export function VolunteerDashboard() {
                 <div
                   key={entry.userId}
                   className={`flex items-center gap-3 p-3 rounded-lg ${
-                    entry.userId === currentUser?.id ? 'bg-blue-50 border-2 border-blue-500' : 'bg-gray-50'
+                    entry.userId === currentUser?.id
+                      ? "bg-blue-50 border-2 border-blue-500"
+                      : "bg-gray-50"
                   }`}
                 >
-                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold ${
-                    entry.rank === 1 ? 'bg-yellow-500 text-white' :
-                    entry.rank === 2 ? 'bg-gray-400 text-white' :
-                    entry.rank === 3 ? 'bg-orange-600 text-white' :
-                    'bg-gray-200 text-gray-700'
-                  }`}>
+                  <div
+                    className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold ${
+                      entry.rank === 1
+                        ? "bg-yellow-500 text-white"
+                        : entry.rank === 2
+                          ? "bg-gray-400 text-white"
+                          : entry.rank === 3
+                            ? "bg-orange-600 text-white"
+                            : "bg-gray-200 text-gray-700"
+                    }`}
+                  >
                     {entry.rank}
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-gray-900 truncate">{entry.displayName}</div>
-                    <div className="text-xs text-gray-500">{entry.score.toLocaleString()} XP</div>
+                    <div className="font-medium text-gray-900 truncate">
+                      {entry.displayName}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {entry.score.toLocaleString()} XP
+                    </div>
                   </div>
 
                   <div className="flex gap-1">
                     {entry.badges.map((badge, idx) => (
-                      <span key={idx} className="text-lg">{badge}</span>
+                      <span key={idx} className="text-lg">
+                        {badge}
+                      </span>
                     ))}
                   </div>
                 </div>
@@ -381,8 +469,12 @@ export function VolunteerDashboard() {
               {profile.skills.map((skill) => (
                 <div key={skill.name}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium text-gray-900">{skill.name}</span>
-                    <span className="text-sm font-bold text-purple-600">Level {skill.level}</span>
+                    <span className="font-medium text-gray-900">
+                      {skill.name}
+                    </span>
+                    <span className="text-sm font-bold text-purple-600">
+                      Level {skill.level}
+                    </span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
                     <div
@@ -404,23 +496,31 @@ export function VolunteerDashboard() {
         <h3 className="text-lg font-semibold mb-2">Your Impact This Month</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
-            <div className="text-3xl font-bold">{profile.lifetimeImpact.patientsServed}</div>
+            <div className="text-3xl font-bold">
+              {profile.lifetimeImpact.patientsServed}
+            </div>
             <div className="text-green-100">Patients Served</div>
           </div>
           <div>
-            <div className="text-3xl font-bold">{profile.lifetimeImpact.consultationsAssisted}</div>
+            <div className="text-3xl font-bold">
+              {profile.lifetimeImpact.consultationsAssisted}
+            </div>
             <div className="text-green-100">Consultations</div>
           </div>
           <div>
-            <div className="text-3xl font-bold">{profile.lifetimeImpact.hoursContributed}h</div>
+            <div className="text-3xl font-bold">
+              {profile.lifetimeImpact.hoursContributed}h
+            </div>
             <div className="text-green-100">Hours Given</div>
           </div>
           <div>
-            <div className="text-3xl font-bold">{profile.lifetimeImpact.communitiesReached}</div>
+            <div className="text-3xl font-bold">
+              {profile.lifetimeImpact.communitiesReached}
+            </div>
             <div className="text-green-100">Communities</div>
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

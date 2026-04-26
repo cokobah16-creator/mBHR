@@ -55,7 +55,7 @@
 -- Create patient_allergies table
 CREATE TABLE IF NOT EXISTS patient_allergies (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   allergen text NOT NULL,
   allergy_type text NOT NULL CHECK (allergy_type IN ('medication', 'food', 'environmental', 'other')),
   reaction text,
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS patient_allergies (
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  created_by uuid REFERENCES users(id),
+  created_by text REFERENCES users(id),
   _dirty integer DEFAULT 0,
   _synced_at timestamptz
 );
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS patient_allergies (
 -- Create patient_preferences table
 CREATE TABLE IF NOT EXISTS patient_preferences (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL UNIQUE REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL UNIQUE REFERENCES patients(id) ON DELETE CASCADE,
   preferred_language text,
   communication_channel text CHECK (communication_channel IN ('sms', 'whatsapp', 'call', 'in-person')),
   best_contact_time text,
@@ -112,7 +112,7 @@ CREATE POLICY "Clinical staff can view patient allergies"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse', 'pharmacist')
     )
   );
@@ -124,7 +124,7 @@ CREATE POLICY "Clinical staff can insert patient allergies"
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -136,14 +136,14 @@ CREATE POLICY "Clinical staff can update patient allergies"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor', 'nurse')
     )
   );
@@ -155,7 +155,7 @@ CREATE POLICY "Admins and doctors can delete patient allergies"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role IN ('admin', 'doctor')
     )
   );
@@ -169,7 +169,7 @@ CREATE POLICY "Staff can view patient preferences"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 
@@ -180,7 +180,7 @@ CREATE POLICY "Staff can insert patient preferences"
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 
@@ -191,13 +191,13 @@ CREATE POLICY "Staff can update patient preferences"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
     )
   );
 
@@ -208,7 +208,7 @@ CREATE POLICY "Admins can delete patient preferences"
   USING (
     EXISTS (
       SELECT 1 FROM users
-      WHERE users.id = auth.uid()
+      WHERE users.id = auth.uid()::text
       AND users.role = 'admin'
     )
   );

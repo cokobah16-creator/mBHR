@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
 interface VirtualListProps<T> {
-  items: T[]
-  itemHeight: number
-  containerHeight: number
-  renderItem: (item: T, index: number) => React.ReactNode
-  overscan?: number
-  className?: string
+  items: T[];
+  itemHeight: number;
+  containerHeight: number;
+  renderItem: (item: T, index: number) => React.ReactNode;
+  overscan?: number;
+  className?: string;
 }
 
 export function VirtualList<T>({
@@ -15,32 +15,32 @@ export function VirtualList<T>({
   containerHeight,
   renderItem,
   overscan = 3,
-  className = ''
+  className = "",
 }: VirtualListProps<T>) {
-  const [scrollTop, setScrollTop] = useState(0)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const [scrollTop, setScrollTop] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const totalHeight = items.length * itemHeight
+  const totalHeight = items.length * itemHeight;
 
-  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan)
+  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
   const endIndex = Math.min(
     items.length - 1,
-    Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan
-  )
+    Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan,
+  );
 
-  const visibleItems = items.slice(startIndex, endIndex + 1)
+  const visibleItems = items.slice(startIndex, endIndex + 1);
 
-  const offsetY = startIndex * itemHeight
+  const offsetY = startIndex * itemHeight;
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    setScrollTop(e.currentTarget.scrollTop)
-  }, [])
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
 
   useEffect(() => {
     if (containerRef.current) {
-      containerRef.current.scrollTop = scrollTop
+      containerRef.current.scrollTop = scrollTop;
     }
-  }, [scrollTop])
+  }, [scrollTop]);
 
   return (
     <div
@@ -49,39 +49,37 @@ export function VirtualList<T>({
       className={`overflow-y-auto ${className}`}
       style={{ height: containerHeight }}
     >
-      <div style={{ height: totalHeight, position: 'relative' }}>
+      <div style={{ height: totalHeight, position: "relative" }}>
         <div style={{ transform: `translateY(${offsetY}px)` }}>
           {visibleItems.map((item, index) => (
-            <div
-              key={startIndex + index}
-              style={{ height: itemHeight }}
-            >
+            <div key={startIndex + index} style={{ height: itemHeight }}>
               {renderItem(item, startIndex + index)}
             </div>
           ))}
         </div>
       </div>
     </div>
-  )
+  );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useVirtualScroll<T>(
   items: T[],
   containerHeight: number,
   itemHeight: number,
-  overscan: number = 3
+  overscan: number = 3,
 ) {
-  const [scrollTop, setScrollTop] = useState(0)
+  const [scrollTop, setScrollTop] = useState(0);
 
-  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan)
+  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
   const endIndex = Math.min(
     items.length - 1,
-    Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan
-  )
+    Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan,
+  );
 
-  const visibleItems = items.slice(startIndex, endIndex + 1)
-  const totalHeight = items.length * itemHeight
-  const offsetY = startIndex * itemHeight
+  const visibleItems = items.slice(startIndex, endIndex + 1);
+  const totalHeight = items.length * itemHeight;
+  const offsetY = startIndex * itemHeight;
 
   return {
     visibleItems,
@@ -89,6 +87,6 @@ export function useVirtualScroll<T>(
     offsetY,
     startIndex,
     scrollTop,
-    setScrollTop
-  }
+    setScrollTop,
+  };
 }

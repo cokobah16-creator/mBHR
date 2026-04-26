@@ -1,0 +1,95 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- MedBridge HealthReach (mBHR) – Supabase Schema Reference
+-- ─────────────────────────────────────────────────────────────────────────────
+-- This file is a REFERENCE ONLY.  The actual tables are created (and evolved)
+-- by the numbered migration files in supabase/migrations/.  Run migrations
+-- through the Supabase CLI:
+--
+--   supabase db push        # push local migrations to cloud
+--   supabase db pull        # pull remote schema to local
+--   supabase migration new  # scaffold a new migration file
+--
+-- ─────────────────────────────────────────────────────────────────────────────
+-- KEY TABLES (all created by existing migrations)
+-- ─────────────────────────────────────────────────────────────────────────────
+--
+-- patients
+--   id          text  PK
+--   given_name  text
+--   family_name text
+--   sex         text
+--   dob         date
+--   phone       text  (nullable)
+--   email       text  (nullable, unique)
+--   auth_uid    text  (nullable, unique) ← Supabase auth.users.id as text
+--   address     text
+--   state       text
+--   lga         text
+--   created_at  timestamptz
+--   updated_at  timestamptz
+--
+-- visits
+--   id          text  PK
+--   patient_id  text  → patients.id
+--   started_at  timestamptz
+--   site_name   text
+--   status      text  (open | closed)
+--   updated_at  timestamptz
+--
+-- vitals
+--   id          text  PK
+--   patient_id  text  → patients.id
+--   visit_id    text  → visits.id
+--   height_cm   numeric
+--   weight_kg   numeric
+--   temp_c      numeric
+--   pulse_bpm   int
+--   systolic    int
+--   diastolic   int
+--   spo2        int
+--   bmi         numeric
+--   flags       jsonb
+--   taken_at    timestamptz
+--   updated_at  timestamptz
+--
+-- consultations
+--   id               text  PK
+--   patient_id       text  → patients.id
+--   visit_id         text  → visits.id
+--   provider_name    text
+--   soap_subjective  text
+--   soap_objective   text
+--   soap_assessment  text
+--   soap_plan        text
+--   provisional_dx   text[]
+--   created_at       timestamptz
+--   updated_at       timestamptz
+--
+-- dispenses  (medications given to patients)
+--   id           text  PK
+--   patient_id   text  → patients.id
+--   visit_id     text  → visits.id
+--   item_name    text
+--   qty          int
+--   dosage       text
+--   directions   text
+--   dispensed_by text
+--   dispensed_at timestamptz
+--   updated_at   timestamptz
+--
+-- staff_roles  (added by migration 20260417000000)
+--   id              uuid  PK
+--   auth_user_id    uuid  → auth.users.id
+--   role            text  (staff | admin | doctor | nurse | pharmacist | volunteer)
+--   created_at      timestamptz
+--
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ADDING A NEW STAFF MEMBER
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 1. Create the auth user in the Supabase dashboard (Authentication → Users)
+-- 2. Insert a staff_roles row:
+--
+--   insert into public.staff_roles (auth_user_id, role)
+--   values ('<auth-user-uuid>', 'nurse');
+--
+-- ─────────────────────────────────────────────────────────────────────────────

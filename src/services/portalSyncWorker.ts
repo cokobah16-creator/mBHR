@@ -7,8 +7,9 @@
 
 import { db } from "@/db";
 import { supabase } from "@/lib/supabase";
-import { MessageQueue, outboxDb } from "@/db/outbox";
+import { MessageQueue } from "@/db/outbox";
 import * as logger from "@/lib/logger";
+import { getErrorMessage } from "@/utils/errors";
 
 let isProcessing = false;
 let syncIntervalId: number | null = null;
@@ -61,32 +62,24 @@ export async function processPortalInvitationQueue(): Promise<{
           continue;
         }
 
-        // Production: Call actual SMS/Email service
-        // TODO: Implement actual SMS/Email delivery
-        // For now, mark as sent
-        await MessageQueue.markSent(message.id);
-
-        await db.patients
-          .where("id")
-          .equals(message.patientId)
-          .modify((patient) => {
-            if (patient.portalInvitation) {
-              patient.portalInvitation.lastStatus = "sent";
-              patient._dirty = 1;
-            }
-          });
-
-        succeeded++;
-      } catch (error: any) {
+        // Production: SMS/Email gateway not yet wired up.
+        // Hold the message in the queue (mark failed) so it retries when a
+        // provider (e.g. Termii, Twilio) is integrated here.
+        logger.warn(
+          `[portal-sync] No SMS/Email provider configured — message ${message.id} held for retry`,
+        );
+        await MessageQueue.markFailed(
+          message.id,
+          "SMS/Email provider not configured",
+        );
+        failed++;
+      } catch (error: unknown) {
         failed++;
         logger.error(
           `Failed to process invitation for patient ${message.patientId}:`,
           error,
         );
-        await MessageQueue.markFailed(
-          message.id,
-          error.message || "Unknown error",
-        );
+        await MessageQueue.markFailed(message.id, getErrorMessage(error));
 
         // Update patient invitation status
         await db.patients
@@ -95,8 +88,7 @@ export async function processPortalInvitationQueue(): Promise<{
           .modify((patient) => {
             if (patient.portalInvitation) {
               patient.portalInvitation.lastStatus = "failed";
-              patient.portalInvitation.failureReason =
-                error.message || "Unknown error";
+              patient.portalInvitation.failureReason = getErrorMessage(error);
               patient._dirty = 1;
             }
           });
@@ -160,11 +152,10 @@ export async function syncPortalActivityFromSupabase(): Promise<{
       }
 
       // Update local records with Supabase data
+      const localById = new Map(patientsWithPortal.map((p) => [p.id, p]));
       for (const supabasePatient of supabasePatients || []) {
         try {
-          const localPatient = patientsWithPortal.find(
-            (p) => p.id === supabasePatient.id,
-          );
+          const localPatient = localById.get(supabasePatient.id);
           if (!localPatient) continue;
 
           // Check if there are updates
@@ -242,12 +233,12 @@ export function startPortalSyncWorker(intervalSeconds: number = 30): void {
   logger.info(`Starting portal sync worker (every ${intervalSeconds}s)`);
 
   // Run initial sync
-  runPortalSync();
+  runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
 
   // Set up periodic sync
   syncIntervalId = window.setInterval(() => {
     if (navigator.onLine) {
-      runPortalSync();
+      runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
     } else {
       logger.info("Offline, skipping scheduled portal sync");
     }
@@ -275,7 +266,7 @@ export function stopPortalSyncWorker(): void {
  */
 function handleOnline() {
   logger.info("Connection restored, running portal sync...");
-  runPortalSync();
+  runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
 }
 
 /**

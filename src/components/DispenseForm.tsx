@@ -3,7 +3,6 @@ import { formatNigerianDate } from "@/utils/dateFormat";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useTranslation } from "react-i18next";
 import { db, generateId, createAuditLog, InventoryItem } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -33,7 +32,6 @@ export function DispenseForm({
   onSuccess,
   onCancel,
 }: DispenseFormProps) {
-  const { t } = useTranslation();
   const { currentUser } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);

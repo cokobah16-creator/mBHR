@@ -1,49 +1,117 @@
-import { useState, startTransition } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowRightIcon, PhoneIcon } from "@heroicons/react/24/outline";
+import { ArrowRightIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
+import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
+import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
+import { getPatientProfile } from "@/services/patientService";
 
-const loginSchema = z.object({
-  contact: z.string().min(3, "Please enter your phone number or email address"),
-  dob: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
+const onlineSchema = z.object({
+  email: z.string().email("Please enter a valid email address"),
+  credential: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-type LoginForm = z.infer<typeof loginSchema>;
+const offlineSchema = z.object({
+  email: z.string().email("Please enter a valid email address"),
+  credential: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
+});
+
+const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
+type LoginForm = z.infer<typeof schema>;
 
 export function PatientLogin() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const form = useForm<LoginForm>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { contact: "", dob: "" },
+    resolver: zodResolver(schema),
+    defaultValues: { email: "", credential: "" },
   });
 
-  const handleLogin = async (data: LoginForm) => {
+  const handleSupabaseLogin = async (data: LoginForm) => {
+    const authError = await login(data.email, data.credential);
+    if (authError) {
+      const msg = authError.message.toLowerCase();
+      if (
+        msg.includes("invalid login") ||
+        msg.includes("invalid credentials")
+      ) {
+        setError("Email or password is incorrect. Please try again.");
+      } else if (msg.includes("email not confirmed")) {
+        setError(
+          "Please check your email and confirm your account before logging in.",
+        );
+      } else if (msg.includes("too many requests")) {
+        setError(
+          "Too many login attempts. Please wait a moment and try again.",
+        );
+      } else {
+        setError(authError.message);
+      }
+      return;
+    }
+    // Populate patient_portal_user so Medical History / Messages can find the patient ID
+    if (supabase) {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          const profileRes = await getPatientProfile(user.id);
+          if (profileRes.data) {
+            localStorage.setItem(
+              "patient_portal_user",
+              JSON.stringify({
+                id: user.id,
+                patientId: profileRes.data.id,
+                givenName: profileRes.data.givenName,
+                familyName: profileRes.data.familyName,
+                email: profileRes.data.email,
+              }),
+            );
+          }
+        }
+      } catch {
+        // Non-fatal: Medical History / Messages will show an error if patientId is missing
+      }
+    }
+    navigate("/patient/dashboard");
+  };
+
+  const handleOfflineLogin = async (data: LoginForm) => {
+    const result = await loginPatientPortal(
+      data.email,
+      data.credential,
+      "pin",
+    ).catch(() => null);
+    if (result?.success && result.sessionToken) {
+      sessionStorage.setItem("patient_session_token", result.sessionToken);
+      localStorage.setItem(
+        "patient_portal_user",
+        JSON.stringify(result.portalUser),
+      );
+      navigate("/patient/dashboard");
+    } else {
+      setError(result?.error || "No account found. Please register first.");
+    }
+  };
+
+  const handleSubmit = async (data: LoginForm) => {
     setLoading(true);
     setError("");
-
     try {
-      const result = await loginPatientPortal(data.contact, data.dob);
-
-      if (result.success && result.sessionToken) {
-        localStorage.setItem("patient_session_token", result.sessionToken);
-        localStorage.setItem(
-          "patient_portal_user",
-          JSON.stringify(result.portalUser),
-        );
-        startTransition(() => navigate("/patient/dashboard"));
+      if (isSupabaseEnabled) {
+        await handleSupabaseLogin(data);
       } else {
-        setError(result.error || "Could not log in");
+        await handleOfflineLogin(data);
       }
     } catch {
-      setError("An error occurred. Please try again.");
+      setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -55,16 +123,30 @@ export function PatientLogin() {
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-              <PhoneIcon className="w-8 h-8 text-blue-600" />
+              <ShieldCheckIcon className="w-8 h-8 text-blue-600" />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">
               Patient Portal Login
             </h1>
             <p className="text-gray-600">
-              Enter the email or phone number you registered with, plus your
-              date of birth.
+              {isSupabaseEnabled
+                ? "Sign in with your email and password."
+                : "Sign in with your email and 6-digit PIN."}
             </p>
           </div>
+
+          {!isSupabaseEnabled && (
+            <div className="mb-6 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-xs text-yellow-800 font-medium mb-1">
+                Running in offline mode
+              </p>
+              <p className="text-xs text-yellow-700">
+                Data is stored on this device only. Email invitations are not
+                available without an internet connection — register directly
+                using the link below.
+              </p>
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -72,46 +154,59 @@ export function PatientLogin() {
             </div>
           )}
 
-          <form onSubmit={form.handleSubmit(handleLogin)} className="space-y-6">
+          <form
+            onSubmit={form.handleSubmit(handleSubmit)}
+            className="space-y-5"
+          >
             <div>
               <label
-                htmlFor="contact"
+                htmlFor="email"
                 className="block text-sm font-medium text-gray-700 mb-2"
               >
-                Email or Phone Number
+                Email Address
               </label>
               <input
-                {...form.register("contact")}
-                type="text"
-                id="contact"
-                placeholder="email@example.com or +234 ..."
+                {...form.register("email")}
+                type="email"
+                id="email"
+                placeholder="your.email@example.com"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={loading}
+                autoComplete="email"
               />
-              {form.formState.errors.contact && (
+              {form.formState.errors.email && (
                 <p className="mt-2 text-sm text-red-600">
-                  {form.formState.errors.contact.message}
+                  {form.formState.errors.email.message}
                 </p>
               )}
             </div>
 
             <div>
               <label
-                htmlFor="dob"
+                htmlFor="credential"
                 className="block text-sm font-medium text-gray-700 mb-2"
               >
-                Date of Birth
+                {isSupabaseEnabled ? "Password" : "6-Digit PIN"}
               </label>
               <input
-                {...form.register("dob")}
-                type="date"
-                id="dob"
+                {...form.register("credential")}
+                type="password"
+                id="credential"
+                inputMode={isSupabaseEnabled ? undefined : "numeric"}
+                placeholder={isSupabaseEnabled ? "Your password" : "••••••"}
+                maxLength={isSupabaseEnabled ? undefined : 6}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={loading}
+                autoComplete="current-password"
               />
-              {form.formState.errors.dob && (
+              {!isSupabaseEnabled && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Enter the 6-digit PIN you chose when you registered.
+                </p>
+              )}
+              {form.formState.errors.credential && (
                 <p className="mt-2 text-sm text-red-600">
-                  {form.formState.errors.dob.message}
+                  {form.formState.errors.credential.message}
                 </p>
               )}
             </div>
@@ -149,7 +244,7 @@ export function PatientLogin() {
           </form>
         </div>
 
-        <div className="mt-6 text-center space-y-3">
+        <div className="mt-6 text-center space-y-2">
           <button
             type="button"
             onClick={() => navigate("/patient")}
@@ -157,10 +252,9 @@ export function PatientLogin() {
           >
             Back to Home
           </button>
-          <div className="text-sm text-gray-600">
-            <p>Med Bridge Health Reach</p>
-            <p className="mt-1">Secure patient portal powered by mBHR</p>
-          </div>
+          <p className="text-sm text-gray-500">
+            Med Bridge Health Reach · Secure patient portal
+          </p>
         </div>
       </div>
     </div>

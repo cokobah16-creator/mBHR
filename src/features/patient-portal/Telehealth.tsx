@@ -5,9 +5,7 @@ import {
   CalendarIcon,
   ClockIcon,
   UserIcon,
-  PhoneIcon,
   CheckCircleIcon,
-  ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
 import * as logger from "@/lib/logger";
 

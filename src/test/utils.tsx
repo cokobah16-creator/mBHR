@@ -1,23 +1,21 @@
-import React, { ReactElement } from 'react'
-import { render, RenderOptions } from '@testing-library/react'
-import { BrowserRouter } from 'react-router-dom'
+import React, { ReactElement } from "react";
+import { render, RenderOptions } from "@testing-library/react";
+import { BrowserRouter } from "react-router-dom";
 
 interface AllProvidersProps {
-  children: React.ReactNode
+  children: React.ReactNode;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 function AllProviders({ children }: AllProvidersProps) {
-  return (
-    <BrowserRouter>
-      {children}
-    </BrowserRouter>
-  )
+  return <BrowserRouter>{children}</BrowserRouter>;
 }
 
 const customRender = (
   ui: ReactElement,
-  options?: Omit<RenderOptions, 'wrapper'>
-) => render(ui, { wrapper: AllProviders, ...options })
+  options?: Omit<RenderOptions, "wrapper">,
+) => render(ui, { wrapper: AllProviders, ...options });
 
-export * from '@testing-library/react'
-export { customRender as render }
+// eslint-disable-next-line react-refresh/only-export-components
+export * from "@testing-library/react";
+export { customRender as render };

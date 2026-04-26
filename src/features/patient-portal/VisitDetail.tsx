@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatNigerianDate } from "@/utils/dateFormat";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeftIcon,
   CalendarIcon,
@@ -12,6 +12,7 @@ import type { PatientMedicalRecord } from "@/types/patientPortal";
 import * as logger from "@/lib/logger";
 
 export function VisitDetail() {
+  const navigate = useNavigate();
   const { visitId } = useParams<{ visitId: string }>();
   const [visit, setVisit] = useState<PatientMedicalRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,6 +22,7 @@ export function VisitDetail() {
     if (visitId) {
       loadVisitDetails(visitId);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visitId]);
 
   const loadVisitDetails = async (id: string) => {
@@ -29,15 +31,15 @@ export function VisitDetail() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
 
       const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId || !portalUser.id) {
         localStorage.removeItem("patient_portal_user");
-        localStorage.removeItem("patient_session_token");
-        window.location.href = "/patient/login";
+        sessionStorage.removeItem("patient_session_token");
+        navigate("/patient/login", { replace: true });
         return;
       }
       const visitData = await getVisitDetails(

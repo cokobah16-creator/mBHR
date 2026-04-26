@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback, memo } from "react";
 import { Link } from "react-router-dom";
-import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth";
 import { db } from "@/db";
 import { can } from "@/auth/roles";
@@ -33,20 +32,28 @@ const StatCard = memo(
     label,
     value,
     colorClass,
+    trend,
   }: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     icon: any;
     label: string;
     value: number;
     colorClass: string;
+    trend?: string;
   }) => (
-    <div className="bg-white rounded-lg shadow-sm p-6">
-      <div className="flex items-center">
-        <div className={`flex-shrink-0 p-2 rounded-lg ${colorClass}`}>
-          <Icon className="h-6 w-6" />
+    <div className="bg-white rounded-lg shadow-md p-5 border border-gray-100">
+      <div className="flex items-start gap-4">
+        <div
+          className={`shrink-0 w-12 h-12 rounded-xl flex items-center justify-center ${colorClass}`}
+        >
+          <Icon className="h-6 w-6" aria-hidden />
         </div>
-        <div className="ml-4">
+        <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-gray-500">{label}</p>
-          <p className="text-2xl font-bold text-gray-900">{value}</p>
+          <p className="text-3xl font-bold text-gray-900 leading-tight">
+            {value.toLocaleString()}
+          </p>
+          {trend && <p className="text-xs text-gray-500 mt-0.5">{trend}</p>}
         </div>
       </div>
     </div>
@@ -55,7 +62,6 @@ const StatCard = memo(
 StatCard.displayName = "StatCard";
 
 export function Dashboard() {
-  const { t } = useTranslation();
   const { currentUser } = useAuthStore();
   const [stats, setStats] = useState({
     totalPatients: 0,
@@ -112,7 +118,8 @@ export function Dashboard() {
   }, [loadStats]);
 
   // Memoize quick actions based on user role
-  const quickActions = useMemo(() => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _quickActions = useMemo(() => {
     const actions = [
       {
         name: "Register Patient",
@@ -230,24 +237,34 @@ export function Dashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           icon={UsersIcon}
           label="Total Patients"
           value={stats.totalPatients}
-          colorClass="bg-blue-50 text-blue-600"
+          colorClass="bg-blue-100 text-blue-600"
+          trend="Local registry"
         />
         <StatCard
           icon={UserPlusIcon}
           label="Today's Registrations"
           value={stats.todayRegistrations}
-          colorClass="bg-green-50 text-green-600"
+          colorClass="bg-green-100 text-green-600"
+          trend="Since midnight"
+        />
+        <StatCard
+          icon={QueueListIcon}
+          label="In Queue"
+          value={0}
+          colorClass="bg-purple-100 text-purple-600"
+          trend="Active patients"
         />
         <StatCard
           icon={HeartIcon}
           label="System Users"
           value={stats.totalUsers}
-          colorClass="bg-purple-50 text-purple-600"
+          colorClass="bg-orange-100 text-orange-600"
+          trend="Staff accounts"
         />
       </div>
 

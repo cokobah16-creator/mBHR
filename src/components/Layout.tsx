@@ -10,7 +10,6 @@ import { LanguageSelector } from "@/components/LanguageSelector";
 import { AccessibilityControls } from "@/components/AccessibilityControls";
 import { SyncButton } from "@/components/SyncButton";
 import { can } from "@/auth/roles";
-import type { ElementType } from "react";
 import {
   HomeIcon,
   UserGroupIcon,
@@ -30,6 +29,7 @@ import {
   Bars3Icon,
   DocumentDuplicateIcon,
   SparklesIcon,
+  HeartIcon,
 } from "@heroicons/react/24/outline";
 
 // Pharmacy Overlay Component
@@ -115,19 +115,6 @@ function PharmacyOverlay({ onClose }: { onClose: () => void }) {
     </main>
   );
 }
-
-// Fallback icon for nav items missing icons
-const FallbackIcon = (props: React.SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 24 24" fill="none" {...props}>
-    <circle cx="12" cy="12" r="9" stroke="currentColor" />
-  </svg>
-);
-
-type NavItem = {
-  name: string;
-  href: string;
-  icon: ElementType;
-};
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -257,66 +244,59 @@ export function Layout({ children }: LayoutProps) {
         role="banner"
         className="bg-primary text-white shadow-lg sticky top-0 z-30"
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-3 md:py-4">
-            {/* Mobile Menu Button */}
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-lg hover:bg-primary/80 transition-colors min-h-touch-target min-w-touch-target"
-              aria-label="Toggle menu"
-            >
-              <Bars3Icon className="h-6 w-6" />
-            </button>
+        <div className="px-4 sm:px-6 h-[73px] flex items-center justify-between">
+          {/* Mobile Menu Button */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 rounded-lg hover:bg-white/10 transition-colors min-h-touch-target min-w-touch-target"
+            aria-label="Toggle menu"
+          >
+            <Bars3Icon className="h-6 w-6" />
+          </button>
 
-            <div className="flex-1 md:flex-initial">
-              <h1 className="text-lg md:text-xl font-bold text-shadow">
-                {t("app.title")}
-              </h1>
-              <p className="text-xs md:text-sm opacity-90 hidden sm:block">
-                {t("app.subtitle")}
-              </p>
+          <div className="flex-1 md:flex-initial">
+            <h1 className="text-lg font-bold leading-tight">
+              {t("app.title")}
+            </h1>
+            <p className="text-[11px] opacity-90 hidden sm:block">
+              {t("app.subtitle")}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 md:gap-3">
+            {/* Online/Offline Badge */}
+            <div className="hidden xs:block">
+              <OfflineBadge />
             </div>
 
-            <div className="flex items-center gap-2 md:gap-4">
-              {/* Online/Offline Badge - Hidden on very small screens */}
-              <div className="hidden xs:block">
-                <OfflineBadge />
-              </div>
+            {/* Sync Button */}
+            <SyncButton />
 
-              {/* Sync Button */}
-              <SyncButton />
+            {/* Language Selector - Hidden on mobile */}
+            <div className="hidden md:block">
+              <LanguageSelector />
+            </div>
 
-              {/* Language Selector - Hidden on mobile */}
-              <div className="hidden md:block">
-                <LanguageSelector />
-              </div>
+            {/* Accessibility Controls - Hidden on mobile */}
+            <div className="hidden lg:block">
+              <AccessibilityControls />
+            </div>
 
-              {/* Accessibility Controls - Hidden on mobile */}
-              <div className="hidden lg:block">
-                <AccessibilityControls />
-              </div>
-
-              {/* User Info - Compact on mobile */}
-              {currentUser && (
-                <div className="flex items-center gap-2">
-                  <div className="text-right hidden md:block">
-                    <p className="text-sm font-medium">
-                      {currentUser.fullName}
-                    </p>
-                    <p className="text-xs opacity-75 capitalize">
-                      {currentUser.role}
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleLogout}
-                    className="p-2 rounded-lg hover:bg-primary/80 transition-colors min-h-touch-target min-w-touch-target"
-                    title={t("auth.logout")}
-                  >
-                    <ArrowRightOnRectangleIcon className="h-5 w-5" />
-                  </button>
+            {/* Logout button — user name/role shown in sidebar footer on desktop */}
+            {currentUser && (
+              <div className="flex items-center gap-2">
+                <div className="text-right md:hidden">
+                  <p className="text-sm font-medium">{currentUser.fullName}</p>
                 </div>
-              )}
-            </div>
+                <button
+                  onClick={handleLogout}
+                  className="p-2 rounded-lg hover:bg-white/10 transition-colors min-h-touch-target min-w-touch-target"
+                  title={t("auth.logout")}
+                >
+                  <ArrowRightOnRectangleIcon className="h-5 w-5" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -336,43 +316,58 @@ export function Layout({ children }: LayoutProps) {
           aria-label="Main navigation"
           className={`
           fixed md:sticky md:top-0 inset-y-0 left-0 z-50
-          w-64 bg-white shadow-lg md:shadow-sm
+          w-64 bg-white border-r border-gray-100 shadow-lg md:shadow-sm flex flex-col
           transform transition-transform duration-300 ease-in-out
           ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
-          overflow-y-auto md:h-[calc(100vh-73px)] md:self-start
+          md:h-[calc(100vh-73px)] md:self-start
         `}
         >
-          <div className="p-4">
-            {/* Mobile Menu Header */}
-            <div className="flex items-center justify-between mb-4 md:hidden">
-              <div>
-                <p className="font-semibold text-gray-900">
-                  {currentUser?.fullName}
-                </p>
-                <p className="text-xs text-gray-600 capitalize">
-                  {currentUser?.role}
-                </p>
+          {/* Logo block — desktop only */}
+          <div className="hidden md:flex items-center gap-3 px-5 pt-5 pb-4 border-b border-gray-100 shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shrink-0">
+              <HeartIcon className="h-6 w-6 text-white" aria-hidden />
+            </div>
+            <div>
+              <div className="text-[15px] font-bold text-gray-900 leading-tight">
+                mBHR
               </div>
-              <button
-                onClick={() => setMobileMenuOpen(false)}
-                className="p-2 rounded-lg hover:bg-gray-100 min-h-touch-target min-w-touch-target"
-                aria-label="Close menu"
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
+              <div className="text-[11px] text-gray-500">
+                Med Bridge Health Reach
+              </div>
             </div>
+          </div>
 
-            {/* Mobile-only controls */}
-            <div className="mb-4 space-y-2 md:hidden">
-              <LanguageSelector />
-              <AccessibilityControls />
+          {/* Mobile header (close button + user) */}
+          <div className="flex items-center justify-between px-4 pt-4 pb-3 md:hidden shrink-0">
+            <div>
+              <p className="font-semibold text-gray-900">
+                {currentUser?.fullName}
+              </p>
+              <p className="text-xs text-gray-600 capitalize">
+                {currentUser?.role}
+              </p>
             </div>
+            <button
+              onClick={() => setMobileMenuOpen(false)}
+              className="p-2 rounded-lg hover:bg-gray-100 min-h-touch-target min-w-touch-target"
+              aria-label="Close menu"
+            >
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+          </div>
 
-            <ul className="space-y-1 md:space-y-2">
+          {/* Mobile-only controls */}
+          <div className="px-4 pb-3 space-y-2 md:hidden shrink-0">
+            <LanguageSelector />
+            <AccessibilityControls />
+          </div>
+
+          {/* Nav items — scrollable */}
+          <div className="flex-1 overflow-y-auto px-3 py-3">
+            <ul className="space-y-0.5">
               {navigation.map((item) => {
                 const isPharmacy = item.name === "Pharmacy";
 
-                // Better active state detection
                 let isActive = false;
                 if (isPharmacy) {
                   isActive =
@@ -403,7 +398,7 @@ export function Layout({ children }: LayoutProps) {
                           setOverlay("pharmacy");
                           setMobileMenuOpen(false);
                         }}
-                        className={`w-full flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target text-left ${
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors min-h-touch-target text-sm text-left ${
                           isActive
                             ? "bg-primary text-white"
                             : "text-gray-700 hover:bg-gray-100 active:bg-gray-200"
@@ -419,7 +414,7 @@ export function Layout({ children }: LayoutProps) {
                         to={item.href}
                         onClick={() => setMobileMenuOpen(false)}
                         aria-current={isActive ? "page" : undefined}
-                        className={`flex items-center gap-3 px-3 md:px-4 py-3 rounded-lg transition-colors min-h-touch-target ${
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors min-h-touch-target text-sm ${
                           isActive
                             ? "bg-primary text-white"
                             : "text-gray-700 hover:bg-gray-100 active:bg-gray-200"
@@ -433,6 +428,38 @@ export function Layout({ children }: LayoutProps) {
               })}
             </ul>
           </div>
+
+          {/* User footer — desktop only */}
+          {currentUser && (
+            <div className="hidden md:block px-3 py-3 border-t border-gray-100 shrink-0">
+              <div className="flex items-center gap-3 px-3 py-2 rounded-lg">
+                <div className="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center font-semibold text-sm shrink-0">
+                  {currentUser.fullName
+                    .split(" ")
+                    .map((n) => n[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-gray-900 truncate">
+                    {currentUser.fullName}
+                  </div>
+                  <div className="text-xs text-gray-500 capitalize">
+                    {currentUser.role}
+                  </div>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="text-gray-400 hover:text-gray-700 p-1 rounded transition-colors"
+                  title={t("auth.logout")}
+                  aria-label={t("auth.logout")}
+                >
+                  <ArrowRightOnRectangleIcon className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          )}
         </nav>
 
         {/* Main Content */}

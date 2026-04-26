@@ -97,8 +97,8 @@
 -- medication_reminders table
 CREATE TABLE IF NOT EXISTS medication_reminders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  dispense_id uuid REFERENCES dispenses(id) ON DELETE CASCADE,
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  dispense_id text REFERENCES dispenses(id) ON DELETE CASCADE,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   medication_name text NOT NULL,
   dosage text NOT NULL,
   scheduled_at timestamptz NOT NULL,
@@ -114,9 +114,9 @@ CREATE TABLE IF NOT EXISTS medication_reminders (
 -- lab_orders table
 CREATE TABLE IF NOT EXISTS lab_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
-  visit_id uuid REFERENCES visits(id) ON DELETE SET NULL,
-  ordered_by uuid REFERENCES app_users(id) ON DELETE SET NULL NOT NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  visit_id text REFERENCES visits(id) ON DELETE SET NULL,
+  ordered_by text REFERENCES app_users(id) ON DELETE SET NULL NOT NULL,
   test_name text NOT NULL,
   test_code text,
   priority text NOT NULL CHECK (priority IN ('routine', 'urgent', 'stat')) DEFAULT 'routine',
@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS lab_results (
   reference_range text,
   interpretation text NOT NULL CHECK (interpretation IN ('normal', 'abnormal', 'critical')) DEFAULT 'normal',
   result_date timestamptz NOT NULL DEFAULT now(),
-  reviewed_by uuid REFERENCES app_users(id) ON DELETE SET NULL,
+  reviewed_by text REFERENCES app_users(id) ON DELETE SET NULL,
   reviewed_at timestamptz,
   notes text,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -150,8 +150,8 @@ CREATE TABLE IF NOT EXISTS lab_results (
 -- appointments table
 CREATE TABLE IF NOT EXISTS appointments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
-  provider_id uuid REFERENCES app_users(id) ON DELETE SET NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  provider_id text REFERENCES app_users(id) ON DELETE SET NULL,
   appointment_type text NOT NULL,
   scheduled_at timestamptz NOT NULL,
   duration_minutes integer NOT NULL DEFAULT 30,
@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   notes text,
   reminder_sent boolean NOT NULL DEFAULT false,
   reminder_sent_at timestamptz,
-  created_by uuid REFERENCES app_users(id) ON DELETE SET NULL NOT NULL,
+  created_by text REFERENCES app_users(id) ON DELETE SET NULL NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS appointments (
 -- waitlist table
 CREATE TABLE IF NOT EXISTS waitlist (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  patient_id text REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
   appointment_type text NOT NULL,
   preferred_dates jsonb,
   reason text,
@@ -190,7 +190,7 @@ CREATE POLICY "Pharmacists and admins can view reminders"
   ON medication_reminders FOR SELECT
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')
     )
   );
@@ -199,7 +199,7 @@ CREATE POLICY "Pharmacists and admins can create reminders"
   ON medication_reminders FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')
     )
   );
@@ -208,7 +208,7 @@ CREATE POLICY "Pharmacists and admins can update reminders"
   ON medication_reminders FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('pharmacist', 'admin')
     )
   );
@@ -223,7 +223,7 @@ CREATE POLICY "Doctors and nurses can create lab orders"
   ON lab_orders FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('doctor', 'nurse', 'admin')
     )
   );
@@ -232,7 +232,7 @@ CREATE POLICY "Doctors and nurses can update lab orders"
   ON lab_orders FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('doctor', 'nurse', 'admin')
     )
   );
@@ -247,7 +247,7 @@ CREATE POLICY "Authorized staff can create lab results"
   ON lab_results FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('doctor', 'nurse', 'admin')
     )
   );
@@ -256,7 +256,7 @@ CREATE POLICY "Authorized staff can update lab results"
   ON lab_results FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('doctor', 'nurse', 'admin')
     )
   );
@@ -271,7 +271,7 @@ CREATE POLICY "Staff can create appointments"
   ON appointments FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
     )
   );
@@ -280,7 +280,7 @@ CREATE POLICY "Staff can update appointments"
   ON appointments FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
     )
   );
@@ -295,7 +295,7 @@ CREATE POLICY "Staff can create waitlist entries"
   ON waitlist FOR INSERT
   TO authenticated
   WITH CHECK (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
     )
   );
@@ -304,7 +304,7 @@ CREATE POLICY "Staff can update waitlist entries"
   ON waitlist FOR UPDATE
   TO authenticated
   USING (
-    auth.uid() IN (
+    auth.uid()::text IN (
       SELECT id FROM app_users WHERE role IN ('chw', 'nurse', 'doctor', 'admin')
     )
   );

@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
   BeakerIcon,
-  DocumentArrowDownIcon,
   CheckCircleIcon,
   ClockIcon,
 } from "@heroicons/react/24/outline";
@@ -24,6 +24,7 @@ interface LabResult {
 }
 
 export function LabResults() {
+  const navigate = useNavigate();
   const [results, setResults] = useState<LabResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -31,6 +32,7 @@ export function LabResults() {
 
   useEffect(() => {
     loadLabResults();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadLabResults = async () => {
@@ -40,7 +42,7 @@ export function LabResults() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
 

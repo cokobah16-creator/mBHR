@@ -34,6 +34,56 @@
     <title>Med Bridge Health Reach</title>
   </head>
   <body>
+    <!-- Nigeria Loader — shows while React boots, removed on first render -->
+    <div id="nldr" role="status" aria-label="Loading Med Bridge Health Reach">
+    <style>
+    #nldr{position:fixed;inset:0;display:grid;place-items:center;background:#F2EEE6;z-index:9999;transition:opacity .4s ease}
+    #nldr.nldr-out{opacity:0;pointer-events:none}
+    @keyframes nldr-s{to{transform:rotate(360deg)}}
+    @keyframes nldr-r{to{transform:rotate(-360deg)}}
+    @keyframes nldr-p{0%,100%{opacity:.55}50%{opacity:1}}
+    .nldr-mp{transform-origin:100px 100px;animation:nldr-s 7.14s linear infinite}
+    .nldr-ro{transform-origin:100px 100px;animation:nldr-r 9s linear infinite}
+    .nldr-ri{transform-origin:100px 100px;animation:nldr-s 6s linear infinite}
+    .nldr-rm{transform-origin:100px 100px;animation:nldr-r 14s linear infinite}
+    .nldr-st{transform-origin:100px 100px;animation:nldr-s 2.4s cubic-bezier(.6,.05,.4,.95) infinite}
+    .nldr-sc{transform-origin:100px 100px;animation:nldr-r 3.2s cubic-bezier(.6,.05,.4,.95) infinite}
+    .nldr-pu{animation:nldr-p 2.4s ease-in-out infinite}
+    </style>
+    <svg viewBox="0 0 200 200" width="200" height="200" overflow="visible" aria-hidden="true">
+      <defs>
+        <mask id="nldr-wm">
+          <rect x="0" y="0" width="200" height="200" fill="white"/>
+          <circle cx="100" cy="100" r="56" fill="black"/>
+        </mask>
+        <clipPath id="nldr-cp"></clipPath>
+      </defs>
+      <!-- Whirl rings -->
+      <g mask="url(#nldr-wm)">
+        <circle class="nldr-ro nldr-pu" cx="100" cy="100" r="94" fill="none" stroke="rgba(0,135,83,.20)" stroke-width=".75" stroke-dasharray="1 6"/>
+        <circle class="nldr-st" cx="100" cy="100" r="86" fill="none" stroke="rgba(0,135,83,.55)" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="60 240 30 270"/>
+        <circle class="nldr-sc" cx="100" cy="100" r="78" fill="none" stroke="#008753" stroke-width=".6" stroke-linecap="round" stroke-dasharray="2 10 18 14 4 16"/>
+        <circle class="nldr-rm" cx="100" cy="100" r="70" fill="none" stroke="rgba(0,135,83,.10)" stroke-width="2" stroke-dasharray="4 3"/>
+        <circle class="nldr-ri" cx="100" cy="100" r="64" fill="none" stroke="rgba(0,135,83,.20)" stroke-width=".6" stroke-dasharray=".6 4" stroke-linecap="round"/>
+        <g class="nldr-st"><g transform="translate(100,100)">
+          <line x1="92" y1="0" x2="98" y2="0" stroke="#008753" stroke-width=".9" stroke-linecap="round"/>
+          <line transform="rotate(60)"  x1="92" y1="0" x2="97" y2="0" stroke="rgba(0,135,83,.55)" stroke-width=".8" stroke-linecap="round"/>
+          <line transform="rotate(120)" x1="92" y1="0" x2="96" y2="0" stroke="rgba(0,135,83,.20)" stroke-width=".7" stroke-linecap="round"/>
+          <line transform="rotate(180)" x1="92" y1="0" x2="98" y2="0" stroke="#008753" stroke-width=".9" stroke-linecap="round"/>
+          <line transform="rotate(240)" x1="92" y1="0" x2="97" y2="0" stroke="rgba(0,135,83,.55)" stroke-width=".8" stroke-linecap="round"/>
+          <line transform="rotate(300)" x1="92" y1="0" x2="96" y2="0" stroke="rgba(0,135,83,.20)" stroke-width=".7" stroke-linecap="round"/>
+        </g></g>
+      </g>
+      <!-- Backdrop disc -->
+      <circle cx="100" cy="100" r="55" fill="rgba(0,135,83,.10)"/>
+      <!-- Nigeria map — paths injected by JS below -->
+      <g id="nldr-map" class="nldr-mp"></g>
+      <!-- Center dot -->
+      <circle cx="100" cy="100" r=".9" fill="#008753"/>
+    </svg>
+    <script src="/nigeria-loader.js" defer></script>
+    </div>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

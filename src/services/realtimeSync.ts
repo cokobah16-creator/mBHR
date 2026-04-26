@@ -22,7 +22,7 @@ type SubscriptionCallback = (payload: RealtimePayload) => void;
 
 class RealtimeSyncService {
   private channels: Map<string, RealtimeChannel> = new Map();
-  private reconnectAttempts: number = 0;
+  private channelReconnectAttempts: Map<string, number> = new Map();
   private maxReconnectAttempts: number = 5;
   private reconnectDelay: number = 1000;
   private isConnected: boolean = false;
@@ -36,7 +36,7 @@ class RealtimeSyncService {
 
     try {
       this.isConnected = true;
-      this.reconnectAttempts = 0;
+      this.channelReconnectAttempts.clear();
       logger.log("Realtime sync service connected");
       return true;
     } catch (error) {
@@ -90,11 +90,11 @@ class RealtimeSyncService {
 
       const channel = client
         .channel(channelKey)
-        // @ts-expect-error Supabase realtime types have overload resolution issues with postgres_changes
         .on("postgres_changes", pgConfig, handlePayload)
         .subscribe((status) => {
           if (status === "SUBSCRIBED") {
             logger.log(`Subscribed to ${channelKey}`);
+            this.channelReconnectAttempts.delete(channelKey);
           } else if (status === "CHANNEL_ERROR") {
             logger.error(`Channel error for ${channelKey}`);
             this.handleReconnect(channelKey, config);
@@ -129,27 +129,28 @@ class RealtimeSyncService {
     channelKey: string,
     config: SubscriptionConfig,
   ): Promise<void> {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+    const attempts = this.channelReconnectAttempts.get(channelKey) || 0;
+    if (attempts >= this.maxReconnectAttempts) {
       logger.error(`Max reconnect attempts reached for ${channelKey}`);
+      this.channelReconnectAttempts.delete(channelKey);
       return;
     }
 
-    this.reconnectAttempts++;
-    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+    this.channelReconnectAttempts.set(channelKey, attempts + 1);
+    const delay = this.reconnectDelay * Math.pow(2, attempts);
 
     logger.log(
-      `Reconnecting to ${channelKey} in ${delay}ms (attempt ${this.reconnectAttempts})`,
+      `Reconnecting to ${channelKey} in ${delay}ms (attempt ${attempts + 1})`,
     );
 
     await new Promise((resolve) => setTimeout(resolve, delay));
 
+    // Save listeners before unsubscribing (unsubscribe deletes the listeners map entry)
+    const savedListeners = new Set(this.listeners.get(channelKey) || []);
     this.unsubscribe(channelKey);
-    const listeners = this.listeners.get(channelKey);
-    if (listeners) {
-      listeners.forEach((callback) => {
-        this.subscribe({ ...config, callback });
-      });
-    }
+    savedListeners.forEach((callback) => {
+      this.subscribe({ ...config, callback });
+    });
   }
 
   subscribeToVitals(
@@ -211,21 +212,18 @@ class RealtimeSyncService {
     callback: SubscriptionCallback,
   ): () => void {
     return this.subscribe({
-      table: "patient_messages",
+      table: "patient_secure_messages",
       filter: `patient_id=eq.${patientId}`,
       callback,
     });
   }
 
   subscribeToNotifications(
-    patientId: string,
-    callback: SubscriptionCallback,
+    _patientId: string,
+    _callback: SubscriptionCallback,
   ): () => void {
-    return this.subscribe({
-      table: "patient_notifications",
-      filter: `patient_id=eq.${patientId}`,
-      callback,
-    });
+    // patient_notifications table does not exist in this schema; no-op.
+    return () => {};
   }
 
   subscribeToQueue(

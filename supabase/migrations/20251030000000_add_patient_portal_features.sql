@@ -52,8 +52,8 @@
 -- Create secure messaging table
 CREATE TABLE IF NOT EXISTS patient_secure_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
-  staff_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  staff_id text REFERENCES users(id) ON DELETE SET NULL,
   subject text NOT NULL,
   body text NOT NULL,
   from_patient boolean NOT NULL DEFAULT true,
@@ -70,7 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_secure_messages_unread ON patient_secure_messages
 -- Create lab results table
 CREATE TABLE IF NOT EXISTS patient_lab_results (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   test_name text NOT NULL,
   test_type text NOT NULL,
   result_value text,
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS patient_lab_results (
   result_date timestamptz,
   notes text,
   abnormal boolean DEFAULT false,
-  ordered_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  ordered_by text REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
@@ -93,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_lab_results_abnormal ON patient_lab_results(patie
 -- Create medical conditions table
 CREATE TABLE IF NOT EXISTS patient_medical_conditions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   condition_name text NOT NULL,
   diagnosed_date date,
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'resolved', 'managed')),
@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_medical_conditions_status ON patient_medical_cond
 -- Create documents table
 CREATE TABLE IF NOT EXISTS patient_documents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   file_name text NOT NULL,
   file_type text NOT NULL,
   file_size integer NOT NULL,
@@ -116,17 +116,17 @@ CREATE TABLE IF NOT EXISTS patient_documents (
   description text,
   storage_path text NOT NULL,
   upload_date timestamptz DEFAULT now(),
-  uploaded_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  uploaded_by text REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_patient ON patient_documents(patient_id, upload_date DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_patient ON patient_documents(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_documents_type ON patient_documents(patient_id, document_type);
 
 -- Create referrals table
 CREATE TABLE IF NOT EXISTS patient_referrals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  patient_id text NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   referring_provider text NOT NULL,
   specialist_name text,
   specialty text NOT NULL,
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS patient_referrals (
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'scheduled', 'completed', 'cancelled')),
   priority text NOT NULL DEFAULT 'routine' CHECK (priority IN ('routine', 'urgent', 'emergency')),
   notes text,
-  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
@@ -168,6 +168,7 @@ ALTER TABLE patient_portal_preferences ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for patient_secure_messages
 
+DROP POLICY IF EXISTS "Patients can view own messages" ON patient_secure_messages;
 CREATE POLICY "Patients can view own messages"
   ON patient_secure_messages FOR SELECT
   TO authenticated
@@ -178,6 +179,7 @@ CREATE POLICY "Patients can view own messages"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can send messages" ON patient_secure_messages;
 CREATE POLICY "Patients can send messages"
   ON patient_secure_messages FOR INSERT
   TO authenticated
@@ -200,6 +202,7 @@ CREATE POLICY "Staff can send messages"
 
 -- RLS Policies for patient_lab_results
 
+DROP POLICY IF EXISTS "Patients can view own lab results" ON patient_lab_results;
 CREATE POLICY "Patients can view own lab results"
   ON patient_lab_results FOR SELECT
   TO authenticated
@@ -223,6 +226,7 @@ CREATE POLICY "Staff can manage lab results"
 
 -- RLS Policies for patient_medical_conditions
 
+DROP POLICY IF EXISTS "Patients can view own conditions" ON patient_medical_conditions;
 CREATE POLICY "Patients can view own conditions"
   ON patient_medical_conditions FOR SELECT
   TO authenticated
@@ -250,6 +254,7 @@ CREATE POLICY "Staff can view all conditions"
 
 -- RLS Policies for patient_documents
 
+DROP POLICY IF EXISTS "Patients can view own documents" ON patient_documents;
 CREATE POLICY "Patients can view own documents"
   ON patient_documents FOR SELECT
   TO authenticated
@@ -260,6 +265,7 @@ CREATE POLICY "Patients can view own documents"
     )
   );
 
+DROP POLICY IF EXISTS "Patients can upload documents" ON patient_documents;
 CREATE POLICY "Patients can upload documents"
   ON patient_documents FOR INSERT
   TO authenticated

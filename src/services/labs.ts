@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase } from "../lib/supabase";
 
 export interface LabOrder {
   id?: string;
@@ -7,8 +7,8 @@ export interface LabOrder {
   orderedBy: string;
   testName: string;
   testCode?: string;
-  priority: 'routine' | 'urgent' | 'stat';
-  status: 'ordered' | 'collected' | 'processing' | 'completed' | 'cancelled';
+  priority: "routine" | "urgent" | "stat";
+  status: "ordered" | "collected" | "processing" | "completed" | "cancelled";
   specimenType?: string;
   clinicalNotes?: string;
   orderedAt?: Date;
@@ -23,7 +23,7 @@ export interface LabResult {
   resultValue: string;
   resultUnit?: string;
   referenceRange?: string;
-  interpretation: 'normal' | 'abnormal' | 'critical';
+  interpretation: "normal" | "abnormal" | "critical";
   resultDate: Date;
   reviewedBy?: string;
   reviewedAt?: Date;
@@ -32,7 +32,7 @@ export interface LabResult {
 
 export async function createLabOrder(order: LabOrder): Promise<string> {
   const { data, error } = await supabase
-    .from('lab_orders')
+    .from("lab_orders")
     .insert({
       patient_id: order.patientId,
       visit_id: order.visitId,
@@ -40,7 +40,7 @@ export async function createLabOrder(order: LabOrder): Promise<string> {
       test_name: order.testName,
       test_code: order.testCode,
       priority: order.priority,
-      status: 'ordered',
+      status: "ordered",
       specimen_type: order.specimenType,
       clinical_notes: order.clinicalNotes,
     })
@@ -53,29 +53,30 @@ export async function createLabOrder(order: LabOrder): Promise<string> {
 
 export async function updateLabOrderStatus(
   orderId: string,
-  status: LabOrder['status']
+  status: LabOrder["status"],
 ): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updates: any = { status };
 
-  if (status === 'collected') {
+  if (status === "collected") {
     updates.collected_at = new Date().toISOString();
-  } else if (status === 'completed') {
+  } else if (status === "completed") {
     updates.completed_at = new Date().toISOString();
-  } else if (status === 'cancelled') {
+  } else if (status === "cancelled") {
     updates.cancelled_at = new Date().toISOString();
   }
 
   const { error } = await supabase
-    .from('lab_orders')
+    .from("lab_orders")
     .update(updates)
-    .eq('id', orderId);
+    .eq("id", orderId);
 
   if (error) throw error;
 }
 
 export async function addLabResult(result: LabResult): Promise<string> {
   const { data, error } = await supabase
-    .from('lab_results')
+    .from("lab_results")
     .insert({
       order_id: result.orderId,
       result_value: result.resultValue,
@@ -90,36 +91,38 @@ export async function addLabResult(result: LabResult): Promise<string> {
 
   if (error) throw error;
 
-  await updateLabOrderStatus(result.orderId, 'completed');
+  await updateLabOrderStatus(result.orderId, "completed");
 
   return data.id;
 }
 
 export async function reviewLabResult(
   resultId: string,
-  reviewedBy: string
+  reviewedBy: string,
 ): Promise<void> {
   const { error } = await supabase
-    .from('lab_results')
+    .from("lab_results")
     .update({
       reviewed_by: reviewedBy,
       reviewed_at: new Date().toISOString(),
     })
-    .eq('id', resultId);
+    .eq("id", resultId);
 
   if (error) throw error;
 }
 
-export async function getPatientLabOrders(patientId: string): Promise<LabOrder[]> {
+export async function getPatientLabOrders(
+  patientId: string,
+): Promise<LabOrder[]> {
   const { data, error } = await supabase
-    .from('lab_orders')
-    .select('*')
-    .eq('patient_id', patientId)
-    .order('ordered_at', { ascending: false });
+    .from("lab_orders")
+    .select("*")
+    .eq("patient_id", patientId)
+    .order("ordered_at", { ascending: false });
 
   if (error) throw error;
 
-  return data.map(o => ({
+  return data.map((o) => ({
     id: o.id,
     patientId: o.patient_id,
     visitId: o.visit_id,
@@ -139,14 +142,14 @@ export async function getPatientLabOrders(patientId: string): Promise<LabOrder[]
 
 export async function getLabResults(orderId: string): Promise<LabResult[]> {
   const { data, error } = await supabase
-    .from('lab_results')
-    .select('*')
-    .eq('order_id', orderId)
-    .order('result_date', { ascending: false });
+    .from("lab_results")
+    .select("*")
+    .eq("order_id", orderId)
+    .order("result_date", { ascending: false });
 
   if (error) throw error;
 
-  return data.map(r => ({
+  return data.map((r) => ({
     id: r.id,
     orderId: r.order_id,
     resultValue: r.result_value,
@@ -162,15 +165,15 @@ export async function getLabResults(orderId: string): Promise<LabResult[]> {
 
 export async function getPendingLabOrders(): Promise<LabOrder[]> {
   const { data, error } = await supabase
-    .from('lab_orders')
-    .select('*')
-    .in('status', ['ordered', 'collected', 'processing'])
-    .order('priority', { ascending: true })
-    .order('ordered_at', { ascending: true });
+    .from("lab_orders")
+    .select("*")
+    .in("status", ["ordered", "collected", "processing"])
+    .order("priority", { ascending: true })
+    .order("ordered_at", { ascending: true });
 
   if (error) throw error;
 
-  return data.map(o => ({
+  return data.map((o) => ({
     id: o.id,
     patientId: o.patient_id,
     visitId: o.visit_id,
@@ -186,19 +189,24 @@ export async function getPendingLabOrders(): Promise<LabOrder[]> {
   }));
 }
 
-export async function getCriticalResults(): Promise<Array<LabResult & { patientId: string; testName: string }>> {
+export async function getCriticalResults(): Promise<
+  Array<LabResult & { patientId: string; testName: string }>
+> {
   const { data, error } = await supabase
-    .from('lab_results')
-    .select(`
+    .from("lab_results")
+    .select(
+      `
       *,
       lab_orders!inner(patient_id, test_name)
-    `)
-    .eq('interpretation', 'critical')
-    .is('reviewed_at', null)
-    .order('result_date', { ascending: false });
+    `,
+    )
+    .eq("interpretation", "critical")
+    .is("reviewed_at", null)
+    .order("result_date", { ascending: false });
 
   if (error) throw error;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return data.map((r: any) => ({
     id: r.id,
     orderId: r.order_id,

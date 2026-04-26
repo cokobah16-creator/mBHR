@@ -83,15 +83,15 @@ export function AppointmentRequest() {
     try {
       const portalUserStr = localStorage.getItem("patient_portal_user");
       if (!portalUserStr) {
-        window.location.href = "/patient/login";
+        navigate("/patient/login", { replace: true });
         return;
       }
 
       const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId) {
         localStorage.removeItem("patient_portal_user");
-        localStorage.removeItem("patient_session_token");
-        window.location.href = "/patient/login";
+        sessionStorage.removeItem("patient_session_token");
+        navigate("/patient/login", { replace: true });
         return;
       }
 

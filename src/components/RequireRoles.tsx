@@ -1,16 +1,19 @@
-import React from 'react'
-import { useAuthStore } from '@/stores/auth'
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import React from "react";
+import { useAuthStore } from "@/stores/auth";
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
-type Props = { 
-  roles: Array<'volunteer'|'inventory_lead'|'pharmacist'|'nurse'|'doctor'|'admin'>
-  children: React.ReactNode 
-}
+type Props = {
+  roles: Array<
+    "volunteer" | "inventory_lead" | "pharmacist" | "nurse" | "doctor" | "admin"
+  >;
+  children: React.ReactNode;
+};
 
 export default function RequireRoles({ roles, children }: Props) {
-  const { currentUser } = useAuthStore()
-  const userRole = currentUser?.role as any
-  
+  const { currentUser } = useAuthStore();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const userRole = currentUser?.role as any;
+
   if (!currentUser || !userRole || !roles.includes(userRole)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -26,16 +29,16 @@ export default function RequireRoles({ roles, children }: Props) {
               You do not have permission to view this page.
             </p>
             <p className="mt-1 text-xs text-gray-400">
-              Required roles: {roles.join(', ')}
+              Required roles: {roles.join(", ")}
             </p>
             <p className="mt-1 text-xs text-gray-400">
-              Your role: {userRole || 'none'}
+              Your role: {userRole || "none"}
             </p>
           </div>
         </div>
       </div>
-    )
+    );
   }
-  
-  return <>{children}</>
+
+  return <>{children}</>;
 }
