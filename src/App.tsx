@@ -264,6 +264,11 @@ const DoctorDashboard = lazy(() =>
   })),
 );
 
+// Retailer discovery
+const RetailerDiscoveryAgent = lazy(
+  () => import("@/features/retailer-discovery/RetailerDiscoveryAgent"),
+);
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
 
@@ -697,6 +702,48 @@ function App() {
                       </RequireRoles>
                     } />
                     */}
+                    <Route
+                      path="/labs"
+                      element={
+                        <RequireRoles roles={["doctor", "nurse", "admin"]}>
+                          <LabResultsDashboard userId="" />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/appointments"
+                      element={
+                        <RequireRoles
+                          roles={["doctor", "nurse", "volunteer", "admin"]}
+                        >
+                          <AppointmentCalendar createdBy="" />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/triage/quick"
+                      element={
+                        <RequireRoles roles={["nurse", "doctor", "admin"]}>
+                          <QuickTriage onComplete={() => {}} />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/retailer-agent"
+                      element={
+                        <RequireRoles roles={["admin", "nurse", "doctor"]}>
+                          <RetailerDiscoveryAgent />
+                        </RequireRoles>
+                      }
+                    />
+                  </Routes>
+                </Layout>
+              </Suspense>
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </ErrorBoundary>
                       <Route
                         path="/labs"
                         element={
