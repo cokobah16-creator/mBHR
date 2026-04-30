@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useMemo, useCallback, memo } from "react";
 import { Link } from "react-router-dom";
+import { useLiveQuery } from "dexie-react-hooks";
 import { useAuthStore } from "@/stores/auth";
 import { db } from "@/db";
+import { mbhrDb } from "@/db/mbhr";
 import { can } from "@/auth/roles";
 import { queryCache, createCacheKey } from "@/utils/queryCache";
 import { OfflineAnalytics } from "@/components/OfflineAnalytics";
@@ -23,6 +25,9 @@ import {
   CalendarIcon,
   EnvelopeIcon,
   ArrowPathIcon,
+  ClipboardDocumentCheckIcon,
+  UserIcon,
+  ShieldExclamationIcon,
 } from "@heroicons/react/24/outline";
 
 // Memoized stat card component
@@ -116,6 +121,79 @@ export function Dashboard() {
   useEffect(() => {
     loadStats();
   }, [loadStats]);
+
+  const startOfToday = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+  const startOfTodayIso = useMemo(
+    () => startOfToday.toISOString(),
+    [startOfToday],
+  );
+
+  const waitingForVitals =
+    useLiveQuery(
+      () =>
+        db.queue
+          .where("stage")
+          .equals("vitals")
+          .and((q) => q.status !== "done")
+          .count(),
+      [],
+      0,
+    ) ?? 0;
+
+  const waitingForDoctor =
+    useLiveQuery(
+      () =>
+        db.queue
+          .where("stage")
+          .equals("consult")
+          .and((q) => q.status !== "done")
+          .count(),
+      [],
+      0,
+    ) ?? 0;
+
+  const waitingForPharmacy =
+    useLiveQuery(
+      () =>
+        db.queue
+          .where("stage")
+          .equals("pharmacy")
+          .and((q) => q.status !== "done")
+          .count(),
+      [],
+      0,
+    ) ?? 0;
+
+  const dispensedToday =
+    useLiveQuery(
+      () => mbhrDb.dispenses.where("dispensedAt").above(startOfTodayIso).count(),
+      [startOfTodayIso],
+      0,
+    ) ?? 0;
+
+  // Distinct patients with at least one vitals row today carrying any abnormal flag
+  const highRiskFlaggedToday =
+    useLiveQuery(
+      async () => {
+        const todaysVitals = await db.vitals
+          .where("takenAt")
+          .above(startOfToday)
+          .toArray();
+        const flaggedPatients = new Set<string>();
+        for (const v of todaysVitals) {
+          if (Array.isArray(v.flags) && v.flags.length > 0) {
+            flaggedPatients.add(v.patientId);
+          }
+        }
+        return flaggedPatients.size;
+      },
+      [startOfToday],
+      0,
+    ) ?? 0;
 
   // Memoize quick actions based on user role
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -253,14 +331,42 @@ export function Dashboard() {
           trend="Since midnight"
         />
         <StatCard
-          icon={QueueListIcon}
-          label="In Queue"
-          value={0}
-          colorClass="bg-purple-100 text-purple-600"
-          trend="Active patients"
+          icon={HeartIcon}
+          label="Waiting for Vitals"
+          value={waitingForVitals}
+          colorClass="bg-emerald-100 text-emerald-600"
+          trend="Active in queue"
         />
         <StatCard
-          icon={HeartIcon}
+          icon={UserIcon}
+          label="Waiting for Doctor"
+          value={waitingForDoctor}
+          colorClass="bg-purple-100 text-purple-600"
+          trend="Active in queue"
+        />
+        <StatCard
+          icon={BeakerIcon}
+          label="Waiting for Pharmacy"
+          value={waitingForPharmacy}
+          colorClass="bg-amber-100 text-amber-600"
+          trend="Active in queue"
+        />
+        <StatCard
+          icon={ClipboardDocumentCheckIcon}
+          label="Dispensed Today"
+          value={dispensedToday}
+          colorClass="bg-teal-100 text-teal-600"
+          trend="Medication events"
+        />
+        <StatCard
+          icon={ShieldExclamationIcon}
+          label="High-Risk Flagged"
+          value={highRiskFlaggedToday}
+          colorClass="bg-red-100 text-red-600"
+          trend="Patients today"
+        />
+        <StatCard
+          icon={Cog6ToothIcon}
           label="System Users"
           value={stats.totalUsers}
           colorClass="bg-orange-100 text-orange-600"
