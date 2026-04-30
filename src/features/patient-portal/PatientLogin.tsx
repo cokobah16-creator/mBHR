@@ -7,7 +7,7 @@ import { ArrowRightIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
-import { getPatientProfile } from "@/services/patientService";
+import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
 
 const onlineSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -62,7 +62,13 @@ export function PatientLogin() {
           data: { user },
         } = await supabase.auth.getUser();
         if (user) {
-          const profileRes = await getPatientProfile(user.id);
+          let profileRes = await getPatientProfile(user.id);
+
+          // Fallback: find patient by email and link auth_uid for this session
+          if (!profileRes.data && user.email) {
+            profileRes = await getPatientProfileByEmail(user.id, user.email);
+          }
+
           if (profileRes.data) {
             localStorage.setItem(
               "patient_portal_user",
@@ -74,10 +80,17 @@ export function PatientLogin() {
                 email: profileRes.data.email,
               }),
             );
+          } else {
+            setError(
+              "Your account was created but we couldn't find your patient profile. " +
+              "Please contact the clinic so staff can link your record."
+            );
+            return;
           }
         }
       } catch {
-        // Non-fatal: Medical History / Messages will show an error if patientId is missing
+        setError("An error occurred loading your profile. Please try again.");
+        return;
       }
     }
     navigate("/patient/dashboard");
