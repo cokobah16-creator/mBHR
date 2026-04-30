@@ -264,11 +264,6 @@ const DoctorDashboard = lazy(() =>
   })),
 );
 
-// Retailer discovery
-const RetailerDiscoveryAgent = lazy(
-  () => import("@/features/retailer-discovery/RetailerDiscoveryAgent"),
-);
-
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
 
@@ -731,14 +726,6 @@ function App() {
                         element={
                           <RequireRoles roles={["nurse", "doctor", "admin"]}>
                             <QuickTriage onComplete={() => {}} />
-                          </RequireRoles>
-                        }
-                      />
-                      <Route
-                        path="/retailer-agent"
-                        element={
-                          <RequireRoles roles={["admin", "nurse", "doctor"]}>
-                            <RetailerDiscoveryAgent />
                           </RequireRoles>
                         }
                       />

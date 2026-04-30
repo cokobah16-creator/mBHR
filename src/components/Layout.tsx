@@ -28,7 +28,6 @@ import {
   XMarkIcon,
   Bars3Icon,
   DocumentDuplicateIcon,
-  SparklesIcon,
   HeartIcon,
 } from "@heroicons/react/24/outline";
 
@@ -192,7 +191,6 @@ export function Layout({ children }: LayoutProps) {
     { name: t("nav.analytics"), href: "/analytics", icon: ChartBarIcon },
     { name: t("nav.issue_tickets"), href: "/tickets/issue", icon: TicketIcon },
     { name: t("nav.restock_game"), href: "/inv/game", icon: GiftIcon },
-    { name: "Retailer Agent", href: "/retailer-agent", icon: SparklesIcon },
   ];
 
   // Add role-specific navigation items
