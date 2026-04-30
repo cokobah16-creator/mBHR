@@ -6,7 +6,6 @@ import { Layout } from "@/components/Layout";
 import RequireRoles from "@/components/RequireRoles";
 import Login from "@/pages/Login";
 import { useAuthStore } from "@/stores/auth";
-import { seedDemo } from "@/db/seedMbhr";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { Home } from "@/pages/Home";
 import {
@@ -383,8 +382,6 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function App() {
   useEffect(() => {
-    seedDemo().catch(console.error);
-
     // Start background portal sync worker
     startPortalSyncWorker();
     return () => stopPortalSyncWorker();

@@ -45,14 +45,7 @@ const defaultConfig: TEFCAConfig = {
     "payment",
     "operations",
   ],
-  qhinPartners: [
-    {
-      id: "demo-qhin-001",
-      name: "Demo Health Information Network",
-      allowedPurposes: ["individual-access", "treatment"],
-      active: true,
-    },
-  ],
+  qhinPartners: [],
   auditRetentionDays: 365 * 6,
   rateLimitPerMinute: 100,
 };

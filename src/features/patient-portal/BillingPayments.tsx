@@ -58,46 +58,8 @@ export function BillingPayments() {
         return;
       }
 
-      // Mock data - replace with actual API calls
-      const mockBills: Bill[] = [
-        {
-          id: "1",
-          visitId: "visit-1",
-          visitDate: new Date("2025-10-15"),
-          description: "General Consultation + Lab Tests",
-          amount: 15000,
-          amountPaid: 5000,
-          status: "partial",
-          dueDate: new Date("2025-11-15"),
-          createdAt: new Date("2025-10-15"),
-        },
-        {
-          id: "2",
-          visitId: "visit-2",
-          visitDate: new Date("2025-09-20"),
-          description: "Follow-up Visit + Medications",
-          amount: 8500,
-          amountPaid: 8500,
-          status: "paid",
-          dueDate: new Date("2025-10-20"),
-          createdAt: new Date("2025-09-20"),
-        },
-      ];
-
-      const mockPayments: Payment[] = [
-        {
-          id: "pay-1",
-          billId: "1",
-          amount: 5000,
-          paymentMethod: "card",
-          referenceNumber: "PAY-2025-001",
-          paidAt: new Date("2025-10-16"),
-          status: "completed",
-        },
-      ];
-
-      setBills(mockBills);
-      setPayments(mockPayments);
+      setBills([]);
+      setPayments([]);
     } catch (err) {
       logger.error("Error loading billing data:", err);
     } finally {

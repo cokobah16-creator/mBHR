@@ -7,7 +7,6 @@ import {
   PlayIcon,
   CheckIcon,
   ClockIcon,
-  UserGroupIcon,
 } from "@heroicons/react/24/outline";
 
 const STAGES: Array<"registration" | "vitals" | "consult" | "pharmacy"> = [
@@ -22,8 +21,7 @@ const asArray = <T,>(v: T[] | undefined | null): T[] =>
   Array.isArray(v) ? v : [];
 
 export default function QueueBoard() {
-  const { callNext, completeCurrent, estimateTailMinutes, issueTicket } =
-    useQueue();
+  const { callNext, completeCurrent, estimateTailMinutes } = useQueue();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [metrics, setMetrics] = useState<any[]>([]);
   const [selectedStage, setSelectedStage] = useState<
@@ -88,22 +86,6 @@ export default function QueueBoard() {
   const handleCompleteCurrent = async () => {
     await completeCurrent(selectedStage, 240); // 4 minutes default
     await updateETA();
-  };
-
-  // Generate demo tickets if none exist
-  const generateDemoTickets = async () => {
-    const categories = ["adult", "child", "antenatal"] as const;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _priorities = ["normal", "urgent"] as const;
-
-    for (let i = 1; i <= 8; i++) {
-      await issueTicket({
-        siteId: "demo-site",
-        category: categories[i % 3],
-        priority: i <= 2 ? "urgent" : "normal",
-        stage: STAGES[Math.floor(Math.random() * STAGES.length)],
-      });
-    }
   };
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -211,15 +193,6 @@ export default function QueueBoard() {
           <CheckIcon className="h-5 w-5" />
           <span>Complete Current</span>
         </button>
-        {allTickets.length === 0 && (
-          <button
-            className="btn-secondary flex items-center space-x-2"
-            onClick={generateDemoTickets}
-          >
-            <UserGroupIcon className="h-5 w-5" />
-            <span>Generate Demo Tickets</span>
-          </button>
-        )}
       </div>
 
       {/* Current Patient */}

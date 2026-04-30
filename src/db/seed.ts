@@ -1,83 +1,13 @@
 import { db, generateId } from "./index";
 import { derivePinHash, newSaltB64 } from "@/utils/pin";
-import { epochDay } from "./index";
 import { seedVitalsRanges } from "./seedVitalsRanges";
-
-// Sample inventory items for seeding
-const INVENTORY_ITEMS = [
-  {
-    itemName: "Paracetamol 500mg",
-    unit: "tablets",
-    onHandQty: 1000,
-    reorderThreshold: 100,
-  },
-  {
-    itemName: "Ibuprofen 400mg",
-    unit: "tablets",
-    onHandQty: 500,
-    reorderThreshold: 50,
-  },
-  {
-    itemName: "Amoxicillin 250mg",
-    unit: "capsules",
-    onHandQty: 200,
-    reorderThreshold: 30,
-  },
-  {
-    itemName: "ORS Sachets",
-    unit: "sachets",
-    onHandQty: 150,
-    reorderThreshold: 25,
-  },
-  {
-    itemName: "Multivitamin",
-    unit: "tablets",
-    onHandQty: 300,
-    reorderThreshold: 50,
-  },
-  {
-    itemName: "Antacid Tablets",
-    unit: "tablets",
-    onHandQty: 250,
-    reorderThreshold: 40,
-  },
-  {
-    itemName: "Cough Syrup",
-    unit: "bottles",
-    onHandQty: 50,
-    reorderThreshold: 10,
-  },
-  {
-    itemName: "Antiseptic Solution",
-    unit: "bottles",
-    onHandQty: 30,
-    reorderThreshold: 5,
-  },
-  { itemName: "Bandages", unit: "rolls", onHandQty: 100, reorderThreshold: 20 },
-  {
-    itemName: "Thermometer Strips",
-    unit: "strips",
-    onHandQty: 200,
-    reorderThreshold: 30,
-  },
-];
 
 export async function seed() {
   try {
     console.log("🌱 Starting database seeding...");
 
-    // Check existing data
-    const [userCount, inventoryCount] = await Promise.all([
-      db.users.count(),
-      db.inventory.count(),
-    ]);
-
-    console.log(
-      "Existing counts - Users:",
-      userCount,
-      "Inventory:",
-      inventoryCount,
-    );
+    const userCount = await db.users.count();
+    console.log("Existing user count:", userCount);
 
     // Seed users if needed
     if (userCount === 0) {
@@ -176,81 +106,13 @@ export async function seed() {
       });
     }
 
-    // Seed inventory if needed
-    if (inventoryCount === 0) {
-      console.log("🌱 Adding inventory items...");
-
-      for (const item of INVENTORY_ITEMS) {
-        await db.inventory.add({
-          id: generateId(),
-          ...item,
-          updatedAt: new Date(),
-        });
-      }
-
-      console.log("✅ Inventory items created:", INVENTORY_ITEMS.length);
-    }
-
-    // Seed gamification data if needed
-    const walletCount = await db.gamificationWallets.count();
-    if (walletCount === 0) {
-      console.log("🎮 Creating demo gamification wallets...");
-
-      const users = await db.users.where("isActive").equals(1).toArray();
-      for (const user of users) {
-        await db.gamificationWallets.add({
-          volunteerId: user.id,
-          tokens: Math.floor(Math.random() * 200) + 50, // 50-250 tokens
-          badges: ["first_quest"],
-          level: 1,
-          streakDays: Math.floor(Math.random() * 7),
-          lifetimeTokens: Math.floor(Math.random() * 500) + 100,
-          lastActiveDate: new Date(),
-          updatedAt: new Date(),
-          _dirty: 1,
-        });
-      }
-
-      console.log("✅ Gamification wallets created for", users.length, "users");
-    }
-
-    // Seed vitals ranges if needed
+    // Seed vitals reference ranges (clinical reference data)
     const rangesCount = await db.vitalsRanges.count();
     if (rangesCount === 0) {
       console.log("🌱 Adding comprehensive vitals reference ranges...");
       await seedVitalsRanges();
       const finalCount = await db.vitalsRanges.count();
       console.log(`✅ Vitals ranges created: ${finalCount} reference ranges`);
-    }
-
-    // Seed daily counts for the last 7 days
-    const dailyCountsCount = await db.dailyCounts.count();
-    if (dailyCountsCount === 0) {
-      console.log("📊 Creating demo daily counts...");
-
-      for (let i = 6; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        const day = epochDay(date);
-
-        // Generate realistic demo data
-        const registrations = Math.floor(Math.random() * 20) + 10; // 10-30 registrations
-        const vitals = Math.floor(registrations * 0.8); // 80% get vitals
-        const consultations = Math.floor(vitals * 0.9); // 90% of vitals get consults
-        const dispenses = Math.floor(consultations * 0.7); // 70% get medications
-        const visits = registrations; // Same as registrations
-
-        await db.dailyCounts.add({
-          day,
-          registrations,
-          vitals,
-          consultations,
-          dispenses,
-          visits,
-        });
-      }
-
-      console.log("✅ Daily counts seeded for last 7 days");
     }
 
     console.log("✅ Database seeded successfully");
