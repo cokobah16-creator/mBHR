@@ -3,13 +3,13 @@ import {
   db,
   Patient,
   Visit,
-  QueueItem,
   generateId,
   createAuditLog,
   createPatientDraft,
   epochDay,
   bumpDailyCount,
 } from "@/db";
+import { queueManagement } from "@/services/queueManagement";
 
 interface PatientsState {
   patients: Patient[];
@@ -103,20 +103,14 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       // Bump daily count
       await bumpDailyCount(epochDay(new Date()), "registrations");
 
-      // Add to queue for registration
-      const queueItem: QueueItem = {
-        id: generateId(),
-        patientId: patient.id,
-        stage: "registration",
-        position: (await db.queue.count()) + 1,
-        status: "waiting",
-        priority: "normal",
-        queuedAt: new Date(),
-        updatedAt: new Date(),
-        _dirty: 1,
-      };
-
-      await db.queue.add(queueItem);
+      // Add to queue for registration. Routed through queueManagement so a
+      // ticket number gets minted and stays with the patient as they move
+      // through subsequent stages.
+      const queueItem = await queueManagement.addToQueue(
+        patient.id,
+        "registration",
+        "normal",
+      );
       console.log("Queue item added:", queueItem);
 
       // Audit log

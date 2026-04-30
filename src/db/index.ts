@@ -165,6 +165,13 @@ export interface QueueItem {
   status: "waiting" | "in_progress" | "done";
   priority?: "urgent" | "normal" | "low";
   createdBy?: string;
+  /**
+   * Short human-readable ticket label (e.g. "Q-014") that follows a patient
+   * through every stage of a single visit. Populated by queueManagement
+   * when the first queue item for the patient/day is created and inherited
+   * by subsequent stage transitions.
+   */
+  ticketNumber?: string;
   queuedAt?: Date;
   updatedAt: Date;
   _dirty?: number;
