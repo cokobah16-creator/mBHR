@@ -174,12 +174,15 @@ export function useAuth(): UseAuthReturn {
       }
 
       // 3. No existing clinic record — create a fresh patient row for self-registered users.
+      // Email is stored lowercase to match Supabase auth.email() and the
+      // documented invariant ("Email addresses are stored in lowercase for
+      // consistency"); otherwise dashboard lookups by email would miss.
       const { error: insertError } = await supabase.from("patients").insert({
         id: crypto.randomUUID(),
         auth_uid: authData.user.id,
         given_name: data.givenName,
         family_name: data.familyName,
-        email: data.email,
+        email: normalizedEmail,
         phone: data.phone ?? null,
         dob: data.dob ?? null,
         sex: "other",

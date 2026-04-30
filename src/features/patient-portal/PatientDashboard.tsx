@@ -20,6 +20,7 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   getPatientProfile,
   getPatientProfileByEmail,
+  ensurePatientProfile,
   getVitals,
   getMedications,
   getVisits,
@@ -131,9 +132,18 @@ function SupabaseDashboard() {
     try {
       // Load profile first so we have the patientId for subsequent queries
       let profileRes = await getPatientProfile(user.id);
-      // Fallback: look up by email and auto-link auth_uid when lookup by uid fails
+      // Fallback 1: look up by email and auto-link auth_uid when lookup by uid fails
       if ((profileRes.error || !profileRes.data) && user.email) {
         profileRes = await getPatientProfileByEmail(user.id, user.email);
+      }
+      // Fallback 2: self-registered users may have an auth account but no
+      // patients row (signup INSERT was missed, or row was wiped). Create one
+      // from the auth session metadata so the dashboard can load.
+      if ((profileRes.error || !profileRes.data) && user.email) {
+        const fullName =
+          (user.user_metadata as { full_name?: string } | undefined)
+            ?.full_name ?? "";
+        profileRes = await ensurePatientProfile(user.id, user.email, fullName);
       }
       if (profileRes.error || !profileRes.data) {
         setError(

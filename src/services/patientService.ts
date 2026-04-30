@@ -105,6 +105,10 @@ export async function getPatientProfile(
  * Fetch a patient by email (RLS allows access when auth.email() matches).
  * Used as a fallback when auth_uid is not yet set on the patient row.
  * If found, links the row to the auth account by setting auth_uid.
+ *
+ * Match is case-insensitive: Supabase auth normalises emails to lowercase
+ * but historical patient rows may have been inserted with mixed case
+ * (signup didn't normalise until the patientService case-insensitivity fix).
  */
 export async function getPatientProfileByEmail(
   authUid: string,
@@ -115,7 +119,7 @@ export async function getPatientProfileByEmail(
   const { data, error } = await supabase
     .from("patients")
     .select(PATIENT_SELECT)
-    .eq("email", email.toLowerCase())
+    .ilike("email", email)
     .maybeSingle();
 
   if (error) {
@@ -139,6 +143,55 @@ export async function getPatientProfileByEmail(
   }
 
   return { data: rowToProfile(data), error: null };
+}
+
+/**
+ * Last-resort recovery for portal users whose auth account exists but who
+ * have no patients row (e.g. signup INSERT was missed, or the row was wiped).
+ * Creates a minimal patients row from the auth session metadata, linked by
+ * auth_uid, so the dashboard can load.
+ */
+export async function ensurePatientProfile(
+  authUid: string,
+  email: string,
+  fullName?: string,
+): Promise<ServiceResult<PatientProfile>> {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+
+  const trimmedName = (fullName ?? "").trim();
+  const [givenName = "Patient", ...rest] = trimmedName.split(/\s+/);
+  const familyName = rest.join(" ");
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cryptoAny = (globalThis as any).crypto;
+  const id =
+    typeof cryptoAny?.randomUUID === "function"
+      ? cryptoAny.randomUUID()
+      : `pt_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+  const { error: insertError } = await supabase.from("patients").insert({
+    id,
+    auth_uid: authUid,
+    given_name: givenName,
+    family_name: familyName,
+    email: email.toLowerCase().trim(),
+    phone: null,
+    dob: null,
+    sex: "other",
+    address: "",
+    state: "",
+    lga: "",
+  });
+
+  if (insertError) {
+    logger.error(
+      "[patientService] ensurePatientProfile insert:",
+      insertError.message,
+    );
+    return { data: null, error: insertError.message };
+  }
+
+  return getPatientProfile(authUid);
 }
 
 export async function updatePatientProfile(
