@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, Patient } from "@/db";
+import { useAuthStore } from "@/stores/auth";
+import { recordStageEvent } from "@/services/stageEvents";
 import {
   QueueListIcon,
   PlayIcon,
@@ -26,6 +28,7 @@ interface StageMetrics {
 }
 
 export function EnhancedQueueBoard() {
+  const { currentUser } = useAuthStore();
   const [selectedStage, setSelectedStage] = useState<Stage>("registration");
   const [stageMetrics, setStageMetrics] = useState<StageMetrics[]>([]);
   const [handoffLoading, setHandoffLoading] = useState<string | null>(null);
@@ -84,6 +87,12 @@ export function EnhancedQueueBoard() {
         status: "in_progress",
         updatedAt: new Date(),
       });
+      await recordStageEvent({
+        stage,
+        kind: "start",
+        patientId: nextItem.patientId,
+        actorId: currentUser?.id,
+      });
     } catch (error) {
       console.error("Error calling next patient:", error);
     }
@@ -106,11 +115,23 @@ export function EnhancedQueueBoard() {
           position: await getNextPosition(nextStage),
           updatedAt: new Date(),
         });
+        await recordStageEvent({
+          stage,
+          kind: "finish",
+          patientId: currentItem.patientId,
+          actorId: currentUser?.id,
+        });
       } else {
         // Complete (remove from queue)
         await db.queue.update(currentItem.id, {
           status: "done",
           updatedAt: new Date(),
+        });
+        await recordStageEvent({
+          stage,
+          kind: "finish",
+          patientId: currentItem.patientId,
+          actorId: currentUser?.id,
         });
       }
     } catch (error) {

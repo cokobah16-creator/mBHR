@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useT } from "@/hooks/useT";
 import { useAuthStore } from "@/stores/auth";
 import { db, generateId } from "@/db";
+import { recordStageEvent } from "@/services/stageEvents";
 import { VisualNumberInput } from "@/components/VisualNumberInput";
 import {
   calculateBMI,
@@ -213,6 +214,14 @@ export default function EnhancedVitalsForm({
         entity: "vital",
         entityId: vital.id,
         at: new Date(),
+      });
+
+      await recordStageEvent({
+        stage: "vitals",
+        kind: "finish",
+        visitId,
+        patientId,
+        actorId: currentUser?.id,
       });
 
       onSuccess?.();

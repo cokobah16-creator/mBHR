@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { db, generateId, createAuditLog, InventoryItem } from "@/db";
 import { useAuthStore } from "@/stores/auth";
+import { recordStageEvent } from "@/services/stageEvents";
 import {
   BeakerIcon,
   ExclamationTriangleIcon,
@@ -116,6 +117,14 @@ export function DispenseForm({
         "medication",
         dispense.id,
       );
+
+      await recordStageEvent({
+        stage: "pharmacy",
+        kind: "finish",
+        visitId,
+        patientId,
+        actorId: currentUser?.id,
+      });
 
       onSuccess?.();
     } catch (error) {

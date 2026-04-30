@@ -107,6 +107,8 @@ export interface Consultation {
   soapAssessment: string;
   soapPlan: string;
   provisionalDx: string[];
+  referred?: boolean;
+  referralNotes?: string;
   createdAt: Date;
   portalVisible?: boolean;
   visibilityReason?: string;
@@ -493,6 +495,16 @@ export const normPhone = (s: string) => s.replace(/\D/g, "");
 export const nameKeyOf = (first: string, last: string) =>
   `${metaphone(first || "")}-${metaphone(last || "")}`;
 
+// Outreach site registry for admins to predefine sites used in visits/reports.
+export interface Site {
+  id: string;
+  name: string;
+  active: 0 | 1;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // Database name - bumped to avoid incompatible older store
 export const DB_NAME = "mbhr_v5";
 
@@ -531,6 +543,7 @@ export class MBHRDatabase extends Dexie {
   portalNotifications!: Table<PortalNotification>;
   patientSubmittedData!: Table<PatientSubmittedData>;
   appointments!: Table<Appointment>;
+  sites!: Table<Site>;
 
   constructor() {
     super(DB_NAME);
@@ -1138,6 +1151,63 @@ export class MBHRDatabase extends Dexie {
             }
           });
       });
+
+    // v15 — outreach site registry. Carries no data on first run; admins
+    // populate it from /reports/outreach so the site filter has a stable
+    // dropdown source even before any visits exist.
+    this.version(15).stores({
+      patients:
+        "id, familyName, phone, email, authUid, state, lga, createdAt, updatedAt, _dirty, _syncedAt, phoneN, nameKey, dobDay, createdDay, updatedDay, mergeInto, contactVerified, portalEnabled, lastPortalActivity",
+      vitals:
+        "id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt, portalVisible",
+      consultations:
+        "id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt, portalVisible",
+      dispenses:
+        "id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt, portalVisible",
+      inventory: "id, itemName, updatedAt, onHandQty, _dirty, _syncedAt",
+      visits: "id, patientId, startedAt, status, siteName, _dirty, _syncedAt",
+      queue:
+        "id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt",
+      auditLogs: "id, actorRole, entity, entityId, at",
+      users:
+        "id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt",
+      sessions: "id, userId, createdAt, lastSeenAt",
+      settings: "key",
+      meta: "key",
+      gameSessions:
+        "id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt",
+      gamificationWallets:
+        "volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt",
+      vitalsRanges: "id, sex, metric, ageMin, ageMax, updatedAt",
+      quizQuestions: "id, topic, difficulty, updatedAt",
+      triageSamples: "id, createdAt, createdBy",
+      inventoryDiscrepancies:
+        "id, itemId, createdAt, resolvedAt, _dirty, _syncedAt",
+      outboundMessages:
+        "id, patientId, status, channel, to, createdAt, scheduledFor, _dirty, _syncedAt",
+      messageTemplates: "key, locale, channel",
+      stockBatches: "id, drugId, expiryDate, updatedAt, _dirty, _syncedAt",
+      careTasks: "id, patientId, status, dueDate, createdAt, _dirty, _syncedAt",
+      triageRecords:
+        "id, patientId, visitId, priority, createdAt, createdBy, _dirty, _syncedAt",
+      patientMerges: "id, winnerId, loserId, createdDay",
+      dailyCounts:
+        "day, registrations, vitals, consultations, dispenses, visits",
+      conflictResolutions: "id, patientId, conflictType, status, resolvedAt",
+      patientAllergies:
+        "id, patientId, allergen, allergyType, severity, isActive, createdAt, updatedAt, _dirty, _syncedAt",
+      patientPreferences:
+        "id, patientId, createdAt, updatedAt, _dirty, _syncedAt",
+      clinicalAlerts:
+        "id, patientId, alertType, severity, acknowledged, createdAt, acknowledgedAt, _dirty, _syncedAt",
+      portalMessages:
+        "id, patientId, senderType, read, createdAt, _dirty, _syncedAt",
+      portalNotifications: "id, patientId, read, createdAt, _dirty, _syncedAt",
+      patientSubmittedData:
+        "id, patientId, submissionType, status, createdAt, _dirty, _syncedAt",
+      appointments: "id, patientId, scheduledAt, status, _dirty, _syncedAt",
+      sites: "id, name, active, updatedAt",
+    });
   }
 }
 

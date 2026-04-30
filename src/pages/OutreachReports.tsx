@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
   ArrowLeftIcon,
   ArrowDownTrayIcon,
@@ -10,7 +11,12 @@ import {
   ClipboardDocumentCheckIcon,
   ArrowUturnRightIcon,
   UserGroupIcon,
+  MapPinIcon,
+  PlusIcon,
 } from "@heroicons/react/24/outline";
+import { db, Site } from "@/db";
+import { useAuthStore } from "@/stores/auth";
+import { addSite, setSiteActive } from "@/services/sites";
 import {
   getOutreachSummary,
   listOutreachSites,
@@ -53,6 +59,8 @@ function downloadCsv(
 }
 
 export default function OutreachReports() {
+  const { currentUser } = useAuthStore();
+  const isAdmin = currentUser?.role === "admin";
   const [startInput, setStartInput] = useState<string>(todayIsoDate());
   const [endInput, setEndInput] = useState<string>(todayIsoDate());
   const [siteName, setSiteName] = useState<string>("");
@@ -60,6 +68,18 @@ export default function OutreachReports() {
   const [summary, setSummary] = useState<OutreachSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [showSiteAdmin, setShowSiteAdmin] = useState(false);
+  const [newSiteName, setNewSiteName] = useState("");
+  const [siteSaveError, setSiteSaveError] = useState("");
+
+  const registrySitesQuery = useLiveQuery(
+    () => db.sites.orderBy("name").toArray(),
+    [],
+  );
+  const registrySites: Site[] = useMemo(
+    () => registrySitesQuery ?? [],
+    [registrySitesQuery],
+  );
 
   const bounds = useMemo(
     () => rangeBounds(isoToLocalDate(startInput), isoToLocalDate(endInput)),
@@ -70,7 +90,28 @@ export default function OutreachReports() {
     listOutreachSites()
       .then(setSites)
       .catch(() => setSites([]));
-  }, []);
+    // Re-run whenever the registry changes so the dropdown stays in sync.
+  }, [registrySites]);
+
+  const handleAddSite = async () => {
+    setSiteSaveError("");
+    try {
+      await addSite(newSiteName);
+      setNewSiteName("");
+    } catch (err) {
+      setSiteSaveError(
+        err instanceof Error ? err.message : "Could not add site.",
+      );
+    }
+  };
+
+  const handleToggleSiteActive = async (id: string, active: boolean) => {
+    try {
+      await setSiteActive(id, active);
+    } catch (err) {
+      console.error("Could not update site:", err);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -192,6 +233,88 @@ export default function OutreachReports() {
           </select>
         </div>
       </div>
+
+      {isAdmin && (
+        <div className="bg-white rounded-lg border border-gray-200">
+          <button
+            type="button"
+            onClick={() => setShowSiteAdmin((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <span className="flex items-center gap-2">
+              <MapPinIcon className="w-4 h-4 text-gray-400" />
+              Manage outreach sites
+              <span className="text-xs text-gray-500">
+                ({registrySites.length} registered)
+              </span>
+            </span>
+            <span className="text-xs text-blue-600">
+              {showSiteAdmin ? "Hide" : "Show"}
+            </span>
+          </button>
+
+          {showSiteAdmin && (
+            <div className="border-t border-gray-100 p-4 space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newSiteName}
+                  onChange={(e) => setNewSiteName(e.target.value)}
+                  placeholder="New site name (e.g. Lagos Outreach 2026)"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddSite}
+                  disabled={!newSiteName.trim()}
+                  className="inline-flex items-center gap-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  <PlusIcon className="w-4 h-4" />
+                  Add
+                </button>
+              </div>
+              {siteSaveError && (
+                <p className="text-xs text-red-600">{siteSaveError}</p>
+              )}
+              {registrySites.length === 0 ? (
+                <p className="text-xs text-gray-500 italic">
+                  No sites registered yet. Visits started without a registry
+                  entry still appear in the dropdown above using their visit
+                  siteName.
+                </p>
+              ) : (
+                <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+                  {registrySites.map((s) => (
+                    <li
+                      key={s.id}
+                      className="flex items-center justify-between px-3 py-2 text-sm"
+                    >
+                      <span
+                        className={
+                          s.active === 1
+                            ? "text-gray-900"
+                            : "text-gray-400 line-through"
+                        }
+                      >
+                        {s.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleToggleSiteActive(s.id, s.active !== 1)
+                        }
+                        className="text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        {s.active === 1 ? "Disable" : "Enable"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">

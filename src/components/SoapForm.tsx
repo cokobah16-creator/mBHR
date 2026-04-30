@@ -6,6 +6,7 @@ import { z } from "zod";
 import { db, generateId, createAuditLog } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { queueManagement } from "@/services/queueManagement";
+import { recordStageEvent } from "@/services/stageEvents";
 import {
   DocumentTextIcon,
   PlusIcon,
@@ -37,6 +38,8 @@ export function SoapForm({
   const { currentUser } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [diagnoses, setDiagnoses] = useState<string[]>([""]);
+  const [referred, setReferred] = useState(false);
+  const [referralNotes, setReferralNotes] = useState("");
 
   const {
     register,
@@ -75,6 +78,8 @@ export function SoapForm({
         soapAssessment: data.soapAssessment || "",
         soapPlan: data.soapPlan || "",
         provisionalDx: diagnoses.filter((dx) => dx.trim()),
+        referred,
+        referralNotes: referred ? referralNotes.trim() || undefined : undefined,
         createdAt: new Date(),
       };
 
@@ -86,6 +91,14 @@ export function SoapForm({
         "consultation",
         consultation.id,
       );
+
+      await recordStageEvent({
+        stage: "consult",
+        kind: "finish",
+        visitId,
+        patientId,
+        actorId: currentUser?.id,
+      });
 
       // Move patient to next stage in queue (pharmacy)
       try {
@@ -234,6 +247,42 @@ export function SoapForm({
               </p>
             )}
           </div>
+
+          {/* Referral */}
+          <fieldset className="rounded-lg border border-gray-200 p-4 space-y-3">
+            <legend className="text-sm font-medium text-gray-700 px-1">
+              Referral
+            </legend>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={referred}
+                onChange={(e) => setReferred(e.target.checked)}
+                className="mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary"
+              />
+              <span className="text-sm text-gray-700">
+                Patient referred to another facility or specialist
+              </span>
+            </label>
+            {referred && (
+              <div>
+                <label
+                  htmlFor="referralNotes"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Referral notes (optional)
+                </label>
+                <textarea
+                  id="referralNotes"
+                  value={referralNotes}
+                  onChange={(e) => setReferralNotes(e.target.value)}
+                  rows={2}
+                  placeholder="Where to, reason, urgency..."
+                  className="input-field"
+                />
+              </div>
+            )}
+          </fieldset>
 
           {/* Provisional Diagnoses */}
           <fieldset>

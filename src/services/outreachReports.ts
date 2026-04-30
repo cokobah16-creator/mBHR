@@ -2,6 +2,7 @@
 // Pure functions over Dexie — no React dependencies.
 import { db, Patient, Visit } from "@/db";
 import { mbhrDb } from "@/db/mbhr";
+import { listActiveSiteNames } from "@/services/sites";
 
 export interface OutreachFilters {
   start: Date;
@@ -162,7 +163,13 @@ export async function getOutreachSummary(
       if (!key) continue;
       conditionCounts.set(key, (conditionCounts.get(key) ?? 0) + 1);
     }
-    if (isLikelyReferral(c.soapPlan)) referrals += 1;
+    // Prefer the explicit boolean once doctors set it; fall back to the
+    // soapPlan text heuristic for legacy rows that pre-date the field.
+    if (c.referred === true) {
+      referrals += 1;
+    } else if (c.referred === undefined && isLikelyReferral(c.soapPlan)) {
+      referrals += 1;
+    }
   }
   const conditions: ConditionTally[] = [...conditionCounts.entries()]
     .map(([diagnosis, count]) => ({ diagnosis, count }))
@@ -251,12 +258,15 @@ export async function getOutreachSummary(
 }
 
 export async function listOutreachSites(): Promise<string[]> {
-  const visits = await db.visits.toArray();
-  const set = new Set<string>();
+  const [registryNames, visits] = await Promise.all([
+    listActiveSiteNames(),
+    db.visits.toArray(),
+  ]);
+  const set = new Set<string>(registryNames);
   for (const v of visits) {
     if (v.siteName) set.add(v.siteName);
   }
-  return [...set].sort();
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 // Inclusive start-of-day (local) → exclusive next-midnight, in local time.
