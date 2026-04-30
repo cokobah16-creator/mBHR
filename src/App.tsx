@@ -739,40 +739,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-      </Routes>
-    </ErrorBoundary>
-                      <Route
-                        path="/labs"
-                        element={
-                          <RequireRoles roles={["doctor", "nurse", "admin"]}>
-                            <LabResultsDashboard userId="" />
-                          </RequireRoles>
-                        }
-                      />
-                      <Route
-                        path="/appointments"
-                        element={
-                          <RequireRoles
-                            roles={["doctor", "nurse", "volunteer", "admin"]}
-                          >
-                            <AppointmentCalendar createdBy="" />
-                          </RequireRoles>
-                        }
-                      />
-                      <Route
-                        path="/triage/quick"
-                        element={
-                          <RequireRoles roles={["nurse", "doctor", "admin"]}>
-                            <QuickTriage onComplete={() => {}} />
-                          </RequireRoles>
-                        }
-                      />
-                    </Routes>
-                  </Layout>
-                </Suspense>
-              </ProtectedRoute>
-            }
-          />
         </Routes>
       </ErrorBoundary>
     </GlobalErrorBoundary>
