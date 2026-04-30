@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db as mbhrDb } from "@/db/mbhr";
 import { useQueue } from "@/stores/queue";
+import { patientStatusFromQueue } from "@/services/patientStatus";
 import {
   QueueListIcon,
   PlayIcon,
@@ -206,8 +207,23 @@ export default function QueueBoard() {
               {inProgress.number.split("-")[1]}
             </div>
             <div>
-              <div className="text-xl font-bold text-gray-900">
-                {inProgress.number}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xl font-bold text-gray-900">
+                  {inProgress.number}
+                </span>
+                {(() => {
+                  const s = patientStatusFromQueue({
+                    stage: inProgress.currentStage,
+                    status: inProgress.state,
+                  });
+                  return (
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
+                    >
+                      {s.label}
+                    </span>
+                  );
+                })()}
               </div>
               <div className="text-sm text-gray-600 capitalize">
                 {inProgress.category} • {inProgress.priority} priority
@@ -248,8 +264,23 @@ export default function QueueBoard() {
                     {index + 1}
                   </div>
                   <div>
-                    <div className="font-medium text-gray-900">
-                      {ticket.number}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-gray-900">
+                        {ticket.number}
+                      </span>
+                      {(() => {
+                        const s = patientStatusFromQueue({
+                          stage: ticket.currentStage,
+                          status: ticket.state,
+                        });
+                        return (
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
+                          >
+                            {s.label}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="text-sm text-gray-600 capitalize">
                       {ticket.category} •

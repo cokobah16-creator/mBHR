@@ -8,12 +8,14 @@ import { formatNigerianDate } from "@/utils/dateFormat";
 import { AllergyManager } from "@/components/AllergyManager";
 import { PreferenceManager } from "@/components/PreferenceManager";
 import { PortalStatusCard } from "@/components/PortalStatusCard";
+import { PatientTimeline } from "@/components/PatientTimeline";
 import { useAuthStore } from "@/stores/auth";
 import { patientSchema, PatientFormData } from "@/validation/schemas";
 import { NIGERIAN_STATES, LGAS_BY_STATE } from "@/utils/nigeria";
 import { normalizePhone } from "@/utils/phone";
 import { useToast } from "@/stores/toast";
 import { supabase } from "@/lib/supabase";
+import { getPatientStatus, PatientStatus } from "@/services/patientStatus";
 import {
   ArrowLeftIcon,
   UserIcon,
@@ -41,6 +43,10 @@ export function PatientDetail() {
   const [vitals, setVitals] = useState<Vital[]>([]);
   const [consultations, setConsultations] = useState<Consultation[]>([]);
   const [dispenses, setDispenses] = useState<Dispense[]>([]);
+  const [status, setStatus] = useState<PatientStatus | null>(null);
+  const [historyView, setHistoryView] = useState<"timeline" | "raw">(
+    "timeline",
+  );
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -113,6 +119,14 @@ export function PatientDetail() {
       setVitals(vitalsData);
       setConsultations(consultationsData);
       setDispenses(dispensesData);
+
+      try {
+        const next = await getPatientStatus(patientId);
+        setStatus(next);
+      } catch (statusErr) {
+        console.warn("Could not derive patient status:", statusErr);
+        setStatus(null);
+      }
     } catch (error) {
       console.error("Error loading patient data:", error);
     } finally {
@@ -577,13 +591,21 @@ export function PatientDetail() {
 
             {/* Info */}
             <div className="flex-1">
-              <div className="flex items-center space-x-3 mb-4">
+              <div className="flex items-center flex-wrap gap-2 mb-4">
                 <h2 className="text-2xl font-bold text-gray-900">
                   {patient.givenName} {patient.familyName}
                 </h2>
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
                   {patient.sex}
                 </span>
+                {status && (
+                  <span
+                    className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${status.classes}`}
+                    title={status.detail}
+                  >
+                    {status.label}
+                  </span>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -631,120 +653,161 @@ export function PatientDetail() {
         )}
       </div>
 
-      {/* Medical History Tabs */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Vitals */}
-        <div className="card">
-          <div className="flex items-center space-x-2 mb-4">
-            <HeartIcon className="h-5 w-5 text-green-600" />
-            <h3 className="text-lg font-semibold text-gray-900">
-              Recent Vitals
-            </h3>
-          </div>
-
-          {vitals.length === 0 ? (
-            <p className="text-gray-500 text-sm">No vitals recorded</p>
-          ) : (
-            <div className="space-y-3">
-              {vitals.slice(0, 3).map((vital) => (
-                <div
-                  key={vital.id}
-                  className="border-l-4 border-green-500 pl-3"
-                >
-                  <div className="text-sm text-gray-600">
-                    {formatNigerianDate(vital.takenAt)}
-                  </div>
-                  <div className="text-sm">
-                    {vital.systolic && vital.diastolic && (
-                      <span>
-                        BP: {vital.systolic}/{vital.diastolic}{" "}
-                      </span>
-                    )}
-                    {vital.pulseBpm && <span>HR: {vital.pulseBpm} </span>}
-                    {vital.bmi && <span>BMI: {vital.bmi}</span>}
-                  </div>
-                  {vital.flags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {vital.flags.map((flag) => (
-                        <span
-                          key={flag}
-                          className={`px-1 py-0.5 rounded text-xs ${getFlagColor(flag)}`}
-                        >
-                          {getFlagLabel(flag)}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Recent Consultations */}
-        <div className="card">
-          <div className="flex items-center space-x-2 mb-4">
-            <DocumentTextIcon className="h-5 w-5 text-purple-600" />
-            <h3 className="text-lg font-semibold text-gray-900">
-              Consultations
-            </h3>
-          </div>
-
-          {consultations.length === 0 ? (
-            <p className="text-gray-500 text-sm">No consultations recorded</p>
-          ) : (
-            <div className="space-y-3">
-              {consultations.slice(0, 3).map((consultation) => (
-                <div
-                  key={consultation.id}
-                  className="border-l-4 border-purple-500 pl-3"
-                >
-                  <div className="text-sm text-gray-600">
-                    {formatNigerianDate(consultation.createdAt)}
-                  </div>
-                  <div className="text-sm font-medium">
-                    {consultation.providerName}
-                  </div>
-                  {consultation.provisionalDx.length > 0 && (
-                    <div className="text-sm text-gray-700">
-                      {consultation.provisionalDx.slice(0, 2).join(", ")}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Recent Dispenses */}
-        <div className="card">
-          <div className="flex items-center space-x-2 mb-4">
-            <BeakerIcon className="h-5 w-5 text-orange-600" />
-            <h3 className="text-lg font-semibold text-gray-900">Medications</h3>
-          </div>
-
-          {dispenses.length === 0 ? (
-            <p className="text-gray-500 text-sm">No medications dispensed</p>
-          ) : (
-            <div className="space-y-3">
-              {dispenses.slice(0, 3).map((dispense) => (
-                <div
-                  key={dispense.id}
-                  className="border-l-4 border-orange-500 pl-3"
-                >
-                  <div className="text-sm text-gray-600">
-                    {formatNigerianDate(dispense.dispensedAt)}
-                  </div>
-                  <div className="text-sm font-medium">{dispense.itemName}</div>
-                  <div className="text-sm text-gray-700">
-                    {dispense.dosage} × {dispense.qty}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+      {/* Medical History — toggle between unified timeline and per-section raw view */}
+      <div className="flex items-center gap-2">
+        <h3 className="text-lg font-semibold text-gray-900">Medical history</h3>
+        <div className="ml-auto inline-flex rounded-lg border border-gray-200 p-0.5 text-sm">
+          <button
+            type="button"
+            onClick={() => setHistoryView("timeline")}
+            className={`px-3 py-1 rounded-md transition-colors ${
+              historyView === "timeline"
+                ? "bg-primary text-white"
+                : "text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            Timeline
+          </button>
+          <button
+            type="button"
+            onClick={() => setHistoryView("raw")}
+            className={`px-3 py-1 rounded-md transition-colors ${
+              historyView === "raw"
+                ? "bg-primary text-white"
+                : "text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            By section
+          </button>
         </div>
       </div>
+
+      {historyView === "timeline" && patient && (
+        <PatientTimeline
+          patientId={patient.id}
+          refreshKey={`${vitals.length}-${consultations.length}-${dispenses.length}-${visits.length}`}
+        />
+      )}
+
+      {historyView === "raw" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Recent Vitals */}
+          <div className="card">
+            <div className="flex items-center space-x-2 mb-4">
+              <HeartIcon className="h-5 w-5 text-green-600" />
+              <h3 className="text-lg font-semibold text-gray-900">
+                Recent Vitals
+              </h3>
+            </div>
+
+            {vitals.length === 0 ? (
+              <p className="text-gray-500 text-sm">No vitals recorded</p>
+            ) : (
+              <div className="space-y-3">
+                {vitals.slice(0, 3).map((vital) => (
+                  <div
+                    key={vital.id}
+                    className="border-l-4 border-green-500 pl-3"
+                  >
+                    <div className="text-sm text-gray-600">
+                      {formatNigerianDate(vital.takenAt)}
+                    </div>
+                    <div className="text-sm">
+                      {vital.systolic && vital.diastolic && (
+                        <span>
+                          BP: {vital.systolic}/{vital.diastolic}{" "}
+                        </span>
+                      )}
+                      {vital.pulseBpm && <span>HR: {vital.pulseBpm} </span>}
+                      {vital.bmi && <span>BMI: {vital.bmi}</span>}
+                    </div>
+                    {vital.flags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {vital.flags.map((flag) => (
+                          <span
+                            key={flag}
+                            className={`px-1 py-0.5 rounded text-xs ${getFlagColor(flag)}`}
+                          >
+                            {getFlagLabel(flag)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Recent Consultations */}
+          <div className="card">
+            <div className="flex items-center space-x-2 mb-4">
+              <DocumentTextIcon className="h-5 w-5 text-purple-600" />
+              <h3 className="text-lg font-semibold text-gray-900">
+                Consultations
+              </h3>
+            </div>
+
+            {consultations.length === 0 ? (
+              <p className="text-gray-500 text-sm">No consultations recorded</p>
+            ) : (
+              <div className="space-y-3">
+                {consultations.slice(0, 3).map((consultation) => (
+                  <div
+                    key={consultation.id}
+                    className="border-l-4 border-purple-500 pl-3"
+                  >
+                    <div className="text-sm text-gray-600">
+                      {formatNigerianDate(consultation.createdAt)}
+                    </div>
+                    <div className="text-sm font-medium">
+                      {consultation.providerName}
+                    </div>
+                    {consultation.provisionalDx.length > 0 && (
+                      <div className="text-sm text-gray-700">
+                        {consultation.provisionalDx.slice(0, 2).join(", ")}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Recent Dispenses */}
+          <div className="card">
+            <div className="flex items-center space-x-2 mb-4">
+              <BeakerIcon className="h-5 w-5 text-orange-600" />
+              <h3 className="text-lg font-semibold text-gray-900">
+                Medications
+              </h3>
+            </div>
+
+            {dispenses.length === 0 ? (
+              <p className="text-gray-500 text-sm">No medications dispensed</p>
+            ) : (
+              <div className="space-y-3">
+                {dispenses.slice(0, 3).map((dispense) => (
+                  <div
+                    key={dispense.id}
+                    className="border-l-4 border-orange-500 pl-3"
+                  >
+                    <div className="text-sm text-gray-600">
+                      {formatNigerianDate(dispense.dispensedAt)}
+                    </div>
+                    <div className="text-sm font-medium">
+                      {dispense.itemName}
+                    </div>
+                    <div className="text-sm text-gray-700">
+                      {dispense.dosage} × {dispense.qty}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Portal Status */}
       {patient && (
