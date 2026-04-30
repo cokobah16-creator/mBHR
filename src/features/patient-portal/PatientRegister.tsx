@@ -152,9 +152,11 @@ export function PatientRegister() {
               }),
             );
           }
+          // If profile is null here, email confirmation may be required —
+          // the user will be prompted to log in after confirming.
         }
       } catch {
-        // Non-fatal: Medical History / Messages will show an error if patientId is missing
+        // Profile fetch failed; user can still log in after email confirmation
       }
     }
     setStep("success");
