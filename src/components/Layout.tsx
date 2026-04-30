@@ -196,6 +196,12 @@ export function Layout({ children }: LayoutProps) {
   ];
 
   // Add role-specific navigation items
+  const canSeeOutreachReports =
+    !!currentUser &&
+    (currentUser.role === "admin" ||
+      currentUser.role === "doctor" ||
+      currentUser.role === "nurse");
+
   const navigation = [
     ...baseNavigation,
     // Doctor-specific items
@@ -205,6 +211,16 @@ export function Layout({ children }: LayoutProps) {
             name: t("nav.doctor_station"),
             href: "/doctor/dashboard",
             icon: ClipboardDocumentListIcon,
+          },
+        ]
+      : []),
+    // Outreach Summary report — clinical leads + admins
+    ...(canSeeOutreachReports
+      ? [
+          {
+            name: "Outreach Reports",
+            href: "/reports/outreach",
+            icon: ChartBarIcon,
           },
         ]
       : []),

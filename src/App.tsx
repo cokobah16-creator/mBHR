@@ -51,6 +51,7 @@ const Pharmacy = lazy(() =>
 );
 const PharmacyMenu = lazy(() => import("@/pages/PharmacyMenu"));
 const PharmacyReports = lazy(() => import("@/pages/PharmacyReports"));
+const OutreachReports = lazy(() => import("@/pages/OutreachReports"));
 const PharmacyStock = lazy(() => import("@/features/pharmacy/PharmacyStock"));
 const RxForm = lazy(() => import("@/features/pharmacy/RxForm"));
 const Dispense = lazy(() => import("@/features/pharmacy/Dispense"));
@@ -692,6 +693,14 @@ function App() {
                           </RequireRoles>
                         }
                       />
+                      <Route
+                        path="/reports/outreach"
+                        element={
+                          <RequireRoles roles={["admin", "doctor", "nurse"]}>
+                            <OutreachReports />
+                          </RequireRoles>
+                        }
+                      />
                       {/* Temporarily disabled - corrupted file
                     <Route path="/pharmacy/enhanced/:visitId" element={
                       <RequireRoles roles={['pharmacist', 'admin']}>
@@ -699,46 +708,46 @@ function App() {
                       </RequireRoles>
                     } />
                     */}
-                    <Route
-                      path="/labs"
-                      element={
-                        <RequireRoles roles={["doctor", "nurse", "admin"]}>
-                          <LabResultsDashboard userId="" />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/appointments"
-                      element={
-                        <RequireRoles
-                          roles={["doctor", "nurse", "volunteer", "admin"]}
-                        >
-                          <AppointmentCalendar createdBy="" />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/triage/quick"
-                      element={
-                        <RequireRoles roles={["nurse", "doctor", "admin"]}>
-                          <QuickTriage onComplete={() => {}} />
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/retailer-agent"
-                      element={
-                        <RequireRoles roles={["admin", "nurse", "doctor"]}>
-                          <RetailerDiscoveryAgent />
-                        </RequireRoles>
-                      }
-                    />
-                  </Routes>
-                </Layout>
-              </Suspense>
-            </ProtectedRoute>
-          }
-        />
+                      <Route
+                        path="/labs"
+                        element={
+                          <RequireRoles roles={["doctor", "nurse", "admin"]}>
+                            <LabResultsDashboard userId="" />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/appointments"
+                        element={
+                          <RequireRoles
+                            roles={["doctor", "nurse", "volunteer", "admin"]}
+                          >
+                            <AppointmentCalendar createdBy="" />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/triage/quick"
+                        element={
+                          <RequireRoles roles={["nurse", "doctor", "admin"]}>
+                            <QuickTriage onComplete={() => {}} />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/retailer-agent"
+                        element={
+                          <RequireRoles roles={["admin", "nurse", "doctor"]}>
+                            <RetailerDiscoveryAgent />
+                          </RequireRoles>
+                        }
+                      />
+                    </Routes>
+                  </Layout>
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
         </Routes>
       </ErrorBoundary>
     </GlobalErrorBoundary>
