@@ -10,7 +10,6 @@ import i18n from "./i18n";
 import "./index.css";
 
 import { seed } from "./db/seed";
-import { seedDemo } from "./db/seedMbhr";
 import { seedGamificationData } from "./db/gamification";
 import { db } from "./db/index";
 import { safeOpenDb } from "./db/safeOpen";
@@ -100,7 +99,6 @@ function renderFatal(msg: string) {
   try {
     log("[seed] starting…");
     await seed();
-    await seedDemo();
     await seedGamificationData();
     log("[seed] done");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuthStore } from "@/stores/auth";
-import { useQueue } from "@/stores/queue";
+import { queueManagement } from "@/services/queueManagement";
 import {
   gamificationDb,
   GameAttempt,
@@ -10,7 +10,7 @@ import {
   checkBadgeEligibility,
 } from "@/db/gamification";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db as mbhrDb } from "@/db/mbhr";
+import { db, QueueItem } from "@/db";
 import {
   PlayIcon,
   CheckIcon,
@@ -33,7 +33,6 @@ export default function QueueMaestro({
   onCancel,
 }: QueueMaestroProps) {
   const { currentUser } = useAuthStore();
-  const { callNext, completeCurrent } = useQueue();
   const [selectedStage, setSelectedStage] = useState<Stage>("registration");
   const [currentAttempt, setCurrentAttempt] = useState<GameAttempt | null>(
     null,
@@ -45,15 +44,21 @@ export default function QueueMaestro({
     speedBonuses: 0,
   });
 
-  // Live query for tickets in selected stage
-  const stageTickets = useLiveQuery(
-    () => mbhrDb.tickets.where("currentStage").equals(selectedStage).toArray(),
-    [selectedStage],
-    [],
-  );
+  // Live query for queue items in the selected stage + a wider query
+  // covering every stage so the stage selector can show counts.
+  const stageQueue: QueueItem[] =
+    useLiveQuery(
+      () => db.queue.where("stage").equals(selectedStage).toArray(),
+      [selectedStage],
+    ) ?? [];
+  const allQueue: QueueItem[] =
+    useLiveQuery(() => db.queue.toArray(), []) ?? [];
 
-  const waiting = stageTickets?.filter((t) => t.state === "waiting") || [];
-  const inProgress = stageTickets?.find((t) => t.state === "in_progress");
+  const waiting = stageQueue.filter((q) => q.status === "waiting");
+  const inProgress = stageQueue.find((q) => q.status === "in_progress");
+
+  const labelForItem = (q: QueueItem) =>
+    q.ticketNumber ?? `#${q.position.toString().padStart(3, "0")}`;
 
   useEffect(() => {
     // Load any existing in-progress attempt
@@ -108,25 +113,21 @@ export default function QueueMaestro({
   const processNextPatient = async () => {
     if (!currentAttempt || !currentUser) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _startTime = new Date();
-
     try {
-      // Call next patient
-      const nextPatient = await callNext(selectedStage);
-      if (!nextPatient) {
+      // Pick the next waiting queue item and start service on it.
+      const next = waiting[0];
+      if (!next) {
         alert("No patients waiting in this stage");
         return;
       }
+      await queueManagement.startService(next.id);
 
       // Simulate processing time (in real app, this would be actual work)
       // For demo, we'll use a random time between 2-8 minutes
       const processingTime = Math.random() * 6 + 2; // 2-8 minutes
 
-      // In real implementation, this would wait for actual completion
-      // For demo, we'll simulate it
       setTimeout(async () => {
-        await completePatientProcessing(nextPatient.id, processingTime);
+        await completePatientProcessing(next.id, processingTime);
       }, 2000); // 2 second demo delay
     } catch (error) {
       console.error("Error processing patient:", error);
@@ -134,14 +135,17 @@ export default function QueueMaestro({
   };
 
   const completePatientProcessing = async (
-    patientId: string,
+    queueItemId: string,
     serviceTimeMinutes: number,
   ) => {
     if (!currentAttempt || !currentUser) return;
 
     try {
-      // Complete current patient in queue system
-      await completeCurrent(selectedStage, serviceTimeMinutes * 60); // Convert to seconds
+      // Complete current queue item — moves it to "done" and reorders the lane.
+      // serviceTimeMinutes is currently informational; the service handler
+      // doesn't yet record per-attempt timing.
+      void serviceTimeMinutes;
+      await queueManagement.completeService(queueItemId);
 
       // Update attempt payload
       const payload = JSON.parse(currentAttempt.payloadJson);
@@ -322,10 +326,9 @@ export default function QueueMaestro({
         </h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {STAGES.map((stage) => {
-            const stageCount =
-              stageTickets?.filter(
-                (t) => t.currentStage === stage && t.state !== "done",
-              ).length || 0;
+            const stageCount = allQueue.filter(
+              (q) => q.stage === stage && q.status !== "done",
+            ).length;
             return (
               <button
                 key={stage}
@@ -420,7 +423,7 @@ export default function QueueMaestro({
                 {inProgress ? (
                   <div className="flex items-center space-x-2 text-yellow-600">
                     <ClockIcon className="h-5 w-5" />
-                    <span>Patient {inProgress.number} in progress</span>
+                    <span>Patient {labelForItem(inProgress)} in progress</span>
                   </div>
                 ) : (
                   <div className="flex items-center space-x-2 text-gray-600">

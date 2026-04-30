@@ -12,6 +12,7 @@ import {
 } from "@/utils/vitals";
 import { useAuthStore } from "@/stores/auth";
 import { queueManagement } from "@/services/queueManagement";
+import { recordStageEvent } from "@/services/stageEvents";
 import { EnhancedVitalsInput } from "@/components/EnhancedVitalsInput";
 import { AudioButton } from "@/components/AudioButton";
 import { HeartIcon } from "@heroicons/react/24/outline";
@@ -110,6 +111,14 @@ export function VitalsForm({
 
       // Bump daily count
       await bumpDailyCount(epochDay(new Date()), "vitals");
+
+      await recordStageEvent({
+        stage: "vitals",
+        kind: "finish",
+        visitId,
+        patientId,
+        actorId: currentUser?.id,
+      });
 
       // Move patient to next stage in queue (consult)
       try {

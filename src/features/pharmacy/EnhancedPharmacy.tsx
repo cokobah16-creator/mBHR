@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useT } from "@/hooks/useT";
 import { useAuthStore } from "@/stores/auth";
 import { db, generateId } from "@/db";
+import { recordStageEvent } from "@/services/stageEvents";
 import { getMessageService } from "@/services/messaging";
 import { can } from "@/auth/roles";
 import * as logger from "@/lib/logger";
@@ -322,6 +323,14 @@ export default function EnhancedPharmacy({
       };
 
       await db.dispenses.add(dispense);
+
+      await recordStageEvent({
+        stage: "pharmacy",
+        kind: "finish",
+        visitId,
+        patientId,
+        actorId: currentUser?.id,
+      });
 
       // Update batch quantities
       for (const alloc of allocation) {

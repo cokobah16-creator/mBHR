@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db as mbhrDb } from "@/db/mbhr";
-import { useQueue } from "@/stores/queue";
+import { db, QueueItem } from "@/db";
+import { queueManagement } from "@/services/queueManagement";
+import { useAuthStore } from "@/stores/auth";
+import { recordStageEvent } from "@/services/stageEvents";
+import { patientStatusFromQueue } from "@/services/patientStatus";
 import {
   QueueListIcon,
   PlayIcon,
   CheckIcon,
   ClockIcon,
-  UserGroupIcon,
 } from "@heroicons/react/24/outline";
 
 const STAGES: Array<"registration" | "vitals" | "consult" | "pharmacy"> = [
@@ -17,107 +19,86 @@ const STAGES: Array<"registration" | "vitals" | "consult" | "pharmacy"> = [
   "pharmacy",
 ];
 
-// Helper to ensure we always have an array
+const AVG_SERVICE_SEC = 240;
+
 const asArray = <T,>(v: T[] | undefined | null): T[] =>
   Array.isArray(v) ? v : [];
 
 export default function QueueBoard() {
-  const { callNext, completeCurrent, estimateTailMinutes, issueTicket } =
-    useQueue();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [metrics, setMetrics] = useState<any[]>([]);
-  const [selectedStage, setSelectedStage] = useState<
-    "registration" | "vitals" | "consult" | "pharmacy"
-  >("vitals");
-  const [etaTail, setEtaTail] = useState(0);
+  const { currentUser } = useAuthStore();
+  const [selectedStage, setSelectedStage] =
+    useState<(typeof STAGES)[number]>("vitals");
 
-  // Use live queries with defensive defaults - always provide empty array as fallback
-  const allTicketsQ = useLiveQuery(
-    () => mbhrDb.tickets.toArray(),
-    [],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    [] as any[],
+  const allQueue = asArray(
+    useLiveQuery(() => db.queue.toArray(), [], [] as QueueItem[]),
+  );
+  const stageQueue = asArray(
+    useLiveQuery(
+      () => db.queue.where("stage").equals(selectedStage).toArray(),
+      [selectedStage],
+      [] as QueueItem[],
+    ),
   );
 
-  const stageTicketsQ = useLiveQuery(
-    () => mbhrDb.tickets.where("currentStage").equals(selectedStage).toArray(),
-    [selectedStage],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    [] as any[],
-  );
+  const waiting = stageQueue
+    .filter((q) => q.status === "waiting")
+    .sort((a, b) => a.position - b.position);
+  const inProgress = stageQueue.find((q) => q.status === "in_progress");
 
-  // Convert to safe arrays before any operations
-  const allTickets = asArray(allTicketsQ);
-  const stageTickets = asArray(stageTicketsQ);
+  const [patientNames, setPatientNames] = useState<
+    Record<string, { givenName: string; familyName: string }>
+  >({});
 
   useEffect(() => {
-    loadMetrics();
-    updateETA();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStage]);
-
-  const loadMetrics = async () => {
-    try {
-      const metricsData = await mbhrDb.queue_metrics.toArray();
-      setMetrics(metricsData);
-    } catch (error) {
-      console.error("Error loading metrics:", error);
+    const ids = Array.from(new Set(stageQueue.map((q) => q.patientId)));
+    if (ids.length === 0) {
+      setPatientNames({});
+      return;
     }
-  };
+    let cancelled = false;
+    db.patients
+      .where("id")
+      .anyOf(ids)
+      .toArray()
+      .then((patients) => {
+        if (cancelled) return;
+        const map: Record<string, { givenName: string; familyName: string }> =
+          {};
+        for (const p of patients) {
+          map[p.id] = { givenName: p.givenName, familyName: p.familyName };
+        }
+        setPatientNames(map);
+      })
+      .catch((err) => console.error("Failed to load patient names:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [stageQueue]);
 
-  const updateETA = async () => {
-    try {
-      const eta = await estimateTailMinutes(selectedStage);
-      setEtaTail(eta);
-    } catch (error) {
-      console.error("Error updating ETA:", error);
-    }
-  };
-
-  // Now safe to use .filter, .find, .length
-  const waiting = stageTickets.filter((t) => t.state === "waiting");
-  const inProgress = stageTickets.find((t) => t.state === "in_progress");
+  const etaTail = waiting.length * Math.round(AVG_SERVICE_SEC / 60);
 
   const handleCallNext = async () => {
-    const next = await callNext(selectedStage);
-    if (next) {
-      await updateETA();
-    }
+    const next = waiting[0];
+    if (!next) return;
+    await queueManagement.startService(next.id);
+    await recordStageEvent({
+      stage: selectedStage,
+      kind: "start",
+      patientId: next.patientId,
+      actorId: currentUser?.id,
+    });
   };
 
   const handleCompleteCurrent = async () => {
-    await completeCurrent(selectedStage, 240); // 4 minutes default
-    await updateETA();
+    if (!inProgress) return;
+    await queueManagement.completeService(inProgress.id);
+    await recordStageEvent({
+      stage: selectedStage,
+      kind: "finish",
+      patientId: inProgress.patientId,
+      actorId: currentUser?.id,
+    });
   };
-
-  // Generate demo tickets if none exist
-  const generateDemoTickets = async () => {
-    const categories = ["adult", "child", "antenatal"] as const;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _priorities = ["normal", "urgent"] as const;
-
-    for (let i = 1; i <= 8; i++) {
-      await issueTicket({
-        siteId: "demo-site",
-        category: categories[i % 3],
-        priority: i <= 2 ? "urgent" : "normal",
-        stage: STAGES[Math.floor(Math.random() * STAGES.length)],
-      });
-    }
-  };
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _loadData = async () => {
-    try {
-      const metricsData = await Promise.all([mbhrDb.queue_metrics.toArray()]);
-      setMetrics(metricsData[0]);
-    } catch (error) {
-      console.error("Error loading queue data:", error);
-    }
-  };
-
-  const metric = metrics.find((m) => m.stage === selectedStage);
-  const avgServiceSec = metric?.avgServiceSec ?? 240;
 
   const getStageColor = (stage: string) => {
     switch (stage) {
@@ -134,8 +115,15 @@ export default function QueueBoard() {
     }
   };
 
-  const getPriorityColor = (priority: string) => {
+  const getPriorityColor = (priority: string | undefined) => {
     return priority === "urgent" ? "text-red-600" : "text-gray-600";
+  };
+
+  const labelForItem = (q: QueueItem) =>
+    q.ticketNumber ?? `#${q.position.toString().padStart(3, "0")}`;
+  const patientNameFor = (q: QueueItem) => {
+    const p = patientNames[q.patientId];
+    return p ? `${p.givenName} ${p.familyName}` : "Patient";
   };
 
   return (
@@ -148,8 +136,8 @@ export default function QueueBoard() {
       {/* Stage Selector */}
       <div className="flex space-x-2 overflow-x-auto">
         {STAGES.map((stage) => {
-          const stageCount = allTickets.filter(
-            (t) => t.currentStage === stage && t.state !== "done",
+          const stageCount = allQueue.filter(
+            (q) => q.stage === stage && q.status !== "done",
           ).length;
           return (
             <button
@@ -184,7 +172,7 @@ export default function QueueBoard() {
         <div className="card bg-green-50 border-green-200">
           <div className="text-sm text-green-600">Avg Service Time</div>
           <div className="text-2xl font-bold text-green-800">
-            {Math.round(avgServiceSec / 60)}m
+            {Math.round(AVG_SERVICE_SEC / 60)}m
           </div>
         </div>
         <div className="card bg-purple-50 border-purple-200">
@@ -211,15 +199,6 @@ export default function QueueBoard() {
           <CheckIcon className="h-5 w-5" />
           <span>Complete Current</span>
         </button>
-        {allTickets.length === 0 && (
-          <button
-            className="btn-secondary flex items-center space-x-2"
-            onClick={generateDemoTickets}
-          >
-            <UserGroupIcon className="h-5 w-5" />
-            <span>Generate Demo Tickets</span>
-          </button>
-        )}
       </div>
 
       {/* Current Patient */}
@@ -230,14 +209,30 @@ export default function QueueBoard() {
         {inProgress ? (
           <div className="flex items-center space-x-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
             <div className="w-12 h-12 bg-yellow-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
-              {inProgress.number.split("-")[1]}
+              {inProgress.position}
             </div>
             <div>
-              <div className="text-xl font-bold text-gray-900">
-                {inProgress.number}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xl font-bold text-gray-900">
+                  {labelForItem(inProgress)}
+                </span>
+                {(() => {
+                  const s = patientStatusFromQueue(inProgress);
+                  return (
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
+                    >
+                      {s.label}
+                    </span>
+                  );
+                })()}
               </div>
-              <div className="text-sm text-gray-600 capitalize">
-                {inProgress.category} • {inProgress.priority} priority
+              <div className="text-sm text-gray-600">
+                {patientNameFor(inProgress)} •
+                <span className={getPriorityColor(inProgress.priority)}>
+                  {" "}
+                  {inProgress.priority ?? "normal"} priority
+                </span>
               </div>
             </div>
           </div>
@@ -261,9 +256,9 @@ export default function QueueBoard() {
           </div>
         ) : (
           <div className="space-y-2">
-            {waiting.slice(0, 10).map((ticket, index) => (
+            {waiting.slice(0, 10).map((item, index) => (
               <div
-                key={ticket.id}
+                key={item.id}
                 className={`flex items-center justify-between p-3 border rounded-lg ${
                   index === 0
                     ? "border-green-200 bg-green-50"
@@ -275,19 +270,32 @@ export default function QueueBoard() {
                     {index + 1}
                   </div>
                   <div>
-                    <div className="font-medium text-gray-900">
-                      {ticket.number}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-gray-900">
+                        {labelForItem(item)}
+                      </span>
+                      {(() => {
+                        const s = patientStatusFromQueue(item);
+                        return (
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
+                          >
+                            {s.label}
+                          </span>
+                        );
+                      })()}
                     </div>
-                    <div className="text-sm text-gray-600 capitalize">
-                      {ticket.category} •
-                      <span className={getPriorityColor(ticket.priority)}>
-                        {ticket.priority} priority
+                    <div className="text-sm text-gray-600">
+                      {patientNameFor(item)} •
+                      <span className={getPriorityColor(item.priority)}>
+                        {" "}
+                        {item.priority ?? "normal"} priority
                       </span>
                     </div>
                   </div>
                 </div>
                 <div className="text-sm text-gray-500">
-                  {index === 0 ? "Next" : `~${(index * avgServiceSec) / 60}m`}
+                  {index === 0 ? "Next" : `~${(index * AVG_SERVICE_SEC) / 60}m`}
                 </div>
               </div>
             ))}

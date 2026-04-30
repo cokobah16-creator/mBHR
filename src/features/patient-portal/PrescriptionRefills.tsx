@@ -63,53 +63,7 @@ export function PrescriptionRefills() {
         return;
       }
 
-      // Mock data - replace with actual API calls
-      const mockPrescriptions: Prescription[] = [
-        {
-          id: "rx-1",
-          medicationName: "Lisinopril",
-          dosage: "10mg",
-          frequency: "Once daily",
-          prescribedBy: "Dr. Adeyemi",
-          prescribedDate: new Date("2025-09-01"),
-          lastDispensedDate: new Date("2025-10-01"),
-          quantityDispensed: 30,
-          daysSupply: 30,
-          refillsRemaining: 2,
-          totalRefills: 3,
-          status: "refill_soon",
-        },
-        {
-          id: "rx-2",
-          medicationName: "Metformin",
-          dosage: "500mg",
-          frequency: "Twice daily",
-          prescribedBy: "Dr. Adeyemi",
-          prescribedDate: new Date("2025-08-15"),
-          lastDispensedDate: new Date("2025-09-28"),
-          quantityDispensed: 60,
-          daysSupply: 30,
-          refillsRemaining: 5,
-          totalRefills: 6,
-          status: "refill_due",
-        },
-        {
-          id: "rx-3",
-          medicationName: "Atorvastatin",
-          dosage: "20mg",
-          frequency: "Once daily at bedtime",
-          prescribedBy: "Dr. Okafor",
-          prescribedDate: new Date("2025-10-10"),
-          lastDispensedDate: new Date("2025-10-10"),
-          quantityDispensed: 30,
-          daysSupply: 30,
-          refillsRemaining: 4,
-          totalRefills: 5,
-          status: "active",
-        },
-      ];
-
-      setPrescriptions(mockPrescriptions);
+      setPrescriptions([]);
     } catch (err) {
       logger.error("Error loading prescriptions:", err);
     } finally {
@@ -119,21 +73,7 @@ export function PrescriptionRefills() {
 
   const loadRefillRequests = async () => {
     try {
-      // Mock data - replace with actual API call
-      const mockRequests: RefillRequest[] = [
-        {
-          id: "req-1",
-          prescriptionId: "rx-1",
-          medicationName: "Lisinopril 10mg",
-          requestedAt: new Date("2025-10-23"),
-          status: "ready",
-          pharmacy: "Main Pharmacy",
-          reviewedAt: new Date("2025-10-24"),
-          reviewedBy: "Pharmacist Johnson",
-        },
-      ];
-
-      setRefillRequests(mockRequests);
+      setRefillRequests([]);
     } catch (err) {
       logger.error("Error loading refill requests:", err);
     }

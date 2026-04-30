@@ -66,37 +66,7 @@ export function PreVisitForms() {
         return;
       }
 
-      // Mock data - replace with actual API calls
-      const mockForms: PreVisitForm[] = [
-        {
-          id: "form-1",
-          appointmentId: "apt-1",
-          appointmentDate: new Date("2025-11-05"),
-          appointmentType: "General Consultation",
-          status: "pending",
-        },
-        {
-          id: "form-2",
-          appointmentId: "apt-2",
-          appointmentDate: new Date("2025-10-15"),
-          appointmentType: "Follow-up Visit",
-          status: "completed",
-          submittedAt: new Date("2025-10-13"),
-          data: {
-            chiefComplaint: "Follow-up on blood pressure medication",
-            symptomDuration: "3 months",
-            currentMedications: "Lisinopril 10mg daily",
-            allergies: "None",
-            recentHospitalVisits: "None",
-            smokingStatus: "never",
-            alcoholUse: "occasional",
-            exerciseFrequency: "3 times per week",
-            additionalNotes: "BP readings have been stable",
-          },
-        },
-      ];
-
-      setForms(mockForms);
+      setForms([]);
     } catch (err) {
       logger.error("Error loading forms:", err);
     } finally {

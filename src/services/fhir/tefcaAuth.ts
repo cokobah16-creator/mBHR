@@ -24,40 +24,29 @@ export interface PatientIdentityMatch {
   matchMethod: "exact" | "demographic" | "identifier";
 }
 
-const DEMO_QHIN_PARTNERS: Record<string, QHINPartner> = {
-  "demo-qhin-001": {
-    id: "demo-qhin-001",
-    name: "Demo Health Information Network",
-    apiKeyHash: "demo-key-hash",
-    allowedPurposes: ["individual-access", "treatment"],
-    active: true,
-    createdAt: new Date().toISOString(),
-  },
-  "test-qhin-002": {
-    id: "test-qhin-002",
-    name: "Test QHIN for Development",
-    apiKeyHash: "test-key-hash",
-    allowedPurposes: [
-      "individual-access",
-      "treatment",
-      "payment",
-      "operations",
-    ],
-    active: true,
-    createdAt: new Date().toISOString(),
-  },
-};
-
 export async function validateQHINRequest(
   qhinId: string,
   apiKey: string,
   exchangePurpose: ExchangePurpose,
 ): Promise<{ valid: boolean; error?: string; partner?: QHINPartner }> {
-  const partner = DEMO_QHIN_PARTNERS[qhinId];
+  const { data: row, error } = await supabase
+    .from("tefca_qhin_partners")
+    .select("id, name, api_key_hash, allowed_purposes, active, created_at")
+    .eq("id", qhinId)
+    .maybeSingle();
 
-  if (!partner) {
+  if (error || !row) {
     return { valid: false, error: "Unknown QHIN identifier" };
   }
+
+  const partner: QHINPartner = {
+    id: row.id,
+    name: row.name,
+    apiKeyHash: row.api_key_hash ?? "",
+    allowedPurposes: (row.allowed_purposes ?? []) as ExchangePurpose[],
+    active: row.active,
+    createdAt: row.created_at,
+  };
 
   if (!partner.active) {
     return { valid: false, error: "QHIN partner is inactive" };
@@ -70,7 +59,10 @@ export async function validateQHINRequest(
     };
   }
 
-  // Validate the API key against the stored hash
+  if (!partner.apiKeyHash) {
+    return { valid: false, error: "QHIN partner has no API key configured" };
+  }
+
   const encoder = new TextEncoder();
   const keyData = encoder.encode(apiKey);
   const hashBuffer = await crypto.subtle.digest("SHA-256", keyData);

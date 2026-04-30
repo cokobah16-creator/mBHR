@@ -45,33 +45,7 @@ export function Telehealth() {
         return;
       }
 
-      // Mock data - replace with actual API calls
-      const mockAppointments: TelehealthAppointment[] = [
-        {
-          id: "tele-1",
-          providerId: "doc-1",
-          providerName: "Dr. Adeyemi",
-          providerSpecialty: "General Practice",
-          scheduledAt: new Date("2025-11-02T10:00:00"),
-          duration: 30,
-          status: "scheduled",
-          meetingLink: "https://meet.example.com/tele-1",
-          reason: "Follow-up consultation",
-          notes: "Please have your blood pressure readings ready",
-        },
-        {
-          id: "tele-2",
-          providerId: "doc-2",
-          providerName: "Dr. Okafor",
-          providerSpecialty: "Cardiology",
-          scheduledAt: new Date("2025-10-20T14:00:00"),
-          duration: 30,
-          status: "completed",
-          reason: "Hypertension check-up",
-        },
-      ];
-
-      setAppointments(mockAppointments);
+      setAppointments([]);
     } catch (err) {
       logger.error("Error loading telehealth appointments:", err);
     } finally {

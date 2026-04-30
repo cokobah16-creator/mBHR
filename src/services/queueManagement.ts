@@ -6,6 +6,45 @@ export type QueueStage = "registration" | "vitals" | "consult" | "pharmacy";
 export type QueueStatus = "waiting" | "in_progress" | "done";
 export type QueuePriority = "urgent" | "normal" | "low";
 
+const TICKET_COUNTER_KEY_PREFIX = "queue:ticketSeq";
+
+/**
+ * Returns the next daily ticket sequence number, persisted in db.settings.
+ * Uses a simple read-modify-write — fine for a local-first app where each
+ * device has its own monotonic clock.
+ */
+async function nextTicketSequence(dateStr: string): Promise<number> {
+  const key = `${TICKET_COUNTER_KEY_PREFIX}:${dateStr}`;
+  const row = await db.settings.get(key);
+  const next = row ? parseInt(row.value, 10) + 1 : 1;
+  await db.settings.put({ key, value: String(next) });
+  return next;
+}
+
+function ticketNumberFromSeq(seq: number): string {
+  return `Q-${String(seq).padStart(3, "0")}`;
+}
+
+async function existingTicketNumberForPatient(
+  patientId: string,
+  todayDateStr: string,
+): Promise<string | undefined> {
+  const items = await db.queue.where("patientId").equals(patientId).toArray();
+  const sameDay = items.filter(
+    (q) =>
+      q.ticketNumber &&
+      q.queuedAt &&
+      new Date(q.queuedAt).toISOString().slice(0, 10) === todayDateStr,
+  );
+  // Newest wins — patient may have had a number issued earlier today.
+  sameDay.sort(
+    (a, b) =>
+      new Date(b.queuedAt ?? b.updatedAt).getTime() -
+      new Date(a.queuedAt ?? a.updatedAt).getTime(),
+  );
+  return sameDay[0]?.ticketNumber;
+}
+
 interface QueueStats {
   stage: QueueStage;
   waiting: number;
@@ -65,6 +104,19 @@ export class QueueManagement {
     // Calculate position based on priority
     const position = await this.calculatePosition(stage, priority);
 
+    // Reuse the patient's ticket number if they already have one issued today
+    // (e.g. they're being moved from vitals to consult). Otherwise mint a new
+    // one so registration desks can still call patients by a short label.
+    const todayStr = now.toISOString().slice(0, 10);
+    let ticketNumber = await existingTicketNumberForPatient(
+      patientId,
+      todayStr,
+    );
+    if (!ticketNumber) {
+      const seq = await nextTicketSequence(todayStr);
+      ticketNumber = ticketNumberFromSeq(seq);
+    }
+
     const queueItem: QueueItem = {
       id: generateId(),
       patientId,
@@ -73,6 +125,7 @@ export class QueueManagement {
       status: "waiting",
       priority,
       createdBy,
+      ticketNumber,
       queuedAt: now,
       updatedAt: now,
       _dirty: 1,

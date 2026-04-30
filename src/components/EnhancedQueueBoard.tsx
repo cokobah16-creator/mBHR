@@ -1,6 +1,9 @@
 import React, { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, Patient } from "@/db";
+import { useAuthStore } from "@/stores/auth";
+import { recordStageEvent } from "@/services/stageEvents";
+import { patientStatusFromQueue } from "@/services/patientStatus";
 import {
   QueueListIcon,
   PlayIcon,
@@ -26,6 +29,7 @@ interface StageMetrics {
 }
 
 export function EnhancedQueueBoard() {
+  const { currentUser } = useAuthStore();
   const [selectedStage, setSelectedStage] = useState<Stage>("registration");
   const [stageMetrics, setStageMetrics] = useState<StageMetrics[]>([]);
   const [handoffLoading, setHandoffLoading] = useState<string | null>(null);
@@ -84,6 +88,12 @@ export function EnhancedQueueBoard() {
         status: "in_progress",
         updatedAt: new Date(),
       });
+      await recordStageEvent({
+        stage,
+        kind: "start",
+        patientId: nextItem.patientId,
+        actorId: currentUser?.id,
+      });
     } catch (error) {
       console.error("Error calling next patient:", error);
     }
@@ -106,11 +116,23 @@ export function EnhancedQueueBoard() {
           position: await getNextPosition(nextStage),
           updatedAt: new Date(),
         });
+        await recordStageEvent({
+          stage,
+          kind: "finish",
+          patientId: currentItem.patientId,
+          actorId: currentUser?.id,
+        });
       } else {
         // Complete (remove from queue)
         await db.queue.update(currentItem.id, {
           status: "done",
           updatedAt: new Date(),
+        });
+        await recordStageEvent({
+          stage,
+          kind: "finish",
+          patientId: currentItem.patientId,
+          actorId: currentUser?.id,
         });
       }
     } catch (error) {
@@ -241,12 +263,24 @@ export function EnhancedQueueBoard() {
                     {currentPatient.position}
                   </div>
                   <div>
-                    <h4 className="font-medium text-gray-900">
-                      {patientMap.get(currentPatient.patientId)?.givenName ||
-                        "Unknown"}{" "}
-                      {patientMap.get(currentPatient.patientId)?.familyName ||
-                        "Patient"}
-                    </h4>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-medium text-gray-900">
+                        {patientMap.get(currentPatient.patientId)?.givenName ||
+                          "Unknown"}{" "}
+                        {patientMap.get(currentPatient.patientId)?.familyName ||
+                          "Patient"}
+                      </h4>
+                      {(() => {
+                        const s = patientStatusFromQueue(currentPatient);
+                        return (
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
+                          >
+                            {s.label}
+                          </span>
+                        );
+                      })()}
+                    </div>
                     <p className="text-sm text-gray-600">
                       Started: {currentPatient.updatedAt.toLocaleTimeString()}
                     </p>
@@ -332,9 +366,21 @@ export function EnhancedQueueBoard() {
                         {index + 1}
                       </div>
                       <div>
-                        <div className="font-medium text-gray-900">
-                          {patient?.givenName || "Unknown"}{" "}
-                          {patient?.familyName || "Patient"}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-gray-900">
+                            {patient?.givenName || "Unknown"}{" "}
+                            {patient?.familyName || "Patient"}
+                          </span>
+                          {(() => {
+                            const s = patientStatusFromQueue(item);
+                            return (
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
+                              >
+                                {s.label}
+                              </span>
+                            );
+                          })()}
                         </div>
                         <div className="text-sm text-gray-600">
                           Position: {item.position} • Added:{" "}

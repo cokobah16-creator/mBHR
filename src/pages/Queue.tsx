@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, Patient, QueueItem } from "@/db";
 import { queueManagement, QueueStage } from "@/services/queueManagement";
+import { patientStatusFromQueue } from "@/services/patientStatus";
 import {
   QueueListIcon,
   PlayIcon,
@@ -241,10 +242,22 @@ export function Queue() {
                     {inProgress.position}
                   </div>
                   <div className="flex-1">
-                    <h4 className="text-xl font-bold text-gray-900">
-                      {inProgress.patient?.givenName}{" "}
-                      {inProgress.patient?.familyName}
-                    </h4>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-xl font-bold text-gray-900">
+                        {inProgress.patient?.givenName}{" "}
+                        {inProgress.patient?.familyName}
+                      </h4>
+                      {(() => {
+                        const s = patientStatusFromQueue(inProgress);
+                        return (
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
+                          >
+                            {s.label}
+                          </span>
+                        );
+                      })()}
+                    </div>
                     <p className="text-gray-600 mt-1">
                       {inProgress.patient?.sex} • {inProgress.patient?.dob}
                     </p>
@@ -322,8 +335,20 @@ export function Queue() {
                       {item.position}
                     </div>
                     <div>
-                      <div className="font-semibold text-gray-900">
-                        {item.patient?.givenName} {item.patient?.familyName}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-gray-900">
+                          {item.patient?.givenName} {item.patient?.familyName}
+                        </span>
+                        {(() => {
+                          const s = patientStatusFromQueue(item);
+                          return (
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
+                            >
+                              {s.label}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="text-sm text-gray-600">
                         {item.patient?.phone}

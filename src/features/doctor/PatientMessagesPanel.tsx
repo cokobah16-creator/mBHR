@@ -50,7 +50,6 @@ export function PatientMessagesPanel({
   onClose,
   onUnreadChange,
 }: PatientMessagesPanelProps) {
-export function PatientMessagesPanel({ onClose, onUnreadChange }: PatientMessagesPanelProps) {
   const { currentUser } = useAuthStore();
   const [threads, setThreads] = useState<PatientThread[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
