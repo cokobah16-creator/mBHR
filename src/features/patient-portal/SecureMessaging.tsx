@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { isRealtimeAvailable } from "@/lib/realtimeAvailable";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
@@ -46,6 +47,7 @@ export function SecureMessaging() {
     loadMessages();
 
     if (!supabase) return;
+    if (!isRealtimeAvailable()) return;
 
     let channel: ReturnType<typeof supabase.channel> | null = null;
     try {

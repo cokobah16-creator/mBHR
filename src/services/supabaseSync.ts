@@ -3,6 +3,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/db";
 import { queryCache } from "@/utils/queryCache";
 import { getErrorMessage } from "@/utils/errors";
+import { isRealtimeAvailable } from "@/lib/realtimeAvailable";
 
 interface SyncStatus {
   lastSync: Date | null;
@@ -320,6 +321,7 @@ class SupabaseSync {
 
   async setupRealtimeSync(table: string, callback: () => void) {
     if (!this.client) return null;
+    if (!isRealtimeAvailable()) return null;
 
     try {
       return this.client

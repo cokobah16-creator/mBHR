@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { isRealtimeAvailable } from "@/lib/realtimeAvailable";
 import { useAuthStore } from "@/stores/auth";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
@@ -147,6 +148,7 @@ export function PatientMessagesPanel({
     loadMessages();
 
     if (!supabase) return;
+    if (!isRealtimeAvailable()) return;
 
     let channel: ReturnType<typeof supabase.channel> | null = null;
     try {
