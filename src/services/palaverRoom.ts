@@ -283,6 +283,56 @@ class PalaverRoomService {
 
     if (error) {
       logger.error("Failed to archive message:", error);
+      throw new Error(`Failed to archive message: ${error.message}`);
+    }
+  }
+
+  async archiveConversation(
+    userId: string,
+    otherUserId: string,
+  ): Promise<void> {
+    if (!supabase) return;
+
+    const conversation = await this.getConversation(userId, otherUserId);
+    const ids = conversation.map((m) => m.id);
+    if (ids.length === 0) return;
+
+    const { error } = await supabase
+      .from("palaver_messages")
+      .update({ is_archived: true })
+      .in("id", ids);
+
+    if (error) {
+      logger.error("Failed to archive conversation:", error);
+      throw new Error(`Failed to archive conversation: ${error.message}`);
+    }
+  }
+
+  async deleteMessage(messageId: string): Promise<void> {
+    if (!supabase) return;
+
+    const { error } = await supabase
+      .from("palaver_messages")
+      .delete()
+      .eq("id", messageId);
+
+    if (error) {
+      logger.error("Failed to delete message:", error);
+      throw new Error(`Failed to delete message: ${error.message}`);
+    }
+  }
+
+  async deleteBroadcast(broadcastId: string): Promise<void> {
+    if (!supabase) return;
+
+    const { error } = await supabase
+      .from("palaver_broadcasts")
+      .update({ is_active: false })
+      .eq("id", broadcastId);
+
+    if (error) {
+      logger.error("Failed to dismiss broadcast:", error);
+      throw new Error(`Failed to dismiss broadcast: ${error.message}`);
     }
   }
 
