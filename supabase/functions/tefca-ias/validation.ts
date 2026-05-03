@@ -1,26 +1,26 @@
 // Edge-side US Core 7.0 validation hook for the TEFCA IAS endpoint.
 //
-// Imports the shared validator core from src/ via a relative path with the
-// .ts extension (Deno-style). Vite is not involved here; this file is only
-// loaded inside the Supabase Edge Function bundle.
+// Imports the shared validator from supabase/functions/_shared/fhir-validation
+// — Phase D-3 relocated the validator there so the Deno-side import is
+// canonical (no cross src <-> supabase boundary at the function root).
 //
 // Phase D-1 enforcement model: SOFT-WARNING.
 //   - We validate every served resource (single resource and Bundle entries).
-//   - On failure we emit a OperationOutcome.issue.severity=warning embedded
-//     in the response Bundle's `meta.tag`, AND log a compact summary into
-//     tefca_access_logs.error_message (alongside other errors).
-//   - We do NOT replace the response with an OperationOutcome — the bug we
-//     want to catch is a mapper regression, not a write attempt with a bad
-//     payload, and 500-ing on legitimate data we already serve would break
-//     production while we shake out validator false positives.
-//   - Phase D-2 will gate /oauth/register'd writes and Phase D-3 will tighten
-//     read-side enforcement once fixtures are clean.
+//   - On failure we attach an X-mBHR-Validation header AND log a compact
+//     summary into tefca_access_logs.error_message.
+//   - We do NOT replace the response body — the bug we want to catch is a
+//     mapper regression, not a write with a bad payload, and 500-ing on
+//     legitimate data we already serve would break production while we
+//     shake out validator false positives.
+//   - Phase D-2 (deferred until write paths land) will gate /oauth/register'd
+//     writes; future tightening of read-side enforcement happens after
+//     fixtures are clean.
 
 import {
   summarizeValidationIssues,
   validateResource,
   type ValidationResult,
-} from "../../../src/services/fhir/validation/core.ts";
+} from "../_shared/fhir-validation/core.ts";
 
 export interface ValidationSummary {
   /** True when every resource passed validation (no errors). */
