@@ -20,11 +20,18 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { logTEFCAAccess, verifyPatientConsent } from "./audit.ts";
 import { createCapabilityStatement } from "./capability.ts";
 import {
+  loadResourceHistory,
+  loadResourceVersion,
+  resourceSupportsHistory,
+  resourceSupportsVread,
+} from "./history.ts";
+import {
   mapDiagnosticReportToFHIR,
   mapPatientToFHIR,
   mapSDOHToFHIR,
   mapVitalsToFHIR,
 } from "./mappers.ts";
+import { matchPatientIdentity, parseMatchParameters } from "./patient-match.ts";
 import { getResourceConfig, type ResourceConfig } from "./registry.ts";
 import {
   corsHeaders,
@@ -674,6 +681,394 @@ async function handleDiagnosticReportSearch(
   return fhirJsonResponse(createBundle(reports, `${baseUrl}/DiagnosticReport`));
 }
 
+async function handlePatientMatch(
+  supabase: SupabaseLike,
+  req: Request,
+  baseUrl: string,
+  context: TEFCAContext,
+  startTime: number,
+): Promise<Response> {
+  if (req.method !== "POST") {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      ["Patient/$match"],
+      0,
+      false,
+      "Method not allowed",
+      Date.now() - startTime,
+    );
+    return errorResponse(
+      "error",
+      "not-supported",
+      "Patient/$match requires POST",
+      405,
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      ["Patient/$match"],
+      0,
+      false,
+      "Malformed body",
+      Date.now() - startTime,
+    );
+    return errorResponse(
+      "error",
+      "structure",
+      "Patient/$match body must be a FHIR Parameters resource",
+      400,
+    );
+  }
+
+  const identifiers = parseMatchParameters(body);
+  if (Object.keys(identifiers).length === 0) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      ["Patient/$match"],
+      0,
+      false,
+      "No matchable identifiers",
+      Date.now() - startTime,
+    );
+    return errorResponse(
+      "error",
+      "required",
+      "Patient/$match requires at least one of identifier, telecom (phone/email), or name+birthDate",
+      400,
+    );
+  }
+
+  const match = await matchPatientIdentity(supabase, identifiers);
+
+  if (!match) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      ["Patient/$match"],
+      0,
+      true,
+      undefined,
+      Date.now() - startTime,
+    );
+    return fhirJsonResponse({
+      resourceType: "Bundle",
+      type: "searchset",
+      total: 0,
+      entry: [],
+    });
+  }
+
+  const { data: patient } = await supabase
+    .from("patients")
+    .select("*")
+    .eq("id", match.patientId)
+    .maybeSingle();
+
+  const fhirPatient = patient
+    ? mapPatientToFHIR(patient as Record<string, unknown>)
+    : null;
+
+  await logTEFCAAccess(
+    supabase,
+    context,
+    ["Patient/$match"],
+    fhirPatient ? 1 : 0,
+    true,
+    undefined,
+    Date.now() - startTime,
+    match.patientId,
+  );
+
+  return fhirJsonResponse({
+    resourceType: "Bundle",
+    type: "searchset",
+    total: fhirPatient ? 1 : 0,
+    entry: fhirPatient
+      ? [
+          {
+            fullUrl: `${baseUrl}/Patient/${match.patientId}`,
+            resource: fhirPatient,
+            search: {
+              mode: "match",
+              score: match.confidence,
+              extension: [
+                {
+                  url: "http://hl7.org/fhir/StructureDefinition/match-grade",
+                  valueCode:
+                    match.confidence >= 0.95
+                      ? "certain"
+                      : match.confidence >= 0.85
+                        ? "probable"
+                        : "possible",
+                },
+              ],
+            },
+          },
+        ]
+      : [],
+  });
+}
+
+async function handleResourceHistory(
+  supabase: SupabaseLike,
+  config: ResourceConfig,
+  logicalId: string,
+  baseUrl: string,
+  context: TEFCAContext,
+  startTime: number,
+): Promise<Response> {
+  if (!resourceSupportsHistory(config)) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${config.resourceType}/_history`],
+      0,
+      false,
+      "History not supported for this resource type",
+      Date.now() - startTime,
+    );
+    return errorResponse(
+      "error",
+      "not-supported",
+      `_history is not available for ${config.resourceType}`,
+      400,
+    );
+  }
+
+  // Consent gate: scope by patient_id where applicable. For Patient/{id} the
+  // resource id IS the patient_id; for other versioned resources we look up
+  // the row first.
+  const patientId = await resolvePatientIdForVersionedResource(
+    supabase,
+    config,
+    logicalId,
+  );
+  if (!patientId) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${config.resourceType}/_history`],
+      0,
+      false,
+      "Resource not found",
+      Date.now() - startTime,
+    );
+    return errorResponse(
+      "error",
+      "not-found",
+      `${config.resourceType}/${logicalId} not found`,
+      404,
+    );
+  }
+
+  const hasConsent = await verifyPatientConsent(
+    supabase,
+    patientId,
+    context.exchangePurpose,
+  );
+  if (!hasConsent) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${config.resourceType}/_history`],
+      0,
+      false,
+      "No consent",
+      Date.now() - startTime,
+      patientId,
+    );
+    return errorResponse(
+      "error",
+      "forbidden",
+      "Patient has not consented to data sharing",
+      403,
+    );
+  }
+
+  const result = await loadResourceHistory(
+    supabase,
+    config,
+    logicalId,
+    baseUrl,
+  );
+  if (!result || result.entryCount === 0) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${config.resourceType}/_history`],
+      0,
+      true,
+      undefined,
+      Date.now() - startTime,
+      patientId,
+    );
+    return fhirJsonResponse({
+      resourceType: "Bundle",
+      type: "history",
+      total: 0,
+      entry: [],
+    });
+  }
+
+  await logTEFCAAccess(
+    supabase,
+    context,
+    [`${config.resourceType}/_history`],
+    result.entryCount,
+    true,
+    undefined,
+    Date.now() - startTime,
+    patientId,
+  );
+  return fhirJsonResponse(result.bundle);
+}
+
+async function handleVread(
+  supabase: SupabaseLike,
+  config: ResourceConfig,
+  logicalId: string,
+  versionId: string,
+  context: TEFCAContext,
+  startTime: number,
+): Promise<Response> {
+  if (!resourceSupportsVread(config)) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${config.resourceType}/vread`],
+      0,
+      false,
+      "vread not supported for this resource type",
+      Date.now() - startTime,
+    );
+    return errorResponse(
+      "error",
+      "not-supported",
+      `vread is not available for ${config.resourceType}`,
+      400,
+    );
+  }
+
+  const patientId = await resolvePatientIdForVersionedResource(
+    supabase,
+    config,
+    logicalId,
+  );
+  if (!patientId) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${config.resourceType}/vread`],
+      0,
+      false,
+      "Resource not found",
+      Date.now() - startTime,
+    );
+    return errorResponse(
+      "error",
+      "not-found",
+      `${config.resourceType}/${logicalId} not found`,
+      404,
+    );
+  }
+
+  const hasConsent = await verifyPatientConsent(
+    supabase,
+    patientId,
+    context.exchangePurpose,
+  );
+  if (!hasConsent) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${config.resourceType}/vread`],
+      0,
+      false,
+      "No consent",
+      Date.now() - startTime,
+      patientId,
+    );
+    return errorResponse(
+      "error",
+      "forbidden",
+      "Patient has not consented to data sharing",
+      403,
+    );
+  }
+
+  const resource = await loadResourceVersion(
+    supabase,
+    config,
+    logicalId,
+    versionId,
+  );
+  if (!resource) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${config.resourceType}/vread`],
+      0,
+      false,
+      "Version not found",
+      Date.now() - startTime,
+      patientId,
+    );
+    return errorResponse(
+      "error",
+      "not-found",
+      `${config.resourceType}/${logicalId}/_history/${versionId} not found`,
+      404,
+    );
+  }
+
+  await logTEFCAAccess(
+    supabase,
+    context,
+    [`${config.resourceType}/vread`],
+    1,
+    true,
+    undefined,
+    Date.now() - startTime,
+    patientId,
+  );
+  return fhirJsonResponse(resource);
+}
+
+/**
+ * Resolve the underlying patient_id for a versioned resource so the consent
+ * gate can be applied uniformly. For Patient/{id}, the id IS the patient_id;
+ * for other clinician-mutated resources, we look the row up by primary key.
+ */
+async function resolvePatientIdForVersionedResource(
+  supabase: SupabaseLike,
+  config: ResourceConfig,
+  logicalId: string,
+): Promise<string | null> {
+  if (config.resourceType === "Patient") {
+    const { data } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("id", logicalId)
+      .maybeSingle();
+    return (data as { id: string } | null)?.id || null;
+  }
+
+  const { data } = await supabase
+    .from(config.table)
+    .select("patient_id")
+    .eq("id", logicalId)
+    .maybeSingle();
+  return (data as { patient_id: string } | null)?.patient_id || null;
+}
+
 Deno.serve(async (req: Request) => {
   const startTime = Date.now();
 
@@ -746,6 +1141,59 @@ Deno.serve(async (req: Request) => {
 
     const resourceType = fhirPath[0];
     const resourceId = fhirPath[1];
+
+    // Patient/$match (TEFCA Patient Discovery) — POST with FHIR Parameters
+    if (resourceType === "Patient" && resourceId === "$match") {
+      return await handlePatientMatch(
+        supabase,
+        req,
+        baseUrl,
+        context,
+        startTime,
+      );
+    }
+
+    // _history-instance and vread — generic across any registry resource that
+    // advertises the interaction.
+    if (resourceId && fhirPath[2] === "_history") {
+      const cfg = getResourceConfig(resourceType);
+      if (!cfg) {
+        await logTEFCAAccess(
+          supabase,
+          context,
+          [resourceType],
+          0,
+          false,
+          "Unsupported resource type for history",
+          Date.now() - startTime,
+        );
+        return errorResponse(
+          "error",
+          "not-supported",
+          `Resource type ${resourceType} is not supported`,
+          400,
+        );
+      }
+      const versionId = fhirPath[3];
+      if (versionId) {
+        return await handleVread(
+          supabase,
+          cfg,
+          resourceId,
+          versionId,
+          context,
+          startTime,
+        );
+      }
+      return await handleResourceHistory(
+        supabase,
+        cfg,
+        resourceId,
+        baseUrl,
+        context,
+        startTime,
+      );
+    }
 
     // Patient: read by id, $everything, search
     if (resourceType === "Patient") {

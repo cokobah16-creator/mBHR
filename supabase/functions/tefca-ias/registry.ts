@@ -16,6 +16,7 @@ import {
   mapImmunizationToFHIR,
   mapMedicationDispenseToFHIR,
   mapMedicationRequestToFHIR,
+  mapPatientToFHIR,
   mapProcedureToFHIR,
   mapServiceRequestToFHIR,
   type FhirRow,
@@ -66,13 +67,21 @@ export interface ResourceConfig {
 
 const baseInteractions: Interaction[] = ["read", "search-type"];
 
+/** Resources that have snapshot triggers writing to resource_versions. */
+const versionedInteractions: Interaction[] = [
+  "read",
+  "vread",
+  "search-type",
+  "history-instance",
+];
+
 export const RESOURCE_REGISTRY: ResourceConfig[] = [
   {
     resourceType: "Patient",
     profile: `${US_CORE}/us-core-patient`,
     table: "patients",
     orderColumn: "updated_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     customHandler: true,
     searchParams: [
       { name: "_id", type: "token" },
@@ -80,12 +89,9 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
       { name: "name", type: "string" },
       { name: "birthdate", type: "date" },
     ],
-    // Patient mapping is invoked directly from the patient handler (it
-    // returns Patient or a $everything Bundle), so the mapper field is unused
-    // for dispatch — wire it anyway so registry entries are uniform.
-    mapper: () => {
-      throw new Error("Patient uses customHandler dispatch");
-    },
+    // Patient search/$everything are still handled by inline custom logic in
+    // index.ts; the mapper is reused by history.ts for _history / vread.
+    mapper: mapPatientToFHIR,
   },
   {
     resourceType: "Observation",
@@ -109,7 +115,10 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-medicationrequest`,
     table: "dispenses",
     orderColumn: "created_at",
-    interactions: baseInteractions,
+    // History snapshots come from the prescriptions table trigger; reads here
+    // still come from dispenses (the existing behavior). Future Phase B-3
+    // could split MedicationRequest reads to also pull prescriptions.
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -163,7 +172,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-condition-problems-health-concerns`,
     table: "conditions",
     orderColumn: "created_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -177,7 +186,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-allergyintolerance`,
     table: "patient_allergies",
     orderColumn: "created_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -237,7 +246,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-careplan`,
     table: "care_plans",
     orderColumn: "created_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -251,7 +260,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-goal`,
     table: "goals",
     orderColumn: "created_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
