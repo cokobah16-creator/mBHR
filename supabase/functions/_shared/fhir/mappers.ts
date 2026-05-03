@@ -10,7 +10,7 @@ import {
   SYSTEM_IDENTIFIERS,
   US_CORE,
   VITAL_LOINC_CODES,
-} from "./shared.ts";
+} from "./codes.ts";
 
 export type FhirRow = Record<string, unknown>;
 

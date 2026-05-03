@@ -21,7 +21,7 @@ import {
   mapServiceRequestToFHIR,
   type FhirRow,
 } from "./mappers.ts";
-import { US_CORE } from "./shared.ts";
+import { US_CORE } from "./codes.ts";
 
 export type SearchParamType = "token" | "reference" | "string" | "date";
 

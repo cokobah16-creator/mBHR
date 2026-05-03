@@ -7,8 +7,8 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-import type { ResourceConfig } from "./registry.ts";
-import type { FhirRow } from "./mappers.ts";
+import type { ResourceConfig } from "../_shared/fhir/registry.ts";
+import type { FhirRow } from "../_shared/fhir/mappers.ts";
 
 type SupabaseLike = ReturnType<typeof createClient>;
 

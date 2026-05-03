@@ -22,8 +22,8 @@ import {
   extractBearerToken,
   introspectBearer,
   scopeAllowsResource,
-} from "../tefca-ias/bearer-auth.ts";
-import { logTEFCAAccess } from "../tefca-ias/audit.ts";
+} from "../_shared/fhir/bearer-auth.ts";
+import { logTEFCAAccess } from "../_shared/fhir/audit.ts";
 import { processJob } from "./processor.ts";
 import {
   type BulkExportJob,
@@ -132,6 +132,45 @@ function unauthorizedResources(
   return resourceTypes.filter((t) => !scopeAllowsResource(scopes, t));
 }
 
+/**
+ * Group/{id}/$export enforcement.
+ *
+ * mBHR doesn't currently have a FHIR Group resource (no `groups` table, no
+ * group_membership join). When a partner system kicks off a Group export, we
+ * have nothing to check membership against, so we refuse with 501 + a
+ * pointer to the registry of supported flows. When the Group resource
+ * lands (Phase E-3), this function should:
+ *
+ *   1. Look up `groups` by id, return 404 if missing.
+ *   2. Verify the caller's qhin_partner_id (or admin user) has read access
+ *      via either RLS policies on `groups` or a tefca_qhin_partners.allowed_groups
+ *      array.
+ *   3. Resolve the group's patient roster and pass it down to the processor
+ *      as `member_ids` so paginatePatientScoped can `.in("patient_id", …)`.
+ */
+async function ensureGroupAccessible(
+  supabase: SupabaseLike,
+  groupId: string,
+): Promise<Response | null> {
+  const { error } = await supabase
+    .from("groups")
+    .select("id")
+    .eq("id", groupId)
+    .maybeSingle();
+
+  // If the table doesn't exist (PGRST204 / 42P01) we're in pre-Group-schema
+  // territory; reject the kickoff cleanly rather than 500ing.
+  if (error) {
+    return errorResponse(
+      "error",
+      "not-supported",
+      "Group/$export is not yet supported — the FHIR Group resource has not been provisioned",
+      501,
+    );
+  }
+  return null;
+}
+
 async function handleKickoff(
   supabase: SupabaseLike,
   req: Request,
@@ -149,6 +188,19 @@ async function handleKickoff(
       "$export requires POST",
       405,
     );
+  }
+
+  if (type === "group") {
+    if (!scopeId) {
+      return errorResponse(
+        "error",
+        "invalid",
+        "Group/$export requires a Group id in the URL",
+        400,
+      );
+    }
+    const groupCheck = await ensureGroupAccessible(supabase, scopeId);
+    if (groupCheck) return groupCheck;
   }
 
   const prefer = req.headers.get("Prefer") || "";
@@ -386,9 +438,34 @@ async function handleFile(
     );
   }
 
-  // Stream from storage. We could 302 to a signed URL instead — Bulk Data
-  // clients accept that — but streaming through this function lets us
-  // continue auditing per-file fetches.
+  // Two delivery modes:
+  //   - default: stream the NDJSON through this function so per-file
+  //     fetches stay auditable.
+  //   - ?redirect=signed: 302 to a Supabase Storage signed URL so the
+  //     client can pull bytes directly from Storage. Useful for very large
+  //     transfers where keeping the edge function alive for the full
+  //     download is wasteful or risks the 25s timeout.
+  const url = new URL(req.url);
+  const wantsRedirect = url.searchParams.get("redirect") === "signed";
+
+  if (wantsRedirect) {
+    let signed: string;
+    try {
+      signed = await signOutputUrl(supabase, row.storage_path);
+    } catch (err) {
+      return errorResponse(
+        "error",
+        "exception",
+        err instanceof Error ? err.message : "failed to sign URL",
+        500,
+      );
+    }
+    return new Response(null, {
+      status: 302,
+      headers: { ...corsHeaders, Location: signed },
+    });
+  }
+
   const stream = await streamObject(supabase, row.storage_path);
   if (!stream) {
     return errorResponse(
@@ -405,21 +482,6 @@ async function handleFile(
       ...corsHeaders,
       "Content-Type": stream.contentType,
     },
-  });
-}
-
-/**
- * Optional: serve a signed URL redirect instead of streaming. Reserved for
- * Phase E-2 — clients that want to bypass the function for large transfers.
- */
-async function handleSignedRedirect(
-  supabase: SupabaseLike,
-  storagePath: string,
-): Promise<Response> {
-  const url = await signOutputUrl(supabase, storagePath);
-  return new Response(null, {
-    status: 302,
-    headers: { ...corsHeaders, Location: url },
   });
 }
 
@@ -479,7 +541,3 @@ Deno.serve(async (req: Request) => {
     return errorResponse("fatal", "exception", message, 500);
   }
 });
-
-// Marker so the import isn't tree-shaken away when added but unused (Phase
-// E-2 will use signed redirects).
-void handleSignedRedirect;

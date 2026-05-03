@@ -17,8 +17,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-import { logTEFCAAccess, verifyPatientConsent } from "./audit.ts";
-import { resolveAuth, scopeAllowsResource } from "./bearer-auth.ts";
+import { logTEFCAAccess, verifyPatientConsent } from "../_shared/fhir/audit.ts";
+import {
+  resolveAuth,
+  scopeAllowsResource,
+} from "../_shared/fhir/bearer-auth.ts";
 import { createCapabilityStatement } from "./capability.ts";
 import { validateResponseClone } from "./validation.ts";
 import {
@@ -32,9 +35,12 @@ import {
   mapPatientToFHIR,
   mapSDOHToFHIR,
   mapVitalsToFHIR,
-} from "./mappers.ts";
+} from "../_shared/fhir/mappers.ts";
 import { matchPatientIdentity, parseMatchParameters } from "./patient-match.ts";
-import { getResourceConfig, type ResourceConfig } from "./registry.ts";
+import {
+  getResourceConfig,
+  type ResourceConfig,
+} from "../_shared/fhir/registry.ts";
 import {
   corsHeaders,
   createBundle,
@@ -263,7 +269,8 @@ async function handlePatientEverything(
     ) => unknown | unknown[];
   }> = [];
 
-  for (const cfg of (await import("./registry.ts")).RESOURCE_REGISTRY) {
+  for (const cfg of (await import("../_shared/fhir/registry.ts"))
+    .RESOURCE_REGISTRY) {
     if (cfg.customHandler) continue;
     everythingTables.push({
       table: cfg.table,
