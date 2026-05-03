@@ -37,6 +37,11 @@ import {
   mapVitalsToFHIR,
 } from "../_shared/fhir/mappers.ts";
 import { matchPatientIdentity, parseMatchParameters } from "./patient-match.ts";
+import {
+  loadFhirResourceById,
+  loadFhirResourcesByPatient,
+  loadFhirResourcesEverything,
+} from "./read-merge.ts";
 import { handleCreate, handleDelete, handleUpdate } from "./writes.ts";
 import {
   getResourceConfig,
@@ -143,9 +148,18 @@ async function handleGenericPatientScoped(
     .maybeSingle();
   const patientName = (patient as { name?: string } | null)?.name;
 
-  const resources = (data || []).map((row: Record<string, unknown>) =>
+  const canonical = (data || []).map((row: Record<string, unknown>) =>
     config.mapper(row, patientName),
   );
+  // Phase I: union with the validator-gated fhir_resources passthrough
+  // store so writes posted via Phase H endpoints surface on subsequent
+  // reads alongside the canonical clinical-table data.
+  const merged = await loadFhirResourcesByPatient(
+    supabase,
+    config.resourceType,
+    patientId,
+  );
+  const resources = [...canonical, ...merged];
   const bundle = createBundle(resources, `${baseUrl}/${config.resourceType}`);
   await logTEFCAAccess(
     supabase,
@@ -173,6 +187,28 @@ async function handlePatientRead(
     .maybeSingle();
 
   if (error || !patient) {
+    // Phase I: fall through to the validator-gated fhir_resources store
+    // for Patients created via POST /Patient. The write-store keeps the
+    // server-assigned uuid as the FHIR id.
+    const fromWrites = await loadFhirResourceById(
+      supabase,
+      "Patient",
+      resourceId,
+    );
+    if (fromWrites) {
+      await logTEFCAAccess(
+        supabase,
+        context,
+        ["Patient"],
+        1,
+        true,
+        undefined,
+        Date.now() - startTime,
+        resourceId,
+      );
+      return fhirJsonResponse(fromWrites);
+    }
+
     await logTEFCAAccess(
       supabase,
       context,
@@ -382,6 +418,12 @@ async function handlePatientEverything(
     }
   }
 
+  // Phase I: union with the validator-gated fhir_resources passthrough
+  // store. $everything pulls every resource type for this patient from the
+  // write store and concatenates after the canonical-table fan-out.
+  const fromWrites = await loadFhirResourcesEverything(supabase, patientId);
+  resources.push(...fromWrites);
+
   const bundle = {
     resourceType: "Bundle",
     type: "collection",
@@ -563,17 +605,28 @@ async function handleObservationSearch(
     );
   }
 
+  // Phase I: union with the validator-gated fhir_resources passthrough
+  // store. Observation reads still pull vitals + SDOH from the canonical
+  // tables; the write-store contributes any Observations posted via
+  // Phase H endpoints (e.g. third-party app sync).
+  const fromWrites = await loadFhirResourcesByPatient(
+    supabase,
+    "Observation",
+    patientId,
+  );
+  const merged = [...observations, ...fromWrites];
+
   await logTEFCAAccess(
     supabase,
     context,
     ["Observation"],
-    observations.length,
+    merged.length,
     true,
     undefined,
     Date.now() - startTime,
     patientId,
   );
-  return fhirJsonResponse(createBundle(observations, `${baseUrl}/Observation`));
+  return fhirJsonResponse(createBundle(merged, `${baseUrl}/Observation`));
 }
 
 async function handleDiagnosticReportSearch(
@@ -687,7 +740,14 @@ async function handleDiagnosticReportSearch(
     Date.now() - startTime,
     patientId,
   );
-  return fhirJsonResponse(createBundle(reports, `${baseUrl}/DiagnosticReport`));
+  // Phase I: union with the validator-gated fhir_resources passthrough.
+  const fromWrites = await loadFhirResourcesByPatient(
+    supabase,
+    "DiagnosticReport",
+    patientId,
+  );
+  const merged = [...reports, ...fromWrites];
+  return fhirJsonResponse(createBundle(merged, `${baseUrl}/DiagnosticReport`));
 }
 
 async function handlePatientMatch(

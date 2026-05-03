@@ -1,0 +1,40 @@
+# ONC Inferno test harness for the mBHR TEFCA IAS endpoint.
+# See ./README.md for setup + usage.
+#
+# Inferno requires PostgreSQL + Redis side services. The official image bundles
+# the test runner; the FHIR_REFERENCE_SERVER env var points it at the mBHR
+# tefca-ias deployment under test.
+
+version: "3.9"
+
+services:
+  inferno:
+    image: ghcr.io/onc-healthit/inferno-core:latest
+    pull_policy: always
+    ports:
+      - "4567:4567"
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@inferno-db:5432/inferno"
+      REDIS_URL: "redis://inferno-redis:6379/0"
+      # Override these for the deployment under test. CLI suggestion:
+      #   FHIR_REFERENCE_SERVER=https://<project>.functions.supabase.co/tefca-ias docker compose up
+      FHIR_REFERENCE_SERVER: "${FHIR_REFERENCE_SERVER:-https://example.supabase.co/functions/v1/tefca-ias}"
+      OAUTH_BASE_URL: "${OAUTH_BASE_URL:-https://example.supabase.co/functions/v1/tefca-oauth}"
+    depends_on:
+      - inferno-db
+      - inferno-redis
+
+  inferno-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: inferno
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - inferno-db-data:/var/lib/postgresql/data
+
+  inferno-redis:
+    image: redis:7-alpine
+
+volumes:
+  inferno-db-data:
