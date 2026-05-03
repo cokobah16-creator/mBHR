@@ -12,7 +12,9 @@ import {
   oauthError,
   parseScopes,
   SUPPORTED_PATIENT_SCOPES,
+  SUPPORTED_PATIENT_WRITE_SCOPES,
   SUPPORTED_SYSTEM_SCOPES,
+  SUPPORTED_SYSTEM_WRITE_SCOPES,
 } from "./shared.ts";
 
 type SupabaseLike = ReturnType<typeof createClient>;
@@ -34,7 +36,9 @@ interface RegistrationRequest {
 
 const ALL_SUPPORTED_SCOPES = new Set([
   ...SUPPORTED_SYSTEM_SCOPES,
+  ...SUPPORTED_SYSTEM_WRITE_SCOPES,
   ...SUPPORTED_PATIENT_SCOPES,
+  ...SUPPORTED_PATIENT_WRITE_SCOPES,
 ]);
 
 async function requireAdmin(

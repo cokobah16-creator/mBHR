@@ -39,12 +39,41 @@ export const SUPPORTED_SYSTEM_SCOPES = [
   "system/*.read",
 ];
 
+/** Phase H: write-side scopes for the validator-gated POST/PUT/DELETE
+ * endpoints. Issued only to clients with token_endpoint_auth_method
+ * 'private_key_jwt' (Backend Services) so casual confidential clients
+ * can't be talked into pushing data. */
+export const SUPPORTED_SYSTEM_WRITE_SCOPES = [
+  "system/Patient.write",
+  "system/Observation.write",
+  "system/MedicationRequest.write",
+  "system/MedicationDispense.write",
+  "system/Encounter.write",
+  "system/Immunization.write",
+  "system/Condition.write",
+  "system/AllergyIntolerance.write",
+  "system/DiagnosticReport.write",
+  "system/Procedure.write",
+  "system/DocumentReference.write",
+  "system/CarePlan.write",
+  "system/Goal.write",
+  "system/ServiceRequest.write",
+  "system/*.write",
+];
+
 export const SUPPORTED_PATIENT_SCOPES = [
   "patient/*.read",
   "patient/Patient.read",
   "patient/Observation.read",
   "patient/MedicationRequest.read",
   "patient/Encounter.read",
+];
+
+export const SUPPORTED_PATIENT_WRITE_SCOPES = [
+  "patient/*.write",
+  "patient/Observation.write",
+  "patient/Condition.write",
+  "patient/AllergyIntolerance.write",
 ];
 
 export interface OAuthError {

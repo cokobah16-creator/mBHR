@@ -37,6 +37,7 @@ import {
   mapVitalsToFHIR,
 } from "../_shared/fhir/mappers.ts";
 import { matchPatientIdentity, parseMatchParameters } from "./patient-match.ts";
+import { handleCreate, handleDelete, handleUpdate } from "./writes.ts";
 import {
   getResourceConfig,
   type ResourceConfig,
@@ -1176,14 +1177,20 @@ Deno.serve(async (req: Request) => {
       // (see bearer-auth.ts:legacySunsetDate). TODO Phase C-1.1: emit
       // Deprecation/Sunset/Warning headers on every response from a legacy
       // caller — currently only this comment carries the contract.
-      if (!auth.isLegacy && !scopeAllowsResource(auth.scopes, resourceType)) {
+      const writeVerbs = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+      const isWrite = writeVerbs.has(req.method);
+      const requiredVerb: "read" | "write" = isWrite ? "write" : "read";
+      if (
+        !auth.isLegacy &&
+        !scopeAllowsResource(auth.scopes, resourceType, requiredVerb)
+      ) {
         await logTEFCAAccess(
           supabase,
           context,
           [resourceType],
           0,
           false,
-          `scope does not authorize ${resourceType}`,
+          `scope does not authorize ${requiredVerb} on ${resourceType}`,
           Date.now() - startTime,
         );
         return new Response(
@@ -1191,16 +1198,61 @@ Deno.serve(async (req: Request) => {
             createOperationOutcome(
               "error",
               "forbidden",
-              `Access token scope does not authorize ${resourceType}`,
+              `Access token scope does not authorize ${requiredVerb} on ${resourceType}`,
             ),
           ),
           {
             status: 403,
             headers: {
               ...fhirJsonHeaders,
-              "WWW-Authenticate": `Bearer realm="tefca-ias", error="insufficient_scope", scope="system/${resourceType}.read"`,
+              "WWW-Authenticate": `Bearer realm="tefca-ias", error="insufficient_scope", scope="system/${resourceType}.${requiredVerb}"`,
             },
           },
+        );
+      }
+
+      // Phase H: write paths (POST / PUT / DELETE) land in the
+      // validator-gated fhir_resources passthrough store.
+      if (req.method === "POST" && !resourceId) {
+        const writeCaller = {
+          clientId: context.requestingOrganization,
+          qhinId: context.qhinId,
+          scopes: auth.scopes,
+        };
+        return await handleCreate(
+          supabase,
+          req,
+          baseUrl,
+          resourceType,
+          writeCaller,
+          context,
+          startTime,
+        );
+      }
+      if (req.method === "PUT" && resourceId) {
+        const writeCaller = {
+          clientId: context.requestingOrganization,
+          qhinId: context.qhinId,
+          scopes: auth.scopes,
+        };
+        return await handleUpdate(
+          supabase,
+          req,
+          baseUrl,
+          resourceType,
+          resourceId,
+          writeCaller,
+          context,
+          startTime,
+        );
+      }
+      if (req.method === "DELETE" && resourceId) {
+        return await handleDelete(
+          supabase,
+          resourceType,
+          resourceId,
+          context,
+          startTime,
         );
       }
 

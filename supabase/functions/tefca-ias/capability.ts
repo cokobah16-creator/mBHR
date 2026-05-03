@@ -4,7 +4,10 @@
 // automatically reflects in the /metadata response — no second source of
 // truth.
 
-import { RESOURCE_REGISTRY } from "../_shared/fhir/registry.ts";
+import {
+  RESOURCE_REGISTRY,
+  writeInteractions,
+} from "../_shared/fhir/registry.ts";
 
 const BULK_EXPORT_OPERATIONS = [
   {
@@ -71,10 +74,14 @@ export function createCapabilityStatement(baseUrl: string) {
         resource: RESOURCE_REGISTRY.map((r) => {
           const operations =
             r.resourceType === "Patient" ? PATIENT_INSTANCE_OPERATIONS : [];
+          // Phase H: every registry resource also accepts validator-gated
+          // writes through the fhir_resources passthrough store. Reads
+          // continue to come from the canonical clinical tables.
+          const allInteractions = [...r.interactions, ...writeInteractions];
           return {
             type: r.resourceType,
             profile: r.profile,
-            interaction: r.interactions.map((code) => ({ code })),
+            interaction: allInteractions.map((code) => ({ code })),
             searchParam: r.searchParams.map(({ name, type }) => ({
               name,
               type,

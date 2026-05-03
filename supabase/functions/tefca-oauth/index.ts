@@ -26,7 +26,9 @@ import {
   jsonResponse,
   oauthError,
   SUPPORTED_PATIENT_SCOPES,
+  SUPPORTED_PATIENT_WRITE_SCOPES,
   SUPPORTED_SYSTEM_SCOPES,
+  SUPPORTED_SYSTEM_WRITE_SCOPES,
 } from "./shared.ts";
 
 function smartConfiguration() {
@@ -50,7 +52,9 @@ function smartConfiguration() {
     ],
     scopes_supported: [
       ...SUPPORTED_SYSTEM_SCOPES,
+      ...SUPPORTED_SYSTEM_WRITE_SCOPES,
       ...SUPPORTED_PATIENT_SCOPES,
+      ...SUPPORTED_PATIENT_WRITE_SCOPES,
       "openid",
       "profile",
       "fhirUser",

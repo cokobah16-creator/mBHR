@@ -41,7 +41,16 @@ export type Interaction =
   | "vread"
   | "search-type"
   | "history-instance"
-  | "history-type";
+  | "history-type"
+  | "create"
+  | "update"
+  | "delete";
+
+/** Phase H: write interactions that the validator-gated fhir_resources
+ * passthrough store accepts. The dispatcher derives this from `writeable`
+ * on the ResourceConfig and the CapabilityStatement generator advertises
+ * them automatically. */
+export const writeInteractions: Interaction[] = ["create", "update", "delete"];
 
 export interface ResourceConfig {
   resourceType: string;
