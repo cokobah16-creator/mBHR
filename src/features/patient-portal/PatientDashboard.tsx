@@ -17,6 +17,7 @@ import {
   WifiIcon,
 } from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
+import { useT } from "@/hooks/useT";
 import {
   getPatientProfile,
   getPatientProfileByEmail,
@@ -62,10 +63,10 @@ const statusDot: Record<VitalStatus, string> = {
   monitor: "bg-yellow-500",
   attention: "bg-red-500",
 };
-const statusLabel: Record<VitalStatus, string> = {
-  normal: "Normal",
-  monitor: "Monitor",
-  attention: "Attention",
+const statusLabelKey: Record<VitalStatus, string> = {
+  normal: "portal.vital.status.normal",
+  monitor: "portal.vital.status.monitor",
+  attention: "portal.vital.status.attention",
 };
 
 function VitalCard({
@@ -79,6 +80,7 @@ function VitalCard({
   unit: string;
   status: VitalStatus;
 }) {
+  const { t } = useT();
   return (
     <div className="bg-gray-50 rounded-lg p-4">
       <div className="flex items-center justify-between mb-1">
@@ -89,7 +91,7 @@ function VitalCard({
           <span
             className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${statusDot[status]}`}
           />
-          {statusLabel[status]}
+          {t(statusLabelKey[status])}
         </span>
       </div>
       <p className="text-xl font-bold text-gray-900">{value}</p>
@@ -109,6 +111,7 @@ interface SupabaseDashboardState {
 
 function SupabaseDashboard() {
   const { user } = useAuth();
+  const { t } = useT();
   const [state, setState] = useState<SupabaseDashboardState>({
     profile: null,
     vitals: [],
@@ -136,9 +139,7 @@ function SupabaseDashboard() {
         profileRes = await getPatientProfileByEmail(user.id, user.email);
       }
       if (profileRes.error || !profileRes.data) {
-        setError(
-          "Could not load your profile. Make sure your account is set up.",
-        );
+        setError(t("portal.error.loadProfile"));
         setLoading(false);
         return;
       }
@@ -158,7 +159,7 @@ function SupabaseDashboard() {
       });
     } catch (err) {
       logger.error("[PatientDashboard] load error:", err);
-      setError("An error occurred loading your information.");
+      setError(t("portal.error.loadInfo"));
     } finally {
       setLoading(false);
     }
@@ -181,15 +182,13 @@ function SupabaseDashboard() {
         <div className="flex items-start justify-between flex-wrap gap-2">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
-              Welcome back, {profile.givenName}!
+              {t("portal.welcome", { name: profile.givenName })}
             </h1>
-            <p className="text-gray-600 mt-1">
-              Here's an overview of your health information.
-            </p>
+            <p className="text-gray-600 mt-1">{t("portal.welcomeSubtitle")}</p>
           </div>
           <span className="flex items-center gap-2 text-sm text-green-600">
             <WifiIcon className="w-4 h-4" />
-            Connected · data saved
+            {t("portal.connected")}
           </span>
         </div>
       </div>
@@ -199,21 +198,21 @@ function SupabaseDashboard() {
         <StatTile
           icon={<CalendarIcon className="w-6 h-6 text-blue-600" />}
           bg="bg-blue-100"
-          label="Visits"
+          label={t("portal.stats.visits")}
           value={visits.length}
           to="/patient/appointments"
         />
         <StatTile
           icon={<HeartIcon className="w-6 h-6 text-red-600" />}
           bg="bg-red-100"
-          label="Medications"
+          label={t("portal.stats.medications")}
           value={medications.length}
           to="/patient/medications"
         />
         <StatTile
           icon={<BeakerIcon className="w-6 h-6 text-purple-600" />}
           bg="bg-purple-100"
-          label="Vital Records"
+          label={t("portal.stats.vitalRecords")}
           value={vitals.length}
           to="/patient/medical-history"
         />
@@ -223,42 +222,45 @@ function SupabaseDashboard() {
       {latest && (
         <div className="bg-white rounded-xl shadow-sm p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-gray-900">Latest Vitals</h2>
+            <h2 className="text-xl font-bold text-gray-900">
+              {t("portal.section.latestVitals")}
+            </h2>
             <Link
               to="/patient/medical-history"
               className="text-sm text-blue-600 hover:text-blue-700 font-medium"
             >
-              View History →
+              {t("portal.viewHistory")} →
             </Link>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {bpSys > 0 && bpDia > 0 && (
               <VitalCard
-                label="Blood Pressure"
+                label={t("portal.vital.bloodPressure")}
                 value={`${bpSys}/${bpDia}`}
-                unit="mmHg"
+                unit={t("portal.vital.unit.mmHg")}
                 status={bpStatus(bpSys)}
               />
             )}
             {latest.weightKg != null && (
               <VitalCard
-                label="Weight"
+                label={t("portal.vital.weight")}
                 value={`${latest.weightKg}`}
-                unit="kg"
+                unit={t("portal.vital.unit.kg")}
                 status="normal"
               />
             )}
             {latest.tempC != null && (
               <VitalCard
-                label="Temperature"
+                label={t("portal.vital.temperature")}
                 value={`${latest.tempC}°C`}
-                unit="celsius"
+                unit={t("portal.vital.unit.celsius")}
                 status={tempStatus(latest.tempC)}
               />
             )}
           </div>
           <p className="text-xs text-gray-500 mt-4">
-            Recorded: {new Date(latest.takenAt).toLocaleDateString()}
+            {t("portal.recorded")}:{" "}
+            {new Date(latest.takenAt).toLocaleDateString()}
           </p>
         </div>
       )}
@@ -267,13 +269,13 @@ function SupabaseDashboard() {
       <div className="bg-white rounded-xl shadow-sm p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-gray-900">
-            Active Medications
+            {t("portal.section.activeMedications")}
           </h2>
           <Link
             to="/patient/medications"
             className="text-sm text-blue-600 hover:text-blue-700 font-medium"
           >
-            View All →
+            {t("portal.viewAll")} →
           </Link>
         </div>
         {medications.length > 0 ? (
@@ -296,7 +298,7 @@ function SupabaseDashboard() {
           </div>
         ) : (
           <p className="text-gray-500 text-center py-8">
-            No medications recorded yet.
+            {t("portal.noMedications")}
           </p>
         )}
       </div>
@@ -305,12 +307,14 @@ function SupabaseDashboard() {
       {visits.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-gray-900">Recent Visits</h2>
+            <h2 className="text-xl font-bold text-gray-900">
+              {t("portal.section.recentVisits")}
+            </h2>
             <Link
               to="/patient/medical-history"
               className="text-sm text-blue-600 hover:text-blue-700 font-medium"
             >
-              View All →
+              {t("portal.viewAll")} →
             </Link>
           </div>
           <div className="space-y-3">
@@ -321,7 +325,7 @@ function SupabaseDashboard() {
                 </p>
                 {v.diagnosis && (
                   <p className="text-xs text-gray-600 mt-1">
-                    Diagnosis: {v.diagnosis}
+                    {t("portal.diagnosis")}: {v.diagnosis}
                   </p>
                 )}
                 {v.notes && (
@@ -342,6 +346,7 @@ function SupabaseDashboard() {
 
 function OfflineDashboard() {
   const navigate = useNavigate();
+  const { t } = useT();
   const [data, setData] = useState<PatientDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -390,11 +395,11 @@ function OfflineDashboard() {
       if (dashboardData) {
         setData(dashboardData);
       } else {
-        setError("Failed to load dashboard data.");
+        setError(t("portal.error.loadDashboard"));
       }
     } catch (err) {
       logger.error("[PatientDashboard offline] load error:", err);
-      setError("An error occurred loading your information.");
+      setError(t("portal.error.loadInfo"));
     } finally {
       setLoading(false);
     }
@@ -414,15 +419,13 @@ function OfflineDashboard() {
         <div className="flex items-start justify-between flex-wrap gap-2">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
-              Welcome back, {patient.givenName}!
+              {t("portal.welcome", { name: patient.givenName })}
             </h1>
-            <p className="text-gray-600 mt-1">
-              Here's an overview of your health information.
-            </p>
+            <p className="text-gray-600 mt-1">{t("portal.welcomeSubtitle")}</p>
           </div>
           <span className="flex items-center gap-2 text-sm text-yellow-600">
             <WifiIcon className="w-4 h-4" />
-            Offline mode
+            {t("portal.offlineMode")}
           </span>
         </div>
       </div>
@@ -432,21 +435,21 @@ function OfflineDashboard() {
         <StatTile
           icon={<CalendarIcon className="w-6 h-6 text-blue-600" />}
           bg="bg-blue-100"
-          label="Upcoming Appointments"
+          label={t("portal.stats.appointments")}
           value={upcomingAppointments.length}
           to="/patient/appointments"
         />
         <StatTile
           icon={<EnvelopeIcon className="w-6 h-6 text-green-600" />}
           bg="bg-green-100"
-          label="Unread Messages"
+          label={t("portal.stats.unreadMessages")}
           value={data.unreadMessages}
           to="/patient/messages"
         />
         <StatTile
           icon={<BellIcon className="w-6 h-6 text-yellow-600" />}
           bg="bg-yellow-100"
-          label="Notifications"
+          label={t("portal.stats.notifications")}
           value={data.unreadNotifications}
           to="/patient/notifications"
         />
@@ -456,22 +459,22 @@ function OfflineDashboard() {
       {recentVitals && (
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="text-xl font-bold text-gray-900 mb-4">
-            Recent Vitals
+            {t("portal.section.recentVitals")}
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {recentVitals.systolic && recentVitals.diastolic && (
               <VitalCard
-                label="Blood Pressure"
+                label={t("portal.vital.bloodPressure")}
                 value={`${recentVitals.systolic}/${recentVitals.diastolic}`}
-                unit="mmHg"
+                unit={t("portal.vital.unit.mmHg")}
                 status={bpStatus(recentVitals.systolic)}
               />
             )}
             {recentVitals.tempC && (
               <VitalCard
-                label="Temperature"
+                label={t("portal.vital.temperature")}
                 value={`${recentVitals.tempC}°C`}
-                unit="celsius"
+                unit={t("portal.vital.unit.celsius")}
                 status={tempStatus(recentVitals.tempC)}
               />
             )}
@@ -483,7 +486,7 @@ function OfflineDashboard() {
       {activeMedications.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="text-xl font-bold text-gray-900 mb-4">
-            Active Medications
+            {t("portal.section.activeMedications")}
           </h2>
           <div className="space-y-3">
             {activeMedications.slice(0, 3).map((med, i) => (
@@ -563,54 +566,57 @@ function StatTile({
 }
 
 function QuickActions() {
+  const { t } = useT();
   return (
     <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl shadow-sm p-6 text-white">
-      <h2 className="text-xl font-bold mb-4">Quick Actions</h2>
+      <h2 className="text-xl font-bold mb-4">
+        {t("portal.section.quickActions")}
+      </h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {[
           {
             to: "/patient/appointments",
             icon: <PlusIcon className="w-5 h-5" />,
-            label: "Book Visit",
+            labelKey: "portal.action.bookVisit",
           },
           {
             to: "/patient/medical-history",
             icon: <ClipboardDocumentListIcon className="w-5 h-5" />,
-            label: "View My Records",
+            labelKey: "portal.action.viewRecords",
           },
           {
             to: "/patient/messages",
             icon: <ChatBubbleLeftRightIcon className="w-5 h-5" />,
-            label: "Talk to Health Worker",
+            labelKey: "portal.action.talkToWorker",
           },
           {
             to: "/patient/medications",
             icon: <InformationCircleIcon className="w-5 h-5" />,
-            label: "Get Medication Info",
+            labelKey: "portal.action.medInfo",
           },
           {
             to: "/patient/outreach",
             icon: <MapPinIcon className="w-5 h-5" />,
-            label: "Find Outreach Near Me",
+            labelKey: "portal.action.findOutreach",
           },
           {
             to: "/patient/export",
             icon: <ArrowDownTrayIcon className="w-5 h-5" />,
-            label: "Download Records",
+            labelKey: "portal.action.downloadRecords",
           },
           {
             to: "/patient/data-sharing",
             icon: <ShieldCheckIcon className="w-5 h-5" />,
-            label: "Manage Data Sharing",
+            labelKey: "portal.action.dataSharing",
           },
-        ].map(({ to, icon, label }) => (
+        ].map(({ to, icon, labelKey }) => (
           <Link
             key={to}
             to={to}
             className="flex items-center gap-3 bg-white/10 hover:bg-white/20 rounded-lg p-4 transition-colors min-h-[60px]"
           >
             {icon}
-            <span className="font-medium">{label}</span>
+            <span className="font-medium">{t(labelKey)}</span>
           </Link>
         ))}
       </div>

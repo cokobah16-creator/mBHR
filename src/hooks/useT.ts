@@ -5,10 +5,18 @@ import { getAudioPromptText, getAudioFilePath } from "@/config/audioPrompts";
 export function useT() {
   const { t: i18nT, i18n } = useTranslation();
 
-  const t = (key: string, fallback?: string): string => {
-    const translation = i18nT(key);
-    if (translation && translation !== key) return translation;
-    return fallback || key.split(".").pop() || key;
+  const t = (
+    key: string,
+    fallbackOrOptions?: string | Record<string, unknown>,
+  ): string => {
+    const isOptions =
+      typeof fallbackOrOptions === "object" && fallbackOrOptions !== null;
+    const translation = isOptions
+      ? i18nT(key, fallbackOrOptions as Record<string, unknown>)
+      : i18nT(key);
+    if (translation && translation !== key) return String(translation);
+    if (typeof fallbackOrOptions === "string") return fallbackOrOptions;
+    return key.split(".").pop() || key;
   };
 
   const speak = async (key: string) => {
