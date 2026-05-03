@@ -15,7 +15,10 @@ const SYSTEM_IDENTIFIERS = {
   ICD10: "http://hl7.org/fhir/sid/icd-10-cm",
   CVX: "http://hl7.org/fhir/sid/cvx",
   UCUM: "http://unitsofmeasure.org",
+  RXNORM: "http://www.nlm.nih.gov/research/umls/rxnorm",
 };
+
+const US_CORE = "http://hl7.org/fhir/us/core/StructureDefinition";
 
 const VITAL_LOINC_CODES: Record<
   string,
@@ -599,6 +602,495 @@ function mapSDOHToFHIR(sdoh: Record<string, unknown>, patientName?: string) {
   return observation;
 }
 
+function mapAllergyIntoleranceToFHIR(
+  allergy: Record<string, unknown>,
+  patientName?: string,
+) {
+  const categoryMap: Record<string, string> = {
+    food: "food",
+    medication: "medication",
+    environmental: "environment",
+    other: "biologic",
+  };
+  const criticalityMap: Record<string, string> = {
+    mild: "low",
+    moderate: "low",
+    severe: "high",
+    "life-threatening": "high",
+  };
+  const reactionSeverityMap: Record<string, string> = {
+    mild: "mild",
+    moderate: "moderate",
+    severe: "severe",
+    "life-threatening": "severe",
+  };
+  const allergyType = allergy.allergy_type as string | undefined;
+  const severity = allergy.severity as string | undefined;
+  const isActive = allergy.is_active !== false;
+
+  return {
+    resourceType: "AllergyIntolerance",
+    id: allergy.id,
+    meta: {
+      lastUpdated: allergy.updated_at || new Date().toISOString(),
+      source: "mBHR",
+      profile: [`${US_CORE}/us-core-allergyintolerance`],
+    },
+    identifier: [{ system: SYSTEM_IDENTIFIERS.MBHR, value: allergy.id }],
+    clinicalStatus: {
+      coding: [
+        {
+          system:
+            "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+          code: isActive ? "active" : "inactive",
+          display: isActive ? "Active" : "Inactive",
+        },
+      ],
+    },
+    verificationStatus: {
+      coding: [
+        {
+          system:
+            "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+          code: "confirmed",
+          display: "Confirmed",
+        },
+      ],
+    },
+    type: "allergy",
+    category: allergyType ? [categoryMap[allergyType] || "biologic"] : undefined,
+    criticality: severity
+      ? criticalityMap[severity] || "unable-to-assess"
+      : undefined,
+    code: { text: allergy.allergen },
+    patient: {
+      reference: `Patient/${allergy.patient_id}`,
+      display: patientName,
+    },
+    onsetDateTime: allergy.onset_date,
+    reaction: allergy.reaction
+      ? [
+          {
+            manifestation: [{ text: allergy.reaction }],
+            severity: severity
+              ? reactionSeverityMap[severity] || "moderate"
+              : "moderate",
+          },
+        ]
+      : undefined,
+    note: allergy.notes ? [{ text: allergy.notes }] : undefined,
+  };
+}
+
+function mapMedicationDispenseToFHIR(
+  d: Record<string, unknown>,
+  patientName?: string,
+) {
+  const dosageText = [d.dosage, d.directions].filter(Boolean).join(" - ");
+  const code = d.medication_code as string | undefined;
+  return {
+    resourceType: "MedicationDispense",
+    id: d.id,
+    meta: {
+      lastUpdated: d.updated_at || new Date().toISOString(),
+      source: "mBHR",
+      profile: [`${US_CORE}/us-core-medicationdispense`],
+    },
+    identifier: [{ system: SYSTEM_IDENTIFIERS.MBHR, value: d.id }],
+    status: d.dispense_status || "completed",
+    medicationCodeableConcept: {
+      coding: code
+        ? [
+            {
+              system:
+                (d.medication_code_system as string) || SYSTEM_IDENTIFIERS.RXNORM,
+              code,
+              display: d.item_name,
+            },
+          ]
+        : undefined,
+      text: d.item_name,
+    },
+    subject: {
+      reference: `Patient/${d.patient_id}`,
+      display: patientName,
+    },
+    context: d.visit_id ? { reference: `Encounter/${d.visit_id}` } : undefined,
+    authorizingPrescription: d.authorizing_prescription_id
+      ? [
+          {
+            reference: `MedicationRequest/${d.authorizing_prescription_id}`,
+          },
+        ]
+      : undefined,
+    quantity:
+      d.qty !== undefined && d.qty !== null
+        ? { value: d.qty, unit: "units" }
+        : undefined,
+    daysSupply:
+      d.days_supply !== undefined && d.days_supply !== null
+        ? {
+            value: d.days_supply,
+            unit: "days",
+            system: SYSTEM_IDENTIFIERS.UCUM,
+            code: "d",
+          }
+        : undefined,
+    whenHandedOver: d.when_handed_over || d.dispensed_at,
+    performer: d.dispensed_by
+      ? [
+          {
+            actor: {
+              reference: `Practitioner/${d.dispensed_by}`,
+              display: d.dispensed_by,
+            },
+          },
+        ]
+      : undefined,
+    dosageInstruction: dosageText ? [{ text: dosageText }] : undefined,
+  };
+}
+
+function mapDiagnosticReportToFHIR(
+  order: Record<string, unknown>,
+  results: Record<string, unknown>[],
+  patientName?: string,
+) {
+  const lastUpdated = (results[0]?.updated_at as string) ||
+    (order.updated_at as string) ||
+    new Date().toISOString();
+
+  return {
+    resourceType: "DiagnosticReport",
+    id: order.id,
+    meta: {
+      lastUpdated,
+      source: "mBHR",
+      profile: [`${US_CORE}/us-core-diagnosticreport-lab`],
+    },
+    identifier: [{ system: SYSTEM_IDENTIFIERS.MBHR, value: order.id }],
+    status: order.status === "completed" ? "final" :
+            order.status === "cancelled" ? "cancelled" : "preliminary",
+    category: [
+      {
+        coding: [
+          {
+            system: "http://terminology.hl7.org/CodeSystem/v2-0074",
+            code: "LAB",
+            display: "Laboratory",
+          },
+        ],
+      },
+    ],
+    code: {
+      coding: order.test_code
+        ? [
+            {
+              system: SYSTEM_IDENTIFIERS.LOINC,
+              code: order.test_code,
+              display: order.test_name,
+            },
+          ]
+        : [],
+      text: order.test_name,
+    },
+    subject: {
+      reference: `Patient/${order.patient_id}`,
+      display: patientName,
+    },
+    encounter: order.visit_id
+      ? { reference: `Encounter/${order.visit_id}` }
+      : undefined,
+    effectiveDateTime: order.collected_at || order.ordered_at,
+    issued: order.completed_at,
+    result: results.map((r) => ({ reference: `Observation/${r.id}` })),
+    conclusion: results
+      .map((r) => r.notes as string | undefined)
+      .filter(Boolean)
+      .join("; ") || undefined,
+  };
+}
+
+function mapProcedureToFHIR(
+  p: Record<string, unknown>,
+  patientName?: string,
+) {
+  return {
+    resourceType: "Procedure",
+    id: p.id,
+    meta: {
+      lastUpdated: p.updated_at || new Date().toISOString(),
+      source: "mBHR",
+      profile: [`${US_CORE}/us-core-procedure`],
+    },
+    identifier: [{ system: SYSTEM_IDENTIFIERS.MBHR, value: p.id }],
+    status: p.status || "completed",
+    code: {
+      coding: p.code
+        ? [
+            {
+              system: (p.code_system as string) || SYSTEM_IDENTIFIERS.SNOMED,
+              code: p.code,
+              display: p.display,
+            },
+          ]
+        : [],
+      text: p.display,
+    },
+    subject: {
+      reference: `Patient/${p.patient_id}`,
+      display: patientName,
+    },
+    encounter: p.encounter_id
+      ? { reference: `Encounter/${p.encounter_id}` }
+      : undefined,
+    performedDateTime: p.performed_at,
+    performer: p.performer_id
+      ? [
+          {
+            actor: {
+              reference: `Practitioner/${p.performer_id}`,
+              display: p.performer_id,
+            },
+          },
+        ]
+      : undefined,
+    note: p.notes ? [{ text: p.notes }] : undefined,
+  };
+}
+
+function mapDocumentReferenceToFHIR(
+  doc: Record<string, unknown>,
+  patientName?: string,
+) {
+  return {
+    resourceType: "DocumentReference",
+    id: doc.id,
+    meta: {
+      lastUpdated: doc.updated_at || new Date().toISOString(),
+      source: "mBHR",
+      profile: [`${US_CORE}/us-core-documentreference`],
+    },
+    identifier: [{ system: SYSTEM_IDENTIFIERS.MBHR, value: doc.id }],
+    status: doc.status || "current",
+    docStatus: doc.doc_status,
+    type: doc.type_code
+      ? {
+          coding: [
+            {
+              system: (doc.type_system as string) || SYSTEM_IDENTIFIERS.LOINC,
+              code: doc.type_code,
+              display: doc.type_display,
+            },
+          ],
+          text: doc.type_display,
+        }
+      : undefined,
+    category: doc.category
+      ? [
+          {
+            coding: [
+              {
+                system:
+                  "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+                code: doc.category,
+              },
+            ],
+          },
+        ]
+      : undefined,
+    subject: {
+      reference: `Patient/${doc.patient_id}`,
+      display: patientName,
+    },
+    date: doc.authored_at,
+    author: doc.author_id
+      ? [
+          {
+            reference: `Practitioner/${doc.author_id}`,
+            display: doc.author_id,
+          },
+        ]
+      : undefined,
+    content: [
+      {
+        attachment: {
+          contentType: doc.content_type || "application/pdf",
+          url: doc.content_url,
+          title: doc.content_title,
+          creation: doc.authored_at,
+        },
+      },
+    ],
+    context: doc.context_encounter_id
+      ? {
+          encounter: [{ reference: `Encounter/${doc.context_encounter_id}` }],
+        }
+      : undefined,
+  };
+}
+
+function mapCarePlanToFHIR(
+  cp: Record<string, unknown>,
+  patientName?: string,
+) {
+  const addresses = Array.isArray(cp.addresses)
+    ? (cp.addresses as string[])
+    : [];
+  const goalIds = Array.isArray(cp.goal_ids) ? (cp.goal_ids as string[]) : [];
+
+  return {
+    resourceType: "CarePlan",
+    id: cp.id,
+    meta: {
+      lastUpdated: cp.updated_at || new Date().toISOString(),
+      source: "mBHR",
+      profile: [`${US_CORE}/us-core-careplan`],
+    },
+    identifier: [{ system: SYSTEM_IDENTIFIERS.MBHR, value: cp.id }],
+    status: cp.status || "active",
+    intent: cp.intent || "plan",
+    category: cp.category
+      ? [
+          {
+            coding: [
+              {
+                system:
+                  "http://hl7.org/fhir/us/core/CodeSystem/careplan-category",
+                code: cp.category,
+              },
+            ],
+          },
+        ]
+      : undefined,
+    title: cp.title,
+    description: cp.description,
+    subject: {
+      reference: `Patient/${cp.patient_id}`,
+      display: patientName,
+    },
+    period:
+      cp.period_start || cp.period_end
+        ? { start: cp.period_start, end: cp.period_end }
+        : undefined,
+    author: cp.author_id
+      ? {
+          reference: `Practitioner/${cp.author_id}`,
+          display: cp.author_id,
+        }
+      : undefined,
+    addresses: addresses.length
+      ? addresses.map((id) => ({ reference: `Condition/${id}` }))
+      : undefined,
+    goal: goalIds.length
+      ? goalIds.map((id) => ({ reference: `Goal/${id}` }))
+      : undefined,
+  };
+}
+
+function mapGoalToFHIR(
+  g: Record<string, unknown>,
+  patientName?: string,
+) {
+  return {
+    resourceType: "Goal",
+    id: g.id,
+    meta: {
+      lastUpdated: g.updated_at || new Date().toISOString(),
+      source: "mBHR",
+      profile: [`${US_CORE}/us-core-goal`],
+    },
+    identifier: [{ system: SYSTEM_IDENTIFIERS.MBHR, value: g.id }],
+    lifecycleStatus: g.lifecycle_status || "active",
+    achievementStatus: g.achievement_status
+      ? {
+          coding: [
+            {
+              system:
+                "http://terminology.hl7.org/CodeSystem/goal-achievement",
+              code: g.achievement_status,
+            },
+          ],
+        }
+      : undefined,
+    category: g.category
+      ? [
+          {
+            coding: [
+              {
+                system:
+                  "http://terminology.hl7.org/CodeSystem/goal-category",
+                code: g.category,
+              },
+            ],
+          },
+        ]
+      : undefined,
+    description: { text: g.description },
+    subject: {
+      reference: `Patient/${g.patient_id}`,
+      display: patientName,
+    },
+    startDate: g.start_date,
+    target: g.target_date ? [{ dueDate: g.target_date }] : undefined,
+  };
+}
+
+function mapServiceRequestToFHIR(
+  sr: Record<string, unknown>,
+  patientName?: string,
+) {
+  return {
+    resourceType: "ServiceRequest",
+    id: sr.id,
+    meta: {
+      lastUpdated: sr.updated_at || new Date().toISOString(),
+      source: "mBHR",
+      profile: [`${US_CORE}/us-core-servicerequest`],
+    },
+    identifier: [{ system: SYSTEM_IDENTIFIERS.MBHR, value: sr.id }],
+    status: sr.status || "active",
+    intent: sr.intent || "order",
+    category: sr.category
+      ? [
+          {
+            coding: [
+              { system: SYSTEM_IDENTIFIERS.SNOMED, code: sr.category },
+            ],
+          },
+        ]
+      : undefined,
+    code: sr.code
+      ? {
+          coding: [
+            {
+              system:
+                (sr.code_system as string) || SYSTEM_IDENTIFIERS.SNOMED,
+              code: sr.code,
+              display: sr.display,
+            },
+          ],
+          text: sr.display,
+        }
+      : { text: sr.display },
+    subject: {
+      reference: `Patient/${sr.patient_id}`,
+      display: patientName,
+    },
+    encounter: sr.encounter_id
+      ? { reference: `Encounter/${sr.encounter_id}` }
+      : undefined,
+    occurrenceDateTime: sr.occurrence_at,
+    requester: sr.requester_id
+      ? {
+          reference: `Practitioner/${sr.requester_id}`,
+          display: sr.requester_id,
+        }
+      : undefined,
+    note: sr.notes ? [{ text: sr.notes }] : undefined,
+  };
+}
+
 function createCapabilityStatement(baseUrl: string) {
   return {
     resourceType: "CapabilityStatement",
@@ -692,6 +1184,86 @@ function createCapabilityStatement(baseUrl: string) {
               { name: "category", type: "token" },
             ],
           },
+          {
+            type: "AllergyIntolerance",
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "clinical-status", type: "token" },
+            ],
+          },
+          {
+            type: "MedicationDispense",
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "status", type: "token" },
+              { name: "whenhandedover", type: "date" },
+            ],
+          },
+          {
+            type: "DiagnosticReport",
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "category", type: "token" },
+              { name: "status", type: "token" },
+              { name: "date", type: "date" },
+            ],
+          },
+          {
+            type: "Procedure",
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "status", type: "token" },
+              { name: "date", type: "date" },
+            ],
+          },
+          {
+            type: "DocumentReference",
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "category", type: "token" },
+              { name: "status", type: "token" },
+              { name: "type", type: "token" },
+            ],
+          },
+          {
+            type: "CarePlan",
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "category", type: "token" },
+              { name: "status", type: "token" },
+            ],
+          },
+          {
+            type: "Goal",
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "lifecycle-status", type: "token" },
+            ],
+          },
+          {
+            type: "ServiceRequest",
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "status", type: "token" },
+              { name: "intent", type: "token" },
+            ],
+          },
         ],
       },
     ],
@@ -747,6 +1319,128 @@ async function verifyPatientConsent(
     .maybeSingle();
 
   return !!consent;
+}
+
+interface PatientScopedHandlerOptions {
+  resourceType: string;
+  table: string;
+  orderColumn: string;
+  filters?: Array<{
+    param: string;
+    column: string;
+    op?: "eq";
+  }>;
+  mapper: (row: Record<string, unknown>, patientName?: string) => unknown;
+}
+
+async function handlePatientScopedResource(
+  supabase: ReturnType<typeof createClient>,
+  url: URL,
+  baseUrl: string,
+  context: TEFCAContext,
+  startTime: number,
+  opts: PatientScopedHandlerOptions,
+): Promise<Response> {
+  const headers = { ...corsHeaders, "Content-Type": "application/fhir+json" };
+  const patientId = url.searchParams.get("patient")?.replace("Patient/", "");
+
+  if (!patientId) {
+    const outcome = createOperationOutcome(
+      "error",
+      "required",
+      `Patient parameter is required for ${opts.resourceType} queries`,
+    );
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [opts.resourceType],
+      0,
+      false,
+      "Missing patient parameter",
+      Date.now() - startTime,
+    );
+    return new Response(JSON.stringify(outcome), { status: 400, headers });
+  }
+
+  const hasConsent = await verifyPatientConsent(
+    supabase,
+    patientId,
+    context.exchangePurpose,
+  );
+  if (!hasConsent) {
+    const outcome = createOperationOutcome(
+      "error",
+      "forbidden",
+      "Patient has not consented to data sharing",
+    );
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [opts.resourceType],
+      0,
+      false,
+      "No consent",
+      Date.now() - startTime,
+      patientId,
+    );
+    return new Response(JSON.stringify(outcome), { status: 403, headers });
+  }
+
+  let query = supabase
+    .from(opts.table)
+    .select("*")
+    .eq("patient_id", patientId)
+    .order(opts.orderColumn, { ascending: false })
+    .limit(100);
+
+  for (const f of opts.filters || []) {
+    const v = url.searchParams.get(f.param);
+    if (v) query = query.eq(f.column, v);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    const outcome = createOperationOutcome(
+      "error",
+      "exception",
+      error.message,
+    );
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [opts.resourceType],
+      0,
+      false,
+      error.message,
+      Date.now() - startTime,
+      patientId,
+    );
+    return new Response(JSON.stringify(outcome), { status: 500, headers });
+  }
+
+  const { data: patient } = await supabase
+    .from("patients")
+    .select("name")
+    .eq("id", patientId)
+    .maybeSingle();
+  const patientName = (patient as { name?: string } | null)?.name;
+
+  const resources = (data || []).map((row: Record<string, unknown>) =>
+    opts.mapper(row, patientName),
+  );
+  const bundle = createBundle(resources, `${baseUrl}/${opts.resourceType}`);
+  await logTEFCAAccess(
+    supabase,
+    context,
+    [opts.resourceType],
+    resources.length,
+    true,
+    undefined,
+    Date.now() - startTime,
+    patientId,
+  );
+  return new Response(JSON.stringify(bundle), { headers });
 }
 
 Deno.serve(async (req: Request) => {
@@ -980,6 +1674,13 @@ Deno.serve(async (req: Request) => {
           immunizationsResult,
           conditionsResult,
           sdohResult,
+          allergiesResult,
+          proceduresResult,
+          docRefsResult,
+          carePlansResult,
+          goalsResult,
+          serviceRequestsResult,
+          labOrdersResult,
         ] = await Promise.all([
           supabase
             .from("patients")
@@ -1016,6 +1717,41 @@ Deno.serve(async (req: Request) => {
             .select("*")
             .eq("patient_id", actualPatientId)
             .order("effective_date", { ascending: false }),
+          supabase
+            .from("patient_allergies")
+            .select("*")
+            .eq("patient_id", actualPatientId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("procedures")
+            .select("*")
+            .eq("patient_id", actualPatientId)
+            .order("performed_at", { ascending: false }),
+          supabase
+            .from("document_references")
+            .select("*")
+            .eq("patient_id", actualPatientId)
+            .order("authored_at", { ascending: false }),
+          supabase
+            .from("care_plans")
+            .select("*")
+            .eq("patient_id", actualPatientId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("goals")
+            .select("*")
+            .eq("patient_id", actualPatientId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("service_requests")
+            .select("*")
+            .eq("patient_id", actualPatientId)
+            .order("occurrence_at", { ascending: false }),
+          supabase
+            .from("lab_orders")
+            .select("*")
+            .eq("patient_id", actualPatientId)
+            .order("ordered_at", { ascending: false }),
         ]);
 
         if (!patientResult.data) {
@@ -1052,6 +1788,7 @@ Deno.serve(async (req: Request) => {
         }
         for (const d of dispensesResult.data || []) {
           resources.push(mapMedicationToFHIR(d, patientName));
+          resources.push(mapMedicationDispenseToFHIR(d, patientName));
         }
         for (const visit of visitsResult.data || []) {
           resources.push(mapEncounterToFHIR(visit, patientName));
@@ -1064,6 +1801,47 @@ Deno.serve(async (req: Request) => {
         }
         for (const sdoh of sdohResult.data || []) {
           resources.push(mapSDOHToFHIR(sdoh, patientName));
+        }
+        for (const allergy of allergiesResult.data || []) {
+          resources.push(mapAllergyIntoleranceToFHIR(allergy, patientName));
+        }
+        for (const proc of proceduresResult.data || []) {
+          resources.push(mapProcedureToFHIR(proc, patientName));
+        }
+        for (const doc of docRefsResult.data || []) {
+          resources.push(mapDocumentReferenceToFHIR(doc, patientName));
+        }
+        for (const cp of carePlansResult.data || []) {
+          resources.push(mapCarePlanToFHIR(cp, patientName));
+        }
+        for (const goal of goalsResult.data || []) {
+          resources.push(mapGoalToFHIR(goal, patientName));
+        }
+        for (const sr of serviceRequestsResult.data || []) {
+          resources.push(mapServiceRequestToFHIR(sr, patientName));
+        }
+        if ((labOrdersResult.data || []).length > 0) {
+          const orderIds = (labOrdersResult.data as Record<string, unknown>[]).map(
+            (o) => o.id as string,
+          );
+          const { data: labResults } = await supabase
+            .from("lab_results")
+            .select("*")
+            .in("order_id", orderIds);
+          const resultsByOrder: Record<string, Record<string, unknown>[]> = {};
+          for (const r of labResults || []) {
+            const oid = r.order_id as string;
+            (resultsByOrder[oid] ||= []).push(r);
+          }
+          for (const order of labOrdersResult.data as Record<string, unknown>[]) {
+            resources.push(
+              mapDiagnosticReportToFHIR(
+                order,
+                resultsByOrder[order.id as string] || [],
+                patientName,
+              ),
+            );
+          }
         }
 
         const bundle = {
@@ -1080,9 +1858,17 @@ Deno.serve(async (req: Request) => {
             "Patient",
             "Observation",
             "MedicationRequest",
+            "MedicationDispense",
             "Encounter",
             "Immunization",
             "Condition",
+            "AllergyIntolerance",
+            "Procedure",
+            "DocumentReference",
+            "CarePlan",
+            "Goal",
+            "ServiceRequest",
+            "DiagnosticReport",
           ],
           resources.length,
           true,
@@ -1725,6 +2511,257 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify(bundle), {
         headers: { ...corsHeaders, "Content-Type": "application/fhir+json" },
       });
+    }
+
+    if (resourceType === "AllergyIntolerance") {
+      return await handlePatientScopedResource(
+        supabase,
+        url,
+        baseUrl,
+        context,
+        startTime,
+        {
+          resourceType: "AllergyIntolerance",
+          table: "patient_allergies",
+          orderColumn: "created_at",
+          filters: [
+            { param: "clinical-status", column: "is_active" },
+          ],
+          mapper: mapAllergyIntoleranceToFHIR,
+        },
+      );
+    }
+
+    if (resourceType === "MedicationDispense") {
+      return await handlePatientScopedResource(
+        supabase,
+        url,
+        baseUrl,
+        context,
+        startTime,
+        {
+          resourceType: "MedicationDispense",
+          table: "dispenses",
+          orderColumn: "when_handed_over",
+          filters: [{ param: "status", column: "dispense_status" }],
+          mapper: mapMedicationDispenseToFHIR,
+        },
+      );
+    }
+
+    if (resourceType === "DiagnosticReport") {
+      const headers = {
+        ...corsHeaders,
+        "Content-Type": "application/fhir+json",
+      };
+      const patientId = url.searchParams
+        .get("patient")
+        ?.replace("Patient/", "");
+
+      if (!patientId) {
+        const outcome = createOperationOutcome(
+          "error",
+          "required",
+          "Patient parameter is required for DiagnosticReport queries",
+        );
+        await logTEFCAAccess(
+          supabase,
+          context,
+          ["DiagnosticReport"],
+          0,
+          false,
+          "Missing patient parameter",
+          Date.now() - startTime,
+        );
+        return new Response(JSON.stringify(outcome), { status: 400, headers });
+      }
+
+      const hasConsent = await verifyPatientConsent(
+        supabase,
+        patientId,
+        exchangePurpose,
+      );
+      if (!hasConsent) {
+        const outcome = createOperationOutcome(
+          "error",
+          "forbidden",
+          "Patient has not consented to data sharing",
+        );
+        await logTEFCAAccess(
+          supabase,
+          context,
+          ["DiagnosticReport"],
+          0,
+          false,
+          "No consent",
+          Date.now() - startTime,
+          patientId,
+        );
+        return new Response(JSON.stringify(outcome), { status: 403, headers });
+      }
+
+      const { data: orders, error: ordersError } = await supabase
+        .from("lab_orders")
+        .select("*")
+        .eq("patient_id", patientId)
+        .order("ordered_at", { ascending: false })
+        .limit(100);
+
+      if (ordersError) {
+        const outcome = createOperationOutcome(
+          "error",
+          "exception",
+          ordersError.message,
+        );
+        await logTEFCAAccess(
+          supabase,
+          context,
+          ["DiagnosticReport"],
+          0,
+          false,
+          ordersError.message,
+          Date.now() - startTime,
+          patientId,
+        );
+        return new Response(JSON.stringify(outcome), { status: 500, headers });
+      }
+
+      const orderIds = (orders || []).map((o) => o.id as string);
+      const resultsByOrder: Record<string, Record<string, unknown>[]> = {};
+      if (orderIds.length > 0) {
+        const { data: results } = await supabase
+          .from("lab_results")
+          .select("*")
+          .in("order_id", orderIds);
+        for (const r of results || []) {
+          const oid = r.order_id as string;
+          (resultsByOrder[oid] ||= []).push(r);
+        }
+      }
+
+      const { data: patient } = await supabase
+        .from("patients")
+        .select("name")
+        .eq("id", patientId)
+        .maybeSingle();
+      const patientName = (patient as { name?: string } | null)?.name;
+
+      const reports = (orders || []).map((o) =>
+        mapDiagnosticReportToFHIR(
+          o as Record<string, unknown>,
+          resultsByOrder[(o as { id: string }).id] || [],
+          patientName,
+        ),
+      );
+      const bundle = createBundle(reports, `${baseUrl}/DiagnosticReport`);
+      await logTEFCAAccess(
+        supabase,
+        context,
+        ["DiagnosticReport"],
+        reports.length,
+        true,
+        undefined,
+        Date.now() - startTime,
+        patientId,
+      );
+      return new Response(JSON.stringify(bundle), { headers });
+    }
+
+    if (resourceType === "Procedure") {
+      return await handlePatientScopedResource(
+        supabase,
+        url,
+        baseUrl,
+        context,
+        startTime,
+        {
+          resourceType: "Procedure",
+          table: "procedures",
+          orderColumn: "performed_at",
+          filters: [{ param: "status", column: "status" }],
+          mapper: mapProcedureToFHIR,
+        },
+      );
+    }
+
+    if (resourceType === "DocumentReference") {
+      return await handlePatientScopedResource(
+        supabase,
+        url,
+        baseUrl,
+        context,
+        startTime,
+        {
+          resourceType: "DocumentReference",
+          table: "document_references",
+          orderColumn: "authored_at",
+          filters: [
+            { param: "status", column: "status" },
+            { param: "category", column: "category" },
+            { param: "type", column: "type_code" },
+          ],
+          mapper: mapDocumentReferenceToFHIR,
+        },
+      );
+    }
+
+    if (resourceType === "CarePlan") {
+      return await handlePatientScopedResource(
+        supabase,
+        url,
+        baseUrl,
+        context,
+        startTime,
+        {
+          resourceType: "CarePlan",
+          table: "care_plans",
+          orderColumn: "created_at",
+          filters: [
+            { param: "status", column: "status" },
+            { param: "category", column: "category" },
+          ],
+          mapper: mapCarePlanToFHIR,
+        },
+      );
+    }
+
+    if (resourceType === "Goal") {
+      return await handlePatientScopedResource(
+        supabase,
+        url,
+        baseUrl,
+        context,
+        startTime,
+        {
+          resourceType: "Goal",
+          table: "goals",
+          orderColumn: "created_at",
+          filters: [
+            { param: "lifecycle-status", column: "lifecycle_status" },
+          ],
+          mapper: mapGoalToFHIR,
+        },
+      );
+    }
+
+    if (resourceType === "ServiceRequest") {
+      return await handlePatientScopedResource(
+        supabase,
+        url,
+        baseUrl,
+        context,
+        startTime,
+        {
+          resourceType: "ServiceRequest",
+          table: "service_requests",
+          orderColumn: "occurrence_at",
+          filters: [
+            { param: "status", column: "status" },
+            { param: "intent", column: "intent" },
+          ],
+          mapper: mapServiceRequestToFHIR,
+        },
+      );
     }
 
     const outcome = createOperationOutcome(

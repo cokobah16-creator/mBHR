@@ -32,12 +32,17 @@ const defaultConfig: TEFCAConfig = {
     "Patient",
     "Observation",
     "MedicationRequest",
+    "MedicationDispense",
     "Encounter",
     "AllergyIntolerance",
     "Condition",
     "Procedure",
     "Immunization",
     "DiagnosticReport",
+    "DocumentReference",
+    "CarePlan",
+    "Goal",
+    "ServiceRequest",
   ],
   supportedExchangePurposes: [
     "individual-access",
@@ -116,7 +121,7 @@ export const TEFCA_ROADMAP = {
   },
   phase4: {
     name: "Advanced Interoperability",
-    status: "future",
+    status: "in-progress",
     features: [
       "Bulk FHIR export ($export operation)",
       "Subscription-based notifications",
@@ -127,20 +132,25 @@ export const TEFCA_ROADMAP = {
   },
 };
 
+export const US_CORE_VERSION = "7.0.0";
+const US_CORE_BASE = "http://hl7.org/fhir/us/core/StructureDefinition";
+
 export const FHIR_PROFILES = {
-  patient: "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient",
-  observation:
-    "http://hl7.org/fhir/us/core/StructureDefinition/us-core-vital-signs",
-  bloodPressure:
-    "http://hl7.org/fhir/us/core/StructureDefinition/us-core-blood-pressure",
-  medicationRequest:
-    "http://hl7.org/fhir/us/core/StructureDefinition/us-core-medicationrequest",
-  encounter:
-    "http://hl7.org/fhir/us/core/StructureDefinition/us-core-encounter",
-  allergyIntolerance:
-    "http://hl7.org/fhir/us/core/StructureDefinition/us-core-allergyintolerance",
-  condition:
-    "http://hl7.org/fhir/us/core/StructureDefinition/us-core-condition",
+  patient: `${US_CORE_BASE}/us-core-patient`,
+  observation: `${US_CORE_BASE}/us-core-vital-signs`,
+  bloodPressure: `${US_CORE_BASE}/us-core-blood-pressure`,
+  medicationRequest: `${US_CORE_BASE}/us-core-medicationrequest`,
+  medicationDispense: `${US_CORE_BASE}/us-core-medicationdispense`,
+  encounter: `${US_CORE_BASE}/us-core-encounter`,
+  allergyIntolerance: `${US_CORE_BASE}/us-core-allergyintolerance`,
+  condition: `${US_CORE_BASE}/us-core-condition-problems-health-concerns`,
+  immunization: `${US_CORE_BASE}/us-core-immunization`,
+  diagnosticReport: `${US_CORE_BASE}/us-core-diagnosticreport-lab`,
+  procedure: `${US_CORE_BASE}/us-core-procedure`,
+  documentReference: `${US_CORE_BASE}/us-core-documentreference`,
+  carePlan: `${US_CORE_BASE}/us-core-careplan`,
+  goal: `${US_CORE_BASE}/us-core-goal`,
+  serviceRequest: `${US_CORE_BASE}/us-core-servicerequest`,
 };
 
 export const TERMINOLOGY_SYSTEMS = {

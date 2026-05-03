@@ -11,9 +11,28 @@ import type {
   FHIRObservation,
   FHIRMedicationRequest,
   FHIREncounter,
-  FHIRResource,
-  FHIRCodeableConcept,
+  FHIRAllergyIntolerance,
+  FHIRCondition,
+  FHIRDiagnosticReport,
+  FHIRMedicationDispense,
+  FHIRProcedure,
+  FHIRDocumentReference,
+  FHIRCarePlan,
+  FHIRGoal,
+  FHIRServiceRequest,
 } from "./types";
+
+export type {
+  FHIRAllergyIntolerance,
+  FHIRCondition,
+  FHIRDiagnosticReport,
+  FHIRMedicationDispense,
+  FHIRProcedure,
+  FHIRDocumentReference,
+  FHIRCarePlan,
+  FHIRGoal,
+  FHIRServiceRequest,
+};
 
 const SYSTEM_IDENTIFIERS = {
   MBHR: "urn:oid:2.16.840.1.113883.3.9999.1",
@@ -49,63 +68,6 @@ const VITAL_LOINC_CODES: Record<
     ucum: "kg/m2",
   },
 };
-
-export interface FHIRAllergyIntolerance extends FHIRResource {
-  resourceType: "AllergyIntolerance";
-  clinicalStatus?: FHIRCodeableConcept;
-  verificationStatus?: FHIRCodeableConcept;
-  type?: "allergy" | "intolerance";
-  category?: ("food" | "medication" | "environment" | "biologic")[];
-  criticality?: "low" | "high" | "unable-to-assess";
-  code?: FHIRCodeableConcept;
-  patient: { reference: string; display?: string };
-  onsetDateTime?: string;
-  reaction?: Array<{
-    manifestation: FHIRCodeableConcept[];
-    severity?: "mild" | "moderate" | "severe";
-  }>;
-  note?: Array<{ text: string }>;
-}
-
-export interface FHIRCondition extends FHIRResource {
-  resourceType: "Condition";
-  clinicalStatus: FHIRCodeableConcept;
-  verificationStatus?: FHIRCodeableConcept;
-  category?: FHIRCodeableConcept[];
-  severity?: FHIRCodeableConcept;
-  code: FHIRCodeableConcept;
-  subject: { reference: string; display?: string };
-  onsetDateTime?: string;
-  recordedDate?: string;
-  note?: Array<{ text: string }>;
-}
-
-export interface FHIRDiagnosticReport extends FHIRResource {
-  resourceType: "DiagnosticReport";
-  status:
-    | "registered"
-    | "partial"
-    | "preliminary"
-    | "final"
-    | "amended"
-    | "corrected"
-    | "appended"
-    | "cancelled"
-    | "entered-in-error"
-    | "unknown";
-  category?: FHIRCodeableConcept[];
-  code: FHIRCodeableConcept;
-  subject: { reference: string; display?: string };
-  encounter?: { reference: string };
-  effectiveDateTime?: string;
-  issued?: string;
-  conclusion?: string;
-  presentedForm?: Array<{
-    contentType?: string;
-    data?: string;
-    title?: string;
-  }>;
-}
 
 export function adaptDexiePatient(patient: Patient): FHIRPatient {
   const lastUpdated =
