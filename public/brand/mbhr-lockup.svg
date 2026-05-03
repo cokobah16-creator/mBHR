@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 140" width="600" height="140">
+  
+  <rect x="10" y="10" width="120" height="120" rx="26" fill="#0A7A3B"></rect>
+  <path d="M32 95 L32 73 Q32 51 70 51 Q108 51 108 73 L108 95" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"></path>
+  <line x1="28" y1="95" x2="112" y2="95" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"></line>
+  <g transform="translate(70,80)">
+    <circle r="13" fill="#0A7A3B" stroke="#FFFFFF" stroke-width="3.5"></circle>
+    <rect x="-7" y="-2" width="14" height="4" rx="1" fill="#FFFFFF"></rect>
+    <rect x="-2" y="-7" width="4" height="14" rx="1" fill="#FFFFFF"></rect>
+  </g>
+  
+  <text x="158" y="68" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-weight="800" font-size="38" fill="#0F3D26" letter-spacing="-0.5">MedBridge</text>
+  <text x="158" y="108" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-weight="800" font-size="38" fill="#0F3D26" letter-spacing="-0.5">Health Reach</text>
+  
+  <line x1="488" y1="34" x2="488" y2="106" stroke="#D1D5DB" stroke-width="1.5"></line>
+  <rect x="500" y="42" width="64" height="26" rx="8" fill="#0A7A3B"></rect>
+  <text x="532" y="60" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="14" fill="#FFFFFF">mBHR</text>
+  <text x="500" y="92" font-family="system-ui,sans-serif" font-weight="500" font-size="14" fill="#4B5563">Bridging Care,</text>
+  <text x="500" y="108" font-family="system-ui,sans-serif" font-weight="500" font-size="14" fill="#4B5563">Reaching All.</text>
+</svg>

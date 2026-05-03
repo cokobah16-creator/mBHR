@@ -142,7 +142,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-white">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-green-50 via-white to-blue-50">
       <div className="w-full max-w-md">
         <Link
           to="/"
@@ -152,127 +152,153 @@ export default function Login() {
         </Link>
 
         <div className="text-center mb-6">
-          <div className="text-2xl font-semibold">Med Bridge Health Reach</div>
-          <div className="text-sm text-gray-500">
-            Powered by Dr. Isioma Okobah Foundation
+          <img
+            src="/brand/mbhr-mark.svg"
+            alt=""
+            aria-hidden
+            className="inline-block w-16 h-16 rounded-2xl mb-4"
+          />
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            MedBridge Health Reach
+          </h1>
+          <p className="text-sm text-gray-600 mt-1">
+            Bridging Care, Reaching All.
+          </p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-md border border-gray-100 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">
+            Staff Sign In
+          </h2>
+          <p className="text-sm text-gray-500 mb-5">
+            Healthcare personnel only.
+          </p>
+
+          <div className="flex mb-4 gap-2">
+            <button
+              type="button"
+              className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                mode === "offline"
+                  ? "bg-primary text-white border-primary"
+                  : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
+              }`}
+              onClick={() => {
+                console.log("[login] switching to offline mode");
+                setMode("offline");
+              }}
+            >
+              Offline PIN
+            </button>
+            <button
+              type="button"
+              className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                mode === "online"
+                  ? "bg-primary text-white border-primary"
+                  : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+              onClick={() => {
+                console.log("[login] switching to online mode");
+                setMode("online");
+              }}
+              disabled={!onlineAvailable}
+              title={onlineAvailable ? "" : "Online auth not configured"}
+            >
+              Online
+            </button>
           </div>
-        </div>
 
-        <div className="text-center mb-4">
-          <div className="text-sm font-medium text-gray-700">Staff Login</div>
-          <div className="text-xs text-gray-500">Healthcare personnel only</div>
-        </div>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {mode === "offline" && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-gray-900">PIN</label>
+                <input
+                  aria-label="PIN"
+                  inputMode="numeric"
+                  pattern="\d{6}"
+                  maxLength={6}
+                  value={pin}
+                  onChange={(e) => {
+                    const newPin = e.target.value
+                      .replace(/\D/g, "")
+                      .slice(0, 6);
+                    console.log("[login] PIN changed:", newPin);
+                    setPin(newPin);
+                  }}
+                  className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none transition focus:ring-2 focus:ring-primary focus:border-transparent"
+                  placeholder="Enter your 6-digit PIN"
+                  required
+                />
+                {attempts > 0 && (
+                  <span className="text-xs text-amber-600">
+                    Failed attempts: {attempts}/5
+                  </span>
+                )}
+              </div>
+            )}
 
-        <div className="flex mb-4 gap-2">
-          <button
-            type="button"
-            className={`flex-1 border rounded p-2 ${mode === "offline" ? "bg-emerald-50 border-emerald-600" : "border-gray-300"}`}
-            onClick={() => {
-              console.log("[login] switching to offline mode");
-              setMode("offline");
-            }}
-          >
-            Offline PIN
-          </button>
-          <button
-            type="button"
-            className={`flex-1 border rounded p-2 ${mode === "online" ? "bg-emerald-50 border-emerald-600" : "border-gray-300"}`}
-            onClick={() => {
-              console.log("[login] switching to online mode");
-              setMode("online");
-            }}
-            disabled={!onlineAvailable}
-            title={onlineAvailable ? "" : "Online auth not configured"}
-          >
-            Online
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {mode === "offline" && (
-            <>
-              <label className="block text-sm font-medium">PIN</label>
-              <input
-                aria-label="PIN"
-                inputMode="numeric"
-                pattern="\d{6}"
-                maxLength={6}
-                value={pin}
-                onChange={(e) => {
-                  const newPin = e.target.value.replace(/\D/g, "").slice(0, 6);
-                  console.log("[login] PIN changed:", newPin);
-                  setPin(newPin);
-                }}
-                className="w-full border rounded px-3 py-2"
-                placeholder="Enter your 6-digit PIN"
-                required
-              />
-              {attempts > 0 && (
-                <div className="text-xs text-amber-600">
-                  Failed attempts: {attempts}/5
+            {mode === "online" && (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-gray-900">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none transition focus:ring-2 focus:ring-primary focus:border-transparent"
+                    placeholder="staff@example.com"
+                    required
+                    autoComplete="email"
+                  />
                 </div>
-              )}
-            </>
-          )}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-gray-900">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none transition focus:ring-2 focus:ring-primary focus:border-transparent"
+                    placeholder="Your password"
+                    required
+                    autoComplete="current-password"
+                  />
+                </div>
+              </>
+            )}
 
-          {mode === "online" && (
-            <>
-              <div>
-                <label className="block text-sm font-medium">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full border rounded px-3 py-2 mt-1"
-                  placeholder="staff@example.com"
-                  required
-                  autoComplete="email"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium">Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full border rounded px-3 py-2 mt-1"
-                  placeholder="Your password"
-                  required
-                  autoComplete="current-password"
-                />
-              </div>
-            </>
-          )}
+            {err && <div className="text-sm text-red-600">{err}</div>}
 
-          {err && <div className="text-sm text-red-600">{err}</div>}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-emerald-700 text-white py-2 rounded hover:bg-emerald-800 disabled:opacity-50"
-          >
-            {loading ? "Logging in..." : "Login"}
-          </button>
-
-          {/* Utility buttons */}
-          <div className="flex items-center justify-between text-sm mt-4 pt-4 border-t">
             <button
-              type="button"
-              onClick={resetLocal}
-              className="text-red-600 hover:text-red-800 underline"
+              type="submit"
               disabled={loading}
+              className="w-full h-12 bg-primary text-white font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-primary"
             >
-              Reset local data
+              {loading ? "Signing in…" : "Sign In"}
             </button>
-            <button
-              type="button"
-              onClick={() => setShowDebug((s) => !s)}
-              className="text-blue-600 hover:text-blue-800 underline"
-            >
-              {showDebug ? "Hide" : "Show"} debug
-            </button>
-          </div>
-        </form>
+
+            {/* Utility buttons */}
+            <div className="flex items-center justify-between text-sm mt-2 pt-4 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={resetLocal}
+                className="text-red-600 hover:text-red-800 underline"
+                disabled={loading}
+              >
+                Reset local data
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDebug((s) => !s)}
+                className="text-blue-600 hover:text-blue-800 underline"
+              >
+                {showDebug ? "Hide" : "Show"} debug
+              </button>
+            </div>
+          </form>
+        </div>
 
         {/* Debug panel */}
         {showDebug && (

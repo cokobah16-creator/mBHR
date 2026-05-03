@@ -2,6 +2,52 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   mBHR Design System tokens — source of truth for brand colors,
+   spacing, radii, shadows, type. Mirrors Tailwind theme so
+   non-Tailwind contexts (raw CSS, SVG, third-party widgets) can
+   reference the same values.
+   ============================================================ */
+:root {
+  /* Brand (Nigerian flag DNA) */
+  --color-brand-green: #0a7a3b;
+  --color-brand-green-deep: #008753;
+  --color-brand-green-soft: #ecfdf5;
+  --color-brand-gold: #ffd700;
+  --color-brand-cream: #f2eee6;
+
+  /* Patient portal lead */
+  --color-portal-blue: #2563eb;
+  --color-portal-blue-deep: #1d4ed8;
+  --color-portal-blue-soft: #eff6ff;
+
+  /* Stage colors (queue) */
+  --color-stage-registration-bg: #eff6ff;
+  --color-stage-registration-border: #bfdbfe;
+  --color-stage-registration-fg: #1e40af;
+  --color-stage-vitals-bg: #f0fdf4;
+  --color-stage-vitals-border: #bbf7d0;
+  --color-stage-vitals-fg: #166534;
+  --color-stage-consult-bg: #faf5ff;
+  --color-stage-consult-border: #e9d5ff;
+  --color-stage-consult-fg: #6b21a8;
+  --color-stage-pharmacy-bg: #fff7ed;
+  --color-stage-pharmacy-border: #fed7aa;
+  --color-stage-pharmacy-fg: #9a3412;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* Touch targets */
+  --touch-target: 44px;
+  --touch-target-large: 64px;
+  --touch-target-simple: 80px;
+}
+
 /* Nigeria Loader animation keyframes */
 @keyframes nldr-spin {
   to {

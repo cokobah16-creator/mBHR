@@ -12,40 +12,76 @@ import {
 export function PatientPortalLanding() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
-      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3">
+      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-100 sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+          <Link to="/" className="flex items-center gap-2.5">
+            <img
+              src="/brand/mbhr-mark.svg"
+              alt=""
+              aria-hidden
+              className="w-9 h-9 rounded-xl"
+            />
+            <div className="text-left">
+              <div className="text-sm font-bold text-gray-900 leading-tight">
+                MedBridge Patient Portal
+              </div>
+              <div className="text-[10px] text-gray-500">
+                Bridging Care, Reaching All.
+              </div>
+            </div>
+          </Link>
           <Link
             to="/"
-            className="inline-flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors font-medium"
+            className="inline-flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors font-medium px-3 py-2 rounded-lg hover:bg-gray-100 text-sm"
           >
             <ArrowLeftIcon className="w-5 h-5" />
-            <span>Back to Home</span>
+            <span className="hidden sm:inline">Back to Home</span>
           </Link>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-12">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-            mBHR Patient Portal
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
+        <div className="text-center max-w-3xl mx-auto mb-12">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-green-100 text-green-800 text-xs font-medium mb-5">
+            <span className="w-2 h-2 rounded-full bg-green-600"></span>
+            Available in English, Hausa, Yoruba, Igbo, Pidgin
+          </div>
+          <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 leading-[1.1] tracking-tight mb-5">
+            Your health,
+            <br />
+            in your hands.
           </h1>
-          <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
+          <p className="text-lg text-gray-600 mb-8 max-w-2xl mx-auto leading-relaxed">
             Access your medical records, request appointments, and communicate
-            with your care team anytime, anywhere.
+            with your care team — anytime, anywhere. Works offline; syncs when
+            you reconnect.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              to="/patient/login"
-              className="inline-flex items-center justify-center px-8 py-4 bg-blue-600 text-white text-lg font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-lg hover:shadow-xl"
-            >
-              <DevicePhoneMobileIcon className="w-6 h-6 mr-2" />
-              Login to Portal
-            </Link>
+          <div className="flex flex-wrap gap-3 justify-center">
             <Link
               to="/patient/register"
-              className="inline-flex items-center justify-center px-8 py-4 bg-white text-blue-600 text-lg font-semibold rounded-xl hover:bg-gray-50 transition-colors border-2 border-blue-600 shadow-lg hover:shadow-xl"
+              className="inline-flex items-center justify-center gap-2 h-14 px-8 bg-[#0A7A3B] text-white text-lg font-semibold rounded-xl hover:bg-[#0a6e35] transition-colors shadow-lg hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0A7A3B]"
             >
-              Create Account
+              Create Free Account
+              <svg
+                className="w-5 h-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+                />
+              </svg>
+            </Link>
+            <Link
+              to="/patient/login"
+              className="inline-flex items-center justify-center gap-2 h-14 px-8 bg-white text-blue-600 text-lg font-semibold rounded-xl hover:bg-blue-50 transition-colors border-2 border-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-600"
+            >
+              <DevicePhoneMobileIcon className="w-6 h-6" />I already have an
+              account
             </Link>
           </div>
         </div>

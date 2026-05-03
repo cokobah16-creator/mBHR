@@ -7,13 +7,19 @@ export function Home() {
       <div className="container mx-auto px-4 py-8 md:py-16">
         <div className="text-center mb-12">
           <div className="flex justify-center mb-6">
-            <div className="bg-green-600 rounded-full p-4">
-              <HeartIcon className="h-16 w-16 text-white" />
-            </div>
+            <img
+              src="/brand/mbhr-mark.svg"
+              alt=""
+              aria-hidden
+              className="w-24 h-24 rounded-2xl"
+            />
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-            Med Bridge Health Reach
+          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-3 tracking-tight">
+            MedBridge Health Reach
           </h1>
+          <p className="text-base text-gray-500 mb-2">
+            Bridging Care, Reaching All.
+          </p>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             Offline-first medical outreach platform for Nigerian healthcare
           </p>

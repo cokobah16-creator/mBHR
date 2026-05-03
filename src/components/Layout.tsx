@@ -28,7 +28,6 @@ import {
   XMarkIcon,
   Bars3Icon,
   DocumentDuplicateIcon,
-  HeartIcon,
 } from "@heroicons/react/24/outline";
 
 // Pharmacy Overlay Component
@@ -338,16 +337,17 @@ export function Layout({ children }: LayoutProps) {
         >
           {/* Logo block — desktop only */}
           <div className="hidden md:flex items-center gap-3 px-5 pt-5 pb-4 border-b border-gray-100 shrink-0">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shrink-0">
-              <HeartIcon className="h-6 w-6 text-white" aria-hidden />
-            </div>
+            <img
+              src="/brand/mbhr-mark.svg"
+              alt=""
+              aria-hidden
+              className="w-10 h-10 rounded-xl shrink-0"
+            />
             <div>
               <div className="text-[15px] font-bold text-gray-900 leading-tight">
-                mBHR
+                MedBridge
               </div>
-              <div className="text-[11px] text-gray-500">
-                Med Bridge Health Reach
-              </div>
+              <div className="text-[11px] text-gray-500">Health Reach</div>
             </div>
           </div>
 
