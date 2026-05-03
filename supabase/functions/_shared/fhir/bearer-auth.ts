@@ -180,18 +180,23 @@ export async function resolveAuth(
 
 /**
  * Check whether the introspected scopes authorize an interaction on a given
- * FHIR resource type. Recognizes system/<Type>.read and the system/*.read
- * wildcard.
+ * FHIR resource type. Recognizes system/<Type>.<verb> and the system/*.<verb>
+ * wildcard, plus the patient/* equivalents.
+ *
+ * `verb` defaults to "read" so existing call sites (read-side dispatch) keep
+ * working without changes. Pass "write" from POST/PUT/DELETE handlers to
+ * gate write paths separately from reads.
  */
 export function scopeAllowsResource(
   scopes: string[],
   resourceType: string,
+  verb: "read" | "write" = "read",
 ): boolean {
   if (scopes.length === 0) return false;
-  if (scopes.includes("system/*.read")) return true;
-  if (scopes.includes(`system/${resourceType}.read`)) return true;
-  if (scopes.includes("patient/*.read")) return true;
-  if (scopes.includes(`patient/${resourceType}.read`)) return true;
+  if (scopes.includes(`system/*.${verb}`)) return true;
+  if (scopes.includes(`system/${resourceType}.${verb}`)) return true;
+  if (scopes.includes(`patient/*.${verb}`)) return true;
+  if (scopes.includes(`patient/${resourceType}.${verb}`)) return true;
   return false;
 }
 
