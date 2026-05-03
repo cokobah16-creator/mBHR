@@ -18,6 +18,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { logTEFCAAccess, verifyPatientConsent } from "./audit.ts";
+import { resolveAuth, scopeAllowsResource } from "./bearer-auth.ts";
 import { createCapabilityStatement } from "./capability.ts";
 import {
   loadResourceHistory,
@@ -40,7 +41,6 @@ import {
   errorResponse,
   fhirJsonHeaders,
   fhirJsonResponse,
-  type ExchangePurpose,
   type TEFCAContext,
   VALID_EXCHANGE_PURPOSES,
 } from "./shared.ts";
@@ -1086,21 +1086,41 @@ Deno.serve(async (req: Request) => {
   const fhirPath = pathParts.slice(functionIndex + 1);
   const baseUrl = `${supabaseUrl}/functions/v1/tefca-ias`;
 
-  const qhinId = req.headers.get("X-QHIN-ID") || "unknown";
-  const exchangePurpose = (req.headers.get("X-Exchange-Purpose") ||
-    "individual-access") as ExchangePurpose;
-  const requestingOrg = req.headers.get("X-Requesting-Organization") || qhinId;
-  const ipAddress =
-    req.headers.get("x-forwarded-for") ||
-    req.headers.get("cf-connecting-ip") ||
-    "unknown";
+  const auth = await resolveAuth(supabase, req);
+  const { context } = auth;
+  const exchangePurpose = context.exchangePurpose;
 
-  const context: TEFCAContext = {
-    qhinId,
-    exchangePurpose,
-    requestingOrganization: requestingOrg,
-    ipAddress,
-  };
+  // Apply Deprecation / Sunset headers for any response when the caller is
+  // still using the legacy X-QHIN-ID auth path.
+  const deprecationHeaders = auth.deprecationHeaders;
+
+  if (auth.unauthorized) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [],
+      0,
+      false,
+      auth.unauthorizedReason ?? "unauthorized",
+      Date.now() - startTime,
+    );
+    return new Response(
+      JSON.stringify(
+        createOperationOutcome(
+          "error",
+          "login",
+          auth.unauthorizedReason ?? "Authorization required",
+        ),
+      ),
+      {
+        status: 401,
+        headers: {
+          ...fhirJsonHeaders,
+          "WWW-Authenticate": 'Bearer realm="tefca-ias", error="invalid_token"',
+        },
+      },
+    );
+  }
 
   if (!VALID_EXCHANGE_PURPOSES.includes(exchangePurpose)) {
     await logTEFCAAccess(
@@ -1124,201 +1144,243 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  try {
-    // /metadata - CapabilityStatement
-    if (fhirPath.length === 0 || fhirPath[0] === "metadata") {
-      await logTEFCAAccess(
-        supabase,
-        context,
-        ["CapabilityStatement"],
-        1,
-        true,
-        undefined,
-        Date.now() - startTime,
-      );
-      return fhirJsonResponse(createCapabilityStatement(baseUrl));
-    }
+  const dispatchResp: Response = await (async (): Promise<Response> => {
+    try {
+      // /metadata - CapabilityStatement
+      if (fhirPath.length === 0 || fhirPath[0] === "metadata") {
+        await logTEFCAAccess(
+          supabase,
+          context,
+          ["CapabilityStatement"],
+          1,
+          true,
+          undefined,
+          Date.now() - startTime,
+        );
+        return fhirJsonResponse(createCapabilityStatement(baseUrl));
+      }
 
-    const resourceType = fhirPath[0];
-    const resourceId = fhirPath[1];
+      const resourceType = fhirPath[0];
+      const resourceId = fhirPath[1];
 
-    // Patient/$match (TEFCA Patient Discovery) — POST with FHIR Parameters
-    if (resourceType === "Patient" && resourceId === "$match") {
-      return await handlePatientMatch(
-        supabase,
-        req,
-        baseUrl,
-        context,
-        startTime,
-      );
-    }
-
-    // _history-instance and vread — generic across any registry resource that
-    // advertises the interaction.
-    if (resourceId && fhirPath[2] === "_history") {
-      const cfg = getResourceConfig(resourceType);
-      if (!cfg) {
+      // SMART scope enforcement for bearer-authed callers. Legacy X-QHIN-ID
+      // callers retain unrestricted access during the deprecation window
+      // (see bearer-auth.ts:legacySunsetDate). TODO Phase C-1.1: emit
+      // Deprecation/Sunset/Warning headers on every response from a legacy
+      // caller — currently only this comment carries the contract.
+      if (!auth.isLegacy && !scopeAllowsResource(auth.scopes, resourceType)) {
         await logTEFCAAccess(
           supabase,
           context,
           [resourceType],
           0,
           false,
-          "Unsupported resource type for history",
+          `scope does not authorize ${resourceType}`,
           Date.now() - startTime,
         );
-        return errorResponse(
-          "error",
-          "not-supported",
-          `Resource type ${resourceType} is not supported`,
-          400,
+        return new Response(
+          JSON.stringify(
+            createOperationOutcome(
+              "error",
+              "forbidden",
+              `Access token scope does not authorize ${resourceType}`,
+            ),
+          ),
+          {
+            status: 403,
+            headers: {
+              ...fhirJsonHeaders,
+              "WWW-Authenticate": `Bearer realm="tefca-ias", error="insufficient_scope", scope="system/${resourceType}.read"`,
+            },
+          },
         );
       }
-      const versionId = fhirPath[3];
-      if (versionId) {
-        return await handleVread(
-          supabase,
-          cfg,
-          resourceId,
-          versionId,
-          context,
-          startTime,
-        );
-      }
-      return await handleResourceHistory(
-        supabase,
-        cfg,
-        resourceId,
-        baseUrl,
-        context,
-        startTime,
-      );
-    }
 
-    // Patient: read by id, $everything, search
-    if (resourceType === "Patient") {
-      // /Patient/{id}/$everything
-      const everythingMatch = url.pathname.match(
-        /Patient\/([^/]+)\/\$everything/,
-      );
-      if (everythingMatch) {
-        return await handlePatientEverything(
+      // Patient/$match (TEFCA Patient Discovery) — POST with FHIR Parameters
+      if (resourceType === "Patient" && resourceId === "$match") {
+        return await handlePatientMatch(
           supabase,
-          everythingMatch[1],
+          req,
+          baseUrl,
           context,
           startTime,
         );
       }
 
-      if (resourceId && resourceId !== "$everything") {
-        return await handlePatientRead(
-          supabase,
-          resourceId,
-          context,
-          startTime,
-        );
-      }
-
-      if (resourceId === "$everything") {
-        const everythingPatientId = url.searchParams
-          .get("patient")
-          ?.replace("Patient/", "");
-        if (!everythingPatientId) {
+      // _history-instance and vread — generic across any registry resource that
+      // advertises the interaction.
+      if (resourceId && fhirPath[2] === "_history") {
+        const cfg = getResourceConfig(resourceType);
+        if (!cfg) {
           await logTEFCAAccess(
             supabase,
             context,
-            ["$everything"],
+            [resourceType],
             0,
             false,
-            "Missing patient ID",
+            "Unsupported resource type for history",
             Date.now() - startTime,
           );
           return errorResponse(
             "error",
-            "required",
-            "Patient ID is required for $everything operation",
+            "not-supported",
+            `Resource type ${resourceType} is not supported`,
             400,
           );
         }
-        return await handlePatientEverything(
+        const versionId = fhirPath[3];
+        if (versionId) {
+          return await handleVread(
+            supabase,
+            cfg,
+            resourceId,
+            versionId,
+            context,
+            startTime,
+          );
+        }
+        return await handleResourceHistory(
           supabase,
-          everythingPatientId,
+          cfg,
+          resourceId,
+          baseUrl,
           context,
           startTime,
         );
       }
 
-      return await handlePatientSearch(
+      // Patient: read by id, $everything, search
+      if (resourceType === "Patient") {
+        // /Patient/{id}/$everything
+        const everythingMatch = url.pathname.match(
+          /Patient\/([^/]+)\/\$everything/,
+        );
+        if (everythingMatch) {
+          return await handlePatientEverything(
+            supabase,
+            everythingMatch[1],
+            context,
+            startTime,
+          );
+        }
+
+        if (resourceId && resourceId !== "$everything") {
+          return await handlePatientRead(
+            supabase,
+            resourceId,
+            context,
+            startTime,
+          );
+        }
+
+        if (resourceId === "$everything") {
+          const everythingPatientId = url.searchParams
+            .get("patient")
+            ?.replace("Patient/", "");
+          if (!everythingPatientId) {
+            await logTEFCAAccess(
+              supabase,
+              context,
+              ["$everything"],
+              0,
+              false,
+              "Missing patient ID",
+              Date.now() - startTime,
+            );
+            return errorResponse(
+              "error",
+              "required",
+              "Patient ID is required for $everything operation",
+              400,
+            );
+          }
+          return await handlePatientEverything(
+            supabase,
+            everythingPatientId,
+            context,
+            startTime,
+          );
+        }
+
+        return await handlePatientSearch(
+          supabase,
+          url,
+          baseUrl,
+          context,
+          startTime,
+        );
+      }
+
+      if (resourceType === "Observation") {
+        return await handleObservationSearch(
+          supabase,
+          url,
+          baseUrl,
+          context,
+          startTime,
+        );
+      }
+
+      if (resourceType === "DiagnosticReport") {
+        return await handleDiagnosticReportSearch(
+          supabase,
+          url,
+          baseUrl,
+          context,
+          startTime,
+        );
+      }
+
+      // Registry-driven generic dispatch for the remaining 11 resources
+      const config = getResourceConfig(resourceType);
+      if (config && !config.customHandler) {
+        return await handleGenericPatientScoped(
+          supabase,
+          url,
+          baseUrl,
+          context,
+          startTime,
+          config,
+        );
+      }
+
+      await logTEFCAAccess(
         supabase,
-        url,
-        baseUrl,
         context,
-        startTime,
+        [resourceType],
+        0,
+        false,
+        "Unsupported resource type",
+        Date.now() - startTime,
+      );
+      return errorResponse(
+        "error",
+        "not-supported",
+        `Resource type ${resourceType} is not supported`,
+        400,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      await logTEFCAAccess(
+        supabase,
+        context,
+        [],
+        0,
+        false,
+        message,
+        Date.now() - startTime,
+      );
+      return new Response(
+        JSON.stringify(createOperationOutcome("fatal", "exception", message)),
+        { status: 500, headers: fhirJsonHeaders },
       );
     }
+  })();
 
-    if (resourceType === "Observation") {
-      return await handleObservationSearch(
-        supabase,
-        url,
-        baseUrl,
-        context,
-        startTime,
-      );
+  if (deprecationHeaders) {
+    for (const [k, v] of Object.entries(deprecationHeaders)) {
+      dispatchResp.headers.set(k, v);
     }
-
-    if (resourceType === "DiagnosticReport") {
-      return await handleDiagnosticReportSearch(
-        supabase,
-        url,
-        baseUrl,
-        context,
-        startTime,
-      );
-    }
-
-    // Registry-driven generic dispatch for the remaining 11 resources
-    const config = getResourceConfig(resourceType);
-    if (config && !config.customHandler) {
-      return await handleGenericPatientScoped(
-        supabase,
-        url,
-        baseUrl,
-        context,
-        startTime,
-        config,
-      );
-    }
-
-    await logTEFCAAccess(
-      supabase,
-      context,
-      [resourceType],
-      0,
-      false,
-      "Unsupported resource type",
-      Date.now() - startTime,
-    );
-    return errorResponse(
-      "error",
-      "not-supported",
-      `Resource type ${resourceType} is not supported`,
-      400,
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    await logTEFCAAccess(
-      supabase,
-      context,
-      [],
-      0,
-      false,
-      message,
-      Date.now() - startTime,
-    );
-    return new Response(
-      JSON.stringify(createOperationOutcome("fatal", "exception", message)),
-      { status: 500, headers: fhirJsonHeaders },
-    );
   }
+  return dispatchResp;
 });
