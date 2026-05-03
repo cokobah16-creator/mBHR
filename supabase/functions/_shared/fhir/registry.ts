@@ -131,7 +131,10 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-medicationdispense`,
     table: "dispenses",
     orderColumn: "when_handed_over",
-    interactions: baseInteractions,
+    // Phase B-3: dispenses has a snapshot trigger; the same row backs both
+    // MedicationRequest and MedicationDispense and history.ts re-runs the
+    // mapper at vread time per resource type.
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -145,7 +148,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-encounter`,
     table: "visits",
     orderColumn: "created_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -158,7 +161,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-immunization`,
     table: "immunizations",
     orderColumn: "administered_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -217,7 +220,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-procedure`,
     table: "procedures",
     orderColumn: "performed_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -231,7 +234,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-documentreference`,
     table: "document_references",
     orderColumn: "authored_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
@@ -277,7 +280,7 @@ export const RESOURCE_REGISTRY: ResourceConfig[] = [
     profile: `${US_CORE}/us-core-servicerequest`,
     table: "service_requests",
     orderColumn: "occurrence_at",
-    interactions: baseInteractions,
+    interactions: versionedInteractions,
     searchParams: [
       { name: "_id", type: "token" },
       { name: "patient", type: "reference" },
