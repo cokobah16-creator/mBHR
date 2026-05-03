@@ -20,6 +20,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { logTEFCAAccess, verifyPatientConsent } from "./audit.ts";
 import { resolveAuth, scopeAllowsResource } from "./bearer-auth.ts";
 import { createCapabilityStatement } from "./capability.ts";
+import { validateResponseClone } from "./validation.ts";
 import {
   loadResourceHistory,
   loadResourceVersion,
@@ -1382,5 +1383,44 @@ Deno.serve(async (req: Request) => {
       dispatchResp.headers.set(k, v);
     }
   }
+
+  // Phase D-1: SOFT-WARNING US Core 7.0 validation. We never replace the
+  // response body — even on validation failures we serve the original — but
+  // we tag the response and append a compact issue summary to the most
+  // recent tefca_access_logs row so mapper regressions are observable.
+  try {
+    const validation = await validateResponseClone(dispatchResp);
+    if (validation && !validation.allValid) {
+      dispatchResp.headers.set(
+        "X-mBHR-Validation",
+        `failed; ${validation.count} resources, see tefca_access_logs`,
+      );
+      // Best-effort tagging on the latest log row for this request — we
+      // logged 'success' inside the dispatch already. Update the most-recent
+      // row for this client+timestamp window with the validation summary.
+      // No await because failures here must not affect the response.
+      void supabase
+        .from("tefca_access_logs")
+        .update({
+          error_message: `validation_warning: ${validation.errorMessage ?? "issues present"}`,
+        })
+        .match({
+          qhin_id: context.qhinId,
+          requesting_organization: context.requestingOrganization,
+          success: true,
+        })
+        .order("created_at", { ascending: false })
+        .limit(1);
+    } else if (validation) {
+      dispatchResp.headers.set(
+        "X-mBHR-Validation",
+        `passed; ${validation.count} resources`,
+      );
+    }
+  } catch {
+    // Validation must never break the response. Failures here are
+    // diagnostic-only and we'd rather miss a warning than surface a 500.
+  }
+
   return dispatchResp;
 });
