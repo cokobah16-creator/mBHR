@@ -159,3 +159,51 @@ export async function markMessageRead(messageId: string) {
 
   if (error) throw error;
 }
+
+export async function archivePatientThread(patientId: string) {
+  if (!supabase) {
+    throw new Error("Secure messaging is unavailable while offline.");
+  }
+  const { error } = await supabase
+    .from("patient_secure_messages")
+    .update({ is_archived: true })
+    .eq("patient_id", patientId);
+
+  if (error) throw error;
+}
+
+export async function deletePatientThread(patientId: string) {
+  if (!supabase) {
+    throw new Error("Secure messaging is unavailable while offline.");
+  }
+  const { error } = await supabase
+    .from("patient_secure_messages")
+    .delete()
+    .eq("patient_id", patientId);
+
+  if (error) throw error;
+}
+
+export async function archiveSecureMessage(messageId: string) {
+  if (!supabase) {
+    throw new Error("Secure messaging is unavailable while offline.");
+  }
+  const { error } = await supabase
+    .from("patient_secure_messages")
+    .update({ is_archived: true })
+    .eq("id", messageId);
+
+  if (error) throw error;
+}
+
+export async function deleteSecureMessage(messageId: string) {
+  if (!supabase) {
+    throw new Error("Secure messaging is unavailable while offline.");
+  }
+  const { error } = await supabase
+    .from("patient_secure_messages")
+    .delete()
+    .eq("id", messageId);
+
+  if (error) throw error;
+}

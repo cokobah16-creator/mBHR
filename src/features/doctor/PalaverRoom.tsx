@@ -21,6 +21,8 @@ import {
   ArrowLeftIcon,
   UserCircleIcon,
   ClockIcon,
+  TrashIcon,
+  ArchiveBoxIcon,
 } from "@heroicons/react/24/outline";
 
 type ViewMode = "inbox" | "sent" | "compose" | "broadcast" | "conversation";
@@ -251,6 +253,100 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
     setViewMode("compose");
   };
 
+  const handleArchiveMessage = async (
+    message: PalaverMessage,
+    e?: React.MouseEvent,
+  ) => {
+    e?.stopPropagation();
+    if (!window.confirm(`Archive "${message.subject}"?`)) return;
+    try {
+      await palaverRoom.archiveMessage(message.id);
+      if (selectedMessage?.id === message.id) {
+        setSelectedMessage(null);
+        setConversationMessages([]);
+        setViewMode("inbox");
+      }
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to archive message",
+      );
+    }
+  };
+
+  const handleDeleteMessage = async (
+    message: PalaverMessage,
+    e?: React.MouseEvent,
+  ) => {
+    e?.stopPropagation();
+    if (
+      !window.confirm(
+        `Permanently delete "${message.subject}"? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await palaverRoom.deleteMessage(message.id);
+      if (selectedMessage?.id === message.id) {
+        setSelectedMessage(null);
+        setConversationMessages([]);
+        setViewMode("inbox");
+      }
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete message");
+    }
+  };
+
+  const handleArchiveConversation = async () => {
+    if (!selectedMessage || !currentUser) return;
+    const otherUserId =
+      selectedMessage.sender_id === currentUser.id
+        ? selectedMessage.recipient_id
+        : selectedMessage.sender_id;
+    const otherName =
+      selectedMessage.sender_id === currentUser.id
+        ? selectedMessage.recipient_name
+        : selectedMessage.sender_name;
+    if (
+      !window.confirm(
+        `Archive the entire conversation with ${otherName}? It will be hidden from your inbox.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await palaverRoom.archiveConversation(currentUser.id, otherUserId);
+      setSelectedMessage(null);
+      setConversationMessages([]);
+      setViewMode("inbox");
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to archive conversation",
+      );
+    }
+  };
+
+  const handleDismissBroadcast = async (broadcast: PalaverBroadcast) => {
+    if (
+      !window.confirm(
+        `Dismiss the announcement "${broadcast.subject}"? It will be removed for everyone.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await palaverRoom.deleteBroadcast(broadcast.id);
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to dismiss announcement",
+      );
+    }
+  };
+
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
     const now = new Date();
@@ -418,7 +514,7 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
                           key={broadcast.id}
                           className="p-3 bg-amber-50 border border-amber-200 rounded-lg"
                         >
-                          <div className="flex items-start justify-between">
+                          <div className="flex items-start justify-between gap-2">
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-1">
                                 {getPriorityIcon(broadcast.priority)}
@@ -435,6 +531,18 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
                                 {formatTime(broadcast.created_at)}
                               </p>
                             </div>
+                            {broadcast.sender_id === currentUser?.id && (
+                              <button
+                                onClick={() =>
+                                  handleDismissBroadcast(broadcast)
+                                }
+                                className="p-1.5 text-amber-700 hover:text-white hover:bg-amber-700 rounded-md transition-colors flex-shrink-0"
+                                title="Dismiss this announcement for everyone"
+                                aria-label={`Dismiss announcement ${broadcast.subject}`}
+                              >
+                                <XMarkIcon className="h-4 w-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -458,45 +566,67 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
                 ) : (
                   <div className="space-y-2">
                     {messages.map((message) => (
-                      <button
+                      <div
                         key={message.id}
-                        onClick={() => handleOpenMessage(message)}
-                        className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                        className={`group relative rounded-lg border transition-colors ${
                           message.is_read
                             ? "bg-white border-gray-200 hover:bg-gray-50"
                             : "bg-emerald-50 border-emerald-200 hover:bg-emerald-100"
                         }`}
                       >
-                        <div className="flex items-start gap-3">
-                          <UserCircleIcon className="h-10 w-10 text-gray-400 flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between mb-1">
-                              <span
-                                className={`font-medium ${!message.is_read ? "text-gray-900" : "text-gray-700"}`}
-                              >
-                                {message.sender_name}
-                              </span>
-                              <div className="flex items-center gap-2">
-                                {getPriorityIcon(message.priority)}
-                                <span className="text-xs text-gray-500">
-                                  {formatTime(message.created_at)}
+                        <button
+                          onClick={() => handleOpenMessage(message)}
+                          className="w-full text-left p-3"
+                        >
+                          <div className="flex items-start gap-3">
+                            <UserCircleIcon className="h-10 w-10 text-gray-400 flex-shrink-0" />
+                            <div className="flex-1 min-w-0 pr-16">
+                              <div className="flex items-center justify-between mb-1">
+                                <span
+                                  className={`font-medium ${!message.is_read ? "text-gray-900" : "text-gray-700"}`}
+                                >
+                                  {message.sender_name}
                                 </span>
+                                <div className="flex items-center gap-2">
+                                  {getPriorityIcon(message.priority)}
+                                  <span className="text-xs text-gray-500">
+                                    {formatTime(message.created_at)}
+                                  </span>
+                                </div>
                               </div>
+                              <p
+                                className={`text-sm ${!message.is_read ? "font-medium text-gray-900" : "text-gray-700"}`}
+                              >
+                                {message.subject}
+                              </p>
+                              <p className="text-sm text-gray-500 truncate">
+                                {message.body}
+                              </p>
                             </div>
-                            <p
-                              className={`text-sm ${!message.is_read ? "font-medium text-gray-900" : "text-gray-700"}`}
-                            >
-                              {message.subject}
-                            </p>
-                            <p className="text-sm text-gray-500 truncate">
-                              {message.body}
-                            </p>
+                            {!message.is_read && (
+                              <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 mt-2"></div>
+                            )}
                           </div>
-                          {!message.is_read && (
-                            <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 mt-2"></div>
-                          )}
+                        </button>
+                        <div className="absolute right-2 bottom-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => handleArchiveMessage(message, e)}
+                            className="p-1.5 text-gray-500 hover:text-gray-900 hover:bg-white rounded-md border border-transparent hover:border-gray-200"
+                            title="Archive message"
+                            aria-label={`Archive message ${message.subject}`}
+                          >
+                            <ArchiveBoxIcon className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteMessage(message, e)}
+                            className="p-1.5 text-red-500 hover:text-white hover:bg-red-600 rounded-md border border-transparent hover:border-red-600"
+                            title="Delete message"
+                            aria-label={`Delete message ${message.subject}`}
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                          </button>
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -731,16 +861,34 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
             {/* Conversation View */}
             {viewMode === "conversation" && selectedMessage && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-gray-900">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-lg font-semibold text-gray-900 truncate">
                     {selectedMessage.subject}
                   </h3>
-                  <button
-                    onClick={handleReply}
-                    className="px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors"
-                  >
-                    Reply
-                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={handleReply}
+                      className="px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors"
+                    >
+                      Reply
+                    </button>
+                    <button
+                      onClick={handleArchiveConversation}
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                      title="Archive entire conversation"
+                    >
+                      <ArchiveBoxIcon className="h-4 w-4" />
+                      Archive
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteMessage(selectedMessage, e)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-sm text-red-600 hover:text-white border border-red-300 rounded-lg hover:bg-red-600 transition-colors"
+                      title="Delete this message"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                      Delete
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-3">

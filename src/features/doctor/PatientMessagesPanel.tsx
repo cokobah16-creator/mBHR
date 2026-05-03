@@ -11,7 +11,13 @@ import {
   ExclamationTriangleIcon,
   PencilSquareIcon,
   MagnifyingGlassIcon,
+  TrashIcon,
+  ArchiveBoxIcon,
 } from "@heroicons/react/24/outline";
+import {
+  archivePatientThread,
+  deletePatientThread,
+} from "@/services/patientSecureMessaging";
 
 interface PatientMessage {
   id: string;
@@ -87,6 +93,7 @@ export function PatientMessagesPanel({
       const { data, error: fetchError } = await supabase
         .from("patient_secure_messages")
         .select("*")
+        .eq("is_archived", false)
         .order("created_at", { ascending: false });
 
       if (fetchError) throw fetchError;
@@ -282,6 +289,47 @@ export function PatientMessagesPanel({
     setComposeSubject("");
     setComposeBody("");
     setError("");
+  };
+
+  const handleArchiveThread = async (
+    patientId: string,
+    patientName: string,
+  ) => {
+    if (
+      !window.confirm(
+        `Archive the conversation with ${patientName}? It will be hidden from the inbox but kept in the patient's record.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await archivePatientThread(patientId);
+      if (selectedPatientId === patientId) goToInbox();
+      await loadMessages();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to archive conversation",
+      );
+    }
+  };
+
+  const handleDeleteThread = async (patientId: string, patientName: string) => {
+    if (
+      !window.confirm(
+        `Permanently delete the entire conversation with ${patientName}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deletePatientThread(patientId);
+      if (selectedPatientId === patientId) goToInbox();
+      await loadMessages();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to delete conversation",
+      );
+    }
   };
 
   const selectedThread =
@@ -480,6 +528,34 @@ export function PatientMessagesPanel({
         ) : viewMode === "conversation" && selectedThread ? (
           /* Conversation view */
           <div className="flex flex-col flex-1">
+            <div className="flex items-center justify-end gap-2 mb-3">
+              <button
+                onClick={() =>
+                  handleArchiveThread(
+                    selectedThread.patient_id,
+                    selectedThread.patient_name,
+                  )
+                }
+                className="flex items-center gap-1 px-2.5 py-1 text-xs text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                title="Archive conversation"
+              >
+                <ArchiveBoxIcon className="h-4 w-4" />
+                Archive
+              </button>
+              <button
+                onClick={() =>
+                  handleDeleteThread(
+                    selectedThread.patient_id,
+                    selectedThread.patient_name,
+                  )
+                }
+                className="flex items-center gap-1 px-2.5 py-1 text-xs text-red-600 hover:text-white border border-red-300 rounded-lg hover:bg-red-600 transition-colors"
+                title="Permanently delete conversation"
+              >
+                <TrashIcon className="h-4 w-4" />
+                Delete
+              </button>
+            </div>
             <div className="flex-1 space-y-3 mb-4">
               {selectedThread.messages.map((msg) => (
                 <div
@@ -552,42 +628,76 @@ export function PatientMessagesPanel({
           /* Thread list */
           <div className="space-y-2">
             {threads.map((thread) => (
-              <button
+              <div
                 key={thread.patient_id}
-                onClick={() => openThread(thread)}
-                className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                className={`group relative rounded-lg border transition-colors ${
                   thread.unread_count > 0
                     ? "bg-blue-50 border-blue-200 hover:bg-blue-100"
                     : "bg-white border-gray-200 hover:bg-gray-50"
                 }`}
               >
-                <div className="flex items-start gap-3">
-                  <UserCircleIcon className="h-10 w-10 text-gray-400 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span
-                        className={`font-medium text-sm ${thread.unread_count > 0 ? "text-gray-900" : "text-gray-700"}`}
-                      >
-                        {thread.patient_name}
-                      </span>
-                      <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
-                        {formatNigerianDate(thread.latest_message.created_at)}
-                      </span>
+                <button
+                  onClick={() => openThread(thread)}
+                  className="w-full text-left p-3"
+                >
+                  <div className="flex items-start gap-3">
+                    <UserCircleIcon className="h-10 w-10 text-gray-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0 pr-16">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span
+                          className={`font-medium text-sm ${thread.unread_count > 0 ? "text-gray-900" : "text-gray-700"}`}
+                        >
+                          {thread.patient_name}
+                        </span>
+                        <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
+                          {formatNigerianDate(thread.latest_message.created_at)}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-600 truncate">
+                        {thread.latest_message.subject}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {thread.latest_message.body}
+                      </p>
                     </div>
-                    <p className="text-sm text-gray-600 truncate">
-                      {thread.latest_message.subject}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {thread.latest_message.body}
-                    </p>
+                    {thread.unread_count > 0 && (
+                      <span className="px-1.5 py-0.5 bg-blue-600 text-white text-xs font-bold rounded-full flex-shrink-0 mt-1">
+                        {thread.unread_count}
+                      </span>
+                    )}
                   </div>
-                  {thread.unread_count > 0 && (
-                    <span className="px-1.5 py-0.5 bg-blue-600 text-white text-xs font-bold rounded-full flex-shrink-0 mt-1">
-                      {thread.unread_count}
-                    </span>
-                  )}
+                </button>
+                <div className="absolute right-2 bottom-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleArchiveThread(
+                        thread.patient_id,
+                        thread.patient_name,
+                      );
+                    }}
+                    className="p-1.5 text-gray-500 hover:text-gray-900 hover:bg-white rounded-md border border-transparent hover:border-gray-200"
+                    title="Archive conversation"
+                    aria-label={`Archive conversation with ${thread.patient_name}`}
+                  >
+                    <ArchiveBoxIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteThread(
+                        thread.patient_id,
+                        thread.patient_name,
+                      );
+                    }}
+                    className="p-1.5 text-red-500 hover:text-white hover:bg-red-600 rounded-md border border-transparent hover:border-red-600"
+                    title="Delete conversation"
+                    aria-label={`Delete conversation with ${thread.patient_name}`}
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         )}
