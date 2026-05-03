@@ -47,23 +47,31 @@ export function SecureMessaging() {
 
     if (!supabase) return;
 
-    const channel = supabase
-      .channel("secure_messages")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "patient_secure_messages",
-        },
-        () => {
-          loadMessages();
-        },
-      )
-      .subscribe();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    try {
+      channel = supabase
+        .channel("secure_messages")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "patient_secure_messages",
+          },
+          () => {
+            loadMessages();
+          },
+        )
+        .subscribe();
+    } catch (err) {
+      console.warn(
+        "[SecureMessaging] Realtime unavailable; live message updates disabled:",
+        err,
+      );
+    }
 
     return () => {
-      supabase!.removeChannel(channel);
+      if (channel) supabase!.removeChannel(channel);
     };
   }, []);
 

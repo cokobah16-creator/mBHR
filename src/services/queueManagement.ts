@@ -430,27 +430,34 @@ export class QueueManagement {
   async setupRealtimeSync(stage: QueueStage): Promise<void> {
     if (!supabase) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _channel = supabase
-      .channel(`queue:${stage}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "queue",
-          filter: `stage=eq.${stage}`,
-        },
-        async (payload) => {
-          logger.log("Queue update received from Supabase", payload);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const _channel = supabase
+        .channel(`queue:${stage}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "queue",
+            filter: `stage=eq.${stage}`,
+          },
+          async (payload) => {
+            logger.log("Queue update received from Supabase", payload);
 
-          // Reload queue from local DB (which will have synced)
-          this.notifySubscribers(stage);
-        },
-      )
-      .subscribe();
+            // Reload queue from local DB (which will have synced)
+            this.notifySubscribers(stage);
+          },
+        )
+        .subscribe();
 
-    logger.log(`Realtime sync enabled for ${stage} queue`);
+      logger.log(`Realtime sync enabled for ${stage} queue`);
+    } catch (err) {
+      logger.warn(
+        `[queue] Realtime unavailable for ${stage}; live updates disabled:`,
+        err,
+      );
+    }
   }
 
   async exportQueueData(stage?: QueueStage): Promise<string> {
