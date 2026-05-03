@@ -137,7 +137,6 @@ class SupabaseSync {
       });
 
       return { success: true };
-       
     } catch (error: unknown) {
       this.updateStatus({
         status: "error",
@@ -292,7 +291,6 @@ class SupabaseSync {
       });
 
       return { success: true };
-       
     } catch (error: unknown) {
       this.updateStatus({
         status: "error",
@@ -323,18 +321,26 @@ class SupabaseSync {
   async setupRealtimeSync(table: string, callback: () => void) {
     if (!this.client) return null;
 
-    return this.client
-      .channel(`public:${table}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table,
-        },
-        callback,
-      )
-      .subscribe();
+    try {
+      return this.client
+        .channel(`public:${table}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table,
+          },
+          callback,
+        )
+        .subscribe();
+    } catch (err) {
+      console.warn(
+        `[supabaseSync] Realtime unavailable for public:${table}; live sync disabled:`,
+        err,
+      );
+      return null;
+    }
   }
 }
 

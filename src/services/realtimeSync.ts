@@ -88,20 +88,27 @@ class RealtimeSyncService {
           }
         : { event: config.event || "*", schema: "public", table: config.table };
 
-      const channel = client
-        .channel(channelKey)
-        .on("postgres_changes", pgConfig, handlePayload)
-        .subscribe((status) => {
-          if (status === "SUBSCRIBED") {
-            logger.log(`Subscribed to ${channelKey}`);
-            this.channelReconnectAttempts.delete(channelKey);
-          } else if (status === "CHANNEL_ERROR") {
-            logger.error(`Channel error for ${channelKey}`);
-            this.handleReconnect(channelKey, config);
-          }
-        });
+      try {
+        const channel = client
+          .channel(channelKey)
+          .on("postgres_changes", pgConfig, handlePayload)
+          .subscribe((status) => {
+            if (status === "SUBSCRIBED") {
+              logger.log(`Subscribed to ${channelKey}`);
+              this.channelReconnectAttempts.delete(channelKey);
+            } else if (status === "CHANNEL_ERROR") {
+              logger.error(`Channel error for ${channelKey}`);
+              this.handleReconnect(channelKey, config);
+            }
+          });
 
-      this.channels.set(channelKey, channel);
+        this.channels.set(channelKey, channel);
+      } catch (err) {
+        logger.warn(
+          `Realtime unavailable for ${channelKey}; live updates disabled (likely Safari Private Browsing or blocked WebSocket):`,
+          err,
+        );
+      }
     }
 
     return () => {
