@@ -39,13 +39,44 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   });
 }
 
-// Global error visibility
-window.addEventListener("error", (ev) =>
-  console.error("[global error]", ev.message, ev.error),
-);
-window.addEventListener("unhandledrejection", (ev) =>
-  console.error("[unhandledrejection]", ev.reason),
-);
+// Safari Private Browsing (and some locked-down WebViews) throw
+// "SecurityError: The operation is insecure." from the WebSocket constructor.
+// Supabase realtime sometimes surfaces this as an async unhandled error after
+// our sync try/catch returns. Swallow it here so the React tree doesn't crash.
+function isWebSocketSecurityError(reason: unknown): boolean {
+  if (!reason) return false;
+  const msg =
+    typeof reason === "string"
+      ? reason
+      : reason instanceof Error
+        ? `${reason.name}: ${reason.message}`
+        : String((reason as { message?: unknown })?.message ?? "");
+  return (
+    msg.includes("WebSocket not available") ||
+    msg.includes("The operation is insecure") ||
+    (msg.includes("SecurityError") && msg.toLowerCase().includes("websocket"))
+  );
+}
+
+window.addEventListener("error", (ev) => {
+  if (
+    isWebSocketSecurityError(ev.error) ||
+    isWebSocketSecurityError(ev.message)
+  ) {
+    console.warn("[realtime] WebSocket unavailable, live updates disabled");
+    ev.preventDefault();
+    return;
+  }
+  console.error("[global error]", ev.message, ev.error);
+});
+window.addEventListener("unhandledrejection", (ev) => {
+  if (isWebSocketSecurityError(ev.reason)) {
+    console.warn("[realtime] WebSocket unavailable, live updates disabled");
+    ev.preventDefault();
+    return;
+  }
+  console.error("[unhandledrejection]", ev.reason);
+});
 
 function renderFatal(msg: string) {
   const el = document.getElementById("root");

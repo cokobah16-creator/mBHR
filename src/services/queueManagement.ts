@@ -1,6 +1,7 @@
 import { db, QueueItem, Patient, generateId, epochDay } from "@/db";
 import { supabase } from "@/lib/supabase";
 import logger from "@/lib/logger";
+import { isRealtimeAvailable } from "@/lib/realtimeAvailable";
 
 export type QueueStage = "registration" | "vitals" | "consult" | "pharmacy";
 export type QueueStatus = "waiting" | "in_progress" | "done";
@@ -429,6 +430,7 @@ export class QueueManagement {
 
   async setupRealtimeSync(stage: QueueStage): Promise<void> {
     if (!supabase) return;
+    if (!isRealtimeAvailable()) return;
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars

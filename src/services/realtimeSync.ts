@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import * as logger from "@/lib/logger";
+import { isRealtimeAvailable } from "@/lib/realtimeAvailable";
 
 type RealtimeEvent = "INSERT" | "UPDATE" | "DELETE" | "*";
 
@@ -48,6 +49,13 @@ class RealtimeSyncService {
   subscribe(config: SubscriptionConfig): () => void {
     if (!supabase) {
       logger.warn("Supabase not initialized, cannot subscribe");
+      return () => {};
+    }
+
+    if (!isRealtimeAvailable()) {
+      // WebSocket constructor throws (Safari Private Browsing, locked-down
+      // WebView, etc.). Skip realtime entirely so the supabase client never
+      // attempts a connection that would crash the React tree.
       return () => {};
     }
 
