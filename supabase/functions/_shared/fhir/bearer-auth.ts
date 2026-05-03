@@ -15,7 +15,7 @@
 // auth-code-flow is in play and tokens travel through more hops.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import type { ExchangePurpose, TEFCAContext } from "./shared.ts";
+import type { ExchangePurpose, TEFCAContext } from "./codes.ts";
 
 type SupabaseLike = ReturnType<typeof createClient>;
 

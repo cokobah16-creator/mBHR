@@ -4,7 +4,7 @@
 // automatically reflects in the /metadata response — no second source of
 // truth.
 
-import { RESOURCE_REGISTRY } from "./registry.ts";
+import { RESOURCE_REGISTRY } from "../_shared/fhir/registry.ts";
 
 const BULK_EXPORT_OPERATIONS = [
   {

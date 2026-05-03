@@ -15,8 +15,8 @@ import {
   mapPatientToFHIR,
   mapSDOHToFHIR,
   mapVitalsToFHIR,
-} from "../tefca-ias/mappers.ts";
-import { RESOURCE_REGISTRY } from "../tefca-ias/registry.ts";
+} from "../_shared/fhir/mappers.ts";
+import { RESOURCE_REGISTRY } from "../_shared/fhir/registry.ts";
 
 import {
   type BulkExportJob,

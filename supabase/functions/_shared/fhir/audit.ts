@@ -2,7 +2,7 @@
 // Required for every QHIN exchange (6-year retention per TEFCA RCE rules).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import type { ExchangePurpose, TEFCAContext } from "./shared.ts";
+import type { ExchangePurpose, TEFCAContext } from "./codes.ts";
 
 type SupabaseLike = ReturnType<typeof createClient>;
 
