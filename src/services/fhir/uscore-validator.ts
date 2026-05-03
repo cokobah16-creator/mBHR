@@ -4,12 +4,10 @@ import type {
   FHIRObservation,
   FHIRMedicationRequest,
   FHIREncounter,
-} from "./types";
-import type {
   FHIRAllergyIntolerance,
   FHIRDiagnosticReport,
   FHIRCondition,
-} from "./dexieAdapters";
+} from "./types";
 
 export interface ValidationError {
   path: string;

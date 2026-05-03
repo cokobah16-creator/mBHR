@@ -186,6 +186,249 @@ export interface FHIREncounter extends FHIRResource {
   reasonCode?: FHIRCodeableConcept[];
 }
 
+export interface FHIRAnnotation {
+  text: string;
+  authorString?: string;
+  time?: string;
+}
+
+export interface FHIRAttachment {
+  contentType?: string;
+  url?: string;
+  data?: string;
+  size?: number;
+  hash?: string;
+  title?: string;
+  creation?: string;
+}
+
+export interface FHIRAllergyIntolerance extends FHIRResource {
+  resourceType: "AllergyIntolerance";
+  identifier?: FHIRIdentifier[];
+  clinicalStatus?: FHIRCodeableConcept;
+  verificationStatus?: FHIRCodeableConcept;
+  type?: "allergy" | "intolerance";
+  category?: ("food" | "medication" | "environment" | "biologic")[];
+  criticality?: "low" | "high" | "unable-to-assess";
+  code?: FHIRCodeableConcept;
+  patient: FHIRReference;
+  onsetDateTime?: string;
+  recordedDate?: string;
+  reaction?: Array<{
+    manifestation: FHIRCodeableConcept[];
+    description?: string;
+    severity?: "mild" | "moderate" | "severe";
+  }>;
+  note?: FHIRAnnotation[];
+}
+
+export interface FHIRCondition extends FHIRResource {
+  resourceType: "Condition";
+  identifier?: FHIRIdentifier[];
+  clinicalStatus: FHIRCodeableConcept;
+  verificationStatus?: FHIRCodeableConcept;
+  category?: FHIRCodeableConcept[];
+  severity?: FHIRCodeableConcept;
+  code: FHIRCodeableConcept;
+  subject: FHIRReference;
+  encounter?: FHIRReference;
+  onsetDateTime?: string;
+  abatementDateTime?: string;
+  recordedDate?: string;
+  note?: FHIRAnnotation[];
+}
+
+export interface FHIRImmunization extends FHIRResource {
+  resourceType: "Immunization";
+  identifier?: FHIRIdentifier[];
+  status: "completed" | "entered-in-error" | "not-done";
+  vaccineCode: FHIRCodeableConcept;
+  patient: FHIRReference;
+  encounter?: FHIRReference;
+  occurrenceDateTime?: string;
+  primarySource?: boolean;
+  lotNumber?: string;
+  site?: FHIRCodeableConcept;
+  route?: FHIRCodeableConcept;
+  doseQuantity?: FHIRQuantity;
+  protocolApplied?: Array<{
+    doseNumberPositiveInt?: number;
+    seriesDosesPositiveInt?: number;
+  }>;
+  note?: FHIRAnnotation[];
+}
+
+export interface FHIRDiagnosticReport extends FHIRResource {
+  resourceType: "DiagnosticReport";
+  identifier?: FHIRIdentifier[];
+  status:
+    | "registered"
+    | "partial"
+    | "preliminary"
+    | "final"
+    | "amended"
+    | "corrected"
+    | "appended"
+    | "cancelled"
+    | "entered-in-error"
+    | "unknown";
+  category?: FHIRCodeableConcept[];
+  code: FHIRCodeableConcept;
+  subject: FHIRReference;
+  encounter?: FHIRReference;
+  effectiveDateTime?: string;
+  issued?: string;
+  result?: FHIRReference[];
+  conclusion?: string;
+  presentedForm?: FHIRAttachment[];
+}
+
+export interface FHIRMedicationDispense extends FHIRResource {
+  resourceType: "MedicationDispense";
+  identifier?: FHIRIdentifier[];
+  status:
+    | "preparation"
+    | "in-progress"
+    | "cancelled"
+    | "on-hold"
+    | "completed"
+    | "entered-in-error"
+    | "stopped"
+    | "declined"
+    | "unknown";
+  medicationCodeableConcept?: FHIRCodeableConcept;
+  subject: FHIRReference;
+  context?: FHIRReference;
+  authorizingPrescription?: FHIRReference[];
+  quantity?: FHIRQuantity;
+  daysSupply?: FHIRQuantity;
+  whenHandedOver?: string;
+  performer?: Array<{ actor: FHIRReference }>;
+  dosageInstruction?: FHIRDosage[];
+  note?: FHIRAnnotation[];
+}
+
+export interface FHIRProcedure extends FHIRResource {
+  resourceType: "Procedure";
+  identifier?: FHIRIdentifier[];
+  status:
+    | "preparation"
+    | "in-progress"
+    | "not-done"
+    | "on-hold"
+    | "stopped"
+    | "completed"
+    | "entered-in-error"
+    | "unknown";
+  code?: FHIRCodeableConcept;
+  subject: FHIRReference;
+  encounter?: FHIRReference;
+  performedDateTime?: string;
+  performedPeriod?: FHIRPeriod;
+  performer?: Array<{ actor: FHIRReference }>;
+  note?: FHIRAnnotation[];
+}
+
+export interface FHIRDocumentReference extends FHIRResource {
+  resourceType: "DocumentReference";
+  identifier?: FHIRIdentifier[];
+  status: "current" | "superseded" | "entered-in-error";
+  docStatus?: "preliminary" | "final" | "amended" | "entered-in-error";
+  type?: FHIRCodeableConcept;
+  category?: FHIRCodeableConcept[];
+  subject: FHIRReference;
+  date?: string;
+  author?: FHIRReference[];
+  content: Array<{
+    attachment: FHIRAttachment;
+    format?: FHIRCoding;
+  }>;
+  context?: {
+    encounter?: FHIRReference[];
+    period?: FHIRPeriod;
+  };
+}
+
+export interface FHIRCarePlan extends FHIRResource {
+  resourceType: "CarePlan";
+  identifier?: FHIRIdentifier[];
+  status:
+    | "draft"
+    | "active"
+    | "on-hold"
+    | "revoked"
+    | "completed"
+    | "entered-in-error"
+    | "unknown";
+  intent: "proposal" | "plan" | "order" | "option" | "directive";
+  category?: FHIRCodeableConcept[];
+  title?: string;
+  description?: string;
+  subject: FHIRReference;
+  period?: FHIRPeriod;
+  author?: FHIRReference;
+  addresses?: FHIRReference[];
+  goal?: FHIRReference[];
+  note?: FHIRAnnotation[];
+}
+
+export interface FHIRGoal extends FHIRResource {
+  resourceType: "Goal";
+  identifier?: FHIRIdentifier[];
+  lifecycleStatus:
+    | "proposed"
+    | "planned"
+    | "accepted"
+    | "active"
+    | "on-hold"
+    | "completed"
+    | "cancelled"
+    | "entered-in-error"
+    | "rejected";
+  achievementStatus?: FHIRCodeableConcept;
+  category?: FHIRCodeableConcept[];
+  description: FHIRCodeableConcept;
+  subject: FHIRReference;
+  startDate?: string;
+  target?: Array<{
+    measure?: FHIRCodeableConcept;
+    detailQuantity?: FHIRQuantity;
+    dueDate?: string;
+  }>;
+  note?: FHIRAnnotation[];
+}
+
+export interface FHIRServiceRequest extends FHIRResource {
+  resourceType: "ServiceRequest";
+  identifier?: FHIRIdentifier[];
+  status:
+    | "draft"
+    | "active"
+    | "on-hold"
+    | "revoked"
+    | "completed"
+    | "entered-in-error"
+    | "unknown";
+  intent:
+    | "proposal"
+    | "plan"
+    | "directive"
+    | "order"
+    | "original-order"
+    | "reflex-order"
+    | "filler-order"
+    | "instance-order"
+    | "option";
+  category?: FHIRCodeableConcept[];
+  code?: FHIRCodeableConcept;
+  subject: FHIRReference;
+  encounter?: FHIRReference;
+  occurrenceDateTime?: string;
+  occurrencePeriod?: FHIRPeriod;
+  requester?: FHIRReference;
+  note?: FHIRAnnotation[];
+}
+
 export interface FHIRBundle extends FHIRResource {
   resourceType: "Bundle";
   type:
