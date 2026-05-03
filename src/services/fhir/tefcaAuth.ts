@@ -223,19 +223,26 @@ export async function createTEFCASession(
   };
 }
 
-export function generateSMARTConfiguration(baseUrl: string) {
+/**
+ * Static fallback used when the SMART well-known doc isn't reachable (offline,
+ * tefca-oauth not deployed yet). The live source of truth is now
+ * `${VITE_SUPABASE_URL}/functions/v1/tefca-oauth/.well-known/smart-configuration`
+ * served by the SMART OAuth edge function (Phase C-1).
+ */
+function buildFallbackSMARTConfiguration(baseUrl: string) {
   return {
     issuer: baseUrl,
     authorization_endpoint: `${baseUrl}/oauth/authorize`,
     token_endpoint: `${baseUrl}/oauth/token`,
     registration_endpoint: `${baseUrl}/oauth/register`,
-    token_endpoint_auth_methods_supported: [
-      "client_secret_basic",
-      "client_secret_post",
-    ],
+    token_endpoint_auth_methods_supported: ["private_key_jwt"],
+    token_endpoint_auth_signing_alg_values_supported: ["ES256", "RS256"],
+    jwks_uri: `${baseUrl}/.well-known/jwks.json`,
+    grant_types_supported: ["client_credentials", "authorization_code"],
     scopes_supported: [
       "openid",
       "profile",
+      "fhirUser",
       "launch",
       "launch/patient",
       "patient/*.read",
@@ -243,22 +250,73 @@ export function generateSMARTConfiguration(baseUrl: string) {
       "patient/Observation.read",
       "patient/MedicationRequest.read",
       "patient/Encounter.read",
+      "system/*.read",
     ],
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code"],
     code_challenge_methods_supported: ["S256"],
     capabilities: [
       "launch-ehr",
       "launch-standalone",
       "client-public",
       "client-confidential-symmetric",
+      "client-confidential-asymmetric",
       "context-ehr-patient",
       "context-standalone-patient",
-      "permission-offline",
+      "permission-system",
       "permission-patient",
       "sso-openid-connect",
     ],
   };
+}
+
+/**
+ * Fetch the live SMART configuration from the tefca-oauth edge function and
+ * cache it. Falls back to a static config when the well-known doc is
+ * unavailable, so callers can still reason about supported flows offline.
+ */
+let smartConfigCache: {
+  baseUrl: string;
+  fetchedAt: number;
+  config: ReturnType<typeof buildFallbackSMARTConfiguration>;
+} | null = null;
+const SMART_CONFIG_TTL_MS = 5 * 60 * 1000;
+
+export async function getSMARTConfiguration(
+  baseUrl: string,
+): Promise<ReturnType<typeof buildFallbackSMARTConfiguration>> {
+  const now = Date.now();
+  if (
+    smartConfigCache &&
+    smartConfigCache.baseUrl === baseUrl &&
+    now - smartConfigCache.fetchedAt < SMART_CONFIG_TTL_MS
+  ) {
+    return smartConfigCache.config;
+  }
+
+  try {
+    const resp = await fetch(`${baseUrl}/.well-known/smart-configuration`, {
+      headers: { Accept: "application/json" },
+    });
+    if (resp.ok) {
+      const config = await resp.json();
+      smartConfigCache = { baseUrl, fetchedAt: now, config };
+      return config;
+    }
+  } catch {
+    // fall through to the static fallback
+  }
+
+  const fallback = buildFallbackSMARTConfiguration(baseUrl);
+  smartConfigCache = { baseUrl, fetchedAt: now, config: fallback };
+  return fallback;
+}
+
+/**
+ * @deprecated Use {@link getSMARTConfiguration} which fetches the live
+ * well-known document. Kept synchronous to preserve existing call sites.
+ */
+export function generateSMARTConfiguration(baseUrl: string) {
+  return buildFallbackSMARTConfiguration(baseUrl);
 }
 
 export const TEFCA_EXCHANGE_PURPOSES = {
