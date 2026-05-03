@@ -15,6 +15,8 @@ import {
 } from "@heroicons/react/24/outline";
 import { useState, useEffect } from "react";
 import { EmergencyHelp } from "./EmergencyHelp";
+import { LanguageSelector } from "@/components/LanguageSelector";
+import { useT } from "@/hooks/useT";
 import type { ManagedPatient } from "@/services/patientPortalAuth";
 import { supabase } from "@/lib/supabase";
 import {
@@ -27,16 +29,36 @@ interface PatientPortalLayoutProps {
 }
 
 const navItems = [
-  { path: "/patient/dashboard", label: "Dashboard", icon: HomeIcon },
-  { path: "/patient/appointments", label: "Appointments", icon: CalendarIcon },
+  {
+    path: "/patient/dashboard",
+    labelKey: "portal.nav.dashboard",
+    icon: HomeIcon,
+  },
+  {
+    path: "/patient/appointments",
+    labelKey: "portal.nav.appointments",
+    icon: CalendarIcon,
+  },
   {
     path: "/patient/medical-history",
-    label: "Medical History",
+    labelKey: "portal.nav.medicalHistory",
     icon: ClipboardDocumentListIcon,
   },
-  { path: "/patient/messages", label: "Messages", icon: EnvelopeIcon },
-  { path: "/patient/lab-results", label: "Lab Results", icon: BeakerIcon },
-  { path: "/patient/account", label: "Account", icon: UserCircleIcon },
+  {
+    path: "/patient/messages",
+    labelKey: "portal.nav.messages",
+    icon: EnvelopeIcon,
+  },
+  {
+    path: "/patient/lab-results",
+    labelKey: "portal.nav.labResults",
+    icon: BeakerIcon,
+  },
+  {
+    path: "/patient/account",
+    labelKey: "portal.nav.account",
+    icon: UserCircleIcon,
+  },
 ];
 
 function getPortalUserInfo() {
@@ -65,6 +87,7 @@ function getActiveProfile() {
 export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const { t } = useT();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
@@ -160,7 +183,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                   <span className="text-white font-bold text-sm">mB</span>
                 </div>
                 <span className="font-semibold text-gray-900 hidden sm:block">
-                  Patient Portal
+                  {t("portal.title")}
                 </span>
               </Link>
             </div>
@@ -180,13 +203,18 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     }`}
                   >
                     <Icon className="w-5 h-5" />
-                    <span>{item.label}</span>
+                    <span>{t(item.labelKey)}</span>
                   </Link>
                 );
               })}
             </nav>
 
             <div className="flex items-center gap-2">
+              {/* Language selector — desktop */}
+              <div className="hidden md:block">
+                <LanguageSelector />
+              </div>
+
               {/* Profile / caregiver switcher */}
               <div className="relative hidden sm:block">
                 <button
@@ -217,7 +245,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                       }`}
                     >
                       <UserCircleIcon className="w-4 h-4" />
-                      Yourself – {name}
+                      {t("portal.profile.yourself")} – {name}
                     </button>
                     {managedPatients.map((mp) => (
                       <button
@@ -249,7 +277,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                         className="w-full text-left px-4 py-2.5 text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2"
                       >
                         <span className="text-lg leading-none">+</span>
-                        Add a patient I care for
+                        {t("portal.profile.addCaregiver")}
                       </Link>
                     </div>
                   </div>
@@ -260,10 +288,10 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
               <button
                 onClick={() => setEmergencyOpen(true)}
                 className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors"
-                aria-label="Emergency help"
+                aria-label={t("portal.emergency.help")}
               >
                 <ExclamationTriangleIcon className="w-4 h-4" />
-                Emergency
+                {t("portal.nav.emergency")}
               </button>
 
               <button
@@ -271,7 +299,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 className="hidden md:flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
               >
                 <ArrowLeftOnRectangleIcon className="w-5 h-5" />
-                <span>Logout</span>
+                <span>{t("portal.nav.logout")}</span>
               </button>
 
               <button
@@ -291,6 +319,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
         {mobileMenuOpen && (
           <div className="md:hidden border-t border-gray-200 bg-white">
             <nav className="px-4 py-3 space-y-1">
+              <div className="px-1 pb-2">
+                <LanguageSelector />
+              </div>
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
@@ -306,7 +337,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     }`}
                   >
                     <Icon className="w-5 h-5" />
-                    <span>{item.label}</span>
+                    <span>{t(item.labelKey)}</span>
                   </Link>
                 );
               })}
@@ -314,7 +345,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 <>
                   <hr className="my-1" />
                   <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Switch Profile
+                    {t("portal.profile.switchProfile")}
                   </p>
                   <button
                     onClick={() => {
@@ -324,7 +355,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
                   >
                     <UserCircleIcon className="w-5 h-5" />
-                    Yourself – {name}
+                    {t("portal.profile.yourself")} – {name}
                   </button>
                   {managedPatients.map((mp) => (
                     <button
@@ -352,7 +383,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 w-full"
               >
                 <UserGroupIcon className="w-5 h-5" />
-                Add patient I care for
+                {t("portal.profile.addCaregiverShort")}
               </Link>
               <button
                 onClick={() => {
@@ -362,7 +393,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 w-full transition-colors"
               >
                 <ExclamationTriangleIcon className="w-5 h-5" />
-                Emergency Help
+                {t("portal.emergency.help")}
               </button>
               <button
                 onClick={() => {
@@ -372,7 +403,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 w-full transition-colors"
               >
                 <ArrowLeftOnRectangleIcon className="w-5 h-5" />
-                <span>Logout</span>
+                <span>{t("portal.nav.logout")}</span>
               </button>
             </nav>
           </div>
@@ -404,7 +435,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 }`}
               >
                 <Icon className="w-6 h-6" />
-                <span className="text-xs">{item.label.split(" ")[0]}</span>
+                <span className="text-xs">
+                  {t(item.labelKey).split(" ")[0]}
+                </span>
               </Link>
             );
           })}
@@ -415,7 +448,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       <button
         onClick={() => setEmergencyOpen(true)}
         className="md:hidden fixed bottom-20 right-4 z-50 w-14 h-14 bg-red-600 hover:bg-red-700 text-white rounded-full shadow-lg flex items-center justify-center transition-colors"
-        aria-label="Emergency help"
+        aria-label={t("portal.emergency.help")}
       >
         <ExclamationTriangleIcon className="w-7 h-7" />
       </button>

@@ -19,7 +19,7 @@ export function LanguageSelector({
   className = "",
   showAudioPreview = true,
 }: LanguageSelectorProps) {
-  const { speak, changeLocale, locale, loading } = useT();
+  const { t, speak, changeLocale, locale, loading } = useT();
   const [isOpen, setIsOpen] = useState(false);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
 
@@ -63,7 +63,7 @@ export function LanguageSelector({
         <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
           <div className="p-2">
             <div className="text-xs font-medium text-gray-500 uppercase tracking-wider px-3 py-2">
-              Select Language
+              {t("language.select")}
             </div>
 
             {availableLocales.map((localeOption) => (
@@ -112,7 +112,7 @@ export function LanguageSelector({
 
           <div className="border-t border-gray-100 p-3">
             <p className="text-xs text-gray-500">
-              🔊 Audio support available for key phrases
+              🔊 {t("language.audioSupport")}
             </p>
           </div>
         </div>
