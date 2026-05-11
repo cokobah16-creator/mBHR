@@ -1,0 +1,391 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "fixture-patient-1",
+        "identifier": [
+          {
+            "use": "usual",
+            "system": "urn:oid:2.16.840.1.113883.3.9999.1",
+            "value": "fixture-patient-1"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "family": "Adeyemi",
+            "given": ["Funmi"],
+            "text": "Funmi Adeyemi"
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1992-04-17",
+        "telecom": [
+          { "system": "phone", "value": "2348012345678", "use": "mobile" }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "fixture-obs-bp",
+        "meta": {
+          "profile": [
+            "http://hl7.org/fhir/us/core/StructureDefinition/us-core-blood-pressure|7.0.0"
+          ]
+        },
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "85354-9",
+              "display": "Blood pressure panel"
+            }
+          ],
+          "text": "Blood Pressure"
+        },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "effectiveDateTime": "2026-04-30T10:15:00Z",
+        "component": [
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "http://loinc.org",
+                  "code": "8480-6",
+                  "display": "Systolic blood pressure"
+                }
+              ]
+            },
+            "valueQuantity": {
+              "value": 118,
+              "unit": "mmHg",
+              "system": "http://unitsofmeasure.org",
+              "code": "mm[Hg]"
+            }
+          },
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "http://loinc.org",
+                  "code": "8462-4",
+                  "display": "Diastolic blood pressure"
+                }
+              ]
+            },
+            "valueQuantity": {
+              "value": 76,
+              "unit": "mmHg",
+              "system": "http://unitsofmeasure.org",
+              "code": "mm[Hg]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "fixture-obs-heart-rate",
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "8867-4",
+              "display": "Heart rate"
+            }
+          ]
+        },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "effectiveDateTime": "2026-04-30T10:16:00Z",
+        "valueQuantity": {
+          "value": 72,
+          "unit": "/min",
+          "system": "http://unitsofmeasure.org",
+          "code": "/min"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "fixture-enc-1",
+        "status": "finished",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "AMB",
+          "display": "ambulatory"
+        },
+        "type": [{ "text": "Outreach clinic visit" }],
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "period": {
+          "start": "2026-04-30T09:00:00Z",
+          "end": "2026-04-30T11:30:00Z"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "fixture-cond-1",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+              "code": "confirmed"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://hl7.org/fhir/sid/icd-10-cm",
+              "code": "E11.9",
+              "display": "Type 2 diabetes mellitus without complications"
+            }
+          ],
+          "text": "Type 2 diabetes mellitus"
+        },
+        "subject": { "reference": "Patient/fixture-patient-1" }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "fixture-allergy-1",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "type": "allergy",
+        "category": ["medication"],
+        "criticality": "high",
+        "code": { "text": "Penicillin" },
+        "patient": { "reference": "Patient/fixture-patient-1" }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "fixture-medreq-1",
+        "status": "completed",
+        "intent": "order",
+        "medicationCodeableConcept": { "text": "Metformin 500mg PO BID" },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "authoredOn": "2026-04-30T11:20:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationDispense",
+        "id": "fixture-meddisp-1",
+        "status": "completed",
+        "medicationCodeableConcept": { "text": "Metformin 500mg" },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "whenHandedOver": "2026-04-30T12:00:00Z",
+        "quantity": { "value": 60, "unit": "tablet" },
+        "daysSupply": {
+          "value": 30,
+          "unit": "days",
+          "system": "http://unitsofmeasure.org",
+          "code": "d"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Immunization",
+        "id": "fixture-imm-1",
+        "status": "completed",
+        "vaccineCode": {
+          "coding": [
+            {
+              "system": "http://hl7.org/fhir/sid/cvx",
+              "code": "150",
+              "display": "Influenza, injectable, quadrivalent"
+            }
+          ],
+          "text": "Influenza"
+        },
+        "patient": { "reference": "Patient/fixture-patient-1" },
+        "occurrenceDateTime": "2025-10-15T09:30:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Procedure",
+        "id": "fixture-proc-1",
+        "status": "completed",
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "180256009",
+              "display": "Subcuticular suturing"
+            }
+          ],
+          "text": "Suturing of wound"
+        },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "performedDateTime": "2026-04-30T10:45:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "DiagnosticReport",
+        "id": "fixture-diag-1",
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/v2-0074",
+                "code": "LAB",
+                "display": "Laboratory"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "4548-4",
+              "display": "Hemoglobin A1c/Hemoglobin.total in Blood"
+            }
+          ],
+          "text": "HbA1c"
+        },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "effectiveDateTime": "2026-04-30T08:00:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "DocumentReference",
+        "id": "fixture-doc-1",
+        "status": "current",
+        "type": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "11506-3",
+              "display": "Progress note"
+            }
+          ]
+        },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "date": "2026-04-30T11:35:00Z",
+        "content": [
+          {
+            "attachment": {
+              "contentType": "application/pdf",
+              "url": "https://example.org/notes/fixture-doc-1.pdf",
+              "title": "Outreach visit progress note"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "CarePlan",
+        "id": "fixture-careplan-1",
+        "status": "active",
+        "intent": "plan",
+        "title": "Type 2 diabetes management",
+        "subject": { "reference": "Patient/fixture-patient-1" }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Goal",
+        "id": "fixture-goal-1",
+        "lifecycleStatus": "active",
+        "description": { "text": "Lower HbA1c below 7.0% within 6 months" },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "target": [{ "dueDate": "2026-10-30" }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "ServiceRequest",
+        "id": "fixture-svcreq-1",
+        "status": "active",
+        "intent": "order",
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "104326007",
+              "display": "Measurement of mass concentration of glucose in blood"
+            }
+          ],
+          "text": "Fasting glucose"
+        },
+        "subject": { "reference": "Patient/fixture-patient-1" },
+        "occurrenceDateTime": "2026-05-15T07:00:00Z"
+      }
+    }
+  ]
+}
