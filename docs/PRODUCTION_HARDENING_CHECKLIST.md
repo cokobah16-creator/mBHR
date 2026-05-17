@@ -41,9 +41,32 @@ Dashboard for `Med Bridge Health Reach` (project ref `dlogqxzejroeyivfmgcv`).
       Dashboard → Authentication → Rate Limits. Built-in. Confirm and record
       the chosen values (defaults are usually fine for healthcare).
 
-## Phase B — Observability + CI/CD ⏳
+## Phase B — Observability + CI/CD ✅
 
-(In progress.)
+| Item                                                    | Status | Notes                                                                                                                                        |
+| ------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| CI: preview deploy job (per PR)                         | ✅     | `.github/workflows/build.yml` `deploy-preview` job — needs `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` repo secrets to actually run |
+| CI: smoke test against the deployed preview URL         | ✅     | `smoke-test` job runs `e2e/login.spec.ts` with `PLAYWRIGHT_BASE_URL`                                                                         |
+| CI: production deploy gated by `production` Environment | ✅     | `migrate-prod` + `deploy-prod` jobs                                                                                                          |
+| CI: DB migrations applied on prod deploy                | ✅     | `supabase/setup-cli` + `supabase db push --linked`; needs `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD`            |
+| Sticky PR comment with preview URL                      | ✅     | `marocchino/sticky-pull-request-comment@v2`                                                                                                  |
+| Centralised Supabase call wrapper                       | ✅     | `src/services/supabaseQuery.ts` + 7 unit tests                                                                                               |
+| `supabase/config.toml` project_id corrected             | ✅     | Was `xxbbafonflieyqcwaeyx`, now `dlogqxzejroeyivfmgcv`                                                                                       |
+| Zod env validation at app boot                          | ✅     | `src/config/env.ts`; throws in dev, reports + falls back in prod                                                                             |
+
+## Phase B — Manual / dashboard items
+
+- [ ] **Create the `production` GitHub Environment** with required reviewer(s)
+      before merging anything to `main` — otherwise `migrate-prod` + `deploy-prod`
+      will run automatically.
+- [ ] **Add the following GitHub Action secrets** to the repository:
+      `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`,
+      `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF` (use
+      `dlogqxzejroeyivfmgcv`), `SUPABASE_DB_PASSWORD`.
+- [ ] **(Recommended) Raise vitest coverage threshold** in
+      `vitest.config.ts` from 60 → 75% in two PRs. Backfill the most
+      under-tested service first — likely `src/services/portalEnrollment.ts`
+      or `src/services/messaging.ts`.
 
 ## Phase C — Resilience ⏳
 
