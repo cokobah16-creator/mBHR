@@ -30,6 +30,7 @@ import {
   SUPPORTED_SYSTEM_SCOPES,
   SUPPORTED_SYSTEM_WRITE_SCOPES,
 } from "./shared.ts";
+import { enforceRateLimit } from "../_shared/security/rateLimit.ts";
 
 function smartConfiguration() {
   const oauthBase = getOAuthBaseUrl();
@@ -102,6 +103,19 @@ function openidConfiguration() {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
+  }
+
+  const rl = await enforceRateLimit(req, {
+    bucket: "edge_tefca_oauth",
+    keyStrategy: "ip",
+    max: 60,
+    windowSeconds: 60,
+  });
+  if (!rl.allowed && rl.response) {
+    return new Response(rl.response.body, {
+      status: rl.response.status,
+      headers: { ...corsHeaders, "Retry-After": String(rl.retryAfter ?? 60) },
+    });
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;

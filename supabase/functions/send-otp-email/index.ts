@@ -1,11 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, X-Client-Info, Apikey",
-};
+import { corsHeadersFor } from "../_shared/security/cors.ts";
+import { enforceRateLimit } from "../_shared/security/rateLimit.ts";
 
 interface EmailRequest {
   email: string;
@@ -15,8 +10,22 @@ interface EmailRequest {
 }
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = corsHeadersFor(req);
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
+  }
+
+  const rl = await enforceRateLimit(req, {
+    bucket: "edge_otp_email",
+    keyStrategy: "ip",
+    max: 10,
+    windowSeconds: 60,
+  });
+  if (!rl.allowed && rl.response) {
+    return new Response(rl.response.body, {
+      status: rl.response.status,
+      headers: { ...corsHeaders, "Retry-After": String(rl.retryAfter ?? 60) },
+    });
   }
 
   try {
@@ -25,7 +34,10 @@ Deno.serve(async (req: Request) => {
     if (!email) {
       return new Response(
         JSON.stringify({ success: false, error: "Email is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
@@ -34,8 +46,14 @@ Deno.serve(async (req: Request) => {
 
     if (!isOtpMode && !isMessageMode) {
       return new Response(
-        JSON.stringify({ success: false, error: "Either otp or subject+message are required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({
+          success: false,
+          error: "Either otp or subject+message are required",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
@@ -49,11 +67,20 @@ Deno.serve(async (req: Request) => {
       } else {
         console.log(`Demo Mode - Invitation email to ${email}: ${subject}`);
       }
-      console.log("To enable real email delivery, add RESEND_API_KEY to Edge Function secrets");
+      console.log(
+        "To enable real email delivery, add RESEND_API_KEY to Edge Function secrets",
+      );
 
       return new Response(
-        JSON.stringify({ success: true, demo: true, message: "Demo mode: Check server logs" }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({
+          success: true,
+          demo: true,
+          message: "Demo mode: Check server logs",
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
@@ -156,17 +183,20 @@ Deno.serve(async (req: Request) => {
       console.error("Resend API error:", errorData);
       return new Response(
         JSON.stringify({ success: false, error: "Failed to send email" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     const data = await response.json();
     console.log("Email sent successfully:", data.id);
 
-    return new Response(
-      JSON.stringify({ success: true, messageId: data.id }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ success: true, messageId: data.id }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (error) {
     console.error("Error in send-otp-email:", error);
     return new Response(
@@ -174,7 +204,10 @@ Deno.serve(async (req: Request) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 });

@@ -1,11 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, X-Client-Info, Apikey",
-};
+import { corsHeadersFor } from "../_shared/security/cors.ts";
+import { enforceRateLimit } from "../_shared/security/rateLimit.ts";
 
 interface SMSRequest {
   to: string;
@@ -13,18 +8,25 @@ interface SMSRequest {
   reminderId?: string;
 }
 
-interface SMSResponse {
-  success: boolean;
-  messageId?: string;
-  error?: string;
-  demo?: boolean;
-}
-
 Deno.serve(async (req: Request) => {
+  const corsHeaders = corsHeadersFor(req);
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 200,
       headers: corsHeaders,
+    });
+  }
+
+  const rl = await enforceRateLimit(req, {
+    bucket: "edge_sms_reminder",
+    keyStrategy: "ip",
+    max: 30,
+    windowSeconds: 60,
+  });
+  if (!rl.allowed && rl.response) {
+    return new Response(rl.response.body, {
+      status: rl.response.status,
+      headers: { ...corsHeaders, "Retry-After": String(rl.retryAfter ?? 60) },
     });
   }
 
