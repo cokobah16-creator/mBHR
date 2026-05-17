@@ -15,6 +15,7 @@ import { db } from "./db/index";
 import { safeOpenDb } from "./db/safeOpen";
 import { log, error, captureError } from "@/lib/logger";
 import { runMigrations } from "@/db/migrations/migration-runner";
+import { startBackgroundSync } from "@/sync/adapter";
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
@@ -141,6 +142,10 @@ function renderFatal(msg: string) {
     // Don't fail the app if seeding fails, just log it
     log("Seeding failed but continuing with app startup");
   }
+
+  // Opportunistic background sync — pushes dirty rows every 60s when online.
+  // Reduces blast radius if a tablet is lost before the user thinks to sync.
+  startBackgroundSync();
 
   log("Application fully initialized and rendered.");
   const root = ReactDOM.createRoot(document.getElementById("root")!);
