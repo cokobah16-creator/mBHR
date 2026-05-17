@@ -91,6 +91,24 @@ Dashboard for `Med Bridge Health Reach` (project ref `dlogqxzejroeyivfmgcv`).
       behaviour is real; rehearsing once a quarter is the cheapest
       production incident.
 
-## Phase D — Polish ⏳
+## Phase D — Polish ✅ (partial — see follow-ups)
 
-(Not started.)
+| Item                                                                                      | Status | Notes                                                                                                                             |
+| ----------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| 37 FK indexes added                                                                       | ✅     | Migration `20260520000005_fk_indexes_and_dup_drops.sql`                                                                           |
+| 4 duplicate indexes dropped                                                               | ✅     | Same migration                                                                                                                    |
+| Workbox runtime caching tuned (NetworkFirst + StaleWhileRevalidate + CacheFirst per host) | ✅     | `vite.config.ts`                                                                                                                  |
+| Caching/CDN strategy documented                                                           | ✅     | `docs/CACHING_STRATEGY.md`                                                                                                        |
+| Scaling readiness documented                                                              | ✅     | `docs/SCALING_PLAN.md`                                                                                                            |
+| PHI encryption spike doc (WS13)                                                           | ✅     | `docs/PHI_ENCRYPTION_SPIKE.md` — threat model + field inventory + crypto sketch + cost (~17 days) + conditional-GO recommendation |
+| 94 `auth_rls_initplan` policies wrapped in `(SELECT auth.<fn>())`                         | ⏳     | Follow-up — each requires per-policy rewrite; my Phase A policies already use the wrap, but pre-existing ones still need it.      |
+| 79 `multiple_permissive_policies` consolidated                                            | ⏳     | Follow-up — same per-policy approach.                                                                                             |
+| 129 unused indexes audited + dropped (ring-fenced)                                        | ⏳     | Follow-up — needs 1-week `pg_stat_user_indexes` confirmation that they really are unused before dropping.                         |
+
+## Phase D — Manual / dashboard items
+
+- [ ] **Re-run `mcp__supabase__get_advisors(type=performance)` after**
+      the follow-up perf migration lands and confirm both
+      `auth_rls_initplan` and `multiple_permissive_policies` drop to zero.
+- [ ] **Lighthouse run** post-Workbox-tuning: expect PWA ≥ 90, Performance
+      ≥ 80 on mid-tier Android (Pixel 5 in dev tools).

@@ -132,6 +132,50 @@ export default defineConfig(({ command, mode }) => {
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,mp3}"],
           maximumFileSizeToCacheInBytes: 3000000,
+          // Runtime caching tuned per host. See docs/CACHING_STRATEGY.md.
+          runtimeCaching: [
+            {
+              // Supabase REST (PostgREST). Network-first with a short timeout
+              // so stale data is served if the network is slow, but fresh data
+              // beats cached when both are available.
+              urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/.*/i,
+              handler: "NetworkFirst",
+              options: {
+                cacheName: "supabase-rest",
+                networkTimeoutSeconds: 5,
+                expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
+              // Supabase Storage. Patient photos and exports — these are large
+              // and rarely change after upload, so stale-while-revalidate keeps
+              // the UI fast while updating in the background.
+              urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/.*/i,
+              handler: "StaleWhileRevalidate",
+              options: {
+                cacheName: "supabase-storage",
+                expiration: {
+                  maxEntries: 200,
+                  maxAgeSeconds: 60 * 60 * 24 * 7,
+                },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
+              // Google Fonts and similar static CDNs.
+              urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/.*/i,
+              handler: "CacheFirst",
+              options: {
+                cacheName: "jsdelivr",
+                expiration: {
+                  maxEntries: 50,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+          ],
         },
         manifest: {
           name: "Med Bridge Health Reach",
