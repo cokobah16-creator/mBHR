@@ -13,7 +13,7 @@ import { seed } from "./db/seed";
 import { seedGamificationData } from "./db/gamification";
 import { db } from "./db/index";
 import { safeOpenDb } from "./db/safeOpen";
-import { log, error } from "@/lib/logger";
+import { log, error, captureError } from "@/lib/logger";
 import { runMigrations } from "@/db/migrations/migration-runner";
 
 if (import.meta.env.VITE_SENTRY_DSN) {
@@ -67,7 +67,10 @@ window.addEventListener("error", (ev) => {
     ev.preventDefault();
     return;
   }
-  console.error("[global error]", ev.message, ev.error);
+  captureError(ev.error ?? new Error(String(ev.message)), {
+    tag: "window.error",
+    extra: { filename: ev.filename, lineno: ev.lineno, colno: ev.colno },
+  });
 });
 window.addEventListener("unhandledrejection", (ev) => {
   if (isWebSocketSecurityError(ev.reason)) {
@@ -75,7 +78,7 @@ window.addEventListener("unhandledrejection", (ev) => {
     ev.preventDefault();
     return;
   }
-  console.error("[unhandledrejection]", ev.reason);
+  captureError(ev.reason, { tag: "window.unhandledrejection" });
 });
 
 function renderFatal(msg: string) {
