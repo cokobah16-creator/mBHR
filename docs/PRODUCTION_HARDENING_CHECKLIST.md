@@ -101,8 +101,8 @@ Dashboard for `Med Bridge Health Reach` (project ref `dlogqxzejroeyivfmgcv`).
 | Caching/CDN strategy documented                                                           | ✅     | `docs/CACHING_STRATEGY.md`                                                                                                        |
 | Scaling readiness documented                                                              | ✅     | `docs/SCALING_PLAN.md`                                                                                                            |
 | PHI encryption spike doc (WS13)                                                           | ✅     | `docs/PHI_ENCRYPTION_SPIKE.md` — threat model + field inventory + crypto sketch + cost (~17 days) + conditional-GO recommendation |
-| 94 `auth_rls_initplan` policies wrapped in `(SELECT auth.<fn>())`                         | ⏳     | Follow-up — each requires per-policy rewrite; my Phase A policies already use the wrap, but pre-existing ones still need it.      |
-| 79 `multiple_permissive_policies` consolidated                                            | ⏳     | Follow-up — same per-policy approach.                                                                                             |
+| 94 `auth_rls_initplan` policies wrapped in `(SELECT auth.<fn>())`                         | ✅     | Migration `20260520000006_wrap_auth_uid_in_rls_policies.sql`. Verified: 0 bare `auth.uid()` references remain in any RLS policy.  |
+| 79 `multiple_permissive_policies` consolidated                                            | ⏳     | Follow-up — not blocking; needs per-table policy merge.                                                                           |
 | 129 unused indexes audited + dropped (ring-fenced)                                        | ⏳     | Follow-up — needs 1-week `pg_stat_user_indexes` confirmation that they really are unused before dropping.                         |
 
 ## Phase D — Manual / dashboard items
