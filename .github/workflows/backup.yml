@@ -50,13 +50,14 @@ jobs:
           dump_file="mbhr-backup-${ts}.sql.gz"
           echo "filename=${dump_file}" >> "$GITHUB_OUTPUT"
 
-          # --no-owner / --no-privileges so the dump can be restored into a
-          # fresh project where roles/owners differ. --format=p keeps it as
-          # plain SQL, which restores via `psql` with no extra tooling.
+          # GitHub Actions runners lack IPv6, so the direct DB host
+          # (db.<ref>.supabase.co:5432) is unreachable. Use the Session Mode
+          # Pooler instead — it is IPv4-accessible and supports pg_dump.
+          # Username must include the project ref suffix for pooler auth.
           pg_dump \
-            --host=${{ secrets.SUPABASE_DB_HOST }} \
+            --host=aws-0-us-east-1.pooler.supabase.com \
             --port=5432 \
-            --username=postgres \
+            --username=postgres.${{ secrets.SUPABASE_PROJECT_REF }} \
             --dbname=postgres \
             --no-owner \
             --no-privileges \
