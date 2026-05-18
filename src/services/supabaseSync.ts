@@ -1,6 +1,7 @@
 // Comprehensive Supabase sync service for bidirectional data synchronization
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { db } from "@/db";
+import { env, supabaseConfigured } from "@/config/env";
 import { queryCache } from "@/utils/queryCache";
 import { getErrorMessage } from "@/utils/errors";
 import { isRealtimeAvailable } from "@/lib/realtimeAvailable";
@@ -348,10 +349,7 @@ class SupabaseSync {
 
 export const supabaseSync = new SupabaseSync();
 
-// Initialize on app startup
-const url = import.meta.env.VITE_SUPABASE_URL;
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-if (url && key && url.startsWith("http")) {
-  supabaseSync.initialize(url, key);
+// Initialize on app startup via the validated env config.
+if (supabaseConfigured() && env.VITE_SUPABASE_URL.startsWith("http")) {
+  supabaseSync.initialize(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 }
