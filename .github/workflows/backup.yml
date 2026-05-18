@@ -67,12 +67,22 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
-          supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-          # Bucket "backups" must exist and be private. Create it once via:
-          # supabase storage buckets create backups --public=false
-          supabase storage cp \
-            "${{ steps.dump.outputs.filename }}" \
-            "ss:///backups/${{ steps.dump.outputs.filename }}"
+          FILE="${{ steps.dump.outputs.filename }}"
+
+          # Upload via Storage REST API — avoids CLI version/path issues.
+          # Bucket "backups" is private and was created once via SQL.
+          HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -X POST \
+            "https://dlogqxzejroeyivfmgcv.supabase.co/storage/v1/object/backups/${FILE}" \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H "Content-Type: application/gzip" \
+            --data-binary "@${FILE}")
+
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "::error::Storage upload failed with HTTP ${HTTP_STATUS}"
+            exit 1
+          fi
+          echo "Uploaded ${FILE} → backups/${FILE} (HTTP ${HTTP_STATUS})"
 
       - name: Notify Slack on success
         if: success() && env.SLACK_WEBHOOK != ''
