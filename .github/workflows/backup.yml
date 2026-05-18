@@ -1,0 +1,107 @@
+name: Nightly DB Backup
+
+# Captures a logical pg_dump of the production Supabase Postgres every night,
+# uploads it to a private storage location, and notifies on success/failure.
+#
+# Requires repository secrets:
+#   SUPABASE_DB_HOST           db.<ref>.supabase.co  (e.g. db.dlogqxzejroeyivfmgcv.supabase.co)
+#   SUPABASE_DB_PASSWORD       postgres role password
+#   SUPABASE_PROJECT_REF       dlogqxzejroeyivfmgcv
+#   SUPABASE_ACCESS_TOKEN      personal access token for `supabase storage cp`
+#   SLACK_BACKUP_WEBHOOK       optional; for success/failure notifications
+#
+# Manual invocation is also supported via workflow_dispatch.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 03:00 UTC every day
+  workflow_dispatch:
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: pg_dump + upload
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Dump database
+        id: dump
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ts=$(date -u +'%Y%m%dT%H%M%SZ')
+          dump_file="mbhr-backup-${ts}.sql.gz"
+          echo "filename=${dump_file}" >> "$GITHUB_OUTPUT"
+
+          # --no-owner / --no-privileges so the dump can be restored into a
+          # fresh project where roles/owners differ. --format=p keeps it as
+          # plain SQL, which restores via `psql` with no extra tooling.
+          pg_dump \
+            --host=${{ secrets.SUPABASE_DB_HOST }} \
+            --port=5432 \
+            --username=postgres \
+            --dbname=postgres \
+            --no-owner \
+            --no-privileges \
+            --format=p \
+            --schema=public \
+            --schema=storage \
+            --schema=auth \
+            | gzip > "${dump_file}"
+
+          size=$(stat -c%s "${dump_file}")
+          echo "size_bytes=${size}" >> "$GITHUB_OUTPUT"
+          # Sanity-check: refuse to upload a dump under 1KB (probably empty).
+          if [ "${size}" -lt 1024 ]; then
+            echo "::error::Dump file is suspiciously small (${size} bytes)"
+            exit 1
+          fi
+
+      - name: Upload dump to Supabase Storage
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          # Bucket "backups" must exist and be private. Create it once via:
+          # supabase storage buckets create backups --public=false
+          supabase storage cp \
+            "${{ steps.dump.outputs.filename }}" \
+            "ss:///backups/${{ steps.dump.outputs.filename }}"
+
+      - name: Notify Slack on success
+        if: success() && env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_BACKUP_WEBHOOK }}
+          FILENAME: ${{ steps.dump.outputs.filename }}
+          SIZE: ${{ steps.dump.outputs.size_bytes }}
+        run: |
+          curl -X POST -H 'Content-Type: application/json' --data \
+            "{\"text\":\":floppy_disk: mBHR backup succeeded: ${FILENAME} (${SIZE} bytes)\"}" \
+            "${SLACK_WEBHOOK}"
+
+      - name: Notify Slack on failure
+        if: failure() && env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_BACKUP_WEBHOOK }}
+        run: |
+          curl -X POST -H 'Content-Type: application/json' --data \
+            "{\"text\":\":rotating_light: mBHR backup FAILED — check GitHub Actions log\"}" \
+            "${SLACK_WEBHOOK}"

@@ -13,8 +13,9 @@ import { seed } from "./db/seed";
 import { seedGamificationData } from "./db/gamification";
 import { db } from "./db/index";
 import { safeOpenDb } from "./db/safeOpen";
-import { log, error } from "@/lib/logger";
+import { log, error, captureError } from "@/lib/logger";
 import { runMigrations } from "@/db/migrations/migration-runner";
+import { startBackgroundSync } from "@/sync/adapter";
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
@@ -67,7 +68,10 @@ window.addEventListener("error", (ev) => {
     ev.preventDefault();
     return;
   }
-  console.error("[global error]", ev.message, ev.error);
+  captureError(ev.error ?? new Error(String(ev.message)), {
+    tag: "window.error",
+    extra: { filename: ev.filename, lineno: ev.lineno, colno: ev.colno },
+  });
 });
 window.addEventListener("unhandledrejection", (ev) => {
   if (isWebSocketSecurityError(ev.reason)) {
@@ -75,7 +79,7 @@ window.addEventListener("unhandledrejection", (ev) => {
     ev.preventDefault();
     return;
   }
-  console.error("[unhandledrejection]", ev.reason);
+  captureError(ev.reason, { tag: "window.unhandledrejection" });
 });
 
 function renderFatal(msg: string) {
@@ -138,6 +142,10 @@ function renderFatal(msg: string) {
     // Don't fail the app if seeding fails, just log it
     log("Seeding failed but continuing with app startup");
   }
+
+  // Opportunistic background sync — pushes dirty rows every 60s when online.
+  // Reduces blast radius if a tablet is lost before the user thinks to sync.
+  startBackgroundSync();
 
   log("Application fully initialized and rendered.");
   const root = ReactDOM.createRoot(document.getElementById("root")!);

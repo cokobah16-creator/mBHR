@@ -3,6 +3,7 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
 } from "@heroicons/react/24/outline";
+import { captureError } from "@/lib/logger";
 
 interface Props {
   children: ReactNode;
@@ -33,20 +34,15 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error("GlobalErrorBoundary caught error:", error, errorInfo);
+    captureError(error, {
+      tag: "GlobalErrorBoundary",
+      extra: { componentStack: errorInfo.componentStack },
+    });
 
     this.setState({
       error,
       errorInfo,
     });
-
-    if (import.meta.env.DEV) {
-      console.error("Error details:", {
-        message: error.message,
-        stack: error.stack,
-        componentStack: errorInfo.componentStack,
-      });
-    }
   }
 
   handleRestart = (): void => {
@@ -152,17 +148,10 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   }
 }
 
-// Hook for programmatic error reporting (placeholder)
+// Hook for programmatic error reporting.
 export function useErrorReport() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const reportError = (error: Error, context?: Record<string, any>) => {
-    console.error("Error reported:", error, context);
-
-    // Placeholder for future integration with Sentry, LogRocket, etc.
-    // Example:
-    // if (import.meta.env.VITE_SENTRY_DSN) {
-    //   Sentry.captureException(error, { extra: context });
-    // }
+  const reportError = (error: Error, context?: Record<string, unknown>) => {
+    captureError(error, { tag: "useErrorReport", extra: context });
   };
 
   return { reportError };

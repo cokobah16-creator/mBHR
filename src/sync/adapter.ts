@@ -521,3 +521,69 @@ if (typeof window !== "undefined") {
     }
   });
 }
+
+// Background opportunistic push.
+//
+// Without this, dirty rows could sit on a tablet for hours before the user
+// thinks to press "sync" — and if the tablet is lost or wiped before then,
+// those rows are gone. The interval below pushes every dirty row at most
+// BACKGROUND_SYNC_INTERVAL_MS old, even with no user action.
+//
+// Guard rails:
+//   - skipped while a sync is already running (avoids overlap)
+//   - skipped while offline (the network listener handles reconnects)
+//   - consecutive failures back off exponentially up to 5 minutes
+const BACKGROUND_SYNC_INTERVAL_MS = 60_000; // 60s opportunistic push
+const BACKGROUND_SYNC_MAX_BACKOFF_MS = 5 * 60_000;
+
+let backgroundSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let backgroundSyncFailures = 0;
+
+function scheduleNextBackgroundSync(delayMs: number): void {
+  if (typeof window === "undefined") return;
+  if (backgroundSyncTimer) clearTimeout(backgroundSyncTimer);
+  backgroundSyncTimer = setTimeout(runBackgroundSync, delayMs);
+}
+
+async function runBackgroundSync(): Promise<void> {
+  try {
+    if (!isOnlineSyncEnabled()) {
+      backgroundSyncFailures = 0;
+      scheduleNextBackgroundSync(BACKGROUND_SYNC_INTERVAL_MS);
+      return;
+    }
+    const store = useSyncStore.getState();
+    if (!store.isOnline) {
+      // Network listener will resume on `online`.
+      backgroundSyncFailures = 0;
+      scheduleNextBackgroundSync(BACKGROUND_SYNC_INTERVAL_MS);
+      return;
+    }
+    if (store.status === "syncing") {
+      scheduleNextBackgroundSync(BACKGROUND_SYNC_INTERVAL_MS);
+      return;
+    }
+    await syncNow();
+    backgroundSyncFailures = 0;
+    scheduleNextBackgroundSync(BACKGROUND_SYNC_INTERVAL_MS);
+  } catch (err) {
+    backgroundSyncFailures += 1;
+    const backoff = Math.min(
+      BACKGROUND_SYNC_INTERVAL_MS * 2 ** backgroundSyncFailures,
+      BACKGROUND_SYNC_MAX_BACKOFF_MS,
+    );
+    console.warn(
+      `[sync] background push failed (attempt ${backgroundSyncFailures}); retry in ${backoff}ms`,
+      err,
+    );
+    scheduleNextBackgroundSync(backoff);
+  }
+}
+
+// Kick off after a small startup delay so the rest of the app can finish
+// mounting before we start hitting the network.
+export function startBackgroundSync(): void {
+  if (typeof window === "undefined") return;
+  if (backgroundSyncTimer) return; // already running
+  scheduleNextBackgroundSync(5_000);
+}

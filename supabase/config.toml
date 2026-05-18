@@ -5,7 +5,7 @@
 #   supabase projects list
 # Then replace the placeholder below and commit the file.
 
-project_id = "xxbbafonflieyqcwaeyx"
+project_id = "dlogqxzejroeyivfmgcv"
 
 [api]
 # The port the local API gateway listens on

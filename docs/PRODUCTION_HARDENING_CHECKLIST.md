@@ -1,0 +1,114 @@
+# mBHR Production-Hardening Checklist
+
+This file tracks the production-readiness work driven by the audit
+(`/root/.claude/plans/after-doing-an-audit-immutable-bentley.md`). Items below
+that require a **dashboard click** (and so cannot be done from a migration or
+code) are listed at the bottom.
+
+## Phase A — Critical security ✅
+
+| Item                                                                                                                                   | Status | Notes                                                                                                                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 59 `USING (true)` RLS policies dropped + scoped replacements                                                                           | ✅     | Migration `20260520000000_lockdown_rls_and_definer.sql`                                                                                                  |
+| 13 legacy SELECT-true policies tightened                                                                                               | ✅     | Migration `20260520000001_tighten_legacy_select_policies.sql` (incl. removing the anon-readable session-token leak)                                      |
+| Anon UPDATE on `patient_portal_sessions` constrained                                                                                   | ✅     | Migration `20260520000002_tighten_portal_session_anon_update.sql`                                                                                        |
+| `is_staff()` / `has_role()` moved to `SECURITY INVOKER` + `notifications` policy added                                                 | ✅     | Migration `20260520000003_helpers_invoker_and_notifications_policy.sql`                                                                                  |
+| 6 functions: `SET search_path = public, pg_catalog`                                                                                    | ✅     | Same migration as RLS lockdown                                                                                                                           |
+| `check_and_increment_otp_rate_limit` / `cleanup_expired_otp_rate_limits` revoked from anon+authenticated, granted only to service_role | ✅     | Same                                                                                                                                                     |
+| `photos` storage bucket: `public = false` + scoped RLS on `storage.objects`                                                            | ✅     | Same                                                                                                                                                     |
+| Sentry `captureException` wired from both error boundaries + window error/unhandledrejection handlers                                  | ✅     | `src/lib/logger.ts` `captureError`, used by `GlobalErrorBoundary.tsx`, `ErrorBoundary.tsx`, `main.tsx`                                                   |
+| Generic `rate_limits` table + `check_and_increment_rate_limit()` SQL function                                                          | ✅     | Migration `20260520000004_generic_rate_limits.sql`                                                                                                       |
+| Edge functions wrapped in `enforceRateLimit` + `corsHeadersFor`                                                                        | ✅     | `supabase/functions/_shared/security/{rateLimit,cors}.ts` applied to send-otp-sms, send-otp-email, send-sms-reminder, tefca-oauth, tefca-ias, tefca-bulk |
+
+## Phase A — Manual / dashboard items
+
+These cannot be applied via migration. Walk through them in Supabase
+Dashboard for `Med Bridge Health Reach` (project ref `dlogqxzejroeyivfmgcv`).
+
+- [ ] **Enable leaked-password protection.**
+      Dashboard → Authentication → Policies → Password Settings → toggle
+      "Check passwords against HaveIBeenPwned.org" **on**.
+      Closes the `auth_leaked_password_protection` advisor warning.
+
+- [ ] **Set `ALLOWED_ORIGINS` secret on each edge function.**
+      Dashboard → Edge Functions → (each function) → Secrets → add
+      `ALLOWED_ORIGINS=https://your-prod-domain.vercel.app,https://staging.your-domain`.
+      Until set, the new CORS helper falls back to `*` and logs a warning at
+      cold-start. **Set it before the next deploy.** Apply to: send-otp-sms,
+      send-otp-email, send-sms-reminder, tefca-oauth, tefca-ias, tefca-bulk.
+
+- [ ] **Confirm Supabase Auth login-throttle is enabled.**
+      Dashboard → Authentication → Rate Limits. Built-in. Confirm and record
+      the chosen values (defaults are usually fine for healthcare).
+
+## Phase B — Observability + CI/CD ✅
+
+| Item                                                    | Status | Notes                                                                                                                                        |
+| ------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| CI: preview deploy job (per PR)                         | ✅     | `.github/workflows/build.yml` `deploy-preview` job — needs `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` repo secrets to actually run |
+| CI: smoke test against the deployed preview URL         | ✅     | `smoke-test` job runs `e2e/login.spec.ts` with `PLAYWRIGHT_BASE_URL`                                                                         |
+| CI: production deploy gated by `production` Environment | ✅     | `migrate-prod` + `deploy-prod` jobs                                                                                                          |
+| CI: DB migrations applied on prod deploy                | ✅     | `supabase/setup-cli` + `supabase db push --linked`; needs `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD`            |
+| Sticky PR comment with preview URL                      | ✅     | `marocchino/sticky-pull-request-comment@v2`                                                                                                  |
+| Centralised Supabase call wrapper                       | ✅     | `src/services/supabaseQuery.ts` + 7 unit tests                                                                                               |
+| `supabase/config.toml` project_id corrected             | ✅     | Was `xxbbafonflieyqcwaeyx`, now `dlogqxzejroeyivfmgcv`                                                                                       |
+| Zod env validation at app boot                          | ✅     | `src/config/env.ts`; throws in dev, reports + falls back in prod                                                                             |
+
+## Phase B — Manual / dashboard items
+
+- [ ] **Create the `production` GitHub Environment** with required reviewer(s)
+      before merging anything to `main` — otherwise `migrate-prod` + `deploy-prod`
+      will run automatically.
+- [ ] **Add the following GitHub Action secrets** to the repository:
+      `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`,
+      `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF` (use
+      `dlogqxzejroeyivfmgcv`), `SUPABASE_DB_PASSWORD`.
+- [ ] **(Recommended) Raise vitest coverage threshold** in
+      `vitest.config.ts` from 60 → 75% in two PRs. Backfill the most
+      under-tested service first — likely `src/services/portalEnrollment.ts`
+      or `src/services/messaging.ts`.
+
+## Phase C — Resilience ✅
+
+| Item                                                                 | Status | Notes                                                                                                                                       |
+| -------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Nightly `pg_dump` workflow uploading to private storage              | ✅     | `.github/workflows/backup.yml` (runs at 03:00 UTC; manual `workflow_dispatch` also supported)                                               |
+| Restore runbook with verification queries                            | ✅     | `docs/RESTORE_RUNBOOK.md`                                                                                                                   |
+| Opportunistic background sync (≤ 60s push of dirty rows when online) | ✅     | `startBackgroundSync()` in `src/sync/adapter.ts`, kicked off from `src/main.tsx` after seed; exponential backoff up to 5 min on repeat fail |
+| Symmetric JSON export → import round-trip                            | ✅     | `src/utils/import.ts` (counterpart to `src/utils/export.ts`); 6 unit tests covering shape, idempotency, dirty-flag stamping                 |
+| Device-key escrow for tablet-loss recovery                           | 🔬     | Deferred to a follow-up spike doc — requires real cryptographic protocol design + UX work; see Phase D / WS13 spike for adjacent context.   |
+
+## Phase C — Manual / dashboard items
+
+- [ ] **Confirm Supabase Point-in-Time Recovery is enabled** for the prod
+      project. The nightly logical dump is a second line of defence; PITR is
+      the first (and finer-grained). PITR requires the Pro plan or higher.
+- [ ] **Create the private `backups` Storage bucket** once:
+      `supabase storage buckets create backups --public=false`. The nightly
+      job assumes it exists.
+- [ ] **Run the quarterly restore drill** documented in
+      `docs/RESTORE_RUNBOOK.md` (Step 7) — drift in pg_dump / Supabase CLI
+      behaviour is real; rehearsing once a quarter is the cheapest
+      production incident.
+
+## Phase D — Polish ✅ (partial — see follow-ups)
+
+| Item                                                                                      | Status | Notes                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 37 FK indexes added                                                                       | ✅     | Migration `20260520000005_fk_indexes_and_dup_drops.sql`                                                                                                                                                                                                                              |
+| 4 duplicate indexes dropped                                                               | ✅     | Same migration                                                                                                                                                                                                                                                                       |
+| Workbox runtime caching tuned (NetworkFirst + StaleWhileRevalidate + CacheFirst per host) | ✅     | `vite.config.ts`                                                                                                                                                                                                                                                                     |
+| Caching/CDN strategy documented                                                           | ✅     | `docs/CACHING_STRATEGY.md`                                                                                                                                                                                                                                                           |
+| Scaling readiness documented                                                              | ✅     | `docs/SCALING_PLAN.md`                                                                                                                                                                                                                                                               |
+| PHI encryption spike doc (WS13)                                                           | ✅     | `docs/PHI_ENCRYPTION_SPIKE.md` — threat model + field inventory + crypto sketch + cost (~17 days) + conditional-GO recommendation                                                                                                                                                    |
+| 94 `auth_rls_initplan` policies wrapped in `(SELECT auth.<fn>())`                         | ✅     | Migration `20260520000006_wrap_auth_uid_in_rls_policies.sql`. Verified: 0 bare `auth.uid()` references remain in any RLS policy.                                                                                                                                                     |
+| 79 `multiple_permissive_policies` consolidated                                            | 🟡     | 19 of 75 combos cleared in migration `20260520000007_consolidate_multiple_permissive_policies.sql`. Remaining 56 are intentional dual policies (patient-portal owner+staff and care_tasks/triage_records role-set mismatches) — load-bearing; documented for case-by-case follow-up. |
+| 129 unused indexes audited + dropped (ring-fenced)                                        | ⏳     | Follow-up — needs 1-week `pg_stat_user_indexes` confirmation that they really are unused before dropping.                                                                                                                                                                            |
+
+## Phase D — Manual / dashboard items
+
+- [ ] **Re-run `mcp__supabase__get_advisors(type=performance)` after**
+      the follow-up perf migration lands and confirm both
+      `auth_rls_initplan` and `multiple_permissive_policies` drop to zero.
+- [ ] **Lighthouse run** post-Workbox-tuning: expect PWA ≥ 90, Performance
+      ≥ 80 on mid-tier Android (Pixel 5 in dev tools).
