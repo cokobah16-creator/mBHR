@@ -64,17 +64,18 @@ jobs:
 
       - name: Upload dump to Supabase Storage
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
           FILE="${{ steps.dump.outputs.filename }}"
 
-          # Upload via Storage REST API — avoids CLI version/path issues.
+          # Storage REST API requires the project service_role key (JWT),
+          # not the management API personal access token.
           # Bucket "backups" is private and was created once via SQL.
           HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
             -X POST \
             "https://dlogqxzejroeyivfmgcv.supabase.co/storage/v1/object/backups/${FILE}" \
-            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
             -H "Content-Type: application/gzip" \
             --data-binary "@${FILE}")
 
