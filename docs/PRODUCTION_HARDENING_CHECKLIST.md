@@ -83,9 +83,10 @@ Dashboard for `Med Bridge Health Reach` (project ref `dlogqxzejroeyivfmgcv`).
 - [ ] **Confirm Supabase Point-in-Time Recovery is enabled** for the prod
       project. The nightly logical dump is a second line of defence; PITR is
       the first (and finer-grained). PITR requires the Pro plan or higher.
-- [ ] **Create the private `backups` Storage bucket** once:
+- [x] **Create the private `backups` Storage bucket** once:
       `supabase storage buckets create backups --public=false`. The nightly
-      job assumes it exists.
+      job assumes it exists. **Done** — bucket created, `public = false`,
+      500 MB limit.
 - [ ] **Run the quarterly restore drill** documented in
       `docs/RESTORE_RUNBOOK.md` (Step 7) — drift in pg_dump / Supabase CLI
       behaviour is real; rehearsing once a quarter is the cheapest
