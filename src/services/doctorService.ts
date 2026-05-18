@@ -1,3 +1,4 @@
+import * as logger from "@/lib/logger";
 import { supabase } from "@/lib/supabase";
 import type {
   PatientFlag,
@@ -26,7 +27,7 @@ export const doctorService = {
       .single();
 
     if (error) {
-      console.error("Error creating patient flag:", error);
+      logger.error("Error creating patient flag:", error);
       return null;
     }
 
@@ -67,7 +68,7 @@ export const doctorService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error fetching patient flags:", error);
+      logger.error("Error fetching patient flags:", error);
       return [];
     }
 
@@ -92,7 +93,7 @@ export const doctorService = {
       .eq("id", flagId);
 
     if (error) {
-      console.error("Error resolving patient flag:", error);
+      logger.error("Error resolving patient flag:", error);
       return false;
     }
 
@@ -111,7 +112,7 @@ export const doctorService = {
       .single();
 
     if (error) {
-      console.error("Error creating referral:", error);
+      logger.error("Error creating referral:", error);
       return null;
     }
 
@@ -147,7 +148,7 @@ export const doctorService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error fetching referrals:", error);
+      logger.error("Error fetching referrals:", error);
       return [];
     }
 
@@ -166,7 +167,7 @@ export const doctorService = {
       .single();
 
     if (error) {
-      console.error("Error scheduling follow-up:", error);
+      logger.error("Error scheduling follow-up:", error);
       return null;
     }
 
@@ -202,7 +203,7 @@ export const doctorService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error fetching follow-up schedules:", error);
+      logger.error("Error fetching follow-up schedules:", error);
       return [];
     }
 
@@ -229,7 +230,7 @@ export const doctorService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error fetching prescription templates:", error);
+      logger.error("Error fetching prescription templates:", error);
       return [];
     }
 
@@ -256,7 +257,7 @@ export const doctorService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error fetching site formulary:", error);
+      logger.error("Error fetching site formulary:", error);
       return [];
     }
 
@@ -277,7 +278,7 @@ export const doctorService = {
       .maybeSingle();
 
     if (error) {
-      console.error("Error fetching doctor analytics:", error);
+      logger.error("Error fetching doctor analytics:", error);
       return null;
     }
 
@@ -299,7 +300,7 @@ export const doctorService = {
     });
 
     if (error) {
-      console.error("Error updating doctor analytics:", error);
+      logger.error("Error updating doctor analytics:", error);
       return false;
     }
 
@@ -331,7 +332,7 @@ export const doctorService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error fetching protocols:", error);
+      logger.error("Error fetching protocols:", error);
       return [];
     }
 
@@ -350,7 +351,7 @@ export const doctorService = {
       .single();
 
     if (error) {
-      console.error("Error creating consultation review:", error);
+      logger.error("Error creating consultation review:", error);
       return null;
     }
 
@@ -381,7 +382,7 @@ export const doctorService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error fetching consultation reviews:", error);
+      logger.error("Error fetching consultation reviews:", error);
       return [];
     }
 

@@ -1,4 +1,6 @@
+import * as Sentry from "@sentry/react";
 import { supabase } from "../lib/supabase";
+import * as logger from "@/lib/logger";
 
 export interface LabOrder {
   id?: string;
@@ -30,6 +32,14 @@ export interface LabResult {
   notes?: string;
 }
 
+function logAndThrow(error: unknown, context: string): never {
+  logger.error(`[labs] ${context}:`, error);
+  if (import.meta.env.VITE_SENTRY_DSN && error instanceof Error) {
+    Sentry.captureException(error, { tags: { service: "labs", context } });
+  }
+  throw error;
+}
+
 export async function createLabOrder(order: LabOrder): Promise<string> {
   const { data, error } = await supabase
     .from("lab_orders")
@@ -47,8 +57,8 @@ export async function createLabOrder(order: LabOrder): Promise<string> {
     .select()
     .single();
 
-  if (error) throw error;
-  return data.id;
+  if (error) logAndThrow(error, "createLabOrder");
+  return data!.id;
 }
 
 export async function updateLabOrderStatus(
@@ -57,21 +67,18 @@ export async function updateLabOrderStatus(
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updates: any = { status };
-
-  if (status === "collected") {
-    updates.collected_at = new Date().toISOString();
-  } else if (status === "completed") {
+  if (status === "collected") updates.collected_at = new Date().toISOString();
+  else if (status === "completed")
     updates.completed_at = new Date().toISOString();
-  } else if (status === "cancelled") {
+  else if (status === "cancelled")
     updates.cancelled_at = new Date().toISOString();
-  }
 
   const { error } = await supabase
     .from("lab_orders")
     .update(updates)
     .eq("id", orderId);
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "updateLabOrderStatus");
 }
 
 export async function addLabResult(result: LabResult): Promise<string> {
@@ -89,11 +96,9 @@ export async function addLabResult(result: LabResult): Promise<string> {
     .select()
     .single();
 
-  if (error) throw error;
-
+  if (error) logAndThrow(error, "addLabResult");
   await updateLabOrderStatus(result.orderId, "completed");
-
-  return data.id;
+  return data!.id;
 }
 
 export async function reviewLabResult(
@@ -108,7 +113,7 @@ export async function reviewLabResult(
     })
     .eq("id", resultId);
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "reviewLabResult");
 }
 
 export async function getPatientLabOrders(
@@ -120,9 +125,9 @@ export async function getPatientLabOrders(
     .eq("patient_id", patientId)
     .order("ordered_at", { ascending: false });
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "getPatientLabOrders");
 
-  return data.map((o) => ({
+  return data!.map((o) => ({
     id: o.id,
     patientId: o.patient_id,
     visitId: o.visit_id,
@@ -147,9 +152,9 @@ export async function getLabResults(orderId: string): Promise<LabResult[]> {
     .eq("order_id", orderId)
     .order("result_date", { ascending: false });
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "getLabResults");
 
-  return data.map((r) => ({
+  return data!.map((r) => ({
     id: r.id,
     orderId: r.order_id,
     resultValue: r.result_value,
@@ -171,9 +176,9 @@ export async function getPendingLabOrders(): Promise<LabOrder[]> {
     .order("priority", { ascending: true })
     .order("ordered_at", { ascending: true });
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "getPendingLabOrders");
 
-  return data.map((o) => ({
+  return data!.map((o) => ({
     id: o.id,
     patientId: o.patient_id,
     visitId: o.visit_id,
@@ -204,10 +209,10 @@ export async function getCriticalResults(): Promise<
     .is("reviewed_at", null)
     .order("result_date", { ascending: false });
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "getCriticalResults");
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return data.map((r: any) => ({
+  return data!.map((r: any) => ({
     id: r.id,
     orderId: r.order_id,
     resultValue: r.result_value,

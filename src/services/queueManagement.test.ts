@@ -8,12 +8,16 @@ const {
   mockQueueGet,
   mockQueueWhere,
   mockPatientsGet,
+  mockSettingsGet,
+  mockSettingsPut,
 } = vi.hoisted(() => ({
   mockQueueAdd: vi.fn(),
   mockQueueUpdate: vi.fn().mockResolvedValue(undefined),
   mockQueueGet: vi.fn(),
   mockQueueWhere: vi.fn(),
   mockPatientsGet: vi.fn(),
+  mockSettingsGet: vi.fn().mockResolvedValue(undefined),
+  mockSettingsPut: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/db", () => ({
@@ -25,6 +29,10 @@ vi.mock("@/db", () => ({
       where: mockQueueWhere,
     },
     patients: { get: mockPatientsGet },
+    settings: {
+      get: mockSettingsGet,
+      put: mockSettingsPut,
+    },
   },
   generateId: vi.fn().mockReturnValue("q-new"),
   epochDay: vi.fn().mockReturnValue(20000),

@@ -1,9 +1,9 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
+import * as Sentry from "@sentry/react";
 import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
 } from "@heroicons/react/24/outline";
-import { captureError } from "@/lib/logger";
 
 interface Props {
   children: ReactNode;
@@ -34,15 +34,24 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    captureError(error, {
-      tag: "GlobalErrorBoundary",
-      extra: { componentStack: errorInfo.componentStack },
-    });
+    console.error("GlobalErrorBoundary caught error:", error, errorInfo);
 
-    this.setState({
-      error,
-      errorInfo,
-    });
+    this.setState({ error, errorInfo });
+
+    if (import.meta.env.VITE_SENTRY_DSN) {
+      Sentry.captureException(error, {
+        contexts: { react: { componentStack: errorInfo.componentStack } },
+        tags: { source: "GlobalErrorBoundary" },
+      });
+    }
+
+    if (import.meta.env.DEV) {
+      console.error("Error details:", {
+        message: error.message,
+        stack: error.stack,
+        componentStack: errorInfo.componentStack,
+      });
+    }
   }
 
   handleRestart = (): void => {
@@ -148,10 +157,13 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   }
 }
 
-// Hook for programmatic error reporting.
 export function useErrorReport() {
-  const reportError = (error: Error, context?: Record<string, unknown>) => {
-    captureError(error, { tag: "useErrorReport", extra: context });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const reportError = (error: Error, context?: Record<string, any>) => {
+    console.error("Error reported:", error, context);
+    if (import.meta.env.VITE_SENTRY_DSN) {
+      Sentry.captureException(error, { extra: context });
+    }
   };
 
   return { reportError };

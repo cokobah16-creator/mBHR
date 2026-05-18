@@ -13,9 +13,8 @@ import { seed } from "./db/seed";
 import { seedGamificationData } from "./db/gamification";
 import { db } from "./db/index";
 import { safeOpenDb } from "./db/safeOpen";
-import { log, error, captureError } from "@/lib/logger";
+import { log, error } from "@/lib/logger";
 import { runMigrations } from "@/db/migrations/migration-runner";
-import { startBackgroundSync } from "@/sync/adapter";
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
@@ -40,46 +39,20 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   });
 }
 
-// Safari Private Browsing (and some locked-down WebViews) throw
-// "SecurityError: The operation is insecure." from the WebSocket constructor.
-// Supabase realtime sometimes surfaces this as an async unhandled error after
-// our sync try/catch returns. Swallow it here so the React tree doesn't crash.
-function isWebSocketSecurityError(reason: unknown): boolean {
-  if (!reason) return false;
-  const msg =
-    typeof reason === "string"
-      ? reason
-      : reason instanceof Error
-        ? `${reason.name}: ${reason.message}`
-        : String((reason as { message?: unknown })?.message ?? "");
-  return (
-    msg.includes("WebSocket not available") ||
-    msg.includes("The operation is insecure") ||
-    (msg.includes("SecurityError") && msg.toLowerCase().includes("websocket"))
-  );
-}
-
+// Global error visibility + Sentry capture
 window.addEventListener("error", (ev) => {
-  if (
-    isWebSocketSecurityError(ev.error) ||
-    isWebSocketSecurityError(ev.message)
-  ) {
-    console.warn("[realtime] WebSocket unavailable, live updates disabled");
-    ev.preventDefault();
-    return;
+  console.error("[global error]", ev.message, ev.error);
+  if (import.meta.env.VITE_SENTRY_DSN && ev.error instanceof Error) {
+    Sentry.captureException(ev.error, { tags: { source: "window.error" } });
   }
-  captureError(ev.error ?? new Error(String(ev.message)), {
-    tag: "window.error",
-    extra: { filename: ev.filename, lineno: ev.lineno, colno: ev.colno },
-  });
 });
 window.addEventListener("unhandledrejection", (ev) => {
-  if (isWebSocketSecurityError(ev.reason)) {
-    console.warn("[realtime] WebSocket unavailable, live updates disabled");
-    ev.preventDefault();
-    return;
+  console.error("[unhandledrejection]", ev.reason);
+  if (import.meta.env.VITE_SENTRY_DSN) {
+    const err =
+      ev.reason instanceof Error ? ev.reason : new Error(String(ev.reason));
+    Sentry.captureException(err, { tags: { source: "unhandledrejection" } });
   }
-  captureError(ev.reason, { tag: "window.unhandledrejection" });
 });
 
 function renderFatal(msg: string) {
@@ -142,10 +115,6 @@ function renderFatal(msg: string) {
     // Don't fail the app if seeding fails, just log it
     log("Seeding failed but continuing with app startup");
   }
-
-  // Opportunistic background sync — pushes dirty rows every 60s when online.
-  // Reduces blast radius if a tablet is lost before the user thinks to sync.
-  startBackgroundSync();
 
   log("Application fully initialized and rendered.");
   const root = ReactDOM.createRoot(document.getElementById("root")!);

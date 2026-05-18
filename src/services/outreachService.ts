@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import * as logger from "@/lib/logger";
 import type {
   Organization,
   Site,
@@ -18,7 +19,7 @@ export const outreachService = {
       .maybeSingle();
 
     if (error) {
-      console.error("Error fetching organization:", error);
+      logger.error("[outreachService] fetching organization:", error);
       return null;
     }
 
@@ -34,7 +35,7 @@ export const outreachService = {
       .eq("user_id", user_id);
 
     if (error) {
-      console.error("Error fetching user organizations:", error);
+      logger.error("[outreachService] fetching user organizations:", error);
       return [];
     }
 
@@ -53,7 +54,7 @@ export const outreachService = {
       .order("name");
 
     if (error) {
-      console.error("Error fetching sites:", error);
+      logger.error("[outreachService] fetching sites:", error);
       return [];
     }
 
@@ -70,7 +71,7 @@ export const outreachService = {
       .maybeSingle();
 
     if (error) {
-      console.error("Error fetching site:", error);
+      logger.error("[outreachService] fetching site:", error);
       return null;
     }
 
@@ -111,7 +112,7 @@ export const outreachService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error fetching outreach events:", error);
+      logger.error("[outreachService] fetching outreach events:", error);
       return [];
     }
 
@@ -128,7 +129,7 @@ export const outreachService = {
       .maybeSingle();
 
     if (error) {
-      console.error("Error fetching outreach event:", error);
+      logger.error("[outreachService] fetching outreach event:", error);
       return null;
     }
 
@@ -147,7 +148,7 @@ export const outreachService = {
       .single();
 
     if (error) {
-      console.error("Error creating outreach event:", error);
+      logger.error("[outreachService] creating outreach event:", error);
       return null;
     }
 
@@ -169,7 +170,7 @@ export const outreachService = {
       .eq("id", event_id);
 
     if (error) {
-      console.error("Error updating outreach event:", error);
+      logger.error("[outreachService] updating outreach event:", error);
       return false;
     }
 
@@ -188,7 +189,10 @@ export const outreachService = {
       .order("created_at");
 
     if (error) {
-      console.error("Error fetching event staff assignments:", error);
+      logger.error(
+        "[outreachService] fetching event staff assignments:",
+        error,
+      );
       return [];
     }
 
@@ -207,7 +211,7 @@ export const outreachService = {
       .single();
 
     if (error) {
-      console.error("Error assigning staff to event:", error);
+      logger.error("[outreachService] assigning staff to event:", error);
       return null;
     }
 
@@ -225,7 +229,7 @@ export const outreachService = {
       .eq("id", assignment_id);
 
     if (error) {
-      console.error("Error checking in staff:", error);
+      logger.error("[outreachService] checking in staff:", error);
       return false;
     }
 
@@ -243,7 +247,7 @@ export const outreachService = {
       .eq("id", assignment_id);
 
     if (error) {
-      console.error("Error checking out staff:", error);
+      logger.error("[outreachService] checking out staff:", error);
       return false;
     }
 
@@ -262,7 +266,7 @@ export const outreachService = {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Error fetching user event assignments:", error);
+      logger.error("[outreachService] fetching user event assignments:", error);
       return [];
     }
 
@@ -294,7 +298,7 @@ export const outreachService = {
       .maybeSingle();
 
     if (error) {
-      console.error("Error fetching active event for user:", error);
+      logger.error("[outreachService] fetching active event for user:", error);
       return null;
     }
 
@@ -312,7 +316,7 @@ export const outreachService = {
       .maybeSingle();
 
     if (error) {
-      console.error("Error fetching default org/site:", error);
+      logger.error("[outreachService] fetching default org/site:", error);
       return null;
     }
 
@@ -339,7 +343,7 @@ export const outreachService = {
       .eq("site_id", site_id || null);
 
     if (error) {
-      console.error("Error setting default org/site:", error);
+      logger.error("[outreachService] setting default org/site:", error);
       return false;
     }
 

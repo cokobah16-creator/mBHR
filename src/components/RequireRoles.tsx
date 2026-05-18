@@ -1,20 +1,18 @@
 import React from "react";
 import { useAuthStore } from "@/stores/auth";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import { hasRole, type Role } from "@/utils/permissions";
 
 type Props = {
-  roles: Array<
-    "volunteer" | "inventory_lead" | "pharmacist" | "nurse" | "doctor" | "admin"
-  >;
+  roles: Role[];
   children: React.ReactNode;
 };
 
 export default function RequireRoles({ roles, children }: Props) {
   const { currentUser } = useAuthStore();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const userRole = currentUser?.role as any;
 
-  if (!currentUser || !userRole || !roles.includes(userRole)) {
+  if (!hasRole(currentUser, roles)) {
+    const userRole = currentUser?.role ?? "none";
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-6">
@@ -31,9 +29,7 @@ export default function RequireRoles({ roles, children }: Props) {
             <p className="mt-1 text-xs text-gray-400">
               Required roles: {roles.join(", ")}
             </p>
-            <p className="mt-1 text-xs text-gray-400">
-              Your role: {userRole || "none"}
-            </p>
+            <p className="mt-1 text-xs text-gray-400">Your role: {userRole}</p>
           </div>
         </div>
       </div>

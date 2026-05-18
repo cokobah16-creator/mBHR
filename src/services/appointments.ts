@@ -1,4 +1,6 @@
+import * as Sentry from "@sentry/react";
 import { supabase } from "../lib/supabase";
+import * as logger from "@/lib/logger";
 
 export interface Appointment {
   id?: string;
@@ -32,6 +34,16 @@ export interface WaitlistEntry {
   status: "waiting" | "scheduled" | "cancelled";
 }
 
+function logAndThrow(error: unknown, context: string): never {
+  logger.error(`[appointments] ${context}:`, error);
+  if (import.meta.env.VITE_SENTRY_DSN && error instanceof Error) {
+    Sentry.captureException(error, {
+      tags: { service: "appointments", context },
+    });
+  }
+  throw error;
+}
+
 export async function createAppointment(
   appointment: Appointment,
 ): Promise<string> {
@@ -51,8 +63,8 @@ export async function createAppointment(
     .select()
     .single();
 
-  if (error) throw error;
-  return data.id;
+  if (error) logAndThrow(error, "createAppointment");
+  return data!.id;
 }
 
 export async function updateAppointmentStatus(
@@ -64,7 +76,7 @@ export async function updateAppointmentStatus(
     .update({ status })
     .eq("id", appointmentId);
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "updateAppointmentStatus");
 }
 
 export async function rescheduleAppointment(
@@ -79,7 +91,7 @@ export async function rescheduleAppointment(
     })
     .eq("id", appointmentId);
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "rescheduleAppointment");
 }
 
 export async function cancelAppointment(
@@ -88,16 +100,14 @@ export async function cancelAppointment(
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updates: any = { status: "cancelled" };
-  if (reason) {
-    updates.notes = reason;
-  }
+  if (reason) updates.notes = reason;
 
   const { error } = await supabase
     .from("appointments")
     .update(updates)
     .eq("id", appointmentId);
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "cancelAppointment");
 }
 
 export async function getPatientAppointments(
@@ -109,9 +119,9 @@ export async function getPatientAppointments(
     .eq("patient_id", patientId)
     .order("scheduled_at", { ascending: false });
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "getPatientAppointments");
 
-  return data.map((a) => ({
+  return data!.map((a) => ({
     id: a.id,
     patientId: a.patient_id,
     providerId: a.provider_id,
@@ -139,15 +149,12 @@ export async function getUpcomingAppointments(
     .gte("scheduled_at", new Date().toISOString())
     .order("scheduled_at", { ascending: true });
 
-  if (providerId) {
-    query = query.eq("provider_id", providerId);
-  }
+  if (providerId) query = query.eq("provider_id", providerId);
 
   const { data, error } = await query;
+  if (error) logAndThrow(error, "getUpcomingAppointments");
 
-  if (error) throw error;
-
-  return data.map((a) => ({
+  return data!.map((a) => ({
     id: a.id,
     patientId: a.patient_id,
     providerId: a.provider_id,
@@ -170,7 +177,6 @@ export async function getTodayAppointments(
 ): Promise<Appointment[]> {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
-
   const endOfDay = new Date();
   endOfDay.setHours(23, 59, 59, 999);
 
@@ -181,15 +187,12 @@ export async function getTodayAppointments(
     .lte("scheduled_at", endOfDay.toISOString())
     .order("scheduled_at", { ascending: true });
 
-  if (providerId) {
-    query = query.eq("provider_id", providerId);
-  }
+  if (providerId) query = query.eq("provider_id", providerId);
 
   const { data, error } = await query;
+  if (error) logAndThrow(error, "getTodayAppointments");
 
-  if (error) throw error;
-
-  return data.map((a) => ({
+  return data!.map((a) => ({
     id: a.id,
     patientId: a.patient_id,
     providerId: a.provider_id,
@@ -224,9 +227,8 @@ export async function checkAvailability(
       `scheduled_at.gte.${startTime.toISOString()},scheduled_at.lt.${endTime.toISOString()}`,
     );
 
-  if (error) throw error;
-
-  return data.length === 0;
+  if (error) logAndThrow(error, "checkAvailability");
+  return data!.length === 0;
 }
 
 export async function addToWaitlist(entry: WaitlistEntry): Promise<string> {
@@ -243,8 +245,8 @@ export async function addToWaitlist(entry: WaitlistEntry): Promise<string> {
     .select()
     .single();
 
-  if (error) throw error;
-  return data.id;
+  if (error) logAndThrow(error, "addToWaitlist");
+  return data!.id;
 }
 
 export async function getWaitlist(): Promise<WaitlistEntry[]> {
@@ -255,9 +257,9 @@ export async function getWaitlist(): Promise<WaitlistEntry[]> {
     .order("priority", { ascending: true })
     .order("created_at", { ascending: true });
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "getWaitlist");
 
-  return data.map((w) => ({
+  return data!.map((w) => ({
     id: w.id,
     patientId: w.patient_id,
     appointmentType: w.appointment_type,
@@ -277,7 +279,7 @@ export async function updateWaitlistStatus(
     .update({ status })
     .eq("id", waitlistId);
 
-  if (error) throw error;
+  if (error) logAndThrow(error, "updateWaitlistStatus");
 }
 
 export async function scheduleFromWaitlist(
@@ -285,8 +287,6 @@ export async function scheduleFromWaitlist(
   appointmentData: Omit<Appointment, "id">,
 ): Promise<string> {
   const appointmentId = await createAppointment(appointmentData);
-
   await updateWaitlistStatus(waitlistId, "scheduled");
-
   return appointmentId;
 }
