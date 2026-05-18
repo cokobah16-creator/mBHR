@@ -1215,6 +1215,80 @@ export class MBHRDatabase extends Dexie {
       appointments: "id, patientId, scheduledAt, status, _dirty, _syncedAt",
       sites: "id, name, active, updatedAt",
     });
+
+    // v16 — PHI field-level encryption (encryption_v1 sprint).
+    // See: docs/PHI_ENCRYPTION_SPIKE.md, github issue #107.
+    //
+    // No new Dexie indexes — encrypted columns (_enc, _iv, _v) are stored
+    // but never queried directly. Operational/index columns stay plaintext.
+    // users gets wrapped_key (not indexed) for multi-user key wrapping.
+    // The upgrade sets encryption_v1="off" so hooks install but do nothing
+    // until the shadow-write period is manually enabled.
+    this.version(16)
+      .stores({
+        // Store definitions unchanged from v15 — column additions (_enc, _iv,
+        // _v, wrapped_key) are stored automatically by Dexie without needing
+        // to be listed in the index spec.
+        patients:
+          "id, familyName, phone, email, authUid, state, lga, createdAt, updatedAt, _dirty, _syncedAt, phoneN, nameKey, dobDay, createdDay, updatedDay, mergeInto, contactVerified, portalEnabled, lastPortalActivity",
+        vitals:
+          "id, patientId, visitId, takenAt, systolic, diastolic, _dirty, _syncedAt, portalVisible",
+        consultations:
+          "id, patientId, visitId, createdAt, providerName, _dirty, _syncedAt, portalVisible",
+        dispenses:
+          "id, patientId, visitId, dispensedAt, itemName, _dirty, _syncedAt, portalVisible",
+        inventory: "id, itemName, updatedAt, onHandQty, _dirty, _syncedAt",
+        visits: "id, patientId, startedAt, status, siteName, _dirty, _syncedAt",
+        queue:
+          "id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt",
+        auditLogs: "id, actorRole, entity, entityId, at",
+        users:
+          "id, fullName, role, email, pinHash, pinSalt, isActive, adminAccess, adminPermanent, createdAt, updatedAt",
+        sessions: "id, userId, createdAt, lastSeenAt",
+        settings: "key",
+        meta: "key",
+        gameSessions:
+          "id, type, volunteerId, startedAt, finishedAt, committed_idx, _dirty, _syncedAt",
+        gamificationWallets:
+          "volunteerId, tokens, level, streakDays, updatedAt, _dirty, _syncedAt",
+        vitalsRanges: "id, sex, metric, ageMin, ageMax, updatedAt",
+        quizQuestions: "id, topic, difficulty, updatedAt",
+        triageSamples: "id, createdAt, createdBy",
+        inventoryDiscrepancies:
+          "id, itemId, createdAt, resolvedAt, _dirty, _syncedAt",
+        outboundMessages:
+          "id, patientId, status, channel, to, createdAt, scheduledFor, _dirty, _syncedAt",
+        messageTemplates: "key, locale, channel",
+        stockBatches: "id, drugId, expiryDate, updatedAt, _dirty, _syncedAt",
+        careTasks:
+          "id, patientId, status, dueDate, createdAt, _dirty, _syncedAt",
+        triageRecords:
+          "id, patientId, visitId, priority, createdAt, createdBy, _dirty, _syncedAt",
+        patientMerges: "id, winnerId, loserId, createdDay",
+        dailyCounts:
+          "day, registrations, vitals, consultations, dispenses, visits",
+        conflictResolutions: "id, patientId, conflictType, status, resolvedAt",
+        patientAllergies:
+          "id, patientId, allergen, allergyType, severity, isActive, createdAt, updatedAt, _dirty, _syncedAt",
+        patientPreferences:
+          "id, patientId, createdAt, updatedAt, _dirty, _syncedAt",
+        clinicalAlerts:
+          "id, patientId, alertType, severity, acknowledged, createdAt, acknowledgedAt, _dirty, _syncedAt",
+        portalMessages:
+          "id, patientId, senderType, read, createdAt, _dirty, _syncedAt",
+        portalNotifications:
+          "id, patientId, read, createdAt, _dirty, _syncedAt",
+        patientSubmittedData:
+          "id, patientId, submissionType, status, createdAt, _dirty, _syncedAt",
+        appointments: "id, patientId, scheduledAt, status, _dirty, _syncedAt",
+        sites: "id, name, active, updatedAt",
+      })
+      .upgrade(async (tx) => {
+        // Mark encryption as off — enables hook installation without activating
+        // encryption. Flip to "shadow" once Week 2 work is complete; flip to
+        // "active" after the soak period.
+        await tx.table("settings").put({ key: "encryption_v1", value: "off" });
+      });
   }
 }
 
