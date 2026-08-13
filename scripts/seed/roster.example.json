@@ -1,0 +1,64 @@
+{
+  "$comment": "Copy this file to scripts/seed/roster.json, replace every placeholder with your real organization, site, staff roster and outreach date, then run: npm run seed:live. Staff `pin` (6 digits) and `password` are optional — omitted values are generated and printed once. roster.json is gitignored: never commit real PINs.",
+  "organization": {
+    "name": "mBHR Health Outreach",
+    "slug": "mbhr-outreach",
+    "subscriptionTier": "standard"
+  },
+  "site": {
+    "name": "St. Andrew's Primary School Grounds",
+    "siteCode": "LAG-001",
+    "address": "12 Harmony Road, Alimosho",
+    "state": "Lagos",
+    "lga": "Alimosho",
+    "typicalPatientVolume": 250,
+    "capacity": 300
+  },
+  "staff": [
+    {
+      "fullName": "Kristopher Okobah",
+      "email": "admin@yourorg.example",
+      "role": "admin",
+      "phone": "+2348000000001",
+      "adminAccess": true,
+      "adminPermanent": true,
+      "station": "registration"
+    },
+    {
+      "fullName": "Dr. Adaeze Obi",
+      "email": "doctor@yourorg.example",
+      "role": "doctor",
+      "phone": "+2348000000002",
+      "station": "consult"
+    },
+    {
+      "fullName": "Nurse Fatima Bello",
+      "email": "nurse@yourorg.example",
+      "role": "nurse",
+      "phone": "+2348000000003",
+      "station": "vitals"
+    },
+    {
+      "fullName": "Pharm. Tunde Adeyemi",
+      "email": "pharmacist@yourorg.example",
+      "role": "pharmacist",
+      "phone": "+2348000000004",
+      "station": "pharmacy"
+    },
+    {
+      "fullName": "Chinedu Eze",
+      "email": "volunteer@yourorg.example",
+      "role": "volunteer",
+      "phone": "+2348000000005",
+      "station": "registration"
+    }
+  ],
+  "event": {
+    "name": "First Outreach Day",
+    "date": "2026-09-05",
+    "startTime": "09:00",
+    "endTime": "15:00",
+    "expectedVolume": 250,
+    "notes": "Replace with your first real outreach event."
+  }
+}
