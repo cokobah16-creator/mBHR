@@ -35,13 +35,17 @@ export default function EmailDiagnostics() {
     setTestResult(null);
 
     try {
-      const testOTP = "123456";
-
-      // Call the Edge Function directly
+      // OTP mode is internal-only (service role) — exercise the email
+      // pipeline with message mode instead.
       const { data, error } = await supabase.functions.invoke(
         "send-otp-email",
         {
-          body: { email: testEmail, otp: testOTP },
+          body: {
+            email: testEmail,
+            subject: "mBHR email diagnostics",
+            message:
+              "This is a test message from the mBHR email diagnostics page. Your email pipeline is working.",
+          },
         },
       );
 

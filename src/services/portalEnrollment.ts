@@ -80,7 +80,12 @@ export async function enablePortalAccess(
             patient_id: patientId,
             phone_number: normalizePhone(patient.phone) || "",
             email: patient.email || null,
-            account_status: "active",
+            // Accounts activate only after the patient proves contact
+            // ownership via the server-side OTP (portal-otp edge function).
+            // Consent is collected during clinic enrollment.
+            account_status: "pending_verification",
+            consent_given: true,
+            consent_given_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           });

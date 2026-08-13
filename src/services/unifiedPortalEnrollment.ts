@@ -95,14 +95,14 @@ export async function enrollPatientInPortal(
         patient_id: patientId,
         phone_number: phone || null,
         email: email || null,
-        given_name: givenName,
-        family_name: familyName,
-        dob,
-        sex: sex || null,
-        account_status: "active",
+        // Self-registration implies consent; the account only becomes
+        // active after the server-side OTP verifies contact ownership.
+        // (given_name/family_name/dob/sex live on patients, not this table.)
+        account_status: "pending_verification",
         phone_verified: false,
         email_verified: false,
-        consent_given: false,
+        consent_given: true,
+        consent_given_at: new Date().toISOString(),
       })
       .select()
       .single();

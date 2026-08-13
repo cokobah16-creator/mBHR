@@ -57,6 +57,27 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // OTP-mode sends are internal-only: codes are minted by the portal-otp
+    // function (service role). Accepting client-supplied codes would let any
+    // caller email forged "verification codes" to arbitrary addresses.
+    // Message mode (invitations) remains available to app callers.
+    if (isOtpMode) {
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const authHeader = req.headers.get("Authorization") || "";
+      if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "OTP sends are internal. Request a code via portal-otp/issue.",
+          }),
+          {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
+    }
+
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
     const senderEmail = Deno.env.get("SENDER_EMAIL");
 

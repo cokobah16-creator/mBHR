@@ -270,69 +270,34 @@ export async function validateAndRefreshPatientSession(
       };
     }
 
-    const { data: session, error } = await supabase
-      .from("patient_portal_sessions")
-      .select("id, expires_at, is_active, last_activity_at")
-      .eq("session_token", sessionToken)
-      .eq("is_active", true)
-      .maybeSingle();
+    // Validation, refresh and expiry all happen server-side in the
+    // portal-otp edge function (service role): direct anon reads of
+    // patient_portal_sessions were removed because they exposed every
+    // session_token (migration 20260813200000).
+    const { data, error } = await supabase.functions.invoke(
+      "portal-otp/session-validate",
+      { body: { sessionToken } },
+    );
 
-    if (error || !session) {
+    if (error || !data) {
       return { valid: false, needsRefresh: false };
     }
 
-    const expiresAt = new Date(session.expires_at);
-    const now = new Date();
-    const timeUntilExpiry = expiresAt.getTime() - now.getTime();
-
-    // Grace period: 5 minutes after expiry
-    const GRACE_PERIOD = 5 * 60 * 1000; // 5 minutes
-
-    if (timeUntilExpiry < -GRACE_PERIOD) {
-      // Session truly expired (beyond grace period)
-      logger.info(
-        "[SessionManager] Patient session expired beyond grace period",
-      );
-      await supabase
-        .from("patient_portal_sessions")
-        .update({ is_active: false })
-        .eq("id", session.id);
-
-      return { valid: false, needsRefresh: false };
-    }
-
-    // Check if session needs refresh (within 15 minutes of expiry OR within grace period)
-    const needsRefresh = timeUntilExpiry < REFRESH_BEFORE_EXPIRY;
-
-    if (needsRefresh || timeUntilExpiry < 0) {
-      // Extend session
-      const newExpiresAt = new Date(
-        now.getTime() + SESSION_CONFIGS.patient.duration * 60 * 60 * 1000,
-      );
-
-      await supabase
-        .from("patient_portal_sessions")
-        .update({
-          expires_at: newExpiresAt.toISOString(),
-          last_activity_at: now.toISOString(),
-        })
-        .eq("id", session.id);
-
+    const result = data as {
+      valid: boolean;
+      needsRefresh: boolean;
+      expiresAt?: string;
+    };
+    if (result.needsRefresh) {
       logger.info("[SessionManager] Patient session refreshed", {
-        wasExpired: timeUntilExpiry < 0,
-        newExpiresAt,
+        newExpiresAt: result.expiresAt,
       });
-
-      return { valid: true, needsRefresh: true, expiresAt: newExpiresAt };
     }
-
-    // Update last activity
-    await supabase
-      .from("patient_portal_sessions")
-      .update({ last_activity_at: now.toISOString() })
-      .eq("id", session.id);
-
-    return { valid: true, needsRefresh: false, expiresAt };
+    return {
+      valid: result.valid,
+      needsRefresh: result.needsRefresh,
+      expiresAt: result.expiresAt ? new Date(result.expiresAt) : undefined,
+    };
   } catch (error) {
     logger.error("[SessionManager] Error validating patient session:", error);
     return { valid: false, needsRefresh: false };

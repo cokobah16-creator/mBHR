@@ -166,7 +166,11 @@ export async function checkAndEnrollPatient(
               patient_id: patient.id,
               phone_number: phoneNumber,
               email: email,
-              account_status: "active",
+              // Activation requires OTP verification (portal-otp function);
+              // anon clients can only create pending rows.
+              account_status: "pending_verification",
+              consent_given: true,
+              consent_given_at: new Date().toISOString(),
             },
             {
               onConflict: "patient_id",

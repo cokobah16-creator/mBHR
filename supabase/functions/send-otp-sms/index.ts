@@ -53,6 +53,21 @@ Deno.serve(async (req: Request) => {
 
   const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" };
 
+  // OTP sends are internal-only: the code is minted by the portal-otp
+  // function (service role). Accepting client-supplied codes would let any
+  // anon caller deliver forged "verification codes" to arbitrary numbers.
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const authHeader = req.headers.get("Authorization") || "";
+  if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "OTP sends are internal. Request a code via portal-otp/issue.",
+      }),
+      { status: 403, headers: jsonHeaders },
+    );
+  }
+
   try {
     const { phone, otp, locale }: OTPRequest = await req.json();
 

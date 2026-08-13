@@ -614,7 +614,12 @@ export async function logAccess(
   return;
 }
 
-// ─── Backward-compat stubs ────────────────────────────────────────────────
+// ─── OTP (server-side issue + verify via the portal-otp edge function) ────
+//
+// The code is generated, stored (salted hash) and compared inside the edge
+// function with the service role; the client only relays the user's input.
+// Offline (no Supabase configured) there is no OTP path — accounts stay in
+// pending_verification until the device is online.
 
 export interface OTPRequestArgs {
   phone?: string;
@@ -623,9 +628,29 @@ export interface OTPRequestArgs {
 }
 
 export async function requestOTP(
-  _args: OTPRequestArgs,
+  args: OTPRequestArgs,
 ): Promise<PatientPortalAuthResponse> {
-  return { success: true };
+  if (!supabase) {
+    return {
+      success: false,
+      error: "Verification codes need an internet connection. Please try again online.",
+    };
+  }
+  const contact = args.phone || args.email;
+  if (!contact) {
+    return { success: false, error: "Phone number or email is required." };
+  }
+  const { data, error } = await supabase.functions.invoke("portal-otp/issue", {
+    body: {
+      contact,
+      channel: args.phone ? "sms" : "email",
+      locale: localStorage.getItem("mbhr-locale") || "en",
+    },
+  });
+  if (error) {
+    return { success: false, error: "Could not send the code. Try again." };
+  }
+  return data as PatientPortalAuthResponse;
 }
 
 export interface OTPVerificationArgs {
@@ -636,10 +661,27 @@ export interface OTPVerificationArgs {
 }
 
 export async function verifyOTP(
-  _args: OTPVerificationArgs,
+  args: OTPVerificationArgs,
 ): Promise<PatientPortalAuthResponse> {
-  return {
-    success: false,
-    error: "OTP verification is disabled in offline mode.",
-  };
+  if (!supabase) {
+    return {
+      success: false,
+      error: "Verification codes need an internet connection. Please try again online.",
+    };
+  }
+  const contact = args.phone || args.email;
+  if (!contact) {
+    return { success: false, error: "Phone number or email is required." };
+  }
+  const { data, error } = await supabase.functions.invoke("portal-otp/verify", {
+    body: {
+      contact,
+      channel: args.phone ? "sms" : "email",
+      otp: args.otp,
+    },
+  });
+  if (error) {
+    return { success: false, error: "Verification failed. Try again." };
+  }
+  return data as PatientPortalAuthResponse;
 }
