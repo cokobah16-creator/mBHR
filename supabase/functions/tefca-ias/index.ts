@@ -1173,10 +1173,6 @@ Deno.serve(async (req: Request) => {
   const { context } = auth;
   const exchangePurpose = context.exchangePurpose;
 
-  // Apply Deprecation / Sunset headers for any response when the caller is
-  // still using the legacy X-QHIN-ID auth path.
-  const deprecationHeaders = auth.deprecationHeaders;
-
   if (auth.unauthorized) {
     await logTEFCAAccess(
       supabase,
@@ -1187,6 +1183,27 @@ Deno.serve(async (req: Request) => {
       auth.unauthorizedReason ?? "unauthorized",
       Date.now() - startTime,
     );
+    // Retired X-QHIN-ID callers get a 410 tombstone pointing at the SMART
+    // configuration so a straggling partner sees the migration path; they
+    // are never authenticated.
+    if (auth.legacyGone) {
+      return new Response(
+        JSON.stringify(
+          createOperationOutcome(
+            "error",
+            "login",
+            auth.unauthorizedReason ?? "X-QHIN-ID auth has been retired",
+          ),
+        ),
+        {
+          status: 410,
+          headers: {
+            ...fhirJsonHeaders,
+            Link: '</functions/v1/tefca-oauth/.well-known/smart-configuration>; rel="successor-version"',
+          },
+        },
+      );
+    }
     return new Response(
       JSON.stringify(
         createOperationOutcome(
@@ -1246,18 +1263,12 @@ Deno.serve(async (req: Request) => {
       const resourceType = fhirPath[0];
       const resourceId = fhirPath[1];
 
-      // SMART scope enforcement for bearer-authed callers. Legacy X-QHIN-ID
-      // callers retain unrestricted access during the deprecation window
-      // (see bearer-auth.ts:legacySunsetDate). TODO Phase C-1.1: emit
-      // Deprecation/Sunset/Warning headers on every response from a legacy
-      // caller — currently only this comment carries the contract.
+      // SMART scope enforcement for every caller. The legacy X-QHIN-ID
+      // bypass was removed after its 2026-08-02 sunset passed.
       const writeVerbs = new Set(["POST", "PUT", "DELETE", "PATCH"]);
       const isWrite = writeVerbs.has(req.method);
       const requiredVerb: "read" | "write" = isWrite ? "write" : "read";
-      if (
-        !auth.isLegacy &&
-        !scopeAllowsResource(auth.scopes, resourceType, requiredVerb)
-      ) {
+      if (!scopeAllowsResource(auth.scopes, resourceType, requiredVerb)) {
         await logTEFCAAccess(
           supabase,
           context,
@@ -1510,12 +1521,6 @@ Deno.serve(async (req: Request) => {
       );
     }
   })();
-
-  if (deprecationHeaders) {
-    for (const [k, v] of Object.entries(deprecationHeaders)) {
-      dispatchResp.headers.set(k, v);
-    }
-  }
 
   // Phase D-1: SOFT-WARNING US Core 7.0 validation. We never replace the
   // response body — even on validation failures we serve the original — but

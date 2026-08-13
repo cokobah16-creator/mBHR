@@ -78,22 +78,24 @@ export async function introspectBearer(
 
 export interface AuthDecision {
   context: TEFCAContext;
-  /** True when the caller used the legacy X-QHIN-ID header. */
-  isLegacy: boolean;
-  /** When isLegacy, the response should carry Deprecation/Sunset headers. */
-  deprecationHeaders?: Record<string, string>;
-  /** Scopes the caller is authorized for; empty for legacy callers. */
+  /** Scopes the caller is authorized for. */
   scopes: string[];
-  /** True when neither bearer nor X-QHIN-ID is acceptable. */
+  /** True when no acceptable bearer token was presented. */
   unauthorized: boolean;
   unauthorizedReason?: string;
+  /**
+   * True when the request carried the retired X-QHIN-ID header without a
+   * bearer token. The caller was NEVER authenticated; respond 410 Gone with
+   * the successor Link so a straggling partner gets a migration signal.
+   */
+  legacyGone?: boolean;
 }
 
 /**
- * Resolve the TEFCAContext for an incoming request. Prefers a Bearer token
- * (introspected against oauth_access_tokens); falls back to the legacy
- * X-QHIN-ID header during the transition window with Deprecation/Sunset
- * response headers.
+ * Resolve the TEFCAContext for an incoming request. Bearer tokens only,
+ * introspected against oauth_access_tokens. The legacy X-QHIN-ID header
+ * trust path was removed after its declared sunset (2026-08-02) passed:
+ * it authenticated nothing and skipped all scope checks.
  */
 export async function resolveAuth(
   supabase: SupabaseLike,
@@ -117,7 +119,6 @@ export async function resolveAuth(
           requestingOrganization: "unknown",
           ipAddress,
         },
-        isLegacy: false,
         scopes: [],
         unauthorized: true,
         unauthorizedReason: "bearer token is inactive, expired, or revoked",
@@ -132,49 +133,37 @@ export async function resolveAuth(
           introspection.client_id ?? introspection.qhinId ?? "unknown",
         ipAddress,
       },
-      isLegacy: false,
       scopes: introspection.scopes,
       unauthorized: false,
     };
   }
 
-  // Legacy header-trust mode. We accept it for now and emit a Deprecation
-  // header so QHIN partners migrate to bearer auth before the sunset date.
-  const legacyQhinId = req.headers.get("X-QHIN-ID");
-  if (legacyQhinId) {
-    const requestingOrg =
-      req.headers.get("X-Requesting-Organization") || legacyQhinId;
+  const unauthorizedContext: TEFCAContext = {
+    qhinId: "unknown",
+    exchangePurpose,
+    requestingOrganization: "unknown",
+    ipAddress,
+  };
+
+  // Retired legacy header-trust mode: X-QHIN-ID authenticated nothing and
+  // bypassed scope checks. Its declared sunset (2026-08-02) has passed —
+  // 410 tombstone only, never authentication.
+  if (req.headers.get("X-QHIN-ID")) {
     return {
-      context: {
-        qhinId: legacyQhinId,
-        exchangePurpose,
-        requestingOrganization: requestingOrg,
-        ipAddress,
-      },
-      isLegacy: true,
+      context: unauthorizedContext,
       scopes: [],
-      unauthorized: false,
-      deprecationHeaders: {
-        Deprecation: "true",
-        Sunset: legacySunsetDate(),
-        Link: '</functions/v1/tefca-oauth/.well-known/smart-configuration>; rel="successor-version"',
-        Warning:
-          '299 - "X-QHIN-ID auth is deprecated; switch to SMART Backend Services bearer tokens before Sunset"',
-      },
+      unauthorized: true,
+      unauthorizedReason:
+        "X-QHIN-ID header auth was retired on 2026-08-02; use SMART Backend Services bearer tokens",
+      legacyGone: true,
     };
   }
 
   return {
-    context: {
-      qhinId: "unknown",
-      exchangePurpose,
-      requestingOrganization: "unknown",
-      ipAddress,
-    },
-    isLegacy: false,
+    context: unauthorizedContext,
     scopes: [],
     unauthorized: true,
-    unauthorizedReason: "missing Authorization or X-QHIN-ID header",
+    unauthorizedReason: "missing Authorization bearer token",
   };
 }
 
@@ -198,14 +187,4 @@ export function scopeAllowsResource(
   if (scopes.includes(`patient/*.${verb}`)) return true;
   if (scopes.includes(`patient/${resourceType}.${verb}`)) return true;
   return false;
-}
-
-/**
- * Sunset date for legacy X-QHIN-ID auth. Set as the day this code is shipped
- * (PHASE_C_LAUNCH) plus 90 days. Hard-coded so the value is deterministic and
- * survives redeploys.
- */
-function legacySunsetDate(): string {
-  // Phase C-1 ship date: 2026-05-03; sunset 90 days later.
-  return "Sun, 02 Aug 2026 00:00:00 GMT";
 }

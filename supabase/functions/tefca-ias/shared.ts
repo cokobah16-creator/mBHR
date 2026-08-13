@@ -1,7 +1,7 @@
 // HTTP shape for tefca-ias responses + re-exports of the FHIR-domain helpers
 // from _shared/fhir/codes.ts. corsHeaders here advertises the headers
-// tefca-ias clients send (X-QHIN-ID, X-Exchange-Purpose) — tefca-bulk has its
-// own corsHeaders with a different surface.
+// tefca-ias clients send (bearer Authorization, X-Exchange-Purpose) —
+// tefca-bulk has its own corsHeaders with a different surface.
 
 export {
   SYSTEM_IDENTIFIERS,
@@ -21,7 +21,7 @@ export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, X-Client-Info, Apikey, X-QHIN-ID, X-Exchange-Purpose",
+    "Content-Type, Authorization, X-Client-Info, Apikey, X-Exchange-Purpose",
 };
 
 export const fhirJsonHeaders = {

@@ -152,13 +152,21 @@ The following capabilities have been implemented:
 
 ### Authentication
 
-TEFCA requests require the following headers:
+TEFCA requests authenticate with SMART Backend Services (RFC 7523
+`private_key_jwt`) bearer tokens issued by `tefca-oauth` `/oauth/token` and
+introspected against `oauth_access_tokens`. Scopes
+(`system/<Type>.read|write`, wildcards) are enforced on every request.
+
+> The legacy `X-QHIN-ID` header-trust mode was **retired on 2026-08-02**
+> (its declared sunset). Requests presenting `X-QHIN-ID` without a bearer
+> token now receive `410 Gone` with a
+> `Link: .../.well-known/smart-configuration; rel="successor-version"`
+> header. The header authenticated nothing and skipped scope checks — do
+> not reintroduce it.
 
 ```http
-X-QHIN-ID: {qhin-identifier}
+Authorization: Bearer {access-token}
 X-Exchange-Purpose: individual-access|treatment|payment|operations
-X-Requesting-Organization: {organization-name}
-Authorization: Bearer {api-key}
 ```
 
 ### Example Requests
@@ -168,7 +176,7 @@ Authorization: Bearer {api-key}
 ```bash
 curl -X GET \
   "{BASE_URL}/Patient/123e4567-e89b-12d3-a456-426614174000" \
-  -H "X-QHIN-ID: demo-qhin-001" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "X-Exchange-Purpose: individual-access" \
   -H "Accept: application/fhir+json"
 ```
@@ -178,7 +186,7 @@ curl -X GET \
 ```bash
 curl -X GET \
   "{BASE_URL}/Observation?patient=Patient/123&category=vital-signs&date=ge2024-01-01" \
-  -H "X-QHIN-ID: demo-qhin-001" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "X-Exchange-Purpose: treatment" \
   -H "Accept: application/fhir+json"
 ```
@@ -188,7 +196,7 @@ curl -X GET \
 ```bash
 curl -X GET \
   "{BASE_URL}/Patient/123/$everything" \
-  -H "X-QHIN-ID: demo-qhin-001" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "X-Exchange-Purpose: individual-access" \
   -H "Accept: application/fhir+json"
 ```

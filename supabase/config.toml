@@ -64,5 +64,18 @@ enabled = true
 # role internally. See migration 20260813190000_add_reminder_flush_cron.sql.
 verify_jwt = false
 
+# TEFCA functions authenticate at the app layer with externally issued
+# SMART Backend Services bearer tokens (introspected against
+# oauth_access_tokens) — Supabase JWT verification must be off for those
+# tokens to reach the handler. Recorded here so the deployed posture is
+# explicit. If no TEFCA partner is active, prefer undeploying all three
+# (`supabase functions delete tefca-ias tefca-bulk tefca-oauth`).
+[functions.tefca-ias]
+verify_jwt = false
+[functions.tefca-oauth]
+verify_jwt = false
+[functions.tefca-bulk]
+verify_jwt = false
+
 [analytics]
 enabled = false
