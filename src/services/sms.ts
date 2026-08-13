@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { composeSms } from './messageTemplates';
 
 export interface SMSReminder {
   id?: string;
@@ -41,9 +42,16 @@ export async function scheduleDispenseReminders(
   medicationName: string,
   dosage: string,
   frequency: string,
-  duration: number
+  duration: number,
+  opts: { patientName?: string; locale?: string } = {}
 ): Promise<void> {
   const reminderDates = calculateReminderSchedule(frequency, duration);
+
+  const message = await composeSms('medication_reminder', opts.locale, {
+    patient_name: opts.patientName || 'Patient',
+    medication: medicationName,
+    dosage,
+  });
 
   const reminders = reminderDates.map(date => ({
     dispenseId,
@@ -52,7 +60,7 @@ export async function scheduleDispenseReminders(
     dosage,
     scheduledAt: date,
     phoneNumber: patientPhone,
-    message: `Reminder: Take your ${medicationName} (${dosage}) now. ${frequency}`,
+    message,
   }));
 
   for (const reminder of reminders) {

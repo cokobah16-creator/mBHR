@@ -1,10 +1,32 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { corsHeadersFor } from "../_shared/security/cors.ts";
 import { enforceRateLimit } from "../_shared/security/rateLimit.ts";
+import {
+  demoModeEnabled,
+  normalizeMsisdn,
+  resolveSmsConfig,
+  sendSms,
+} from "../_shared/sms/provider.ts";
 
 interface OTPRequest {
   phone: string;
   otp: string;
+  locale?: string;
+}
+
+// Kept in sync with the "otp" rows seeded into message_templates. Inlined here
+// so the OTP path never needs a database round-trip.
+const OTP_BODIES: Record<string, string> = {
+  en: "Your mBHR verification code is {{otp}}. It expires in 10 minutes. Do not share this code with anyone.",
+  ha: "Lambar tabbatarwa ta mBHR: {{otp}}. Tana karewa cikin minti 10. Kada ku ba kowa wannan lambar.",
+  yo: "Koodu ijerisi mBHR yin ni {{otp}}. Yoo pari laarin iseju 10. E ma fi han enikeni.",
+  ig: "Koodu nkwenye mBHR gi bu {{otp}}. O ga-agwu n'ime nkeji 10. Agwala onye obula ya.",
+  pcm: "Your mBHR code na {{otp}}. E go expire after 10 minutes. Abeg no give anybody this code.",
+};
+
+function otpMessage(otp: string, locale?: string): string {
+  const body = OTP_BODIES[locale ?? "en"] ?? OTP_BODIES.en;
+  return body.replace("{{otp}}", otp);
 }
 
 Deno.serve(async (req: Request) => {
@@ -29,89 +51,78 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" };
+
   try {
-    const { phone, otp }: OTPRequest = await req.json();
+    const { phone, otp, locale }: OTPRequest = await req.json();
 
     if (!phone || !otp) {
       return new Response(
         JSON.stringify({ success: false, error: "Phone and OTP are required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+        { status: 400, headers: jsonHeaders },
       );
     }
 
-    const twilioAccountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
-    const twilioAuthToken = Deno.env.get("TWILIO_AUTH_TOKEN");
-    const twilioPhoneNumber = Deno.env.get("TWILIO_PHONE_NUMBER");
+    const msisdn = normalizeMsisdn(phone);
+    if (!msisdn) {
+      return new Response(
+        JSON.stringify({ success: false, error: `Invalid phone number: ${phone}` }),
+        { status: 400, headers: jsonHeaders },
+      );
+    }
 
-    if (!twilioAccountSid || !twilioAuthToken || !twilioPhoneNumber) {
-      const missing = [];
-      if (!twilioAccountSid) missing.push("TWILIO_ACCOUNT_SID");
-      if (!twilioAuthToken) missing.push("TWILIO_AUTH_TOKEN");
-      if (!twilioPhoneNumber) missing.push("TWILIO_PHONE_NUMBER");
+    const config = resolveSmsConfig();
 
+    if (!config) {
+      if (demoModeEnabled()) {
+        console.log(`OTP Demo - To: ${msisdn}, OTP: ${otp}`);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            demo: true,
+            provider: "demo",
+            message: "SMS_DEMO_MODE is on: OTP logged, not sent",
+          }),
+          { status: 200, headers: jsonHeaders },
+        );
+      }
+
+      // Callers use supabase.functions.invoke and read the success flag, so
+      // configuration errors keep HTTP 200 — but success is honestly false.
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Missing Twilio secrets: ${missing.join(", ")}`,
+          configured: false,
+          error:
+            "No SMS provider configured. Set TERMII_API_KEY and TERMII_SENDER_ID (preferred) or TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_PHONE_NUMBER, then redeploy.",
         }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+        { status: 200, headers: jsonHeaders },
       );
     }
 
-    const message = `Your mBHR verification code is: ${otp}. This code will expire in 10 minutes. Do not share this code with anyone.`;
+    const result = await sendSms(config, msisdn, otpMessage(otp, locale));
 
-    const auth = btoa(`${twilioAccountSid}:${twilioAuthToken}`);
-    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/Messages.json`;
-
-    const formData = new URLSearchParams({
-      To: phone,
-      From: twilioPhoneNumber,
-      Body: message,
-    });
-
-    const response = await fetch(twilioUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: formData.toString(),
-    });
-
-    const responseData = await response.json();
-
-    if (!response.ok) {
-      console.error("Twilio API error:", JSON.stringify(responseData));
+    if (!result.ok) {
+      console.error(`${result.provider} OTP send failed:`, result.error);
       return new Response(
         JSON.stringify({
           success: false,
-          error: responseData.message || "Twilio API error",
-          code: responseData.code,
+          provider: result.provider,
+          error: result.error || "Failed to send OTP SMS",
         }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+        { status: 200, headers: jsonHeaders },
       );
     }
 
-    console.log("SMS sent successfully:", responseData.sid);
+    console.log(`OTP SMS sent via ${result.provider}: ${result.messageId ?? "n/a"}`);
 
     return new Response(
       JSON.stringify({
         success: true,
-        messageId: responseData.sid,
+        provider: result.provider,
+        messageId: result.messageId,
       }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      { status: 200, headers: jsonHeaders },
     );
   } catch (error) {
     console.error("Error in send-otp-sms:", error);
@@ -120,10 +131,7 @@ Deno.serve(async (req: Request) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      { status: 200, headers: jsonHeaders },
     );
   }
 });

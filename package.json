@@ -11,6 +11,8 @@
     "lint:fix": "eslint --fix src --ext .ts,.tsx",
     "test:accept": "node scripts/acceptance.js || true",
     "seed": "node scripts/seed.js",
+    "seed:live": "tsx scripts/seed/seedLive.ts",
+    "test:sms": "tsx scripts/send-test-sms.ts",
     "quality": "npm run typecheck && npm run lint",
     "analyze": "vite build && echo 'Bundle analysis saved to .bolt-artifacts/stats.html'",
     "i18n:check": "tsx scripts/i18n-verify.ts",
