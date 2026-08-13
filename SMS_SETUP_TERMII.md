@@ -78,6 +78,42 @@ The script exits non-zero if the function is unconfigured **or** still in demo
 mode, and prints the provider + message ID on success. The test is only passed
 when the SMS actually arrives on the handset.
 
+## Scheduler: what actually fires the reminders
+
+Scheduled reminders are drained **server-side** every 5 minutes: a pg_cron
+job (migration `20260813190000_add_reminder_flush_cron.sql`) POSTs via
+pg_net to the `flush-reminders` edge function, which sends due
+`medication_reminders` and `outbound_messages` rows through the provider and
+marks them sent/failed (up to 3 attempts, growing retry delay). Before this,
+reminders only went out while a pharmacist had the SMS screen open in a
+browser.
+
+Setup:
+
+```bash
+supabase functions deploy flush-reminders --no-verify-jwt --project-ref <ref>
+supabase db push   # applies the cron migration
+```
+
+Verify it is running:
+
+```sql
+select jobname, schedule, active from cron.job;                         -- job exists
+select status, created from net._http_response order by id desc limit 5; -- recent calls
+select status, count(*) from medication_reminders group by status;       -- rows draining
+```
+
+Notes:
+
+- `flush-reminders` is deployed with JWT verification off so the cron call
+  needs no stored key. The drain is rate-limited and benign (it only sends
+  reminders that are already due); all writes happen with the service role
+  inside the function.
+- With no provider configured the flusher leaves rows `pending` and reports
+  `sms_not_configured` — nothing is falsely marked sent.
+- Forks: the function URL inside the migration embeds this project's ref
+  (same as `supabase/config.toml`) — update both when forking.
+
 ## Phone number format
 
 The provider module normalizes Nigerian numbers automatically:

@@ -58,5 +58,11 @@ enable_signup = false
 [edge_runtime]
 enabled = true
 
+[functions.flush-reminders]
+# Invoked by pg_cron via pg_net with no stored key: the drain is benign
+# (sends only already-due reminders), rate-limited, and uses the service
+# role internally. See migration 20260813190000_add_reminder_flush_cron.sql.
+verify_jwt = false
+
 [analytics]
 enabled = false

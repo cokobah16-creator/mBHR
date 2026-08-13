@@ -119,6 +119,16 @@ async function processMedicationReminders(): Promise<number> {
   let processed = 0;
 
   for (const reminder of reminders) {
+    // Claim the row first so the server-side cron flusher (flush-reminders)
+    // and this worker never both send the same reminder.
+    const { data: claimed } = await supabase
+      .from("medication_reminders")
+      .update({ status: "sending" })
+      .eq("id", reminder.id)
+      .eq("status", "pending")
+      .select("id");
+    if (!claimed?.length) continue;
+
     const result = await sendSMS(
       reminder.phone_number,
       reminder.message,
