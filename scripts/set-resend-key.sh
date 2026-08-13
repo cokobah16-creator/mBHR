@@ -5,7 +5,7 @@
 
 set -e
 
-RESEND_API_KEY="re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu"
+RESEND_API_KEY="re_REDACTED_ROTATE_THIS_KEY"
 
 echo "=========================================="
 echo "  Resend API Key Setup for mBHR"

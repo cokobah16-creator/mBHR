@@ -1,6 +1,6 @@
 # Resend API Key Setup - Quick Guide
 
-Your Resend API Key: `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+Your Resend API Key: `re_REDACTED_ROTATE_THIS_KEY`
 
 ## ✅ Edge Functions Status
 
@@ -26,7 +26,7 @@ Both functions are deployed and ready to use your API key!
    - Enter:
      ```
      Name:  RESEND_API_KEY
-     Value: re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu
+     Value: re_REDACTED_ROTATE_THIS_KEY
      ```
    - Click "Save" or "Add secret"
 
@@ -48,7 +48,7 @@ If you have the Supabase CLI installed and linked to your project:
 cd /tmp/cc-agent/57742079/project
 
 # Set the secret
-npx supabase secrets set RESEND_API_KEY=re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu
+npx supabase secrets set RESEND_API_KEY=re_REDACTED_ROTATE_THIS_KEY
 
 # Verify it was set (shows names only, not values)
 npx supabase secrets list
@@ -69,7 +69,7 @@ For local development testing, you can temporarily add it to `.env.local`:
 
 ```bash
 # Create .env.local file
-echo "RESEND_API_KEY=re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu" > .env.local
+echo "RESEND_API_KEY=re_REDACTED_ROTATE_THIS_KEY" > .env.local
 ```
 
 **Note:** This only works for local testing. Production edge functions need the secret set via dashboard/CLI.
@@ -142,7 +142,7 @@ echo "RESEND_API_KEY=re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu" > .env.local
 **Possible causes:**
 
 1. **Invalid API Key**
-   - Verify: `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+   - Verify: `re_REDACTED_ROTATE_THIS_KEY`
    - No extra spaces when pasting
    - Check Resend dashboard that key is active
 
@@ -208,7 +208,7 @@ Once the secret is set:
 
 ## Quick Reference
 
-**Your API Key:** `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+**Your API Key:** `re_REDACTED_ROTATE_THIS_KEY`
 
 **Secret Name:** `RESEND_API_KEY` (exactly as shown, case-sensitive)
 

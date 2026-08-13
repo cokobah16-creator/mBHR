@@ -19,7 +19,7 @@
 ## 🔑 Your Resend API Key
 
 ```
-re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu
+re_REDACTED_ROTATE_THIS_KEY
 ```
 
 **Where to add it:**
@@ -41,14 +41,14 @@ https://supabase.com/dashboard/project/dlogqxzejroeyivfmgcv/settings/edge-functi
 ### Add API Key (Enable Email)
 
 1. Go to Supabase dashboard → Edge Functions → Secrets
-2. Add secret: `RESEND_API_KEY` = `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+2. Add secret: `RESEND_API_KEY` = `re_REDACTED_ROTATE_THIS_KEY`
 3. Wait 60 seconds
 4. Test at `/admin/email-diagnostics`
 
 ### Or Use CLI
 
 ```bash
-npx supabase secrets set RESEND_API_KEY=re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu --project-ref dlogqxzejroeyivfmgcv
+npx supabase secrets set RESEND_API_KEY=re_REDACTED_ROTATE_THIS_KEY --project-ref dlogqxzejroeyivfmgcv
 ```
 
 ---

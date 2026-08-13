@@ -2,7 +2,7 @@
 
 ## What I Just Fixed
 
-Your Resend API key (`re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`) has been:
+Your Resend API key (`re_REDACTED_ROTATE_THIS_KEY`) has been:
 
 1. ✅ **Updated in the edge function code** (line 35)
 2. ✅ **Deployed to Supabase** (function is LIVE)
@@ -34,7 +34,7 @@ Your Resend API key (`re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`) has been:
 
 **Before:** The edge function had an old/invalid API key hardcoded as a fallback
 
-**Now:** Your NEW valid API key is in the function: `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+**Now:** Your NEW valid API key is in the function: `re_REDACTED_ROTATE_THIS_KEY`
 
 **Result:** Emails send immediately, no configuration needed
 
@@ -79,7 +79,7 @@ Your Resend API key (`re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`) has been:
 
 5. **Verify API Key is Valid**
    - Go to: https://resend.com/dashboard/api-keys
-   - Make sure `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu` is listed
+   - Make sure `re_REDACTED_ROTATE_THIS_KEY` is listed
    - Check it's not disabled or expired
 
 ---

@@ -13,7 +13,7 @@
 
 ### 2. Resend API Key - DOCUMENTED
 
-- ✅ Your API key saved: `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+- ✅ Your API key saved: `re_REDACTED_ROTATE_THIS_KEY`
 - ✅ Setup instructions created
 - ✅ Helper script created
 - ✅ Edge functions verified (both ACTIVE)
@@ -55,7 +55,7 @@
 1. Go to: https://supabase.com/dashboard/project/dlogqxzejroeyivfmgcv/settings/edge-functions
 2. Click "Add a new secret"
 3. Name: `RESEND_API_KEY`
-4. Value: `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+4. Value: `re_REDACTED_ROTATE_THIS_KEY`
 5. Click Save
 
 #### Option B: CLI Script (If Supabase CLI installed)
@@ -68,7 +68,7 @@
 #### Option C: Manual CLI Command
 
 ```bash
-npx supabase secrets set RESEND_API_KEY=re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu --project-ref dlogqxzejroeyivfmgcv
+npx supabase secrets set RESEND_API_KEY=re_REDACTED_ROTATE_THIS_KEY --project-ref dlogqxzejroeyivfmgcv
 ```
 
 **After setting the secret:**
