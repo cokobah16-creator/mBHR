@@ -9,11 +9,18 @@ import {
 
 interface OutreachEvent {
   id: string;
-  title: string;
-  location: string;
-  date: string;
-  services: string[];
+  event_name: string;
+  event_date: string;
+  start_time?: string;
+  end_time?: string;
+  status?: string;
   notes?: string;
+  sites?: {
+    name: string;
+    address: string;
+    lga: string;
+    state: string;
+  } | null;
 }
 
 export function OutreachFinder() {
@@ -34,14 +41,18 @@ export function OutreachFinder() {
         return;
       }
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("outreach_events")
-        .select("*")
-        .gte("date", new Date().toISOString().split("T")[0])
-        .order("date", { ascending: true })
+        .select(
+          "id, event_name, event_date, start_time, end_time, status, notes, sites(name, address, lga, state)",
+        )
+        .gte("event_date", new Date().toISOString().split("T")[0])
+        .in("status", ["planned", "active"])
+        .order("event_date", { ascending: true })
         .limit(20);
+      if (error) throw error;
 
-      const result = (data || []) as OutreachEvent[];
+      const result = (data || []) as unknown as OutreachEvent[];
       setEvents(result);
       localStorage.setItem("patient_cached_outreach", JSON.stringify(result));
     } catch {
@@ -109,32 +120,25 @@ export function OutreachFinder() {
               <div className="flex items-start justify-between flex-wrap gap-3">
                 <div className="flex-1">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {event.title}
+                    {event.event_name}
                   </h3>
                   <div className="mt-2 flex flex-wrap gap-4 text-sm text-gray-600">
                     <span className="flex items-center gap-1">
                       <MapPinIcon className="w-4 h-4 text-red-500" />
-                      {event.location}
+                      {event.sites
+                        ? `${event.sites.name}, ${event.sites.lga}, ${event.sites.state}`
+                        : "Location to be announced"}
                     </span>
                     <span className="flex items-center gap-1">
                       <CalendarIcon className="w-4 h-4 text-blue-500" />
-                      {event.date}
+                      {event.event_date}
+                      {event.start_time
+                        ? ` · ${event.start_time.slice(0, 5)}${event.end_time ? `–${event.end_time.slice(0, 5)}` : ""}`
+                        : ""}
                     </span>
                   </div>
-                  {event.services && event.services.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {event.services.map((service) => (
-                        <span
-                          key={service}
-                          className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full"
-                        >
-                          {service}
-                        </span>
-                      ))}
-                    </div>
-                  )}
                   {event.notes && (
-                    <p className="mt-3 text-sm text-gray-500">{event.notes}</p>
+                    <p className="mt-3 text-sm text-gray-600">{event.notes}</p>
                   )}
                 </div>
               </div>
