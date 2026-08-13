@@ -46,6 +46,11 @@ so only `service_role` can bootstrap the first rows. Never put this key in a
   them immediately.
 - Re-runs never rotate an existing PIN or password unless `roster.json`
   specifies one explicitly.
+- Re-runs also never touch live `pharmacy_items.on_hand_qty` or reset an
+  outreach event's status once it has gone active/completed.
+- Running without a `roster.json` requires `--allow-example` (so placeholder
+  data can't reach a real project by accident); a mistyped `--roster` path is
+  an error, not a fallback.
 - `roster.json` is gitignored. Never commit real PINs or passwords.
 
 ## What it deliberately does NOT do

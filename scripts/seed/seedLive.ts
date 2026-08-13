@@ -138,6 +138,10 @@ function loadRoster(): Roster {
       ];
   const rosterPath = candidates.find((p) => existsSync(p));
 
+  if (explicit && !rosterPath) {
+    fail(`--roster file not found: ${explicit}`);
+  }
+
   let usingExample = false;
   let path = rosterPath;
   if (!path) {
@@ -148,9 +152,16 @@ function loadRoster(): Roster {
   const roster = JSON.parse(readFileSync(path, "utf8")) as Roster;
 
   if (usingExample) {
+    const dryRun = process.argv.includes("--dry-run");
+    if (!dryRun && !process.argv.includes("--allow-example")) {
+      fail(
+        "No scripts/seed/roster.json found. Refusing to seed PLACEHOLDER data into a real project.\n" +
+          "  Copy scripts/seed/roster.example.json to scripts/seed/roster.json and fill in your\n" +
+          "  real org, site and staff — or pass --allow-example if you really want demo data.",
+      );
+    }
     console.warn(
-      "\n⚠ No scripts/seed/roster.json found — using roster.example.json PLACEHOLDER data.\n" +
-        "  Copy it to scripts/seed/roster.json and fill in your real org, site and staff.\n",
+      "\n⚠ Using roster.example.json PLACEHOLDER data.\n",
     );
   }
   console.log(`Roster: ${path}`);
@@ -167,6 +178,7 @@ function loadRoster(): Roster {
     errors.push("staff must be a non-empty array");
   }
   const emails = new Set<string>();
+  const derivedIds = new Set<string>();
   for (const s of roster.staff ?? []) {
     const label = s.fullName || s.email || "?";
     if (!s.fullName || !s.email) errors.push(`staff "${label}": fullName and email are required`);
@@ -182,6 +194,11 @@ function loadRoster(): Roster {
     }
     if (emails.has(s.email.toLowerCase())) errors.push(`duplicate staff email ${s.email}`);
     emails.add(s.email.toLowerCase());
+    const derivedId = `user-${slugify(s.email)}`;
+    if (derivedIds.has(derivedId)) {
+      errors.push(`staff "${label}": email slug collides with another staff member (${derivedId})`);
+    }
+    derivedIds.add(derivedId);
   }
   if (!roster.event?.name || !/^\d{4}-\d{2}-\d{2}$/.test(roster.event?.date ?? "")) {
     errors.push("event.name is required and event.date must be YYYY-MM-DD");
@@ -230,6 +247,9 @@ async function findAuthUserByEmail(
 }
 
 async function main(): Promise<void> {
+  if (typeof globalThis.crypto?.subtle === "undefined") {
+    fail("Node 20+ is required (WebCrypto is used for PIN hashing). Current: " + process.version);
+  }
   loadDotEnv();
   const dryRun = process.argv.includes("--dry-run");
 
@@ -383,7 +403,8 @@ async function main(): Promise<void> {
     );
 
     // PIN roster: keep an existing hash unless the roster pins it explicitly.
-    const userId = `user-${slugify(staff.email.split("@")[0])}`;
+    // Id derives from the FULL email so ada@a.com and ada@b.com never collide.
+    const userId = `user-${slugify(staff.email)}`;
     const { data: existingUser, error: userReadErr } = await db
       .from("users")
       .select("id")
@@ -397,11 +418,11 @@ async function main(): Promise<void> {
       full_name: staff.fullName,
       role: staff.role,
       email: staff.email,
-      phone: staff.phone ?? null,
       admin_access: staff.adminAccess ?? isAdmin,
       admin_permanent: staff.adminPermanent ?? false,
       is_active: 1,
     };
+    if (staff.phone) baseUserRow.phone = staff.phone;
     if (!existingUser || staff.pin) {
       pin = staff.pin ?? randomPin();
       const pinSalt = newSaltB64();
@@ -420,18 +441,36 @@ async function main(): Promise<void> {
   // ── 4. Pharmacy formulary ──────────────────────────────────────────────────
   // pharmacy_items is the dispensing catalog; on-hand quantities start at 0
   // and real stock is entered through the restock flow on packing day.
+  // Existing rows keep their on_hand_qty — a re-run must never wipe live stock.
   const itemRows = FORMULARY_ITEMS.map((item) => ({
     id: `item-${slugify(`${item.medName}-${item.strength}-${item.form}`)}`,
     med_name: item.medName,
     form: item.form,
     strength: item.strength,
     unit: item.unit,
-    on_hand_qty: 0,
     reorder_threshold: item.reorderThreshold,
     is_controlled: item.isControlled,
   }));
-  await upsert(db, "pharmacy_items", itemRows, "id");
-  console.log(`✓ pharmacy_items: ${itemRows.length}`);
+  const { data: existingItems, error: itemsReadErr } = await db
+    .from("pharmacy_items")
+    .select("id")
+    .in("id", itemRows.map((r) => r.id));
+  if (itemsReadErr) throw new Error(`pharmacy_items read failed: ${itemsReadErr.message}`);
+  const existingItemIds = new Set((existingItems ?? []).map((r: { id: string }) => r.id));
+
+  const newItems = itemRows
+    .filter((r) => !existingItemIds.has(r.id))
+    .map((r) => ({ ...r, on_hand_qty: 0 }));
+  if (newItems.length) {
+    const { error } = await db.from("pharmacy_items").insert(newItems);
+    if (error) throw new Error(`pharmacy_items insert failed: ${error.message}`);
+  }
+  for (const row of itemRows.filter((r) => existingItemIds.has(r.id))) {
+    const { id, ...fields } = row;
+    const { error } = await db.from("pharmacy_items").update(fields).eq("id", id);
+    if (error) throw new Error(`pharmacy_items update failed: ${error.message}`);
+  }
+  console.log(`✓ pharmacy_items: ${itemRows.length} (${newItems.length} new)`);
 
   const formularyRows = FORMULARY_ITEMS.map((item) => ({
     org_id: orgId,
@@ -490,28 +529,37 @@ async function main(): Promise<void> {
   // ── 7. First outreach event + staff assignments ────────────────────────────
   const event = roster.event;
   const eventId = deterministicUuid(`event:${org.slug}:${site.siteCode}:${event.date}`);
-  await upsert(
-    db,
-    "outreach_events",
-    {
-      id: eventId,
-      org_id: orgId,
-      site_id: siteId,
-      event_name: event.name,
-      event_date: event.date,
-      start_time: event.startTime ?? "09:00",
-      end_time: event.endTime ?? "15:00",
-      status: "planned",
-      expected_volume: event.expectedVolume ?? site.typicalPatientVolume ?? 200,
-      notes: event.notes ?? null,
-      staff_roster: roster.staff.map((s) => ({
-        name: s.fullName,
-        role: s.role,
-        station: s.station ?? DEFAULT_STATION[s.role],
-      })),
-    },
-    "id",
-  );
+  const eventRow: Record<string, unknown> = {
+    org_id: orgId,
+    site_id: siteId,
+    event_name: event.name,
+    event_date: event.date,
+    start_time: event.startTime ?? "09:00",
+    end_time: event.endTime ?? "15:00",
+    expected_volume: event.expectedVolume ?? site.typicalPatientVolume ?? 200,
+    notes: event.notes ?? null,
+    staff_roster: roster.staff.map((s) => ({
+      name: s.fullName,
+      role: s.role,
+      station: s.station ?? DEFAULT_STATION[s.role],
+    })),
+  };
+  const { data: existingEvent, error: eventReadErr } = await db
+    .from("outreach_events")
+    .select("id")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (eventReadErr) throw new Error(`outreach_events read failed: ${eventReadErr.message}`);
+  if (existingEvent) {
+    // Never reset the status of an event that has since gone active/completed.
+    const { error } = await db.from("outreach_events").update(eventRow).eq("id", eventId);
+    if (error) throw new Error(`outreach_events update failed: ${error.message}`);
+  } else {
+    const { error } = await db
+      .from("outreach_events")
+      .insert({ id: eventId, status: "planned", ...eventRow });
+    if (error) throw new Error(`outreach_events insert failed: ${error.message}`);
+  }
   const assignmentRows = roster.staff.map((s) => ({
     event_id: eventId,
     user_id: authIdByEmail.get(s.email.toLowerCase()),

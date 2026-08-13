@@ -426,7 +426,7 @@ export const FORMULARY_ITEMS: FormularyItem[] = [
     "notes": "1 tab daily. High demand on outreach; useful adjunct for convalescence and poor nutrition."
   },
   {
-    "medName": "Multivitamin",
+    "medName": "Multivitamin Syrup",
     "genericName": "multivitamin (compound)",
     "form": "syrup",
     "strength": "standard",
