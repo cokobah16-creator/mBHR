@@ -5,6 +5,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Layout } from "@/components/Layout";
 import RequireRoles from "@/components/RequireRoles";
 import Login from "@/pages/Login";
+import FirstRunSetup from "@/pages/FirstRunSetup";
 import { useAuthStore } from "@/stores/auth";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { Home } from "@/pages/Home";
@@ -396,6 +397,11 @@ function App() {
           {/* Public Routes - Must be defined before catch-all */}
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
+
+          {/* First-run administrator setup. Eagerly imported: a freshly
+              installed device may be offline, and this is the only route that
+              can produce a usable PIN. Self-guards once any user exists. */}
+          <Route path="/setup" element={<FirstRunSetup />} />
 
           {/* Supabase auth email-confirmation redirect */}
           <Route path="/auth/callback" element={<AuthCallback />} />

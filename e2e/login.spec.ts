@@ -4,16 +4,18 @@ import { test, expect, type Page } from "@playwright/test";
 // offline PIN mode by default, and its field is `pattern="\d{6}"`, so only a
 // six-digit PIN ever reaches the submit handler.
 const PIN_FIELD = 'input[aria-label="PIN"]';
+const CONFIRM_PIN_FIELD = 'input[aria-label="Confirm PIN"]';
+const NAME_FIELD = 'input[aria-label="Full name"]';
 const SEEDED_PIN = "482913";
 // 16 bytes ("mbhr-smoke-test1"), matching SALT_LENGTH in src/utils/pin.ts.
 // Fixed rather than random so the run is deterministic.
 const PIN_SALT = "bWJoci1zbW9rZS10ZXN0MQ==";
 const DB_NAME = "mbhr_v5";
 
-// src/main.tsx seeds demo staff on boot, but it does so asynchronously and the
-// PINs it creates are demo data this spec should not depend on. Write a known
-// user straight into the store instead: no race with that seeding, and the
-// test keeps working if the demo seeding is ever removed.
+// Demo staff are seeded in development only, so the bundle under test starts
+// with no users: every test that needs a PIN writes a known user straight into
+// the store. Each Playwright test gets a fresh browser context, so IndexedDB
+// starts empty for each of them.
 async function seedStaffUser(page: Page): Promise<void> {
   await page.evaluate(
     async ({ pin, salt, dbName }) => {
@@ -90,17 +92,60 @@ async function seedStaffUser(page: Page): Promise<void> {
   );
 }
 
-test.describe("Staff login", () => {
-  test("shows the login page", async ({ page }) => {
+// Loads the app on the public landing page so main.tsx opens the database,
+// writes a staff user into it, then lands on the login form with a PIN that
+// works. Going straight to /login would bounce to /setup instead.
+async function openLoginWithSeededUser(page: Page): Promise<void> {
+  await page.goto("/");
+  await seedStaffUser(page);
+  await page.goto("/login");
+  await expect(page.locator(PIN_FIELD)).toBeVisible();
+}
+
+test.describe("First-run setup", () => {
+  test("sends a device with no staff account to setup", async ({ page }) => {
     await page.goto("/login");
 
+    await expect(page).toHaveURL(/\/setup$/);
+    await expect(
+      page.getByRole("heading", { name: "Set up this device" }),
+    ).toBeVisible();
+  });
+
+  test("creates the first administrator and signs in", async ({ page }) => {
+    const setupPin = "715204";
+    await page.goto("/setup");
+    await expect(page.locator(NAME_FIELD)).toBeVisible();
+
+    await page.locator(NAME_FIELD).fill("E2E Setup Admin");
+    await page.locator(PIN_FIELD).fill(setupPin);
+    await page.locator(CONFIRM_PIN_FIELD).fill(setupPin);
+    await page
+      .getByRole("button", { name: "Create administrator" })
+      .click();
+
+    await expect(page).toHaveURL(/\/dashboard/);
+  });
+
+  test("refuses to run once a staff account exists", async ({ page }) => {
+    await page.goto("/");
+    await seedStaffUser(page);
+
+    await page.goto("/setup");
+
+    await expect(page).toHaveURL(/\/login$/);
+  });
+});
+
+test.describe("Staff login", () => {
+  test("shows the login page", async ({ page }) => {
+    await openLoginWithSeededUser(page);
+
     await expect(page.locator("h1")).toContainText("MedBridge Health Reach");
-    await expect(page.locator(PIN_FIELD)).toBeVisible();
   });
 
   test("shows an error for an unknown PIN", async ({ page }) => {
-    await page.goto("/login");
-    await expect(page.locator(PIN_FIELD)).toBeVisible();
+    await openLoginWithSeededUser(page);
 
     await page.locator(PIN_FIELD).fill("000000");
     await page.getByRole("button", { name: "Sign In" }).click();
@@ -109,9 +154,7 @@ test.describe("Staff login", () => {
   });
 
   test("signs in with a valid PIN", async ({ page }) => {
-    await page.goto("/login");
-    await expect(page.locator(PIN_FIELD)).toBeVisible();
-    await seedStaffUser(page);
+    await openLoginWithSeededUser(page);
 
     await page.locator(PIN_FIELD).fill(SEEDED_PIN);
     await page.getByRole("button", { name: "Sign In" }).click();

@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
 import { isOnlineSyncEnabled } from "@/sync/adapter";
 import { db } from "@/db";
+import { needsFirstRunSetup } from "@/db/firstRun";
 import { derivePinHash } from "@/utils/pin";
 
 export default function Login() {
@@ -14,6 +15,7 @@ export default function Login() {
   const [attempts, setAttempts] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [checkingSetup, setCheckingSetup] = useState(true);
 
   const onlineAvailable = isOnlineSyncEnabled();
   const navigate = useNavigate();
@@ -24,8 +26,40 @@ export default function Login() {
   const [debugUsers, setDebugUsers] = useState<any[]>([]);
   const [computed, setComputed] = useState<string>("");
 
+  // Production builds ship no demo staff, so a freshly installed device has no
+  // PIN that could ever work here — first-run setup is the only way in.
+  // main.tsx finishes seeding before React mounts, so this count is final
+  // rather than racing the seed.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const needed = await needsFirstRunSetup();
+        if (cancelled) return;
+        if (needed) {
+          navigate("/setup", { replace: true });
+          return;
+        }
+      } catch (error) {
+        // Fall through to the form: a PIN that works is better than a dead
+        // end if the count could not be read.
+        console.error("[login] could not check for first-run setup:", error);
+      }
+      if (!cancelled) setCheckingSetup(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate]);
+
   // Reset local data function
   const resetLocal = async () => {
+    const confirmed = window.confirm(
+      "This deletes every patient, visit and staff account stored on this device. " +
+        "Anything not yet synced is lost, and you will have to set the device up again. Continue?",
+    );
+    if (!confirmed) return;
+
     try {
       setLoading(true);
       await db.delete();
@@ -40,7 +74,9 @@ export default function Login() {
         }
       });
 
-      alert("Local data cleared. The app will now reload and reseed.");
+      alert(
+        "Local data cleared. The app will now reload and ask you to set up this device again.",
+      );
       window.location.reload();
     } catch (e) {
       console.error("Failed to reset local data:", e);
@@ -140,6 +176,16 @@ export default function Login() {
       setLoading(false);
     }
   };
+
+  // Held until the user count is known so a device that needs first-run setup
+  // never flashes a PIN form no PIN can satisfy.
+  if (checkingSetup) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 via-white to-blue-50">
+        <p className="text-gray-600">Checking this device…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-green-50 via-white to-blue-50">
@@ -327,7 +373,7 @@ export default function Login() {
               </div>
             ) : (
               <div className="text-gray-600 italic">
-                No users found. Try "Reset local data".
+                No users found. This device needs first-run setup.
               </div>
             )}
 
@@ -342,18 +388,23 @@ export default function Login() {
               </div>
             )}
 
-            <div className="mt-3 text-xs text-gray-600 border-t pt-2">
-              <strong>Known seed PINs:</strong>
-              <br />
-              • 123456 (Admin User)
-              <br />
-              • 234567 (Nurse Joy)
-              <br />
-              • 111222 (Doctor Ada)
-              <br />
-              • 333444 (Pharmacist Chidi)
-              <br />• 555666 (Volunteer Musa)
-            </div>
+            {/* Demo staff are seeded in development only, so these PINs do not
+                exist in a production build — showing them there would be a
+                lie. Keep this list in step with src/db/seed.ts. */}
+            {import.meta.env.DEV && (
+              <div className="mt-3 text-xs text-gray-600 border-t pt-2">
+                <strong>Demo PINs (development only):</strong>
+                <br />
+                • 123456 (Admin User)
+                <br />
+                • 234567 (Dr. Sarah Johnson)
+                <br />
+                • 345678 (Nurse Mary)
+                <br />
+                • 456789 (Pharmacist John)
+                <br />• 567890 (Volunteer Mike)
+              </div>
+            )}
           </div>
         )}
       </div>

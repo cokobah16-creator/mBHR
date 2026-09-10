@@ -12,6 +12,23 @@ import {
   EyeSlashIcon,
 } from "@heroicons/react/24/outline";
 
+// PINs are stored only as PBKDF2 hashes, so the one thing this column can ever
+// reveal is the published PIN of a demo account. Those exist in development
+// only (see src/db/seed.ts) — in a production build every row is masked.
+const DEMO_SEED_PINS: Record<string, string> = {
+  "Kristopher Okobah": "070398",
+  "Admin User": "123456",
+  "Dr. Sarah Johnson": "234567",
+  "Nurse Mary": "345678",
+  "Pharmacist John": "456789",
+  "Volunteer Mike": "567890",
+};
+
+function displayPin(fullName: string): string {
+  if (!import.meta.env.DEV) return "••••••";
+  return DEMO_SEED_PINS[fullName] ?? "••••••";
+}
+
 export function UserManagement() {
   const { currentUser } = useAuthStore();
   const [users, setUsers] = useState<User[]>([]);
@@ -511,20 +528,7 @@ export function UserManagement() {
                 </td>
                 {showPins && (
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
-                    {/* Show known PINs for seeded users */}
-                    {user.fullName === "Kristopher Okobah"
-                      ? "070398"
-                      : user.fullName === "Admin User"
-                        ? "123456"
-                        : user.fullName === "Dr. Sarah Johnson"
-                          ? "234567"
-                          : user.fullName === "Nurse Mary"
-                            ? "345678"
-                            : user.fullName === "Pharmacist John"
-                              ? "456789"
-                              : user.fullName === "Volunteer Mike"
-                                ? "567890"
-                                : "••••••"}
+                    {displayPin(user.fullName)}
                   </td>
                 )}
                 <td className="px-6 py-4 whitespace-nowrap">

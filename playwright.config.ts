@@ -30,16 +30,19 @@ export default defineConfig({
     },
   ],
 
-  // In CI the built app in dist/ is served, so the smoke spec exercises the
-  // same production bundle the build job produced rather than the dev server.
-  // Locally `npm run dev` keeps hot reload.
+  // Always serve the built bundle. Demo staff are seeded in development only,
+  // so the dev server and a production build disagree about what a fresh
+  // device looks like — and first-run setup is exactly what these specs cover.
+  // CI downloads dist/ from the build job, so only local runs need to build.
   webServer: useDeployed
     ? undefined
     : {
         command: process.env.CI
           ? "npm run preview -- --port 5173 --strictPort"
-          : "npm run dev",
+          : "npm run build && npm run preview -- --port 5173 --strictPort",
         url: "http://localhost:5173",
         reuseExistingServer: !process.env.CI,
+        // A local run builds first; the default 60s is not enough for that.
+        timeout: 180_000,
       },
 });

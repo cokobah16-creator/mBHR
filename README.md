@@ -34,10 +34,21 @@ npm run lint
 
 ## First Run Setup
 
+Production builds ship with no staff accounts, so the first time the app opens
+on a device it sends you to `/setup` to create the administrator:
+
 1. Open the app in your browser
-2. Complete the Admin Setup by creating the first admin user
-3. Set a secure Admin Setup PIN (6-12 digits)
-4. Log in with your PIN to access the dashboard
+2. Enter the administrator's full name
+3. Choose and confirm a 6-digit PIN — it is stored only on this device and
+   cannot be recovered, so write it down somewhere safe
+4. You are signed in automatically; add the rest of the staff from **Users**
+
+The setup screen refuses to run once any staff account exists, so it cannot be
+used to mint an admin on a device that is already provisioned.
+
+Development builds (`npm run dev`) seed demo staff instead and skip setup; those
+demo PINs are listed in the login page's debug panel and never exist in a
+production build.
 
 ## Architecture
 
@@ -122,8 +133,8 @@ This migration creates all necessary tables, indexes, and Row Level Security pol
 
 ### A1: First Run Setup
 
-- App shows Admin Setup screen
-- Create admin with Setup PIN
+- A device with no staff account is redirected from `/login` to `/setup`
+- Create the admin with a confirmed 6-digit PIN
 - Create additional users
 - Login with offline PIN
 - Dashboard shows with offline badge
