@@ -26,6 +26,7 @@ import {
   preferredSlotToTime,
   requestTelevisit,
   scheduleTelevisit,
+  STAFF_NOT_REGISTERED_MESSAGE,
   televisitJoinOpensAt,
   updateTelevisitStatus,
   type PatientContact,
@@ -256,28 +257,30 @@ describe("televisits service", () => {
 
   describe("scheduleTelevisit", () => {
     const NOW = new Date("2026-09-10T08:00:00Z");
+    const DOCTOR_ID = "11111111-1111-4111-8111-111111111111";
     const row = {
       id: "appt-1",
       patient_id: "p1",
-      provider_id: "doc-1",
+      provider_id: DOCTOR_ID,
       scheduled_at: "2026-09-12T09:00:00.000Z",
       duration_minutes: 20,
       status: "scheduled",
       meeting_link: "https://meet.jit.si/mbhr-room",
-      created_by: "doc-1",
+      created_by: DOCTOR_ID,
       created_at: "2026-09-10T08:00:00.000Z",
     };
     const noConflicts = { data: [], error: null };
     const scheduleInput = {
       patientId: "p1",
-      providerId: "doc-1",
+      providerId: DOCTOR_ID,
       scheduledAt: new Date("2026-09-12T09:00:00Z"),
-      createdBy: "doc-1",
+      createdBy: DOCTOR_ID,
     };
 
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(NOW);
+      h.results.app_users = [{ data: { id: DOCTOR_ID }, error: null }];
     });
 
     afterEach(() => {
@@ -314,7 +317,7 @@ describe("televisits service", () => {
       await scheduleTelevisit(scheduleInput);
 
       const eqs = callsFor("appointments", "eq").map((c) => c.args);
-      expect(eqs).toContainEqual(["provider_id", "doc-1"]);
+      expect(eqs).toContainEqual(["provider_id", DOCTOR_ID]);
       const inCall = callsFor("appointments", "in")[0];
       expect(inCall.args[0]).toBe("status");
       const lt = callsFor("appointments", "lt")[0];
@@ -377,6 +380,29 @@ describe("televisits service", () => {
       expect(h.from).not.toHaveBeenCalledWith("appointments");
     });
 
+    it("rejects a provider id that is not a uuid without querying", async () => {
+      await expect(
+        scheduleTelevisit({
+          ...scheduleInput,
+          providerId: "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+          createdBy: "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+        }),
+      ).rejects.toThrow(STAFF_NOT_REGISTERED_MESSAGE);
+      expect(h.from).not.toHaveBeenCalledWith("app_users");
+      expect(h.from).not.toHaveBeenCalledWith("appointments");
+    });
+
+    it("rejects a provider that is missing from app_users", async () => {
+      h.results.app_users = [{ data: null, error: null }];
+
+      await expect(scheduleTelevisit(scheduleInput)).rejects.toThrow(
+        STAFF_NOT_REGISTERED_MESSAGE,
+      );
+      const eq = callsFor("app_users", "eq")[0];
+      expect(eq.args).toEqual(["id", DOCTOR_ID]);
+      expect(h.from).not.toHaveBeenCalledWith("appointments");
+    });
+
     it("claims the originating request before inserting, then links it", async () => {
       h.results.appointments = [noConflicts, { data: row, error: null }];
       h.results.patient_appointment_requests = [
@@ -390,7 +416,7 @@ describe("televisits service", () => {
       expect(updates).toHaveLength(2);
       expect(updates[0].args[0]).toMatchObject({
         status: "scheduled",
-        reviewed_by: "doc-1",
+        reviewed_by: DOCTOR_ID,
         reviewed_at: NOW.toISOString(),
       });
       expect(updates[1].args[0]).toEqual({

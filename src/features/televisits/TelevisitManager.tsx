@@ -18,6 +18,7 @@ import type { Patient } from "@/db";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate, formatNigerianDateTime } from "@/utils/dateFormat";
 import {
+  STAFF_NOT_REGISTERED_MESSAGE,
   TELEVISIT_DEFAULT_DURATION_MIN,
   canJoinTelevisit,
   cancelTelevisit,
@@ -25,6 +26,7 @@ import {
   getPatientContact,
   getPendingTelevisitRequests,
   getUpcomingTelevisits,
+  isRegisteredStaffUser,
   isTelevisitServiceAvailable,
   loadPatientNames,
   notifyPatientTelevisitScheduled,
@@ -396,6 +398,7 @@ export function TelevisitManager() {
   const [lastScheduled, setLastScheduled] = useState<ScheduledResult | null>(
     null,
   );
+  const [staffRegistered, setStaffRegistered] = useState<boolean | null>(null);
 
   const userId = currentUser?.id;
   const providerName = currentUser?.fullName;
@@ -440,6 +443,24 @@ export function TelevisitManager() {
     const interval = setInterval(() => load(false), 30000);
     return () => clearInterval(interval);
   }, [load]);
+
+  useEffect(() => {
+    if (!userId || !isTelevisitServiceAvailable()) return;
+    let active = true;
+    isRegisteredStaffUser(userId)
+      .then((registered) => {
+        if (active) setStaffRegistered(registered);
+      })
+      .catch((err) => {
+        logger.error(
+          "[TelevisitManager] Staff registration check failed:",
+          err,
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
     const tick = setInterval(() => setNow(new Date()), 30000);
@@ -685,6 +706,12 @@ export function TelevisitManager() {
           </div>
         </div>
       </div>
+
+      {staffRegistered === false && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
+          {STAFF_NOT_REGISTERED_MESSAGE}
+        </div>
+      )}
 
       {lastScheduled && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex flex-wrap items-start justify-between gap-3">

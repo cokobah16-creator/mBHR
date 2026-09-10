@@ -321,6 +321,25 @@ export async function getUpcomingTelevisits(
   return ((data ?? []) as TelevisitRow[]).map(mapTelevisitRow);
 }
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const STAFF_NOT_REGISTERED_MESSAGE =
+  "Your staff account is not registered in the online staff directory, so it cannot own appointments. Sign in online with your email and password once, then try again.";
+
+// appointments.provider_id / created_by are uuid foreign keys to app_users, so
+// a device-only PIN user (ULID id, never synced) cannot own an appointment.
+export async function isRegisteredStaffUser(userId: string): Promise<boolean> {
+  if (!supabase || !UUID_PATTERN.test(userId)) return false;
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) logAndThrow(error, "isRegisteredStaffUser");
+  return Boolean(data);
+}
+
 // Bounds the overlap query; no appointment type in the app runs longer.
 const MAX_APPOINTMENT_LOOKBACK_MS = 4 * 60 * 60 * 1000;
 
@@ -390,6 +409,11 @@ export async function scheduleTelevisit(input: {
       new Error("The televisit time must be in the future"),
       "scheduleTelevisit",
     );
+  }
+  for (const staffId of new Set([input.providerId, input.createdBy])) {
+    if (!(await isRegisteredStaffUser(staffId))) {
+      logAndThrow(new Error(STAFF_NOT_REGISTERED_MESSAGE), "scheduleTelevisit");
+    }
   }
   if (
     await hasProviderConflict(
