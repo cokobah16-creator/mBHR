@@ -43,15 +43,20 @@ jobs:
       - name: i18n completeness check
         run: npm run i18n:check
 
-      # Advisory, not blocking. The outstanding advisories are all in
-      # transitive dependencies and clearing them needs a lockfile refresh
-      # (`npm audit fix`), including at least one breaking major bump, so they
-      # cannot be fixed from within a feature branch. The report still runs and
-      # a failed step is flagged on the run; it just no longer gates merges.
-      # Drop this line to make it blocking again once the tree is updated.
+      # Advisory on PRs and feature branches, blocking on anything that can
+      # reach production. The outstanding advisories are all in transitive
+      # dependencies and clearing them needs a lockfile refresh (`npm audit
+      # fix`), including at least one breaking major bump, so no feature branch
+      # can turn this green on its own; the report still runs and a failed step
+      # is flagged on the run, it just does not gate merges.
+      #
+      # The condition below deliberately mirrors the `if:` on migrate-prod /
+      # deploy-prod, which this job gates via `needs: build`. Keep the two in
+      # sync: if the production jobs start triggering off another branch, this
+      # must follow, or critical advisories reach production unchecked.
       - name: Security audit
         run: npm audit --audit-level=critical
-        continue-on-error: true
+        continue-on-error: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
       - name: Build
         run: npm run build
