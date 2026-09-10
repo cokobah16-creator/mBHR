@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   CalendarIcon,
   ClockIcon,
+  VideoCameraIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import {
@@ -13,20 +14,16 @@ import {
   getTodayAppointments,
   checkAvailability,
   updateAppointmentStatus,
+  type Appointment,
 } from "@/services/appointments";
+import {
+  TELEVISIT_APPOINTMENT_TYPE,
+  generateMeetingLink,
+  getPatientContact,
+  notifyPatientTelevisitScheduled,
+} from "@/services/televisits";
+import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
-
-interface Appointment {
-  id: string;
-  patient_id: string;
-  provider_id: string;
-  appointment_type: string;
-  scheduled_at: string;
-  duration_minutes: number;
-  status: string;
-  reason?: string;
-  notes?: string;
-}
 
 const appointmentSchema = z.object({
   patientId: z.string().min(1, "Patient is required"),
@@ -46,6 +43,7 @@ interface AppointmentCalendarProps {
 }
 
 const appointmentTypes = [
+  TELEVISIT_APPOINTMENT_TYPE,
   "Initial Consultation",
   "Follow-up",
   "Vaccination",
@@ -57,6 +55,11 @@ const appointmentTypes = [
   "Postnatal Care",
   "Child Wellness Visit",
 ];
+
+const isTelevisitRow = (row: Appointment) =>
+  row.appointmentType === TELEVISIT_APPOINTMENT_TYPE ||
+  row.visitMode === "televisit" ||
+  Boolean(row.meetingLink);
 
 export function AppointmentCalendar({
   providerId,
@@ -71,6 +74,7 @@ export function AppointmentCalendar({
   );
   const [viewMode, setViewMode] = useState<"today" | "week" | "month">("today");
   const toast = useToast();
+  const providerName = useAuthStore((s) => s.currentUser?.fullName);
 
   const {
     register,
@@ -94,7 +98,7 @@ export function AppointmentCalendar({
   const loadAppointments = async () => {
     try {
       setLoading(true);
-      let data;
+      let data: Appointment[];
 
       if (viewMode === "today") {
         data = await getTodayAppointments();
@@ -127,21 +131,58 @@ export function AppointmentCalendar({
         return;
       }
 
-      await createAppointment({
+      const isTelevisit = data.appointmentType === TELEVISIT_APPOINTMENT_TYPE;
+      const meetingLink = isTelevisit ? generateMeetingLink() : undefined;
+      const scheduledAt = new Date(data.scheduledAt);
+
+      const appointmentId = await createAppointment({
         patientId: data.patientId,
         providerId: data.providerId,
         appointmentType: data.appointmentType,
-        scheduledAt: new Date(data.scheduledAt),
+        scheduledAt,
         durationMinutes: data.durationMinutes,
         status: "scheduled",
         reason: data.reason,
         createdBy,
+        ...(isTelevisit
+          ? { visitMode: "televisit" as const, meetingLink }
+          : {}),
       });
 
-      toast.push({
-        id: Date.now().toString(),
-        title: "Appointment scheduled successfully",
-      });
+      if (isTelevisit) {
+        let smsMessage = "Patient contact not found. Share the link manually.";
+        const contact = await getPatientContact(data.patientId);
+        if (contact) {
+          const result = await notifyPatientTelevisitScheduled(
+            {
+              id: appointmentId,
+              patientId: data.patientId,
+              providerId: data.providerId,
+              scheduledAt,
+              durationMinutes: data.durationMinutes,
+              status: "scheduled",
+              reason: data.reason,
+              meetingLink,
+              createdBy,
+            },
+            contact,
+            providerName,
+          );
+          smsMessage = result.sent
+            ? "SMS with the meeting link sent to the patient."
+            : `SMS not sent: ${result.error ?? "unknown error"}. Share the link manually.`;
+        }
+        toast.push({
+          id: Date.now().toString(),
+          title: "Televisit scheduled successfully",
+          body: `${smsMessage} Link: ${meetingLink}`,
+        });
+      } else {
+        toast.push({
+          id: Date.now().toString(),
+          title: "Appointment scheduled successfully",
+        });
+      }
       setShowForm(false);
       reset();
       await loadAppointments();
@@ -156,11 +197,10 @@ export function AppointmentCalendar({
 
   const handleStatusChange = async (
     appointmentId: string,
-    newStatus: string,
+    newStatus: Appointment["status"],
   ) => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await updateAppointmentStatus(appointmentId, newStatus as any);
+      await updateAppointmentStatus(appointmentId, newStatus);
       toast.push({
         id: Date.now().toString(),
         title: `Appointment ${newStatus}`,
@@ -196,8 +236,7 @@ export function AppointmentCalendar({
     }
   };
 
-  const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
+  const formatTime = (date: Date) => {
     return date.toLocaleTimeString("en-US", {
       hour: "numeric",
       minute: "2-digit",
@@ -290,14 +329,30 @@ export function AppointmentCalendar({
                           {appointment.status}
                         </span>
                         <span className="ml-3 text-sm font-medium text-gray-900">
-                          {appointment.appointment_type}
+                          {appointment.appointmentType}
                         </span>
+                        {isTelevisitRow(appointment) && (
+                          <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                            <VideoCameraIcon className="mr-1 h-3.5 w-3.5" />
+                            Video
+                          </span>
+                        )}
                       </div>
                       <div className="mt-2 flex items-center text-sm text-gray-500">
                         <ClockIcon className="flex-shrink-0 mr-1.5 h-4 w-4" />
-                        {formatTime(appointment.scheduled_at)} (
-                        {appointment.duration_minutes} min)
+                        {formatTime(appointment.scheduledAt)} (
+                        {appointment.durationMinutes} min)
                       </div>
+                      {appointment.meetingLink && (
+                        <a
+                          href={appointment.meetingLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 inline-flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-800"
+                        >
+                          Open link
+                        </a>
+                      )}
                       {appointment.reason && (
                         <div className="mt-1 text-sm text-gray-600">
                           {appointment.reason}

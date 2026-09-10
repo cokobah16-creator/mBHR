@@ -12,6 +12,7 @@ import {
   ChevronDownIcon,
   UserGroupIcon,
   ExclamationTriangleIcon,
+  VideoCameraIcon,
 } from "@heroicons/react/24/outline";
 import { useState, useEffect } from "react";
 import { EmergencyHelp } from "./EmergencyHelp";
@@ -38,6 +39,11 @@ const navItems = [
     path: "/patient/appointments",
     labelKey: "portal.nav.appointments",
     icon: CalendarIcon,
+  },
+  {
+    path: "/patient/telehealth",
+    labelKey: "portal.nav.telehealth",
+    icon: VideoCameraIcon,
   },
   {
     path: "/patient/medical-history",
@@ -189,7 +195,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
             </div>
 
             <nav className="hidden md:flex items-center gap-1">
-              {navItems.slice(0, 4).map((item) => {
+              {navItems.slice(0, 5).map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
                 return (
@@ -423,14 +429,14 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40">
         <div className="flex justify-around py-2">
-          {navItems.slice(0, 5).map((item) => {
+          {navItems.slice(0, 6).map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
             return (
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg ${
+                className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg ${
                   isActive ? "text-blue-600" : "text-gray-500"
                 }`}
               >

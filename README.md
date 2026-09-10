@@ -11,6 +11,7 @@ An offline-first Progressive Web App (PWA) for Nigerian medical outreach program
 - **Queue Management**: Track patients through care stages
 - **PWA Support**: Installable, works offline, responsive design
 - **Nigerian Context**: States/LGAs, phone formatting, cultural considerations
+- **Televisits**: Patients request video visits from the portal; staff schedule them and share a Jitsi link by SMS
 
 ## Quick Start
 

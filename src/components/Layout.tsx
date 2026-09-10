@@ -28,6 +28,7 @@ import {
   XMarkIcon,
   Bars3Icon,
   DocumentDuplicateIcon,
+  VideoCameraIcon,
 } from "@heroicons/react/24/outline";
 
 // Pharmacy Overlay Component
@@ -208,6 +209,16 @@ export function Layout({ children }: LayoutProps) {
             name: t("nav.doctor_station"),
             href: "/doctor/dashboard",
             icon: ClipboardDocumentListIcon,
+          },
+        ]
+      : []),
+    // Televisits — clinical staff + admins
+    ...(canSeeOutreachReports
+      ? [
+          {
+            name: t("nav.televisits"),
+            href: "/televisits",
+            icon: VideoCameraIcon,
           },
         ]
       : []),

@@ -12,6 +12,7 @@
   "nav.doctor_station": "Doctor Station",
   "nav.user_management": "User Management",
   "nav.approve_games": "Approve Games",
+  "nav.televisits": "Televisits",
 
   "action.save": "Save",
   "action.cancel": "Cancel",
@@ -290,6 +291,7 @@
   "portal.nav.labResults": "Lab Results",
   "portal.nav.account": "Account",
   "portal.nav.emergency": "Emergency",
+  "portal.nav.telehealth": "Telehealth",
   "portal.nav.logout": "Logout",
   "portal.welcome": "Welcome back, {{name}}!",
   "portal.welcomeSubtitle": "Here's an overview of your health information.",

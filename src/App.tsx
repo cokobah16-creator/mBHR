@@ -68,6 +68,11 @@ const AppointmentCalendar = lazy(() =>
     default: m.AppointmentCalendar,
   })),
 );
+const TelevisitManager = lazy(() =>
+  import("@/features/televisits/TelevisitManager").then((m) => ({
+    default: m.TelevisitManager,
+  })),
+);
 
 // Portal admin pages
 const PortalDashboard = lazy(() =>
@@ -718,6 +723,14 @@ function App() {
                             roles={["doctor", "nurse", "volunteer", "admin"]}
                           >
                             <AppointmentCalendar createdBy="" />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/televisits"
+                        element={
+                          <RequireRoles roles={["doctor", "nurse", "admin"]}>
+                            <TelevisitManager />
                           </RequireRoles>
                         }
                       />
