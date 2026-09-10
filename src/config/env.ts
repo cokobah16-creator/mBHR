@@ -35,6 +35,13 @@ const envSchema = z.object({
   VITE_TERMII_API_KEY: z.string().optional(),
   VITE_TERMII_SENDER_ID: z.string().optional(),
   VITE_INVITE_RATE_MS: z.coerce.number().int().nonnegative().default(60_000),
+
+  // Televisits (video-room base URL; rooms are appended as /mbhr-<uuid>).
+  // A present-but-blank value is treated as unset so the default applies.
+  VITE_TELEVISIT_BASE_URL: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().url().default("https://meet.jit.si"),
+  ),
 });
 
 export type EnvShape = z.infer<typeof envSchema>;
@@ -53,6 +60,7 @@ function readRaw(): Record<string, unknown> {
     VITE_TERMII_API_KEY: e.VITE_TERMII_API_KEY,
     VITE_TERMII_SENDER_ID: e.VITE_TERMII_SENDER_ID,
     VITE_INVITE_RATE_MS: e.VITE_INVITE_RATE_MS,
+    VITE_TELEVISIT_BASE_URL: e.VITE_TELEVISIT_BASE_URL,
   };
 }
 

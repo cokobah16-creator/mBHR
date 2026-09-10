@@ -9,6 +9,7 @@ import { palaverRoom } from "@/services/palaverRoom";
 import { PatientMessagesPanel } from "@/features/doctor/PatientMessagesPanel";
 import { PalaverRoom } from "@/features/doctor/PalaverRoom";
 import { supabase } from "@/lib/supabase";
+import { getPendingTelevisitRequests } from "@/services/televisits";
 import {
   UserIcon,
   ClockIcon,
@@ -17,6 +18,7 @@ import {
   HeartIcon,
   ChatBubbleLeftRightIcon,
   InboxIcon,
+  VideoCameraIcon,
 } from "@heroicons/react/24/outline";
 
 interface PatientInQueue extends QueueItem {
@@ -38,6 +40,7 @@ export function DoctorDashboard() {
   const [showPatientMessages, setShowPatientMessages] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [unreadPatientMessages, setUnreadPatientMessages] = useState(0);
+  const [pendingTelevisits, setPendingTelevisits] = useState(0);
   const userId = currentUser?.id;
 
   const loadUnreadCount = useCallback(async () => {
@@ -61,6 +64,16 @@ export function DoctorDashboard() {
       setUnreadPatientMessages(count || 0);
     } catch (err) {
       console.error("Failed to load unread patient message count:", err);
+    }
+  }, []);
+
+  const loadPendingTelevisits = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      const requests = await getPendingTelevisitRequests();
+      setPendingTelevisits(requests.length);
+    } catch (err) {
+      console.error("Failed to load pending televisit count:", err);
     }
   }, []);
 
@@ -144,17 +157,26 @@ export function DoctorDashboard() {
     loadDashboardData(true);
     loadUnreadCount();
     loadUnreadPatientMessages();
+    loadPendingTelevisits();
 
     const interval = setInterval(() => loadDashboardData(false), 10000);
     const messageInterval = setInterval(loadUnreadCount, 30000);
     const patientMsgInterval = setInterval(loadUnreadPatientMessages, 30000);
+    const televisitInterval = setInterval(loadPendingTelevisits, 30000);
 
     return () => {
       clearInterval(interval);
       clearInterval(messageInterval);
       clearInterval(patientMsgInterval);
+      clearInterval(televisitInterval);
     };
-  }, [userId, loadDashboardData, loadUnreadCount, loadUnreadPatientMessages]);
+  }, [
+    userId,
+    loadDashboardData,
+    loadUnreadCount,
+    loadUnreadPatientMessages,
+    loadPendingTelevisits,
+  ]);
 
   const handleStartConsultation = async (item: PatientInQueue) => {
     try {
@@ -248,6 +270,20 @@ export function DoctorDashboard() {
               </span>
             )}
           </button>
+
+          {/* Televisits Button */}
+          <Link
+            to="/televisits"
+            className="relative flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+          >
+            <VideoCameraIcon className="h-5 w-5" />
+            <span className="font-medium">Televisits</span>
+            {pendingTelevisits > 0 && (
+              <span className="absolute -top-2 -right-2 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] text-center">
+                {pendingTelevisits}
+              </span>
+            )}
+          </Link>
 
           {/* Stats */}
           <div className="flex items-center space-x-4 bg-white rounded-lg shadow-sm p-4">

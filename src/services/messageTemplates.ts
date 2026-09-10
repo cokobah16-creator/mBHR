@@ -8,7 +8,8 @@ export type SmsTemplateKey =
   | "outreach_announcement"
   | "visit_thank_you"
   | "otp"
-  | "test_message";
+  | "test_message"
+  | "televisit_scheduled";
 
 // English fallbacks so composing still works offline or before the
 // message_templates table has been seeded.
@@ -24,6 +25,8 @@ const FALLBACK_BODIES: Record<SmsTemplateKey, string> = {
   otp: "Your mBHR verification code is {{otp}}. It expires in 10 minutes. Do not share this code with anyone.",
   test_message:
     "mBHR: This is a test message. Your SMS setup is working correctly.",
+  televisit_scheduled:
+    "mBHR: {{patient_name}}, your video visit with {{provider_name}} is on {{date}} at {{time}}. Join: {{link}}",
 };
 
 const cache = new Map<string, string>();

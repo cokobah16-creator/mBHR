@@ -22,6 +22,46 @@ export interface Appointment {
   reminderSent?: boolean;
   reminderSentAt?: Date;
   createdBy: string;
+  visitMode?: "in_person" | "televisit";
+  meetingLink?: string;
+}
+
+interface AppointmentRow {
+  id: string;
+  patient_id: string;
+  provider_id?: string;
+  appointment_type: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  status: Appointment["status"];
+  reason?: string;
+  notes?: string;
+  reminder_sent?: boolean;
+  reminder_sent_at?: string;
+  created_by: string;
+  visit_mode?: Appointment["visitMode"] | null;
+  meeting_link?: string | null;
+}
+
+function mapAppointmentRow(a: AppointmentRow): Appointment {
+  return {
+    id: a.id,
+    patientId: a.patient_id,
+    providerId: a.provider_id,
+    appointmentType: a.appointment_type,
+    scheduledAt: new Date(a.scheduled_at),
+    durationMinutes: a.duration_minutes,
+    status: a.status,
+    reason: a.reason,
+    notes: a.notes,
+    reminderSent: a.reminder_sent,
+    reminderSentAt: a.reminder_sent_at
+      ? new Date(a.reminder_sent_at)
+      : undefined,
+    createdBy: a.created_by,
+    visitMode: a.visit_mode ?? undefined,
+    meetingLink: a.meeting_link ?? undefined,
+  };
 }
 
 export interface WaitlistEntry {
@@ -59,6 +99,12 @@ export async function createAppointment(
       reason: appointment.reason,
       notes: appointment.notes,
       created_by: appointment.createdBy,
+      ...(appointment.visitMode !== undefined
+        ? { visit_mode: appointment.visitMode }
+        : {}),
+      ...(appointment.meetingLink !== undefined
+        ? { meeting_link: appointment.meetingLink }
+        : {}),
     })
     .select()
     .single();
@@ -121,22 +167,7 @@ export async function getPatientAppointments(
 
   if (error) logAndThrow(error, "getPatientAppointments");
 
-  return data!.map((a) => ({
-    id: a.id,
-    patientId: a.patient_id,
-    providerId: a.provider_id,
-    appointmentType: a.appointment_type,
-    scheduledAt: new Date(a.scheduled_at),
-    durationMinutes: a.duration_minutes,
-    status: a.status,
-    reason: a.reason,
-    notes: a.notes,
-    reminderSent: a.reminder_sent,
-    reminderSentAt: a.reminder_sent_at
-      ? new Date(a.reminder_sent_at)
-      : undefined,
-    createdBy: a.created_by,
-  }));
+  return (data as AppointmentRow[]).map(mapAppointmentRow);
 }
 
 export async function getUpcomingAppointments(
@@ -154,22 +185,7 @@ export async function getUpcomingAppointments(
   const { data, error } = await query;
   if (error) logAndThrow(error, "getUpcomingAppointments");
 
-  return data!.map((a) => ({
-    id: a.id,
-    patientId: a.patient_id,
-    providerId: a.provider_id,
-    appointmentType: a.appointment_type,
-    scheduledAt: new Date(a.scheduled_at),
-    durationMinutes: a.duration_minutes,
-    status: a.status,
-    reason: a.reason,
-    notes: a.notes,
-    reminderSent: a.reminder_sent,
-    reminderSentAt: a.reminder_sent_at
-      ? new Date(a.reminder_sent_at)
-      : undefined,
-    createdBy: a.created_by,
-  }));
+  return (data as AppointmentRow[]).map(mapAppointmentRow);
 }
 
 export async function getTodayAppointments(
@@ -192,22 +208,7 @@ export async function getTodayAppointments(
   const { data, error } = await query;
   if (error) logAndThrow(error, "getTodayAppointments");
 
-  return data!.map((a) => ({
-    id: a.id,
-    patientId: a.patient_id,
-    providerId: a.provider_id,
-    appointmentType: a.appointment_type,
-    scheduledAt: new Date(a.scheduled_at),
-    durationMinutes: a.duration_minutes,
-    status: a.status,
-    reason: a.reason,
-    notes: a.notes,
-    reminderSent: a.reminder_sent,
-    reminderSentAt: a.reminder_sent_at
-      ? new Date(a.reminder_sent_at)
-      : undefined,
-    createdBy: a.created_by,
-  }));
+  return (data as AppointmentRow[]).map(mapAppointmentRow);
 }
 
 export async function checkAvailability(
