@@ -30,10 +30,15 @@ export default defineConfig({
     },
   ],
 
+  // In CI the built app in dist/ is served, so the smoke spec exercises the
+  // same production bundle the build job produced rather than the dev server.
+  // Locally `npm run dev` keeps hot reload.
   webServer: useDeployed
     ? undefined
     : {
-        command: "npm run dev",
+        command: process.env.CI
+          ? "npm run preview -- --port 5173 --strictPort"
+          : "npm run dev",
         url: "http://localhost:5173",
         reuseExistingServer: !process.env.CI,
       },
