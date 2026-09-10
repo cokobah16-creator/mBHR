@@ -25,6 +25,7 @@ import {
   notifyPatientTelevisitScheduled,
   preferredSlotToTime,
   requestTelevisit,
+  resolveStaffAppUserId,
   scheduleTelevisit,
   STAFF_NOT_REGISTERED_MESSAGE,
   televisitJoinOpensAt,
@@ -88,12 +89,13 @@ const h = vi.hoisted(() => {
 
   const from = vi.fn((table: string) => makeRoot(table));
   const patientGet = vi.fn();
+  const getSession = vi.fn();
 
-  return { results, calls, from, patientGet };
+  return { results, calls, from, patientGet, getSession };
 });
 
 vi.mock("@/lib/supabase", () => ({
-  supabase: { from: h.from },
+  supabase: { from: h.from, auth: { getSession: h.getSession } },
 }));
 
 vi.mock("@/config/env", () => ({
@@ -128,6 +130,8 @@ describe("televisits service", () => {
     for (const key of Object.keys(h.results)) delete h.results[key];
     h.from.mockClear();
     h.patientGet.mockReset();
+    h.getSession.mockReset();
+    h.getSession.mockResolvedValue({ data: { session: null }, error: null });
   });
 
   afterEach(() => {
@@ -252,6 +256,51 @@ describe("televisits service", () => {
           preferredDate: "2026-09-12",
         }),
       ).rejects.toThrow("insert failed");
+    });
+  });
+
+  describe("resolveStaffAppUserId", () => {
+    const SESSION_ID = "22222222-2222-4222-8222-222222222222";
+    const LOCAL_ID = "33333333-3333-4333-8333-333333333333";
+
+    it("prefers the Supabase session user when it is registered", async () => {
+      h.getSession.mockResolvedValue({
+        data: { session: { user: { id: SESSION_ID } } },
+        error: null,
+      });
+      h.results.app_users = [{ data: { id: SESSION_ID }, error: null }];
+
+      await expect(
+        resolveStaffAppUserId("01HZZZZZZZZZZZZZZZZZZZZZZZ"),
+      ).resolves.toBe(SESSION_ID);
+      const eqs = callsFor("app_users", "eq").map((c) => c.args);
+      expect(eqs).toEqual([["id", SESSION_ID]]);
+    });
+
+    it("falls back to a registered local uuid when there is no session", async () => {
+      h.results.app_users = [{ data: { id: LOCAL_ID }, error: null }];
+
+      await expect(resolveStaffAppUserId(LOCAL_ID)).resolves.toBe(LOCAL_ID);
+    });
+
+    it("returns null when neither id is registered", async () => {
+      h.getSession.mockResolvedValue({
+        data: { session: { user: { id: SESSION_ID } } },
+        error: null,
+      });
+      h.results.app_users = [{ data: null, error: null }];
+
+      await expect(
+        resolveStaffAppUserId("01HZZZZZZZZZZZZZZZZZZZZZZZ"),
+      ).resolves.toBeNull();
+      expect(callsFor("app_users", "eq")).toHaveLength(1);
+    });
+
+    it("still resolves the local id when reading the session throws", async () => {
+      h.getSession.mockRejectedValue(new Error("no auth"));
+      h.results.app_users = [{ data: { id: LOCAL_ID }, error: null }];
+
+      await expect(resolveStaffAppUserId(LOCAL_ID)).resolves.toBe(LOCAL_ID);
     });
   });
 

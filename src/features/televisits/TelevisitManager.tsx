@@ -26,11 +26,11 @@ import {
   getPatientContact,
   getPendingTelevisitRequests,
   getUpcomingTelevisits,
-  isRegisteredStaffUser,
   isTelevisitServiceAvailable,
   loadPatientNames,
   notifyPatientTelevisitScheduled,
   preferredSlotToTime,
+  resolveStaffAppUserId,
   scheduleTelevisit,
   updateTelevisitStatus,
   type Televisit,
@@ -398,7 +398,9 @@ export function TelevisitManager() {
   const [lastScheduled, setLastScheduled] = useState<ScheduledResult | null>(
     null,
   );
-  const [staffRegistered, setStaffRegistered] = useState<boolean | null>(null);
+  const [staffAppUserId, setStaffAppUserId] = useState<
+    string | null | undefined
+  >(undefined);
 
   const userId = currentUser?.id;
   const providerName = currentUser?.fullName;
@@ -447,9 +449,9 @@ export function TelevisitManager() {
   useEffect(() => {
     if (!userId || !isTelevisitServiceAvailable()) return;
     let active = true;
-    isRegisteredStaffUser(userId)
-      .then((registered) => {
-        if (active) setStaffRegistered(registered);
+    resolveStaffAppUserId(userId)
+      .then((resolved) => {
+        if (active) setStaffAppUserId(resolved);
       })
       .catch((err) => {
         logger.error(
@@ -493,14 +495,18 @@ export function TelevisitManager() {
     if (!userId) {
       throw new Error("You must be signed in to schedule a televisit.");
     }
+    const staffId = staffAppUserId ?? (await resolveStaffAppUserId(userId));
+    if (!staffId) {
+      throw new Error(STAFF_NOT_REGISTERED_MESSAGE);
+    }
     const visit = await scheduleTelevisit({
       patientId: values.patientId,
-      providerId: userId,
+      providerId: staffId,
       scheduledAt: values.scheduledAt,
       durationMinutes: values.durationMinutes,
       reason: values.reason,
       notes: values.notes || undefined,
-      createdBy: userId,
+      createdBy: staffId,
       requestId: values.requestId,
     });
 
@@ -707,7 +713,7 @@ export function TelevisitManager() {
         </div>
       </div>
 
-      {staffRegistered === false && (
+      {staffAppUserId === null && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
           {STAFF_NOT_REGISTERED_MESSAGE}
         </div>
