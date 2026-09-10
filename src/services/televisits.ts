@@ -321,6 +321,56 @@ export async function getUpcomingTelevisits(
   return ((data ?? []) as TelevisitRow[]).map(mapTelevisitRow);
 }
 
+// Bounds the overlap query; no appointment type in the app runs longer.
+const MAX_APPOINTMENT_LOOKBACK_MS = 4 * 60 * 60 * 1000;
+
+export async function hasProviderConflict(
+  providerId: string,
+  scheduledAt: Date,
+  durationMinutes: number,
+): Promise<boolean> {
+  if (!supabase) return false;
+  const start = scheduledAt.getTime();
+  const end = start + durationMinutes * 60000;
+
+  const { data, error } = await supabase
+    .from("appointments")
+    .select("id,scheduled_at,duration_minutes")
+    .eq("provider_id", providerId)
+    .in("status", JOINABLE_STATUSES)
+    .gte(
+      "scheduled_at",
+      new Date(start - MAX_APPOINTMENT_LOOKBACK_MS).toISOString(),
+    )
+    .lt("scheduled_at", new Date(end).toISOString());
+
+  if (error) logAndThrow(error, "hasProviderConflict");
+
+  const rows = (data ?? []) as Array<{
+    scheduled_at: string;
+    duration_minutes: number | null;
+  }>;
+  return rows.some((row) => {
+    const rowStart = new Date(row.scheduled_at).getTime();
+    const rowEnd =
+      rowStart +
+      (row.duration_minutes ?? TELEVISIT_DEFAULT_DURATION_MIN) * 60000;
+    return rowStart < end && rowEnd > start;
+  });
+}
+
+async function releaseRequestClaim(
+  client: SupabaseClient,
+  requestId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("patient_appointment_requests")
+    .update({ status: "pending", reviewed_by: null, reviewed_at: null })
+    .eq("id", requestId)
+    .eq("status", "scheduled");
+  if (error) logError(error, "scheduleTelevisit:release");
+}
+
 export async function scheduleTelevisit(input: {
   patientId: string;
   providerId: string;
@@ -332,6 +382,52 @@ export async function scheduleTelevisit(input: {
   requestId?: string;
 }): Promise<Televisit> {
   const client = requireSupabase("scheduleTelevisit");
+  const durationMinutes =
+    input.durationMinutes ?? TELEVISIT_DEFAULT_DURATION_MIN;
+
+  if (input.scheduledAt.getTime() <= Date.now()) {
+    logAndThrow(
+      new Error("The televisit time must be in the future"),
+      "scheduleTelevisit",
+    );
+  }
+  if (
+    await hasProviderConflict(
+      input.providerId,
+      input.scheduledAt,
+      durationMinutes,
+    )
+  ) {
+    logAndThrow(
+      new Error("The provider already has an appointment in that time slot"),
+      "scheduleTelevisit",
+    );
+  }
+
+  if (input.requestId) {
+    // Claim the request before creating the appointment: the status guard
+    // makes the claim atomic, so concurrent schedulers (or a patient who has
+    // just cancelled) cannot produce a second appointment for one request.
+    const { data: claimed, error: claimError } = await client
+      .from("patient_appointment_requests")
+      .update({
+        status: "scheduled",
+        reviewed_by: input.createdBy,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", input.requestId)
+      .eq("status", "pending")
+      .select("id");
+
+    if (claimError) logAndThrow(claimError, "scheduleTelevisit:claim");
+    if (!claimed || (claimed as unknown[]).length === 0) {
+      logAndThrow(
+        new Error("This request is no longer pending"),
+        "scheduleTelevisit:claim",
+      );
+    }
+  }
+
   const { data, error } = await client
     .from("appointments")
     .insert({
@@ -341,7 +437,7 @@ export async function scheduleTelevisit(input: {
       visit_mode: "televisit",
       meeting_link: generateMeetingLink(),
       scheduled_at: input.scheduledAt.toISOString(),
-      duration_minutes: input.durationMinutes ?? TELEVISIT_DEFAULT_DURATION_MIN,
+      duration_minutes: durationMinutes,
       status: "scheduled",
       reason: input.reason ?? null,
       notes: input.notes ?? null,
@@ -350,23 +446,21 @@ export async function scheduleTelevisit(input: {
     .select()
     .single();
 
-  if (error) logAndThrow(error, "scheduleTelevisit");
+  if (error) {
+    if (input.requestId) await releaseRequestClaim(client, input.requestId);
+    logAndThrow(error, "scheduleTelevisit");
+  }
   const visit = mapTelevisitRow(data as TelevisitRow);
 
   if (input.requestId) {
-    const { error: requestError } = await client
+    const { error: linkError } = await client
       .from("patient_appointment_requests")
-      .update({
-        status: "scheduled",
-        scheduled_appointment_id: visit.id,
-        reviewed_by: input.createdBy,
-        reviewed_at: new Date().toISOString(),
-      })
+      .update({ scheduled_appointment_id: visit.id })
       .eq("id", input.requestId);
 
-    // The appointment is already persisted; failing here would leave an
-    // orphan row and invite a duplicate on retry, so log instead of throwing.
-    if (requestError) logError(requestError, "scheduleTelevisit:request");
+    // The request is claimed and the appointment persisted; a missing
+    // back-link is harmless, so log instead of throwing.
+    if (linkError) logError(linkError, "scheduleTelevisit:link");
   }
 
   return visit;

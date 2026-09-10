@@ -176,6 +176,10 @@ function ScheduleTelevisitModal({
       setError("The date or time is invalid.");
       return;
     }
+    if (scheduledAt.getTime() <= Date.now()) {
+      setError("Choose a time in the future.");
+      return;
+    }
     if (!reason.trim()) {
       setError("Enter a reason for the visit.");
       return;

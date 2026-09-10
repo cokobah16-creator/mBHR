@@ -42,6 +42,7 @@ const h = vi.hoisted(() => {
     "eq",
     "in",
     "gte",
+    "lt",
     "lte",
     "order",
     "or",
@@ -254,6 +255,7 @@ describe("televisits service", () => {
   });
 
   describe("scheduleTelevisit", () => {
+    const NOW = new Date("2026-09-10T08:00:00Z");
     const row = {
       id: "appt-1",
       patient_id: "p1",
@@ -265,16 +267,27 @@ describe("televisits service", () => {
       created_by: "doc-1",
       created_at: "2026-09-10T08:00:00.000Z",
     };
+    const noConflicts = { data: [], error: null };
+    const scheduleInput = {
+      patientId: "p1",
+      providerId: "doc-1",
+      scheduledAt: new Date("2026-09-12T09:00:00Z"),
+      createdBy: "doc-1",
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NOW);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
     it("inserts a televisit appointment with a meeting link", async () => {
-      h.results.appointments = [{ data: row, error: null }];
+      h.results.appointments = [noConflicts, { data: row, error: null }];
 
-      const visit = await scheduleTelevisit({
-        patientId: "p1",
-        providerId: "doc-1",
-        scheduledAt: new Date("2026-09-12T09:00:00Z"),
-        createdBy: "doc-1",
-      });
+      const visit = await scheduleTelevisit(scheduleInput);
 
       expect(h.from).toHaveBeenCalledWith("appointments");
       const insert = callsFor("appointments", "insert")[0];
@@ -295,62 +308,182 @@ describe("televisits service", () => {
       );
     });
 
-    it("marks the originating request as scheduled", async () => {
-      h.results.appointments = [{ data: row, error: null }];
-      h.results.patient_appointment_requests = [{ data: null, error: null }];
+    it("checks the provider's calendar for overlaps before inserting", async () => {
+      h.results.appointments = [noConflicts, { data: row, error: null }];
 
-      await scheduleTelevisit({
-        patientId: "p1",
-        providerId: "doc-1",
-        scheduledAt: new Date("2026-09-12T09:00:00Z"),
-        createdBy: "doc-1",
-        requestId: "req-1",
-      });
+      await scheduleTelevisit(scheduleInput);
 
-      const update = callsFor("patient_appointment_requests", "update")[0];
-      expect(update.args[0]).toMatchObject({
-        status: "scheduled",
-        scheduled_appointment_id: "appt-1",
-        reviewed_by: "doc-1",
-      });
-      const eq = callsFor("patient_appointment_requests", "eq")[0];
-      expect(eq.args).toEqual(["id", "req-1"]);
+      const eqs = callsFor("appointments", "eq").map((c) => c.args);
+      expect(eqs).toContainEqual(["provider_id", "doc-1"]);
+      const inCall = callsFor("appointments", "in")[0];
+      expect(inCall.args[0]).toBe("status");
+      const lt = callsFor("appointments", "lt")[0];
+      expect(lt.args).toEqual(["scheduled_at", "2026-09-12T09:20:00.000Z"]);
+      const firstSelect = h.calls.findIndex(
+        (c) => c.table === "appointments" && c.method === "select",
+      );
+      const insertIndex = h.calls.findIndex(
+        (c) => c.table === "appointments" && c.method === "insert",
+      );
+      expect(firstSelect).toBeLessThan(insertIndex);
     });
 
-    it("still returns the visit when the request update fails", async () => {
-      h.results.appointments = [{ data: row, error: null }];
+    it("rejects a time slot the provider already has booked", async () => {
+      h.results.appointments = [
+        {
+          data: [
+            {
+              id: "other",
+              scheduled_at: "2026-09-12T08:50:00.000Z",
+              duration_minutes: 30,
+            },
+          ],
+          error: null,
+        },
+      ];
+
+      await expect(scheduleTelevisit(scheduleInput)).rejects.toThrow(
+        "already has an appointment",
+      );
+      expect(callsFor("appointments", "insert")).toHaveLength(0);
+    });
+
+    it("ignores appointments that end exactly when the televisit starts", async () => {
+      h.results.appointments = [
+        {
+          data: [
+            {
+              id: "other",
+              scheduled_at: "2026-09-12T08:30:00.000Z",
+              duration_minutes: 30,
+            },
+          ],
+          error: null,
+        },
+        { data: row, error: null },
+      ];
+
+      const visit = await scheduleTelevisit(scheduleInput);
+      expect(visit.id).toBe("appt-1");
+    });
+
+    it("rejects a time that has already passed", async () => {
+      await expect(
+        scheduleTelevisit({
+          ...scheduleInput,
+          scheduledAt: new Date("2026-09-10T07:30:00Z"),
+        }),
+      ).rejects.toThrow("must be in the future");
+      expect(h.from).not.toHaveBeenCalledWith("appointments");
+    });
+
+    it("claims the originating request before inserting, then links it", async () => {
+      h.results.appointments = [noConflicts, { data: row, error: null }];
       h.results.patient_appointment_requests = [
-        { data: null, error: new Error("request update failed") },
+        { data: [{ id: "req-1" }], error: null },
+        { data: null, error: null },
+      ];
+
+      await scheduleTelevisit({ ...scheduleInput, requestId: "req-1" });
+
+      const updates = callsFor("patient_appointment_requests", "update");
+      expect(updates).toHaveLength(2);
+      expect(updates[0].args[0]).toMatchObject({
+        status: "scheduled",
+        reviewed_by: "doc-1",
+        reviewed_at: NOW.toISOString(),
+      });
+      expect(updates[1].args[0]).toEqual({
+        scheduled_appointment_id: "appt-1",
+      });
+      const eqs = callsFor("patient_appointment_requests", "eq").map(
+        (c) => c.args,
+      );
+      expect(eqs).toContainEqual(["id", "req-1"]);
+      expect(eqs).toContainEqual(["status", "pending"]);
+
+      const claimIndex = h.calls.findIndex(
+        (c) =>
+          c.table === "patient_appointment_requests" && c.method === "update",
+      );
+      const insertIndex = h.calls.findIndex(
+        (c) => c.table === "appointments" && c.method === "insert",
+      );
+      expect(claimIndex).toBeLessThan(insertIndex);
+    });
+
+    it("rejects when the request is no longer pending", async () => {
+      h.results.appointments = [noConflicts];
+      h.results.patient_appointment_requests = [{ data: [], error: null }];
+
+      await expect(
+        scheduleTelevisit({ ...scheduleInput, requestId: "req-1" }),
+      ).rejects.toThrow("no longer pending");
+      expect(callsFor("appointments", "insert")).toHaveLength(0);
+    });
+
+    it("throws when the claim itself fails", async () => {
+      h.results.appointments = [noConflicts];
+      h.results.patient_appointment_requests = [
+        { data: null, error: new Error("claim failed") },
+      ];
+
+      await expect(
+        scheduleTelevisit({ ...scheduleInput, requestId: "req-1" }),
+      ).rejects.toThrow("claim failed");
+      expect(callsFor("appointments", "insert")).toHaveLength(0);
+    });
+
+    it("still returns the visit when the back-link update fails", async () => {
+      h.results.appointments = [noConflicts, { data: row, error: null }];
+      h.results.patient_appointment_requests = [
+        { data: [{ id: "req-1" }], error: null },
+        { data: null, error: new Error("link failed") },
       ];
 
       const visit = await scheduleTelevisit({
-        patientId: "p1",
-        providerId: "doc-1",
-        scheduledAt: new Date("2026-09-12T09:00:00Z"),
-        createdBy: "doc-1",
+        ...scheduleInput,
         requestId: "req-1",
       });
 
       expect(visit.id).toBe("appt-1");
       expect(callsFor("patient_appointment_requests", "update")).toHaveLength(
-        1,
+        2,
       );
     });
 
-    it("throws when the appointment insert fails", async () => {
+    it("releases the claim when the appointment insert fails", async () => {
       h.results.appointments = [
+        noConflicts,
         { data: null, error: new Error("insert failed") },
+      ];
+      h.results.patient_appointment_requests = [
+        { data: [{ id: "req-1" }], error: null },
+        { data: null, error: null },
       ];
 
       await expect(
-        scheduleTelevisit({
-          patientId: "p1",
-          providerId: "doc-1",
-          scheduledAt: new Date("2026-09-12T09:00:00Z"),
-          createdBy: "doc-1",
-          requestId: "req-1",
-        }),
+        scheduleTelevisit({ ...scheduleInput, requestId: "req-1" }),
       ).rejects.toThrow("insert failed");
+
+      const updates = callsFor("patient_appointment_requests", "update");
+      expect(updates).toHaveLength(2);
+      expect(updates[1].args[0]).toEqual({
+        status: "pending",
+        reviewed_by: null,
+        reviewed_at: null,
+      });
+    });
+
+    it("throws when the appointment insert fails without a request", async () => {
+      h.results.appointments = [
+        noConflicts,
+        { data: null, error: new Error("insert failed") },
+      ];
+
+      await expect(scheduleTelevisit(scheduleInput)).rejects.toThrow(
+        "insert failed",
+      );
       expect(callsFor("patient_appointment_requests", "update")).toHaveLength(
         0,
       );
