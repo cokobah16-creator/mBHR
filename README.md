@@ -43,8 +43,17 @@ on a device it sends you to `/setup` to create the administrator:
    cannot be recovered, so write it down somewhere safe
 4. You are signed in automatically; add the rest of the staff from **Users**
 
-The setup screen refuses to run once any staff account exists, so it cannot be
-used to mint an admin on a device that is already provisioned.
+The setup screen refuses to run once any active staff account exists, so it
+cannot be used to mint an admin on a device that is already provisioned. The
+first administrator is created as a *permanent* admin, and user management
+refuses any edit — a role change, a deactivation, a deletion — that would leave
+the device with no active administrator.
+
+**Upgrading an existing device:** earlier production builds seeded six demo
+accounts whose PINs are published in this repository. Migration `0003`
+deactivates those accounts on first load of a production build and clears a
+signed-in demo session, so the device falls back to first-run setup. Patient
+data is untouched; only the demo logins stop working.
 
 Development builds (`npm run dev`) seed demo staff instead and skip setup; those
 demo PINs are listed in the login page's debug panel and never exist in a

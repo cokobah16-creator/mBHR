@@ -1,17 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  countOtherActiveAdmins,
   createFirstAdmin,
   needsFirstRunSetup,
   FIRST_ADMIN_EXISTS_MESSAGE,
 } from "./firstRun";
 
-const { mockUsers, mockTransaction } = vi.hoisted(() => ({
-  mockUsers: {
-    count: vi.fn(),
-    add: vi.fn(),
-  },
-  mockTransaction: vi.fn(),
-}));
+// db.users.where("isActive").equals(1) → a Dexie Collection, which the code
+// either counts directly or narrows with .filter() first.
+const { mockUsers, mockTransaction, mockCollection, mockFilteredCount } =
+  vi.hoisted(() => {
+    const mockFilteredCount = vi.fn();
+    const mockCollection = {
+      count: vi.fn(),
+      filter: vi.fn(),
+    };
+    return {
+      mockFilteredCount,
+      mockCollection,
+      mockUsers: {
+        add: vi.fn(),
+        where: vi.fn(() => ({ equals: vi.fn(() => mockCollection) })),
+      },
+      mockTransaction: vi.fn(),
+    };
+  });
 
 vi.mock("./index", () => ({
   db: {
@@ -34,8 +47,13 @@ const validInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockUsers.count.mockResolvedValue(0);
   mockUsers.add.mockResolvedValue(undefined);
+  mockUsers.where.mockImplementation(() => ({
+    equals: vi.fn(() => mockCollection),
+  }));
+  mockCollection.count.mockResolvedValue(0);
+  mockCollection.filter.mockReturnValue({ count: mockFilteredCount });
+  mockFilteredCount.mockResolvedValue(0);
   // Dexie runs the callback with the transaction open; the tables argument is
   // irrelevant to what we are asserting.
   mockTransaction.mockImplementation(
@@ -44,14 +62,39 @@ beforeEach(() => {
 });
 
 describe("needsFirstRunSetup", () => {
-  it("is true when the device has no staff account", async () => {
-    mockUsers.count.mockResolvedValue(0);
+  it("is true when the device has no active staff account", async () => {
+    mockCollection.count.mockResolvedValue(0);
     await expect(needsFirstRunSetup()).resolves.toBe(true);
   });
 
-  it("is false once any staff account exists", async () => {
-    mockUsers.count.mockResolvedValue(1);
+  it("is false once an active staff account exists", async () => {
+    mockCollection.count.mockResolvedValue(1);
     await expect(needsFirstRunSetup()).resolves.toBe(false);
+  });
+
+  it("counts only active users", async () => {
+    const equals = vi.fn(() => mockCollection);
+    mockUsers.where.mockReturnValue({ equals });
+
+    await needsFirstRunSetup();
+
+    // A device whose every account is deactivated cannot sign anyone in, so it
+    // needs setup just as much as an empty one does.
+    expect(mockUsers.where).toHaveBeenCalledWith("isActive");
+    expect(equals).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("countOtherActiveAdmins", () => {
+  it("excludes the user being changed and anyone who is not an admin", async () => {
+    mockFilteredCount.mockResolvedValue(2);
+
+    await expect(countOtherActiveAdmins("user-1")).resolves.toBe(2);
+
+    const predicate = mockCollection.filter.mock.calls[0][0];
+    expect(predicate({ id: "user-1", role: "admin" })).toBe(false);
+    expect(predicate({ id: "user-2", role: "admin" })).toBe(true);
+    expect(predicate({ id: "user-2", role: "nurse" })).toBe(false);
   });
 });
 
@@ -102,7 +145,7 @@ describe("createFirstAdmin", () => {
   it("refuses when another tab created a user first", async () => {
     // The setup route rendered on a count of zero; by the time the write
     // transaction opens, another tab has already written an admin.
-    mockUsers.count.mockResolvedValue(1);
+    mockCollection.count.mockResolvedValue(1);
 
     await expect(createFirstAdmin(validInput)).rejects.toThrow(
       FIRST_ADMIN_EXISTS_MESSAGE,

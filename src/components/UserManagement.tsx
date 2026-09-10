@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { db, User, generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { derivePinHash, newSaltB64 } from "@/utils/pin";
+import { countOtherActiveAdmins, LAST_ADMIN_MESSAGE } from "@/db/firstRun";
 import { getRoleColor, getRoleDisplayName } from "@/auth/roles";
 import { supabase } from "@/lib/supabase";
 import {
@@ -93,6 +94,19 @@ export function UserManagement() {
           return;
         }
 
+        // Losing the last admin locks user management away permanently:
+        // nothing else grants the `users` permission, and first-run setup
+        // refuses to run while an active account exists.
+        if (
+          editingUser.role === "admin" &&
+          formData.role !== "admin" &&
+          (await countOtherActiveAdmins(editingUser.id)) === 0
+        ) {
+          alert(LAST_ADMIN_MESSAGE);
+          setLoading(false);
+          return;
+        }
+
         // Update existing user
         await db.users.update(editingUser.id, {
           fullName: formData.fullName,
@@ -174,6 +188,15 @@ export function UserManagement() {
       return;
     }
 
+    if (
+      user.isActive === 1 &&
+      user.role === "admin" &&
+      (await countOtherActiveAdmins(user.id)) === 0
+    ) {
+      alert(LAST_ADMIN_MESSAGE);
+      return;
+    }
+
     try {
       await db.users.update(user.id, {
         isActive: user.isActive === 1 ? 0 : 1,
@@ -187,6 +210,16 @@ export function UserManagement() {
 
   const deleteUser = async () => {
     if (!pendingDeleteUser) return;
+
+    if (
+      pendingDeleteUser.role === "admin" &&
+      (await countOtherActiveAdmins(pendingDeleteUser.id)) === 0
+    ) {
+      alert(LAST_ADMIN_MESSAGE);
+      setPendingDeleteUser(null);
+      return;
+    }
+
     setDeleting(true);
     try {
       await db.users.delete(pendingDeleteUser.id);

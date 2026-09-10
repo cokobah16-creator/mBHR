@@ -12,33 +12,66 @@ const SEEDED_PIN = "482913";
 const PIN_SALT = "bWJoci1zbW9rZS10ZXN0MQ==";
 const DB_NAME = "mbhr_v5";
 
-// Demo staff are seeded in development only, so the bundle under test starts
-// with no users: every test that needs a PIN writes a known user straight into
-// the store. Each Playwright test gets a fresh browser context, so IndexedDB
-// starts empty for each of them.
+// src/main.tsx opens Dexie, runs 16 schema versions and seeds reference data
+// before it calls root.render, so `load` firing says nothing about whether the
+// app is usable. Everything here waits on the app instead of on the page.
+const BOOT_TIMEOUT = 30_000;
+
+// Surface what the browser saw. Without this a boot failure reads only as
+// "element not found", which is what made the previous run so hard to
+// diagnose; the list reporter prints these inline in CI.
+test.beforeEach(async ({ page }) => {
+  page.on("pageerror", (err) => console.log(`[pageerror] ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error" || msg.type() === "warning") {
+      console.log(`[console.${msg.type()}] ${msg.text()}`);
+    }
+  });
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus) return;
+  const body = await page
+    .locator("body")
+    .innerText()
+    .catch(() => "<no body>");
+  console.log(`[failure] url=${page.url()}`);
+  console.log(`[failure] body=${body.replace(/\s+/g, " ").slice(0, 600)}`);
+});
+
+// Navigates and waits for React to mount. main.tsx renders a "Startup error"
+// screen instead of the app when the database will not open, so check for that
+// explicitly rather than letting it surface as a missing selector.
+async function bootApp(page: Page, path: string): Promise<void> {
+  await page.goto(path);
+  await page
+    .locator("#root > *")
+    .first()
+    .waitFor({ state: "attached", timeout: BOOT_TIMEOUT });
+
+  if (await page.getByText("Startup error").isVisible()) {
+    const detail = await page.locator("#root").innerText();
+    throw new Error(`the app failed to start: ${detail}`);
+  }
+}
+
+// Writes a known staff user straight into the users store.
+//
+// This must run only once the app has mounted. Dexie is still stepping through
+// its schema upgrades while the page is loading, and a second connection
+// opened mid-upgrade blocks it, which hangs the boot before React ever
+// renders. bootApp() is the guarantee that the upgrade is finished.
 async function seedStaffUser(page: Page): Promise<void> {
   await page.evaluate(
     async ({ pin, salt, dbName }) => {
-      // Wait for main.tsx to create the database rather than creating it here,
-      // so the schema and version stay whatever Dexie decided.
-      const deadline = Date.now() + 15_000;
-      let handle: IDBDatabase | null = null;
-      while (Date.now() < deadline) {
-        const existing = await indexedDB.databases();
-        if (existing.some((entry) => entry.name === dbName)) {
-          handle = await new Promise<IDBDatabase>((resolve, reject) => {
-            const request = indexedDB.open(dbName);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-          });
-          if (handle.objectStoreNames.contains("users")) break;
-          handle.close();
-          handle = null;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      if (!handle) {
-        throw new Error(`${dbName}.users was not created within 15s`);
+      const handle = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(dbName);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      if (!handle.objectStoreNames.contains("users")) {
+        handle.close();
+        throw new Error(`${dbName} has no users store`);
       }
 
       // Mirrors derivePinHash() in src/utils/pin.ts: PBKDF2-SHA256, 100k
@@ -53,12 +86,7 @@ async function seedStaffUser(page: Page): Promise<void> {
         ["deriveBits"],
       );
       const bits = await crypto.subtle.deriveBits(
-        {
-          name: "PBKDF2",
-          salt: saltBytes,
-          iterations: 100_000,
-          hash: "SHA-256",
-        },
+        { name: "PBKDF2", salt: saltBytes, iterations: 100_000, hash: "SHA-256" },
         keyMaterial,
         256,
       );
@@ -67,8 +95,9 @@ async function seedStaffUser(page: Page): Promise<void> {
         .join("");
 
       await new Promise<void>((resolve, reject) => {
-        const tx = handle!.transaction("users", "readwrite");
-        // isActive must be 1: the auth store filters on it before verifying.
+        const tx = handle.transaction("users", "readwrite");
+        // isActive must be 1: the auth store filters on it before verifying,
+        // and needsFirstRunSetup() counts only active users.
         tx.objectStore("users").put({
           id: "e2e-smoke-admin",
           fullName: "E2E Smoke Admin",
@@ -92,21 +121,21 @@ async function seedStaffUser(page: Page): Promise<void> {
   );
 }
 
-// Loads the app on the public landing page so main.tsx opens the database,
-// writes a staff user into it, then lands on the login form with a PIN that
-// works. Going straight to /login would bounce to /setup instead.
+// Boots the app on the public landing page, writes a staff user, then lands on
+// the login form with a PIN that works. Going straight to /login on a device
+// with no staff account would bounce to /setup instead.
 async function openLoginWithSeededUser(page: Page): Promise<void> {
-  await page.goto("/");
+  await bootApp(page, "/");
   await seedStaffUser(page);
-  await page.goto("/login");
-  await expect(page.locator(PIN_FIELD)).toBeVisible();
+  await bootApp(page, "/login");
+  await expect(page.locator(PIN_FIELD)).toBeVisible({ timeout: BOOT_TIMEOUT });
 }
 
 test.describe("First-run setup", () => {
   test("sends a device with no staff account to setup", async ({ page }) => {
-    await page.goto("/login");
+    await bootApp(page, "/login");
 
-    await expect(page).toHaveURL(/\/setup$/);
+    await expect(page).toHaveURL(/\/setup$/, { timeout: BOOT_TIMEOUT });
     await expect(
       page.getByRole("heading", { name: "Set up this device" }),
     ).toBeVisible();
@@ -114,26 +143,26 @@ test.describe("First-run setup", () => {
 
   test("creates the first administrator and signs in", async ({ page }) => {
     const setupPin = "715204";
-    await page.goto("/setup");
-    await expect(page.locator(NAME_FIELD)).toBeVisible();
+    await bootApp(page, "/setup");
+    await expect(page.locator(NAME_FIELD)).toBeVisible({
+      timeout: BOOT_TIMEOUT,
+    });
 
     await page.locator(NAME_FIELD).fill("E2E Setup Admin");
     await page.locator(PIN_FIELD).fill(setupPin);
     await page.locator(CONFIRM_PIN_FIELD).fill(setupPin);
-    await page
-      .getByRole("button", { name: "Create administrator" })
-      .click();
+    await page.getByRole("button", { name: "Create administrator" }).click();
 
-    await expect(page).toHaveURL(/\/dashboard/);
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: BOOT_TIMEOUT });
   });
 
   test("refuses to run once a staff account exists", async ({ page }) => {
-    await page.goto("/");
+    await bootApp(page, "/");
     await seedStaffUser(page);
 
-    await page.goto("/setup");
+    await bootApp(page, "/setup");
 
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login$/, { timeout: BOOT_TIMEOUT });
   });
 });
 
@@ -159,6 +188,6 @@ test.describe("Staff login", () => {
     await page.locator(PIN_FIELD).fill(SEEDED_PIN);
     await page.getByRole("button", { name: "Sign In" }).click();
 
-    await expect(page).toHaveURL(/\/dashboard/);
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: BOOT_TIMEOUT });
   });
 });

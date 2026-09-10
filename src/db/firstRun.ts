@@ -4,6 +4,9 @@ import { derivePinHash, newSaltB64 } from "@/utils/pin";
 export const FIRST_ADMIN_EXISTS_MESSAGE =
   "This device already has a staff account. Sign in with its PIN instead.";
 
+export const LAST_ADMIN_MESSAGE =
+  "This is the only administrator on this device. Create another administrator first.";
+
 export interface FirstAdminInput {
   fullName: string;
   pin: string;
@@ -11,15 +14,43 @@ export interface FirstAdminInput {
 }
 
 /**
- * True when the local database holds no staff account at all.
+ * True when the local database holds no staff account that could sign in.
  *
  * Demo seeding only runs in development (see src/db/seed.ts), so a freshly
  * installed production device starts with zero users and no PIN that could
  * ever sign in. First-run setup is the only way out of that state, which is
  * why both /login and /setup route on this answer.
+ *
+ * Counts active users specifically: the auth store only ever considers
+ * `isActive === 1`, so a device whose every account is deactivated — which is
+ * what migration 0003 leaves behind when it retires demo accounts — is just as
+ * unusable as an empty one and needs the same way back in.
  */
 export async function needsFirstRunSetup(): Promise<boolean> {
-  return (await db.users.count()) === 0;
+  return (await activeUserCount()) === 0;
+}
+
+function activeUserCount(): Promise<number> {
+  return db.users.where("isActive").equals(1).count();
+}
+
+/**
+ * How many *other* active administrators the device would still have if this
+ * user stopped being one.
+ *
+ * Only the "admin" role grants the `users` permission (src/auth/roles.ts), and
+ * first-run setup refuses to run while an active account exists, so demoting,
+ * deactivating or deleting the last admin locks user management away for good.
+ * Callers use this to refuse that edit.
+ */
+export async function countOtherActiveAdmins(
+  excludeUserId: string,
+): Promise<number> {
+  return db.users
+    .where("isActive")
+    .equals(1)
+    .filter((user) => user.role === "admin" && user.id !== excludeUserId)
+    .count();
 }
 
 /**
@@ -64,7 +95,7 @@ export async function createFirstAdmin(input: FirstAdminInput): Promise<User> {
   };
 
   await db.transaction("rw", db.users, async () => {
-    if ((await db.users.count()) > 0) {
+    if ((await activeUserCount()) > 0) {
       throw new Error(FIRST_ADMIN_EXISTS_MESSAGE);
     }
     await db.users.add(user);
