@@ -321,6 +321,49 @@ export async function getUpcomingTelevisits(
   return ((data ?? []) as TelevisitRow[]).map(mapTelevisitRow);
 }
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const STAFF_NOT_REGISTERED_MESSAGE =
+  "Your staff account is not registered in the online staff directory, so it cannot own appointments. Sign in online with your email and password, or ask an admin to add your account to the staff directory, then try again.";
+
+// appointments.provider_id / created_by are uuid foreign keys to app_users, so
+// a device-only PIN user (ULID id, never synced) cannot own an appointment.
+export async function isRegisteredStaffUser(userId: string): Promise<boolean> {
+  if (!supabase || !UUID_PATTERN.test(userId)) return false;
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) logAndThrow(error, "isRegisteredStaffUser");
+  return Boolean(data);
+}
+
+// Online sign-in keeps an existing local (ULID) user record, so the id that
+// app_users knows is the Supabase session's user id, not necessarily the
+// local one. Prefer the session id, then fall back to the local id.
+export async function resolveStaffAppUserId(
+  localUserId?: string | null,
+): Promise<string | null> {
+  if (!supabase) return null;
+  const candidates: string[] = [];
+  try {
+    const { data } = await supabase.auth.getSession();
+    const sessionUserId = data.session?.user?.id;
+    if (sessionUserId) candidates.push(sessionUserId);
+  } catch (err) {
+    logger.warn("[televisits] Could not read the Supabase session:", err);
+  }
+  if (localUserId && !candidates.includes(localUserId)) {
+    candidates.push(localUserId);
+  }
+  for (const id of candidates) {
+    if (await isRegisteredStaffUser(id)) return id;
+  }
+  return null;
+}
+
 // Bounds the overlap query; no appointment type in the app runs longer.
 const MAX_APPOINTMENT_LOOKBACK_MS = 4 * 60 * 60 * 1000;
 
@@ -390,6 +433,11 @@ export async function scheduleTelevisit(input: {
       new Error("The televisit time must be in the future"),
       "scheduleTelevisit",
     );
+  }
+  for (const staffId of new Set([input.providerId, input.createdBy])) {
+    if (!(await isRegisteredStaffUser(staffId))) {
+      logAndThrow(new Error(STAFF_NOT_REGISTERED_MESSAGE), "scheduleTelevisit");
+    }
   }
   if (
     await hasProviderConflict(

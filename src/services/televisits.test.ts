@@ -25,7 +25,9 @@ import {
   notifyPatientTelevisitScheduled,
   preferredSlotToTime,
   requestTelevisit,
+  resolveStaffAppUserId,
   scheduleTelevisit,
+  STAFF_NOT_REGISTERED_MESSAGE,
   televisitJoinOpensAt,
   updateTelevisitStatus,
   type PatientContact,
@@ -87,12 +89,13 @@ const h = vi.hoisted(() => {
 
   const from = vi.fn((table: string) => makeRoot(table));
   const patientGet = vi.fn();
+  const getSession = vi.fn();
 
-  return { results, calls, from, patientGet };
+  return { results, calls, from, patientGet, getSession };
 });
 
 vi.mock("@/lib/supabase", () => ({
-  supabase: { from: h.from },
+  supabase: { from: h.from, auth: { getSession: h.getSession } },
 }));
 
 vi.mock("@/config/env", () => ({
@@ -127,6 +130,8 @@ describe("televisits service", () => {
     for (const key of Object.keys(h.results)) delete h.results[key];
     h.from.mockClear();
     h.patientGet.mockReset();
+    h.getSession.mockReset();
+    h.getSession.mockResolvedValue({ data: { session: null }, error: null });
   });
 
   afterEach(() => {
@@ -254,30 +259,77 @@ describe("televisits service", () => {
     });
   });
 
+  describe("resolveStaffAppUserId", () => {
+    const SESSION_ID = "22222222-2222-4222-8222-222222222222";
+    const LOCAL_ID = "33333333-3333-4333-8333-333333333333";
+
+    it("prefers the Supabase session user when it is registered", async () => {
+      h.getSession.mockResolvedValue({
+        data: { session: { user: { id: SESSION_ID } } },
+        error: null,
+      });
+      h.results.app_users = [{ data: { id: SESSION_ID }, error: null }];
+
+      await expect(
+        resolveStaffAppUserId("01HZZZZZZZZZZZZZZZZZZZZZZZ"),
+      ).resolves.toBe(SESSION_ID);
+      const eqs = callsFor("app_users", "eq").map((c) => c.args);
+      expect(eqs).toEqual([["id", SESSION_ID]]);
+    });
+
+    it("falls back to a registered local uuid when there is no session", async () => {
+      h.results.app_users = [{ data: { id: LOCAL_ID }, error: null }];
+
+      await expect(resolveStaffAppUserId(LOCAL_ID)).resolves.toBe(LOCAL_ID);
+    });
+
+    it("returns null when neither id is registered", async () => {
+      h.getSession.mockResolvedValue({
+        data: { session: { user: { id: SESSION_ID } } },
+        error: null,
+      });
+      h.results.app_users = [{ data: null, error: null }];
+
+      await expect(
+        resolveStaffAppUserId("01HZZZZZZZZZZZZZZZZZZZZZZZ"),
+      ).resolves.toBeNull();
+      expect(callsFor("app_users", "eq")).toHaveLength(1);
+    });
+
+    it("still resolves the local id when reading the session throws", async () => {
+      h.getSession.mockRejectedValue(new Error("no auth"));
+      h.results.app_users = [{ data: { id: LOCAL_ID }, error: null }];
+
+      await expect(resolveStaffAppUserId(LOCAL_ID)).resolves.toBe(LOCAL_ID);
+    });
+  });
+
   describe("scheduleTelevisit", () => {
     const NOW = new Date("2026-09-10T08:00:00Z");
+    const DOCTOR_ID = "11111111-1111-4111-8111-111111111111";
     const row = {
       id: "appt-1",
       patient_id: "p1",
-      provider_id: "doc-1",
+      provider_id: DOCTOR_ID,
       scheduled_at: "2026-09-12T09:00:00.000Z",
       duration_minutes: 20,
       status: "scheduled",
       meeting_link: "https://meet.jit.si/mbhr-room",
-      created_by: "doc-1",
+      created_by: DOCTOR_ID,
       created_at: "2026-09-10T08:00:00.000Z",
     };
     const noConflicts = { data: [], error: null };
     const scheduleInput = {
       patientId: "p1",
-      providerId: "doc-1",
+      providerId: DOCTOR_ID,
       scheduledAt: new Date("2026-09-12T09:00:00Z"),
-      createdBy: "doc-1",
+      createdBy: DOCTOR_ID,
     };
 
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(NOW);
+      h.results.app_users = [{ data: { id: DOCTOR_ID }, error: null }];
     });
 
     afterEach(() => {
@@ -314,7 +366,7 @@ describe("televisits service", () => {
       await scheduleTelevisit(scheduleInput);
 
       const eqs = callsFor("appointments", "eq").map((c) => c.args);
-      expect(eqs).toContainEqual(["provider_id", "doc-1"]);
+      expect(eqs).toContainEqual(["provider_id", DOCTOR_ID]);
       const inCall = callsFor("appointments", "in")[0];
       expect(inCall.args[0]).toBe("status");
       const lt = callsFor("appointments", "lt")[0];
@@ -377,6 +429,29 @@ describe("televisits service", () => {
       expect(h.from).not.toHaveBeenCalledWith("appointments");
     });
 
+    it("rejects a provider id that is not a uuid without querying", async () => {
+      await expect(
+        scheduleTelevisit({
+          ...scheduleInput,
+          providerId: "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+          createdBy: "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+        }),
+      ).rejects.toThrow(STAFF_NOT_REGISTERED_MESSAGE);
+      expect(h.from).not.toHaveBeenCalledWith("app_users");
+      expect(h.from).not.toHaveBeenCalledWith("appointments");
+    });
+
+    it("rejects a provider that is missing from app_users", async () => {
+      h.results.app_users = [{ data: null, error: null }];
+
+      await expect(scheduleTelevisit(scheduleInput)).rejects.toThrow(
+        STAFF_NOT_REGISTERED_MESSAGE,
+      );
+      const eq = callsFor("app_users", "eq")[0];
+      expect(eq.args).toEqual(["id", DOCTOR_ID]);
+      expect(h.from).not.toHaveBeenCalledWith("appointments");
+    });
+
     it("claims the originating request before inserting, then links it", async () => {
       h.results.appointments = [noConflicts, { data: row, error: null }];
       h.results.patient_appointment_requests = [
@@ -390,7 +465,7 @@ describe("televisits service", () => {
       expect(updates).toHaveLength(2);
       expect(updates[0].args[0]).toMatchObject({
         status: "scheduled",
-        reviewed_by: "doc-1",
+        reviewed_by: DOCTOR_ID,
         reviewed_at: NOW.toISOString(),
       });
       expect(updates[1].args[0]).toEqual({

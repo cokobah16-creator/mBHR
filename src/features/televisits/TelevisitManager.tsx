@@ -18,6 +18,7 @@ import type { Patient } from "@/db";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate, formatNigerianDateTime } from "@/utils/dateFormat";
 import {
+  STAFF_NOT_REGISTERED_MESSAGE,
   TELEVISIT_DEFAULT_DURATION_MIN,
   canJoinTelevisit,
   cancelTelevisit,
@@ -29,6 +30,7 @@ import {
   loadPatientNames,
   notifyPatientTelevisitScheduled,
   preferredSlotToTime,
+  resolveStaffAppUserId,
   scheduleTelevisit,
   updateTelevisitStatus,
   type Televisit,
@@ -396,6 +398,9 @@ export function TelevisitManager() {
   const [lastScheduled, setLastScheduled] = useState<ScheduledResult | null>(
     null,
   );
+  const [staffAppUserId, setStaffAppUserId] = useState<
+    string | null | undefined
+  >(undefined);
 
   const userId = currentUser?.id;
   const providerName = currentUser?.fullName;
@@ -442,6 +447,24 @@ export function TelevisitManager() {
   }, [load]);
 
   useEffect(() => {
+    if (!userId || !isTelevisitServiceAvailable()) return;
+    let active = true;
+    resolveStaffAppUserId(userId)
+      .then((resolved) => {
+        if (active) setStaffAppUserId(resolved);
+      })
+      .catch((err) => {
+        logger.error(
+          "[TelevisitManager] Staff registration check failed:",
+          err,
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [userId]);
+
+  useEffect(() => {
     const tick = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(tick);
   }, []);
@@ -472,14 +495,18 @@ export function TelevisitManager() {
     if (!userId) {
       throw new Error("You must be signed in to schedule a televisit.");
     }
+    const staffId = staffAppUserId ?? (await resolveStaffAppUserId(userId));
+    if (!staffId) {
+      throw new Error(STAFF_NOT_REGISTERED_MESSAGE);
+    }
     const visit = await scheduleTelevisit({
       patientId: values.patientId,
-      providerId: userId,
+      providerId: staffId,
       scheduledAt: values.scheduledAt,
       durationMinutes: values.durationMinutes,
       reason: values.reason,
       notes: values.notes || undefined,
-      createdBy: userId,
+      createdBy: staffId,
       requestId: values.requestId,
     });
 
@@ -685,6 +712,12 @@ export function TelevisitManager() {
           </div>
         </div>
       </div>
+
+      {staffAppUserId === null && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
+          {STAFF_NOT_REGISTERED_MESSAGE}
+        </div>
+      )}
 
       {lastScheduled && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex flex-wrap items-start justify-between gap-3">
