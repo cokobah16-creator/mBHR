@@ -70,59 +70,19 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------
-  # Preview deploy (every PR). Posts the deploy URL as a sticky PR comment
-  # and runs the Playwright login smoke test against it.
+  # Smoke test (every PR). Runs Playwright against the dist/ artifact the
+  # build job produced, served locally by the config's webServer block.
+  #
+  # This deliberately does not deploy: Vercel's own GitHub integration
+  # already publishes a preview for every PR, so a second CI-side deploy
+  # duplicated those builds and required VERCEL_TOKEN / VERCEL_ORG_ID /
+  # VERCEL_PROJECT_ID. Testing the built bundle locally needs no
+  # credentials and is deterministic, at the cost of not exercising
+  # Vercel's rewrites and headers.
   # ------------------------------------------------------------------
-  deploy-preview:
-    name: Deploy preview
-    needs: build
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    outputs:
-      url: ${{ steps.deploy.outputs.url }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install Vercel CLI
-        run: npm install --global vercel@latest
-
-      - name: Pull Vercel preview env
-        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-      - name: Build for Vercel
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-
-      - name: Deploy preview
-        id: deploy
-        run: |
-          url=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "Preview: $url"
-
-      - name: Comment preview URL on PR
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: deploy-preview
-          message: |
-            **Preview deploy:** ${{ steps.deploy.outputs.url }}
-
   smoke-test:
-    name: Smoke test (preview)
-    needs: deploy-preview
+    name: Smoke test
+    needs: build
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -138,12 +98,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Reuse the exact bundle the build job produced rather than rebuilding.
+      - name: Download built app
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
       - name: Run login smoke test
         env:
-          PLAYWRIGHT_BASE_URL: ${{ needs.deploy-preview.outputs.url }}
           CI: '1'
         run: npx playwright test e2e/login.spec.ts --project=chromium
 
