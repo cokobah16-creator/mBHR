@@ -3,8 +3,9 @@ import { log, error as logError } from "@/lib/logger";
 import type { Migration } from "./types";
 import { migration0001 } from "./0001-committed-idx";
 import { migration0002 } from "./0002-vitals-ranges";
+import { migration0003 } from "./0003-retire-demo-users";
 
-const migrations: Migration[] = [migration0001, migration0002];
+const migrations: Migration[] = [migration0001, migration0002, migration0003];
 
 export async function runMigrations(): Promise<void> {
   const metaKey = "db_version";

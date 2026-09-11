@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { db, User, generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { derivePinHash, newSaltB64 } from "@/utils/pin";
+import { countOtherActiveAdmins, LAST_ADMIN_MESSAGE } from "@/db/firstRun";
 import { getRoleColor, getRoleDisplayName } from "@/auth/roles";
 import { supabase } from "@/lib/supabase";
 import {
@@ -11,6 +12,23 @@ import {
   EyeIcon,
   EyeSlashIcon,
 } from "@heroicons/react/24/outline";
+
+// PINs are stored only as PBKDF2 hashes, so the one thing this column can ever
+// reveal is the published PIN of a demo account. Those exist in development
+// only (see src/db/seed.ts) — in a production build every row is masked.
+const DEMO_SEED_PINS: Record<string, string> = {
+  "Kristopher Okobah": "070398",
+  "Admin User": "123456",
+  "Dr. Sarah Johnson": "234567",
+  "Nurse Mary": "345678",
+  "Pharmacist John": "456789",
+  "Volunteer Mike": "567890",
+};
+
+function displayPin(fullName: string): string {
+  if (!import.meta.env.DEV) return "••••••";
+  return DEMO_SEED_PINS[fullName] ?? "••••••";
+}
 
 export function UserManagement() {
   const { currentUser } = useAuthStore();
@@ -72,6 +90,19 @@ export function UserManagement() {
         // Prevent editing permanent admin status unless current user is permanent admin
         if (editingUser.adminPermanent && !currentUser?.adminPermanent) {
           alert("Cannot modify permanent admin users");
+          setLoading(false);
+          return;
+        }
+
+        // Losing the last admin locks user management away permanently:
+        // nothing else grants the `users` permission, and first-run setup
+        // refuses to run while an active account exists.
+        if (
+          editingUser.role === "admin" &&
+          formData.role !== "admin" &&
+          (await countOtherActiveAdmins(editingUser.id)) === 0
+        ) {
+          alert(LAST_ADMIN_MESSAGE);
           setLoading(false);
           return;
         }
@@ -157,6 +188,15 @@ export function UserManagement() {
       return;
     }
 
+    if (
+      user.isActive === 1 &&
+      user.role === "admin" &&
+      (await countOtherActiveAdmins(user.id)) === 0
+    ) {
+      alert(LAST_ADMIN_MESSAGE);
+      return;
+    }
+
     try {
       await db.users.update(user.id, {
         isActive: user.isActive === 1 ? 0 : 1,
@@ -170,6 +210,16 @@ export function UserManagement() {
 
   const deleteUser = async () => {
     if (!pendingDeleteUser) return;
+
+    if (
+      pendingDeleteUser.role === "admin" &&
+      (await countOtherActiveAdmins(pendingDeleteUser.id)) === 0
+    ) {
+      alert(LAST_ADMIN_MESSAGE);
+      setPendingDeleteUser(null);
+      return;
+    }
+
     setDeleting(true);
     try {
       await db.users.delete(pendingDeleteUser.id);
@@ -511,20 +561,7 @@ export function UserManagement() {
                 </td>
                 {showPins && (
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
-                    {/* Show known PINs for seeded users */}
-                    {user.fullName === "Kristopher Okobah"
-                      ? "070398"
-                      : user.fullName === "Admin User"
-                        ? "123456"
-                        : user.fullName === "Dr. Sarah Johnson"
-                          ? "234567"
-                          : user.fullName === "Nurse Mary"
-                            ? "345678"
-                            : user.fullName === "Pharmacist John"
-                              ? "456789"
-                              : user.fullName === "Volunteer Mike"
-                                ? "567890"
-                                : "••••••"}
+                    {displayPin(user.fullName)}
                   </td>
                 )}
                 <td className="px-6 py-4 whitespace-nowrap">
