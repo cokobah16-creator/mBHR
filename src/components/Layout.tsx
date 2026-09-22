@@ -337,17 +337,20 @@ export function Layout({ children }: LayoutProps) {
 
   const renderItem = (item: NavItem) => {
     const active = isItemActive(item);
-    const cls = `group flex w-full items-center gap-3 rounded-md px-3 py-2 min-h-touch-target text-label transition-colors ${
+    const cls = `group relative flex w-full items-center gap-3 rounded-md px-3 py-2 min-h-touch-target text-label transition-colors ${
       collapsed ? "md:justify-center md:px-0" : ""
     } ${
       active
-        ? "bg-primary-soft text-primary-fg font-semibold"
-        : "text-ink-secondary hover:bg-surface-hover hover:text-ink"
+        ? "bg-rail-active text-white font-semibold"
+        : "text-rail-text hover:bg-rail-hover hover:text-white"
     }`;
     const content = (
       <>
+        {active && (
+          <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" aria-hidden />
+        )}
         <item.icon
-          className={`h-5 w-5 shrink-0 ${active ? "text-primary" : "text-ink-muted group-hover:text-ink-secondary"}`}
+          className={`h-5 w-5 shrink-0 ${active ? "text-white" : "text-rail-muted group-hover:text-white"}`}
           aria-hidden
         />
         <span className={collapsed ? "md:sr-only" : ""}>{item.name}</span>
@@ -386,178 +389,178 @@ export function Layout({ children }: LayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-canvas">
+    <div className="min-h-screen bg-canvas md:flex">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-primary focus:text-white focus:px-4 focus:py-2 focus:rounded-md focus:outline-none focus:ring-2 focus:ring-white"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[60] focus:bg-primary focus:text-white focus:px-4 focus:py-2 focus:rounded-md focus:outline-none focus:ring-2 focus:ring-white"
       >
         Skip to main content
       </a>
-      <OfflineBanner />
-      <header
-        role="banner"
-        className="sticky top-0 z-30 h-14 border-b border-line bg-surface"
+
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-ink/40 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      {/* Navigation rail: full height on tablet/desktop, drawer on phones */}
+      <nav
+        role="navigation"
+        aria-label="Main navigation"
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-rail text-rail-text shadow-xl transition-transform duration-200 md:sticky md:top-0 md:z-auto md:h-screen md:shrink-0 md:shadow-none md:translate-x-0 ${
+          collapsed ? "md:w-16" : "md:w-60"
+        } ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
-        <div className="flex h-full items-center gap-2 px-2 sm:px-4">
+        <div className={`flex h-16 shrink-0 items-center gap-2.5 border-b border-rail-line px-4 ${collapsed ? "md:justify-center md:px-0" : ""}`}>
+          <img src="/brand/mbhr-mark.svg" alt="" aria-hidden className="h-8 w-8 shrink-0 rounded-md" />
+          <span className={`min-w-0 leading-tight ${collapsed ? "md:sr-only" : ""}`}>
+            <span className="block text-h3 text-white">mBHR</span>
+            <span className="block text-caption text-rail-muted">Med Bridge Health Reach</span>
+          </span>
           <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden btn-ghost px-2"
-            aria-label="Open navigation"
-            aria-expanded={mobileMenuOpen}
+            onClick={() => setMobileMenuOpen(false)}
+            className="ml-auto rounded-md p-2 text-rail-text hover:bg-rail-hover md:hidden"
+            aria-label="Close navigation"
           >
-            <Bars3Icon className="h-6 w-6" aria-hidden />
+            <XMarkIcon className="h-5 w-5" aria-hidden />
           </button>
+        </div>
 
-          <Link
-            to="/dashboard"
-            className="flex items-center gap-2 shrink-0 rounded-md pr-1"
-            aria-label={`${t("app.title")} — dashboard`}
+        <div className="flex-1 overflow-y-auto px-2 py-3">
+          {navGroups.map((group) => (
+            <div key={group.label} className="mb-4 last:mb-0">
+              <p
+                className={`px-3 pb-1.5 text-caption font-semibold uppercase tracking-wide text-rail-muted ${collapsed ? "md:sr-only" : ""}`}
+              >
+                {group.label}
+              </p>
+              <ul className="space-y-0.5">{group.items.map(renderItem)}</ul>
+            </div>
+          ))}
+        </div>
+
+        {/* Phone drawer: user + preferences */}
+        <div className="space-y-2 border-t border-rail-line px-4 py-3 md:hidden">
+          <p className="text-label text-white">{currentUser?.fullName}</p>
+          <p className="text-caption text-rail-muted">
+            {currentUser ? getRoleDisplayName(currentUser.role) : ""}
+          </p>
+          <LanguageSelector />
+          <AccessibilityControls />
+          {currentUser && (
+            <button onClick={handleLogout} className="btn-secondary w-full">
+              <ArrowRightOnRectangleIcon className="h-5 w-5" aria-hidden />
+              {t("auth.logout")}
+            </button>
+          )}
+        </div>
+
+        <div className="hidden border-t border-rail-line p-2 md:block">
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 min-h-touch-target text-caption text-rail-muted hover:bg-rail-hover hover:text-white ${collapsed ? "justify-center px-0" : ""}`}
+            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-expanded={!collapsed}
+            title={collapsed ? "Expand navigation" : undefined}
           >
-            <img src="/brand/mbhr-mark.svg" alt="" aria-hidden className="h-8 w-8 rounded-md" />
-            <span className="hidden lg:block text-h3 text-ink">mBHR</span>
-          </Link>
-
-          <span className="hidden sm:block h-6 w-px bg-line mx-1" aria-hidden />
-
-          <div className="min-w-0 flex-1">
-            <ActiveSiteControl />
-          </div>
-
-          <div className="flex items-center gap-1 sm:gap-2">
-            <SyncStatusControl />
-            <div className="hidden md:block">
-              <LanguageSelector />
-            </div>
-            <div className="hidden lg:block">
-              <AccessibilityControls />
-            </div>
-            {currentUser && (
-              <div className="hidden md:flex items-center gap-2 pl-2 ml-1 border-l border-line">
-                <span
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-soft text-caption font-semibold text-primary-fg"
-                  aria-hidden
-                >
-                  {initials}
-                </span>
-                <span className="hidden xl:block leading-tight">
-                  <span className="block text-label text-ink">{currentUser.fullName}</span>
-                  <span className="block text-caption text-ink-muted">
-                    {getRoleDisplayName(currentUser.role)}
-                  </span>
-                </span>
-                <button
-                  onClick={handleLogout}
-                  className="btn-ghost px-2"
-                  title={t("auth.logout")}
-                  aria-label={t("auth.logout")}
-                >
-                  <ArrowRightOnRectangleIcon className="h-5 w-5" aria-hidden />
-                </button>
-              </div>
+            {collapsed ? (
+              <ChevronDoubleRightIcon className="h-4 w-4" aria-hidden />
+            ) : (
+              <>
+                <ChevronDoubleLeftIcon className="h-4 w-4" aria-hidden />
+                Collapse
+              </>
             )}
+          </button>
+          <div className={`flex gap-3 px-3 pt-1 text-caption text-rail-muted ${collapsed ? "sr-only" : ""}`}>
+            <Link to="/privacy" className="hover:text-white hover:underline">
+              Privacy
+            </Link>
+            <Link to="/terms" className="hover:text-white hover:underline">
+              Terms
+            </Link>
           </div>
         </div>
-      </header>
+      </nav>
 
-      <div className="relative flex min-h-[calc(100vh-3.5rem)]">
-        {mobileMenuOpen && (
-          <div
-            className="fixed inset-0 z-40 bg-ink/40 md:hidden"
-            onClick={() => setMobileMenuOpen(false)}
-            aria-hidden
-          />
-        )}
-
-        <nav
-          role="navigation"
-          aria-label="Main navigation"
-          className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-line bg-surface shadow-xl transition-transform duration-200 md:sticky md:top-14 md:z-auto md:h-[calc(100vh-3.5rem)] md:self-start md:shadow-none md:translate-x-0 ${
-            collapsed ? "md:w-16" : "md:w-60"
-          } ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`}
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+        <OfflineBanner />
+        <header
+          role="banner"
+          className="sticky top-0 z-30 h-16 shrink-0 border-b border-line bg-surface"
         >
-          {/* Mobile drawer header */}
-          <div className="flex items-center justify-between border-b border-line px-4 py-3 md:hidden">
-            <div>
-              <p className="text-label font-semibold text-ink">{currentUser?.fullName}</p>
-              <p className="text-caption text-ink-muted">
-                {currentUser ? getRoleDisplayName(currentUser.role) : ""}
-              </p>
-            </div>
+          <div className="flex h-full items-center gap-2 px-2 sm:px-4">
             <button
-              onClick={() => setMobileMenuOpen(false)}
-              className="btn-ghost px-2"
-              aria-label="Close navigation"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden btn-ghost px-2"
+              aria-label="Open navigation"
+              aria-expanded={mobileMenuOpen}
             >
-              <XMarkIcon className="h-5 w-5" aria-hidden />
+              <Bars3Icon className="h-6 w-6" aria-hidden />
             </button>
-          </div>
+            <Link
+              to="/dashboard"
+              className="flex shrink-0 items-center rounded-md md:hidden"
+              aria-label={`${t("app.title")} — dashboard`}
+            >
+              <img src="/brand/mbhr-mark.svg" alt="" aria-hidden className="h-8 w-8 rounded-md" />
+            </Link>
 
-          <div className="flex-1 overflow-y-auto px-2 py-3">
-            {navGroups.map((group) => (
-              <div key={group.label} className="mb-4 last:mb-0">
-                <p
-                  className={`section-label px-3 pb-1.5 ${collapsed ? "md:sr-only" : ""}`}
-                >
-                  {group.label}
-                </p>
-                <ul className="space-y-0.5">{group.items.map(renderItem)}</ul>
+            <div className="min-w-0 flex-1">
+              <ActiveSiteControl />
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-2">
+              <SyncStatusControl />
+              <div className="hidden md:block">
+                <LanguageSelector />
               </div>
-            ))}
-          </div>
-
-          {/* Mobile-only controls */}
-          <div className="space-y-2 border-t border-line px-4 py-3 md:hidden">
-            <LanguageSelector />
-            <AccessibilityControls />
-            {currentUser && (
-              <button onClick={handleLogout} className="btn-secondary w-full">
-                <ArrowRightOnRectangleIcon className="h-5 w-5" aria-hidden />
-                {t("auth.logout")}
-              </button>
-            )}
-          </div>
-
-          <div className="hidden border-t border-line p-2 md:block">
-            <button
-              type="button"
-              onClick={toggleCollapsed}
-              className={`btn-ghost w-full text-caption ${collapsed ? "px-0" : "justify-start"}`}
-              aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-              aria-expanded={!collapsed}
-              title={collapsed ? "Expand navigation" : undefined}
-            >
-              {collapsed ? (
-                <ChevronDoubleRightIcon className="h-4 w-4" aria-hidden />
-              ) : (
-                <>
-                  <ChevronDoubleLeftIcon className="h-4 w-4" aria-hidden />
-                  Collapse
-                </>
+              <div className="hidden lg:block">
+                <AccessibilityControls />
+              </div>
+              {currentUser && (
+                <div className="hidden md:flex items-center gap-2 pl-2 ml-1 border-l border-line">
+                  <span
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-primary-soft text-caption font-semibold text-primary-fg"
+                    aria-hidden
+                  >
+                    {initials}
+                  </span>
+                  <span className="hidden xl:block leading-tight">
+                    <span className="block text-label text-ink">{currentUser.fullName}</span>
+                    <span className="block text-caption text-ink-muted">
+                      {getRoleDisplayName(currentUser.role)}
+                    </span>
+                  </span>
+                  <button
+                    onClick={handleLogout}
+                    className="btn-ghost px-2"
+                    title={t("auth.logout")}
+                    aria-label={t("auth.logout")}
+                  >
+                    <ArrowRightOnRectangleIcon className="h-5 w-5" aria-hidden />
+                  </button>
+                </div>
               )}
-            </button>
-            <div className={`flex gap-3 px-3 pt-1 text-caption text-ink-muted ${collapsed ? "sr-only" : ""}`}>
-              <Link to="/privacy" className="hover:text-ink hover:underline">
-                Privacy
-              </Link>
-              <Link to="/terms" className="hover:text-ink hover:underline">
-                Terms
-              </Link>
             </div>
           </div>
-        </nav>
+        </header>
 
         <main
           id="main-content"
           role="main"
           aria-label="Main content"
-          className="min-h-full w-full min-w-0 flex-1 overflow-x-hidden"
+          className="min-w-0 flex-1 overflow-x-hidden"
         >
           {overlay === "pharmacy" ? (
             <div id="pharmacy-menu" role="dialog" aria-modal="true" aria-label="Pharmacy">
               <PharmacyOverlay onClose={() => setOverlay(null)} />
             </div>
           ) : (
-            <div className="mx-auto min-h-full max-w-7xl p-4 sm:p-6">{children}</div>
+            <div className="mx-auto max-w-7xl p-4 sm:p-6">{children}</div>
           )}
         </main>
       </div>

@@ -38,6 +38,17 @@ module.exports = {
           hover: "#F1F3F0",
         },
 
+        // Staff navigation rail (dark brand green). Text colours keep
+        // ≥4.5:1 contrast on the rail background.
+        rail: {
+          DEFAULT: "#0F3D2E",
+          hover: "#16503D",
+          active: "#1E644C",
+          line: "#245A47",
+          text: "#E3EFE8",
+          muted: "#9CC0AF",
+        },
+
         // Borders
         line: {
           DEFAULT: "#E2E5E0",

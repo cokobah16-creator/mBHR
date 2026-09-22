@@ -71,15 +71,14 @@ export function ActiveSiteControl() {
           aria-hidden
         />
         <span className="min-w-0">
-          <span className="block text-caption text-ink-muted leading-none">
-            Outreach site
-          </span>
-          <span className="block truncate text-label font-semibold">
-            {loading ? "…" : site ? site.name : "Not set"}
-            <span className="hidden sm:inline font-normal text-ink-muted">
-              {" "}
-              · {todayLabel()}
+          <span className="block truncate text-body">
+            <span className="text-ink-muted">Outreach: </span>
+            <span className="font-semibold">
+              {loading ? "…" : site ? site.name : "Not set — choose a site"}
             </span>
+          </span>
+          <span className="block text-caption text-ink-muted tabular-nums">
+            {todayLabel()}
           </span>
         </span>
         <ChevronDownIcon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden />
