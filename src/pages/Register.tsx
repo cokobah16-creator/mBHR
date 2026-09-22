@@ -1,50 +1,50 @@
-import React, { startTransition } from "react";
+import { startTransition } from "react";
 import { useNavigate } from "react-router-dom";
 import { PatientForm } from "@/components/PatientForm";
-import { ArrowLeftIcon } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { db } from "@/db";
+import { useToast } from "@/stores/toast";
 
 export function Register() {
   const navigate = useNavigate();
+  const { push: pushToast } = useToast();
 
-  const handleSuccess = (patientId: string) => {
-    // Navigate to patient details or back to dashboard
-    startTransition(() => {
-      navigate("/dashboard", {
-        state: {
-          message: "Patient registered successfully!",
-          patientId,
-        },
+  const handleSuccess = async (patientId: string) => {
+    // Tell staff what happened and what comes next, then open the record.
+    try {
+      const [patient, queued] = await Promise.all([
+        db.patients.get(patientId),
+        db.queue
+          .where("patientId")
+          .equals(patientId)
+          .and((q) => q.status !== "done")
+          .first(),
+      ]);
+      const name = patient ? `${patient.givenName} ${patient.familyName}` : "Patient";
+      pushToast({
+        id: crypto.randomUUID(),
+        title: `${name} registered`,
+        body: queued?.ticketNumber
+          ? `Ticket ${queued.ticketNumber} · added to the queue.`
+          : "Added to the queue.",
       });
-    });
+    } catch {
+      pushToast({ id: crypto.randomUUID(), title: "Patient registered" });
+    }
+    startTransition(() => navigate(`/patients/${patientId}`));
   };
 
   const handleCancel = () => {
-    startTransition(() => {
-      navigate("/dashboard");
-    });
+    startTransition(() => navigate("/dashboard"));
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center space-x-4">
-        <button
-          onClick={() => startTransition(() => navigate("/dashboard"))}
-          className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
-        >
-          <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-        </button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Patient Registration
-          </h1>
-          <p className="text-gray-600">
-            Register a new patient for today's clinic
-          </p>
-        </div>
-      </div>
-
-      {/* Form */}
+    <div>
+      <PageHeader
+        breadcrumbs={[{ label: "Patients", to: "/patients" }, { label: "Register" }]}
+        title="Patient Registration"
+        description="Check the patient is not already registered before adding them. Possible duplicates are shown before saving."
+      />
       <PatientForm onSuccess={handleSuccess} onCancel={handleCancel} />
     </div>
   );

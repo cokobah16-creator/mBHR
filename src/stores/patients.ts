@@ -21,6 +21,10 @@ interface PatientsState {
   searchPatients: (query: string) => Promise<Patient[]>;
   addPatient: (
     patient: Omit<Patient, "id" | "createdAt" | "updatedAt">,
+    options?: {
+      /** Staff confirmed this is a different person from the candidates. */
+      skipDuplicateCheck?: boolean;
+    },
   ) => Promise<string>;
   updatePatient: (id: string, updates: Partial<Patient>) => Promise<void>;
   setCurrentPatient: (patient: Patient | null) => void;
@@ -60,7 +64,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
           (patient) =>
             patient.givenName.toLowerCase().includes(query.toLowerCase()) ||
             patient.familyName.toLowerCase().includes(query.toLowerCase()) ||
-            patient.phone.includes(query),
+            (patient.phone ?? "").includes(query),
         )
         .toArray();
 
@@ -71,13 +75,14 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
     }
   },
 
-  addPatient: async (patientData) => {
+  addPatient: async (patientData, options) => {
     try {
       // Check for duplicates first
       const { rec, candidates } = await createPatientDraft({
         givenName: patientData.givenName,
         familyName: patientData.familyName,
         phone: patientData.phone,
+        email: patientData.email,
         dob: new Date(patientData.dob),
         sex: patientData.sex,
         address: patientData.address,
@@ -86,7 +91,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       });
 
       // If duplicates found, return for user resolution
-      if (candidates.length > 0) {
+      if (candidates.length > 0 && !options?.skipDuplicateCheck) {
         throw new Error(
           `DUPLICATES_FOUND:${JSON.stringify({ patient: rec, candidates })}`,
         );
@@ -95,6 +100,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       const patient: Patient = {
         ...rec,
         photoUrl: patientData.photoUrl,
+        familyId: patientData.familyId || undefined,
       };
 
       await db.patients.add(patient);

@@ -11,6 +11,7 @@ import { normalizePhone } from "@/utils/phone";
 import { patientSchema, PatientFormData } from "@/validation/schemas";
 import { CameraIcon, UserIcon } from "@heroicons/react/24/outline";
 import { enrollPatientInPortal } from "@/services/unifiedPortalEnrollment";
+import { useToast } from "@/stores/toast";
 
 interface PatientFormProps {
   onSuccess?: (patientId: string) => void;
@@ -21,6 +22,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const { t } = useTranslation();
   const { addPatient } = usePatientsStore();
   const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const { push: pushToast } = useToast();
   const [photo, setPhoto] = useState<string | null>(null);
   const [showPhotoCapture, setShowPhotoCapture] = useState(false);
   const [showDedupeModal, setShowDedupeModal] = useState(false);
@@ -64,6 +67,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   };
 
   const onSubmit = async (data: PatientFormData) => {
+    setSubmitError("");
     setLoading(true);
     console.log("PatientForm: Submitting patient data:", data);
     try {
@@ -102,14 +106,18 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
         if (!portalResult.success) {
           console.warn("Portal enrollment failed:", portalResult.error);
-          alert(
-            `Patient registered but portal enrollment failed: ${portalResult.error}. You can enable portal access later from patient details.`,
-          );
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Portal access not set up",
+            body: `The patient is registered, but portal enrolment failed (${portalResult.error}). You can enable it later from their record.`,
+          });
         } else {
           console.log("Portal account created:", portalResult.portalUserId);
-          alert(
-            "Patient registered successfully! Portal access enabled. Patient can login at /patient/login",
-          );
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Portal access enabled",
+            body: "The patient can sign in to the patient portal with their phone or email.",
+          });
         }
       }
 
@@ -125,7 +133,9 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         setDedupeData(duplicateData);
         setShowDedupeModal(true);
       } else {
-        alert("Failed to register patient: " + error.message);
+        setSubmitError(
+          "The patient was not registered — the record could not be saved. Check the form and try again.",
+        );
       }
     } finally {
       setLoading(false);
@@ -141,16 +151,21 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     if (action === "create_new" && dedupeData) {
       // Force create new patient (bypass duplicate check)
       try {
-        const patientId = await addPatient({
-          ...dedupeData.patient,
-          photoUrl: photo || undefined,
-          // Add a suffix to make it unique
-          givenName: dedupeData.patient.givenName + " (New)",
-        });
+        // Staff confirmed this is a different person: keep their real name
+        // and skip the duplicate check rather than altering the record.
+        const patientId = await addPatient(
+          {
+            ...dedupeData.patient,
+            photoUrl: photo || undefined,
+          },
+          { skipDuplicateCheck: true },
+        );
         onSuccess?.(patientId);
       } catch (error) {
         console.error("Error creating new patient:", error);
-        alert("Failed to create new patient");
+        setSubmitError(
+          "The patient was not registered — the record could not be saved. Try again.",
+        );
       }
     } else if (action === "merge" && winnerId) {
       // Use existing patient
@@ -163,14 +178,17 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     <>
       <div className="max-w-2xl mx-auto">
         <div className="card">
-          <div className="flex items-center space-x-3 mb-6">
-            <UserIcon className="h-8 w-8 text-primary" />
-            <h2 className="text-2xl font-bold text-gray-900">
-              {t("patient.register")}
-            </h2>
+          <div className="mb-5 flex items-center gap-2">
+            <UserIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+            <h2 className="text-h2 text-ink">{t("patient.register")}</h2>
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+            {submitError && (
+              <div className="banner banner-danger" role="alert">
+                {submitError}
+              </div>
+            )}
             {/* Photo Section */}
             <div className="flex flex-col items-center space-y-4">
               <div className="relative">
