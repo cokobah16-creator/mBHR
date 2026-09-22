@@ -181,14 +181,14 @@ export default function Login() {
   // never flashes a PIN form no PIN can satisfy.
   if (checkingSetup) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 via-white to-blue-50">
+      <div className="min-h-screen flex items-center justify-center bg-canvas">
         <p className="text-gray-600">Checking this device…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-green-50 via-white to-blue-50">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-canvas">
       <div className="w-full max-w-md">
         <Link
           to="/"
@@ -202,17 +202,17 @@ export default function Login() {
             src="/brand/mbhr-mark.svg"
             alt=""
             aria-hidden
-            className="inline-block w-16 h-16 rounded-2xl mb-4"
+            className="inline-block w-14 h-14 rounded-lg mb-4"
           />
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+          <h1 className="text-h1 text-ink">
             MedBridge Health Reach
           </h1>
           <p className="text-sm text-gray-600 mt-1">
-            Bridging Care, Reaching All.
+            Staff sign-in
           </p>
         </div>
 
-        <div className="bg-white rounded-lg shadow-md border border-gray-100 p-6">
+        <div className="panel p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-1">
             Staff Sign In
           </h2>
