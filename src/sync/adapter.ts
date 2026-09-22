@@ -211,6 +211,25 @@ const localTableMap: Record<Tbl, string> = {
   patient_preferences: "patientPreferences",
 };
 
+/**
+ * Records saved on this device that have not been uploaded yet (rows with
+ * _dirty = 1 in every synced table). Safe to call inside a Dexie liveQuery.
+ */
+export async function countUnsyncedRecords(): Promise<number> {
+  let total = 0;
+  for (const t of tables) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const table = (db as any)[localTableMap[t]];
+    if (!table) continue;
+    total += await table
+      .where("_dirty")
+      .equals(1)
+      .count()
+      .catch(() => 0);
+  }
+  return total;
+}
+
 // --- Cursor helpers (per-table) ---
 const DEFAULT_TS = "1970-01-01T00:00:00.000Z";
 const CURSOR_KEY = (t: Tbl) => `sync_cursor:${t}`;

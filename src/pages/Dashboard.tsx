@@ -20,6 +20,7 @@ import {
   ArrowPathIcon,
 } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { LiveQueueTable } from "@/components/dashboard/LiveQueueTable";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getFlagLabel, getFlagTone } from "@/utils/vitals";
 
@@ -92,6 +93,19 @@ export function Dashboard() {
   const registeredToday =
     useLiveQuery(
       () => db.patients.where("createdAt").above(startOfToday).count(),
+      [startOfToday],
+      0,
+    ) ?? 0;
+
+  // Patients whose pharmacy stage finished today, i.e. left the flow.
+  const completedToday =
+    useLiveQuery(
+      () =>
+        db.queue
+          .where("stage")
+          .equals("pharmacy")
+          .and((q) => q.status === "done" && new Date(q.updatedAt) >= startOfToday)
+          .count(),
       [startOfToday],
       0,
     ) ?? 0;
@@ -225,12 +239,13 @@ export function Dashboard() {
             Manage queue
           </Link>
         </div>
-        <dl className="grid grid-cols-2 divide-line sm:grid-cols-4 sm:divide-x">
+        <dl className="grid grid-cols-2 divide-line sm:grid-cols-5 sm:divide-x">
           {[
             { label: "Registered today", value: registeredToday, marker: "bg-stage-registration" },
             { label: "Waiting for vitals", value: waitingForVitals, marker: "bg-stage-vitals" },
             { label: "Waiting for a clinician", value: waitingForDoctor, marker: "bg-stage-consult" },
             { label: "Waiting at pharmacy", value: waitingForPharmacy, marker: "bg-stage-pharmacy" },
+            { label: "Completed today", value: completedToday, marker: "bg-success" },
           ].map((m) => (
             <div key={m.label} className="px-4 py-4">
               <dt className="flex items-center gap-2 text-caption text-ink-muted">
@@ -241,6 +256,18 @@ export function Dashboard() {
             </div>
           ))}
         </dl>
+      </section>
+
+      <section aria-labelledby="live-queue-title" className="panel">
+        <div className="panel-header">
+          <h2 id="live-queue-title" className="panel-title">
+            Live queue
+          </h2>
+          <span className="text-caption text-ink-muted">
+            Urgent first, then longest wait
+          </span>
+        </div>
+        <LiveQueueTable />
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">

@@ -8,7 +8,8 @@ import {
   SignalSlashIcon,
   ServerIcon,
 } from "@heroicons/react/20/solid";
-import { syncNow, isOnlineSyncEnabled } from "@/sync/adapter";
+import { useLiveQuery } from "dexie-react-hooks";
+import { syncNow, isOnlineSyncEnabled, countUnsyncedRecords } from "@/sync/adapter";
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
 import { resolveConflict } from "@/sync/conflictResolver";
@@ -117,7 +118,8 @@ export function SyncStatusControl() {
     }
   };
 
-  const pending = queueStore.getPendingCount();
+  const unsynced = useLiveQuery(() => countUnsyncedRecords(), [], 0) ?? 0;
+  const pending = unsynced + queueStore.getPendingCount();
   const failed = queueStore.getFailedCount();
   const syncing = syncStore.status === "syncing";
 
