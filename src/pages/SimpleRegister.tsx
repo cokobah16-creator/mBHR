@@ -1,22 +1,24 @@
-import React, { startTransition } from "react";
+import { startTransition, useState } from "react";
+import { announceRegistration } from "@/services/registrationFeedback";
 import { useNavigate } from "react-router-dom";
 import { useT } from "@/hooks/useT";
 import { SimplePatientForm } from "@/components/SimplePatientForm";
-import { ArrowLeftIcon } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RegistrationModeSwitch } from "@/components/RegistrationModeSwitch";
 
 export function SimpleRegister() {
   const { t } = useT();
   const navigate = useNavigate();
 
-  const handleSuccess = (patientId: string) => {
-    startTransition(() => {
-      navigate("/dashboard", {
-        state: {
-          message: t("patient.registrationSuccess"),
-          patientId,
-        },
-      });
-    });
+  // Quick registration is for throughput: confirm the ticket and reset the
+  // form for the next person instead of leaving the page.
+  const [formKey, setFormKey] = useState(0);
+  const handleSuccess = async (
+    patientId: string,
+    opts?: { existing?: boolean },
+  ) => {
+    await announceRegistration(patientId, opts);
+    setFormKey((k) => k + 1);
   };
 
   const handleCancel = () => {
@@ -26,29 +28,14 @@ export function SimpleRegister() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-4xl mx-auto px-4">
-        {/* Header */}
-        <div className="flex items-center space-x-4 mb-8">
-          <button
-            onClick={() => startTransition(() => navigate("/dashboard"))}
-            className="p-3 rounded-lg hover:bg-gray-100 transition-colors touch-target-large"
-          >
-            <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-          </button>
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              {t("patient.register")}
-            </h1>
-            <p className="text-lg text-gray-600">
-              {t("simple.registerDescription")}
-            </p>
-          </div>
-        </div>
-
-        {/* Form */}
-        <SimplePatientForm onSuccess={handleSuccess} onCancel={handleCancel} />
-      </div>
+    <div>
+      <PageHeader
+        breadcrumbs={[{ label: "Patients", to: "/patients" }, { label: "Quick registration" }]}
+        title={t("patient.register")}
+        description={t("simple.registerDescription")}
+      />
+      <RegistrationModeSwitch mode="quick" />
+      <SimplePatientForm key={formKey} onSuccess={handleSuccess} onCancel={handleCancel} />
     </div>
   );
 }

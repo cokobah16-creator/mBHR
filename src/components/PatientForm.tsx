@@ -187,6 +187,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                 {submitError}
               </div>
             )}
+            <h3 className="section-label border-b border-line pb-1.5">Identity</h3>
             {/* Photo Section */}
             <div className="flex flex-col items-center space-y-4">
               <div className="relative">
@@ -346,6 +347,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               </div>
             </div>
 
+            <h3 className="section-label border-b border-line pb-1.5">Contact</h3>
             {/* Phone and Email */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -432,6 +434,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               )}
             </div>
 
+            <h3 className="section-label border-b border-line pb-1.5">Location</h3>
             {/* State and LGA */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -517,6 +520,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               </div>
             </div>
 
+            <h3 className="section-label border-b border-line pb-1.5">Additional information</h3>
             {/* Family ID (Optional) */}
             <div>
               <label
@@ -627,15 +631,15 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex space-x-4 pt-6">
+            <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row-reverse">
               <AudioButton
                 audioKey="action.register"
-                fallbackText="Register Patient"
+                fallbackText="Register and issue ticket"
                 type="submit"
                 disabled={loading}
-                className="btn-primary flex-1"
+                className="btn-primary sm:flex-1"
               >
-                {loading ? "Registering..." : "Register Patient"}
+                {loading ? "Registering…" : "Register & issue ticket"}
               </AudioButton>
               {onCancel && (
                 <AudioButton
