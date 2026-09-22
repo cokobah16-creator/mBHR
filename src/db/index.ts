@@ -173,6 +173,12 @@ export interface QueueItem {
    */
   ticketNumber?: string;
   queuedAt?: Date;
+  /**
+   * Staff member who called the patient for the current stage. Local to the
+   * device (not in the sync column map), so other devices show no assignee.
+   */
+  assignedTo?: string;
+  assignedName?: string;
   updatedAt: Date;
   _dirty?: number;
   _syncedAt?: string;

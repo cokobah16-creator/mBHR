@@ -221,11 +221,15 @@ export class QueueManagement {
     return stages[currentIndex + 1];
   }
 
-  async startService(queueItemId: string): Promise<void> {
+  async startService(
+    queueItemId: string,
+    assignee?: { id: string; name: string },
+  ): Promise<void> {
     await db.queue.update(queueItemId, {
       status: "in_progress",
       updatedAt: new Date(),
       _dirty: 1,
+      ...(assignee ? { assignedTo: assignee.id, assignedName: assignee.name } : {}),
     });
 
     const item = await db.queue.get(queueItemId);

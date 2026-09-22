@@ -180,7 +180,10 @@ export function DoctorDashboard() {
 
   const handleStartConsultation = async (item: PatientInQueue) => {
     try {
-      await queueManagement.startService(item.id);
+      await queueManagement.startService(
+        item.id,
+        currentUser ? { id: currentUser.id, name: currentUser.fullName } : undefined,
+      );
       await loadDashboardData();
     } catch (error) {
       console.error("Error starting consultation:", error);

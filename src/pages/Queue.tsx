@@ -5,6 +5,7 @@ import { db, Patient, QueueItem } from "@/db";
 import { queueManagement, QueueStage } from "@/services/queueManagement";
 import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
 import { useAuthStore } from "@/stores/auth";
+import { recordStageEvent } from "@/services/stageEvents";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -65,7 +66,9 @@ function useNow(intervalMs = 30000) {
 }
 
 export function Queue() {
-  const role = useAuthStore((s) => s.currentUser?.role);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const role = currentUser?.role;
+  const [filter, setFilter] = useState<"all" | "urgent" | "long" | "mine">("all");
   const [selectedStage, setSelectedStage] = useState<QueueStage>("vitals");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
@@ -123,10 +126,20 @@ export function Queue() {
     );
   }
 
-  const waiting = stageItems.filter((i) => i.status === "waiting");
-  const inService = stageItems.filter((i) => i.status === "in_progress");
+  const allWaiting = stageItems.filter((i) => i.status === "waiting");
+  const waiting = allWaiting.filter((i) => {
+    if (filter === "urgent") return i.priority === "urgent";
+    if (filter === "long")
+      return minutesSince(i.queuedAt ?? i.updatedAt, now) >= LONG_WAIT_MINUTES;
+    return true;
+  });
+  const inService = stageItems.filter(
+    (i) =>
+      i.status === "in_progress" &&
+      (filter !== "mine" || i.assignedTo === currentUser?.id),
+  );
   const summary = stageSummary.find((s) => s.stage === selectedStage)!;
-  const longestWait = waiting.reduce(
+  const longestWait = allWaiting.reduce(
     (max, i) => Math.max(max, minutesSince(i.queuedAt ?? i.updatedAt, now)),
     0,
   );
@@ -147,7 +160,18 @@ export function Queue() {
   };
 
   const start = (item: QueueItem) =>
-    run(item.id, () => queueManagement.startService(item.id));
+    run(item.id, async () => {
+      await queueManagement.startService(
+        item.id,
+        currentUser ? { id: currentUser.id, name: currentUser.fullName } : undefined,
+      );
+      await recordStageEvent({
+        stage: item.stage,
+        kind: "start",
+        patientId: item.patientId,
+        actorId: currentUser?.id,
+      });
+    });
   const complete = (item: QueueItem) =>
     run(item.id, () => queueManagement.moveToNextStage(item.patientId));
   const prioritise = (item: QueueItem) =>
@@ -222,6 +246,36 @@ export function Queue() {
         aria-labelledby={`tab-${selectedStage}`}
         className="mt-4 space-y-4"
       >
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter queue">
+          {(
+            [
+              ["all", "All"],
+              ["urgent", "Urgent"],
+              ["long", `Waiting ${LONG_WAIT_MINUTES}+ min`],
+              ["mine", "Called by me"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              aria-pressed={filter === key}
+              className={`rounded-md border px-3 py-1.5 text-label transition-colors ${
+                filter === key
+                  ? "border-primary bg-primary-soft text-primary-fg"
+                  : "border-line bg-surface text-ink-secondary hover:bg-surface-hover"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {filter !== "all" && (
+            <button type="button" onClick={() => setFilter("all")} className="btn-ghost text-caption">
+              Clear filter
+            </button>
+          )}
+        </div>
+
         {actionError && (
           <div className="banner banner-danger" role="alert">
             {actionError}
@@ -240,14 +294,14 @@ export function Queue() {
               <p className="text-body text-ink-muted">
                 Nobody is being seen at this stage.
               </p>
-              {waiting.length > 0 && (
+              {allWaiting.length > 0 && (
                 <button
-                  onClick={() => start(waiting[0])}
+                  onClick={() => start(allWaiting[0])}
                   disabled={busyId !== null}
                   className="btn-primary"
                 >
                   <PlayIcon className="h-4 w-4" aria-hidden />
-                  Call {waiting[0].ticketNumber ?? "next patient"}
+                  Call {allWaiting[0].ticketNumber ?? "next patient"}
                 </button>
               )}
             </div>
@@ -271,6 +325,7 @@ export function Queue() {
                     <span className="text-caption text-ink-muted">
                       In service for{" "}
                       {formatMinutes(minutesSince(item.updatedAt, now))}
+                      {item.assignedName ? ` · with ${item.assignedName}` : ""}
                     </span>
                   </span>
                   <button
@@ -292,7 +347,10 @@ export function Queue() {
         {/* Waiting */}
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">Waiting ({waiting.length})</h2>
+            <h2 className="panel-title">
+              Waiting ({waiting.length}
+              {filter !== "all" && filter !== "mine" ? ` of ${allWaiting.length}` : ""})
+            </h2>
             {waiting.length > 0 && (
               <span
                 className={`text-caption ${
@@ -306,7 +364,11 @@ export function Queue() {
             )}
           </div>
 
-          {waiting.length === 0 ? (
+          {waiting.length === 0 && allWaiting.length > 0 ? (
+            <p className="panel-body text-body text-ink-muted">
+              No waiting patients match this filter.
+            </p>
+          ) : waiting.length === 0 ? (
             <EmptyState
               icon={QueueListIcon}
               title={`No one waiting for ${FLOW_STAGE_LABELS[selectedStage].toLowerCase()}`}
@@ -332,7 +394,7 @@ export function Queue() {
                   </tr>
                 </thead>
                 <tbody>
-                  {waiting.map((item, index) => {
+                  {waiting.map((item) => {
                     const mins = minutesSince(item.queuedAt ?? item.updatedAt, now);
                     return (
                       <tr key={item.id}>
@@ -367,7 +429,7 @@ export function Queue() {
                         </td>
                         <td className="text-right">
                           <div className="flex justify-end gap-2">
-                            {index === 0 && inService.length === 0 ? (
+                            {item.id === allWaiting[0]?.id && inService.length === 0 ? (
                               <button
                                 onClick={() => start(item)}
                                 disabled={busyId !== null}
@@ -376,7 +438,7 @@ export function Queue() {
                                 <PlayIcon className="h-4 w-4" aria-hidden />
                                 Call
                               </button>
-                            ) : index > 0 ? (
+                            ) : item.id !== allWaiting[0]?.id ? (
                               <button
                                 onClick={() => prioritise(item)}
                                 disabled={busyId !== null}
@@ -398,7 +460,7 @@ export function Queue() {
 
               {/* Phone list */}
               <ul className="divide-y divide-line md:hidden">
-                {waiting.map((item, index) => {
+                {waiting.map((item) => {
                   const mins = minutesSince(item.queuedAt ?? item.updatedAt, now);
                   return (
                     <li key={item.id} className="flex items-center gap-3 px-4 py-3">
@@ -425,7 +487,7 @@ export function Queue() {
                           )}
                         </span>
                       </span>
-                      {index === 0 && inService.length === 0 ? (
+                      {item.id === allWaiting[0]?.id && inService.length === 0 ? (
                         <button
                           onClick={() => start(item)}
                           disabled={busyId !== null}
@@ -433,7 +495,7 @@ export function Queue() {
                         >
                           Call
                         </button>
-                      ) : index > 0 ? (
+                      ) : item.id !== allWaiting[0]?.id ? (
                         <button
                           onClick={() => prioritise(item)}
                           disabled={busyId !== null}
