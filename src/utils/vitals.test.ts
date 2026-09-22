@@ -239,3 +239,33 @@ describe("vitals utilities", () => {
     });
   });
 });
+
+describe("clinical classification", () => {
+  it("labels BMI with WHO categories", async () => {
+    const { classifyBMI } = await import("./vitals");
+    expect(classifyBMI(27.4)).toEqual({ label: "Overweight", tone: "warning" });
+    expect(classifyBMI(22)).toEqual({ label: "Normal", tone: "success" });
+    expect(classifyBMI(17)?.label).toBe("Underweight");
+    expect(classifyBMI(31)?.label).toBe("Obese");
+    expect(classifyBMI(0)).toBeNull();
+  });
+
+  it("escalates severely elevated blood pressure", async () => {
+    const { classifyBloodPressure } = await import("./vitals");
+    expect(classifyBloodPressure(178, 112)?.tone).toBe("danger");
+    expect(classifyBloodPressure(182, 100)).toEqual({
+      label: "Severely elevated",
+      tone: "critical",
+    });
+    expect(classifyBloodPressure(118, 76)?.label).toBe("Normal");
+    expect(classifyBloodPressure(85, 55)?.label).toBe("Low");
+    expect(classifyBloodPressure(undefined, undefined)).toBeNull();
+  });
+
+  it("keeps flag tones consistent with flagVitals codes", async () => {
+    const { getFlagTone } = await import("./vitals");
+    expect(getFlagTone("high_bp")).toBe("danger");
+    expect(getFlagTone("high_bmi")).toBe("warning");
+    expect(getFlagTone("something_else")).toBe("neutral");
+  });
+});

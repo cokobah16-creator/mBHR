@@ -3,43 +3,61 @@
 @tailwind utilities;
 
 /* ============================================================
-   mBHR Design System tokens — source of truth for brand colors,
-   spacing, radii, shadows, type. Mirrors Tailwind theme so
-   non-Tailwind contexts (raw CSS, SVG, third-party widgets) can
-   reference the same values.
+   mBHR clinical design system — CSS custom properties.
+   Mirrors tailwind.config.js so raw CSS, SVG and third-party widgets
+   use the same values. Colour carries meaning; surfaces, borders and
+   type carry hierarchy.
    ============================================================ */
 :root {
-  /* Brand (Nigerian flag DNA) */
+  /* Brand */
   --color-brand-green: #0a7a3b;
-  --color-brand-green-deep: #008753;
-  --color-brand-green-soft: #ecfdf5;
+  --color-brand-green-deep: #086631;
+  --color-brand-green-soft: #eaf4ee;
   --color-brand-gold: #ffd700;
-  --color-brand-cream: #f2eee6;
 
   /* Patient portal lead */
-  --color-portal-blue: #2563eb;
-  --color-portal-blue-deep: #1d4ed8;
-  --color-portal-blue-soft: #eff6ff;
+  --color-portal-blue: #1d5fbf;
+  --color-portal-blue-deep: #174c99;
+  --color-portal-blue-soft: #ebf2fb;
 
-  /* Stage colors (queue) */
-  --color-stage-registration-bg: #eff6ff;
-  --color-stage-registration-border: #bfdbfe;
+  /* Surfaces */
+  --color-canvas: #f4f5f3;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f8f9f7;
+  --color-line: #e2e5e0;
+  --color-line-strong: #c8cdc5;
+
+  /* Text */
+  --color-ink: #1b211d;
+  --color-ink-secondary: #474f4a;
+  --color-ink-muted: #636c66;
+
+  /* Semantic */
+  --color-info: #1d5fbf;
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #c0262d;
+  --color-critical: #8e1016;
+
+  /* Stage colors (queue / patient flow) */
+  --color-stage-registration-bg: #eff4ff;
+  --color-stage-registration-border: #c3d3f5;
   --color-stage-registration-fg: #1e40af;
-  --color-stage-vitals-bg: #f0fdf4;
-  --color-stage-vitals-border: #bbf7d0;
+  --color-stage-vitals-bg: #eef8f1;
+  --color-stage-vitals-border: #bfe1cb;
   --color-stage-vitals-fg: #166534;
-  --color-stage-consult-bg: #faf5ff;
-  --color-stage-consult-border: #e9d5ff;
+  --color-stage-consult-bg: #f6f0fc;
+  --color-stage-consult-border: #dcc8f0;
   --color-stage-consult-fg: #6b21a8;
-  --color-stage-pharmacy-bg: #fff7ed;
-  --color-stage-pharmacy-border: #fed7aa;
+  --color-stage-pharmacy-bg: #fdf3ec;
+  --color-stage-pharmacy-border: #f2cfb6;
   --color-stage-pharmacy-fg: #9a3412;
 
   /* Radii */
   --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
   --radius-full: 9999px;
 
   /* Touch targets */
@@ -108,7 +126,7 @@
   }
 
   body {
-    @apply bg-background text-text;
+    @apply bg-canvas text-ink;
     overscroll-behavior: none;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
@@ -128,6 +146,12 @@
     font-size: 16px;
   }
 
+  /* Keyboard focus is always visible */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-green);
+    outline-offset: 2px;
+  }
+
   /* Smooth scrolling for mobile */
   * {
     -webkit-overflow-scrolling: touch;
@@ -145,33 +169,157 @@
 }
 
 @layer components {
+  /* ---------- Buttons ----------
+     Stable feedback only: colour change on hover/press, a visible focus
+     ring, no scaling. Staff press these while dispensing and documenting. */
   .btn-primary {
-    @apply bg-primary text-white px-6 py-3 rounded-lg font-medium hover:bg-primary/90 transition-colors min-h-12 text-lg;
+    @apply inline-flex items-center justify-center gap-2 bg-primary text-white px-5 py-2.5 rounded-md font-medium min-h-control text-body
+      transition-colors hover:bg-primary-hover active:bg-primary-active
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2
+      disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-secondary {
-    @apply bg-gray-200 text-gray-800 px-6 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors min-h-12 text-lg;
+    @apply inline-flex items-center justify-center gap-2 bg-surface text-ink border border-line-strong px-5 py-2.5 rounded-md font-medium min-h-control text-body
+      transition-colors hover:bg-surface-hover active:bg-line
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2
+      disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 bg-danger text-white px-5 py-2.5 rounded-md font-medium min-h-control text-body
+      transition-colors hover:bg-danger-fg
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2
+      disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 text-ink-secondary px-3 py-2 rounded-md font-medium min-h-touch-target
+      transition-colors hover:bg-surface-hover hover:text-ink
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-primary;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-line-strong bg-surface text-ink
+      transition-colors hover:bg-surface-hover
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-primary;
+  }
+
+  /* ---------- Form controls ---------- */
   .input-field {
-    @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent min-h-12 text-lg;
+    @apply w-full px-3 py-2.5 bg-surface text-ink border border-line-strong rounded-md min-h-control placeholder:text-ink-muted
+      focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary
+      disabled:bg-surface-sunken disabled:text-ink-disabled
+      aria-[invalid=true]:border-danger aria-[invalid=true]:ring-danger/30;
   }
 
+  .input {
+    @apply w-full px-3 py-2 bg-surface text-ink border border-line-strong rounded-md placeholder:text-ink-muted
+      focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary;
+  }
+
+  .field-label {
+    @apply block text-label text-ink mb-1.5;
+  }
+
+  .field-hint {
+    @apply mt-1 text-caption text-ink-muted;
+  }
+
+  .field-error {
+    @apply mt-1 text-caption text-danger-fg;
+  }
+
+  /* ---------- Surfaces ----------
+     .card is a bordered content surface, not a floating tile. */
   .card {
-    @apply bg-white rounded-lg shadow-md p-6 border border-gray-100;
+    @apply bg-surface rounded-lg border border-line p-5;
+  }
+
+  .panel {
+    @apply bg-surface rounded-lg border border-line;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between gap-3 px-4 py-3 border-b border-line;
+  }
+
+  .panel-title {
+    @apply text-h3 text-ink;
+  }
+
+  .panel-body {
+    @apply p-4;
+  }
+
+  .section-label {
+    @apply text-caption font-semibold uppercase tracking-wide text-ink-muted;
   }
 
   .touch-target {
     @apply min-h-12 min-w-12;
   }
 
-  /* Additional utility classes for new features */
-  .btn {
-    @apply px-3 py-2 rounded-lg border shadow-sm hover:bg-gray-50 transition-colors;
+  /* ---------- Badges ---------- */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded px-2 py-0.5 text-caption font-medium border whitespace-nowrap;
+  }
+  .badge-neutral {
+    @apply bg-surface-sunken text-ink-secondary border-line;
+  }
+  .badge-info {
+    @apply bg-info-soft text-info-fg border-info-line;
+  }
+  .badge-success {
+    @apply bg-success-soft text-success-fg border-success-line;
+  }
+  .badge-warning {
+    @apply bg-warning-soft text-warning-fg border-warning-line;
+  }
+  .badge-danger {
+    @apply bg-danger-soft text-danger-fg border-danger-line;
+  }
+  .badge-critical {
+    @apply bg-critical text-critical-fg border-critical;
   }
 
-  .input {
-    @apply px-3 py-2 rounded-lg border w-full focus:ring-2 focus:ring-primary focus:border-transparent;
+  /* ---------- Banners / alerts ---------- */
+  .banner {
+    @apply flex items-start gap-3 rounded-md border px-4 py-3 text-body;
+  }
+  .banner-info {
+    @apply bg-info-soft text-info-fg border-info-line;
+  }
+  .banner-success {
+    @apply bg-success-soft text-success-fg border-success-line;
+  }
+  .banner-warning {
+    @apply bg-warning-soft text-warning-fg border-warning-line;
+  }
+  .banner-danger {
+    @apply bg-danger-soft text-danger-fg border-danger-line;
+  }
+
+  /* ---------- Tables ---------- */
+  .data-table {
+    @apply w-full text-left text-body;
+  }
+  .data-table thead th {
+    @apply sticky top-0 bg-surface-sunken px-4 py-2.5 text-caption font-semibold uppercase tracking-wide text-ink-muted border-b border-line;
+  }
+  .data-table tbody td {
+    @apply px-4 py-3 border-b border-line text-ink align-middle;
+  }
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .data-table tbody tr:hover {
+    @apply bg-surface-sunken;
+  }
+
+  /* ---------- Loading ---------- */
+  .skeleton {
+    @apply bg-line/70 rounded animate-pulse;
   }
 }
 
@@ -230,7 +378,20 @@
   }
 
   .simple-mode .card {
-    @apply p-8 rounded-2xl;
+    @apply p-6;
+  }
+}
+
+/* Respect the OS-level reduced-motion preference everywhere, not only when
+   the in-app accessibility toggle is on. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
