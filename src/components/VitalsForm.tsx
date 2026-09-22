@@ -5,17 +5,18 @@ import { z } from "zod";
 import { useTranslation } from "react-i18next";
 import { db, generateId, createAuditLog, bumpDailyCount, epochDay } from "@/db";
 import {
-  calculateBMI,
-  flagVitals,
-  getFlagColor,
+  assessVitals,
+  classifyBMI,
+  classifyBloodPressure,
   getFlagLabel,
+  getFlagTone,
 } from "@/utils/vitals";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuthStore } from "@/stores/auth";
 import { queueManagement } from "@/services/queueManagement";
 import { recordStageEvent } from "@/services/stageEvents";
 import { EnhancedVitalsInput } from "@/components/EnhancedVitalsInput";
 import { AudioButton } from "@/components/AudioButton";
-import { HeartIcon } from "@heroicons/react/24/outline";
 
 const vitalsSchema = z.object({
   heightCm: z.number().min(30).max(250).optional(),
@@ -63,29 +64,11 @@ export function VitalsForm({
     db.patients.get(patientId).then(setPatient);
   }, [patientId]);
 
-  // Calculate BMI and flags when height/weight change
+  // Recalculate BMI and flags as values are entered
   useEffect(() => {
-    const { heightCm, weightKg, systolic, diastolic, tempC, pulseBpm } =
-      watchedValues;
-
-    let calculatedBmi = null;
-    if (heightCm && weightKg) {
-      calculatedBmi = calculateBMI(heightCm, weightKg);
-      setBmi(calculatedBmi);
-    } else {
-      setBmi(null);
-    }
-
-    const vitalsForFlagging = {
-      systolic,
-      diastolic,
-      tempC,
-      pulseBpm,
-      bmi: calculatedBmi || undefined,
-    };
-
-    const newFlags = flagVitals(vitalsForFlagging);
-    setFlags(newFlags);
+    const assessment = assessVitals(watchedValues);
+    setBmi(assessment.bmi);
+    setFlags(assessment.flags);
   }, [watchedValues]);
 
   const onSubmit = async (data: VitalsFormData) => {
@@ -153,36 +136,33 @@ export function VitalsForm({
 
   if (!patient) {
     return (
-      <div
-        className="flex items-center justify-center py-12"
-        role="status"
-        aria-live="polite"
-      >
-        <div className="text-center">
-          <div
-            className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"
-            aria-hidden="true"
-          ></div>
-          <p className="mt-4 text-gray-600">Loading patient...</p>
+      <div className="max-w-2xl mx-auto panel p-5 space-y-4" role="status">
+        <span className="sr-only">Loading patient</span>
+        <div className="skeleton h-6 w-48" aria-hidden />
+        <div className="grid grid-cols-2 gap-4" aria-hidden>
+          <div className="skeleton h-16" />
+          <div className="skeleton h-16" />
         </div>
       </div>
     );
   }
 
   const patientAge = getPatientAge(patient.dob);
+  const bmiClass = classifyBMI(bmi);
+  const bpClass =
+    watchedValues.systolic && watchedValues.diastolic
+      ? classifyBloodPressure(watchedValues.systolic, watchedValues.diastolic)
+      : null;
   const patientSex =
     patient.sex === "male" ? "M" : patient.sex === "female" ? "F" : "U";
   return (
     <div className="max-w-2xl mx-auto">
       <div className="card">
-        <div className="flex items-center space-x-3 mb-6">
-          <HeartIcon className="h-8 w-8 text-primary" />
-          <h2 className="text-2xl font-bold text-gray-900">
-            Record Vital Signs
-          </h2>
-          <div className="text-sm text-gray-600">
-            Age: {patientAge} • {patient.sex}
-          </div>
+        <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-h2 text-ink">Record Vital Signs</h2>
+          <span className="text-caption text-ink-muted">
+            Ranges adjusted for age {patientAge}, {patient.sex}
+          </span>
         </div>
 
         <FormProvider {...methods}>
@@ -214,13 +194,17 @@ export function VitalsForm({
             {/* BMI Display */}
             {bmi && (
               <div
-                className="bg-blue-50 p-4 rounded-lg"
+                className="flex items-center gap-3 rounded-md border border-line bg-surface-sunken px-4 py-3"
                 role="status"
                 aria-live="polite"
               >
-                <p className="text-sm font-medium text-blue-800">
-                  BMI: <span className="text-lg">{bmi}</span>
-                </p>
+                <span className="text-label text-ink-secondary">BMI</span>
+                <span className="text-h2 text-ink">{bmi}</span>
+                {bmiClass && (
+                  <StatusBadge tone={bmiClass.tone} icon={bmiClass.tone !== "success"}>
+                    {bmiClass.label}
+                  </StatusBadge>
+                )}
               </div>
             )}
 
@@ -249,8 +233,13 @@ export function VitalsForm({
 
             {/* Blood Pressure */}
             <fieldset>
-              <legend className="block text-sm font-medium text-gray-700 mb-2">
+              <legend className="field-label flex flex-wrap items-center gap-2">
                 {t("vitals.bloodPressure")}
+                {bpClass && (
+                  <StatusBadge tone={bpClass.tone} icon={bpClass.tone !== "success"}>
+                    {watchedValues.systolic}/{watchedValues.diastolic} · {bpClass.label}
+                  </StatusBadge>
+                )}
               </legend>
               <div className="grid grid-cols-2 gap-4">
                 <EnhancedVitalsInput
@@ -288,24 +277,22 @@ export function VitalsForm({
             {/* Flags Display */}
             {flags.length > 0 && (
               <div
-                className="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
+                className="rounded-md border border-warning-line bg-warning-soft p-4"
                 role="alert"
                 aria-live="polite"
               >
-                <h3 className="text-sm font-medium text-yellow-800 mb-2">
-                  <span aria-hidden="true">Warning: </span>Abnormal Values
-                  Detected
+                <h3 className="text-label text-warning-fg mb-2">
+                  Abnormal values — tell the clinician before the consultation
                 </h3>
                 <ul
                   className="flex flex-wrap gap-2"
-                  aria-label="List of abnormal vital signs"
+                  aria-label="Abnormal vital signs"
                 >
                   {flags.map((flag) => (
-                    <li
-                      key={flag}
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${getFlagColor(flag)}`}
-                    >
-                      {getFlagLabel(flag)}
+                    <li key={flag}>
+                      <StatusBadge tone={getFlagTone(flag)}>
+                        {getFlagLabel(flag)}
+                      </StatusBadge>
                     </li>
                   ))}
                 </ul>

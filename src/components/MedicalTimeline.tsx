@@ -10,6 +10,7 @@ import {
   UserIcon,
   CalendarIcon,
 } from "@heroicons/react/24/outline";
+import { resolveBmi } from "@/utils/vitals";
 
 interface TimelineEvent {
   id: string;
@@ -82,8 +83,9 @@ export function MedicalTimeline({
         if (vital.tempC) {
           vitalDetails.push(`${t("vitals.temperature")}: ${vital.tempC}°C`);
         }
-        if (vital.bmi) {
-          vitalDetails.push(`${t("vitals.bmi")}: ${vital.bmi}`);
+        const bmi = resolveBmi(vital);
+        if (bmi) {
+          vitalDetails.push(`${t("vitals.bmi")}: ${bmi}`);
         }
 
         timelineEvents.push({

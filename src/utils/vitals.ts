@@ -197,3 +197,50 @@ export function getFlagTone(flag: string): ClinicalTone {
       return 'neutral'
   }
 }
+
+/**
+ * BMI and flags for a vitals record, taking the record's own field names.
+ * Use this instead of calling calculateBMI/flagVitals directly: both have
+ * positional/renamed parameters that were previously passed incorrectly
+ * (height and weight swapped; tempC/pulseBpm/spo2 never reaching the flags).
+ */
+export function assessVitals(v: {
+  heightCm?: number | null
+  weightKg?: number | null
+  tempC?: number | null
+  pulseBpm?: number | null
+  systolic?: number | null
+  diastolic?: number | null
+  spo2?: number | null
+}): { bmi: number | null; flags: string[] } {
+  const bmi =
+    v.heightCm && v.weightKg && v.heightCm > 0 && v.weightKg > 0
+      ? calculateBMI(v.weightKg, v.heightCm)
+      : null
+  const flags = flagVitals({
+    systolic: v.systolic ?? undefined,
+    diastolic: v.diastolic ?? undefined,
+    temperature: v.tempC ?? undefined,
+    pulse: v.pulseBpm ?? undefined,
+    spo2: v.spo2 ?? undefined,
+    bmi: bmi ?? undefined,
+  })
+  return { bmi, flags }
+}
+
+/**
+ * BMI to display for a stored vitals record. Recomputes from height and
+ * weight when both exist (records saved before the argument-order fix hold
+ * a wrong stored BMI); otherwise uses the stored value only if plausible.
+ */
+export function resolveBmi(v: {
+  heightCm?: number | null
+  weightKg?: number | null
+  bmi?: number | null
+}): number | undefined {
+  if (v.heightCm && v.weightKg && v.heightCm > 0 && v.weightKg > 0) {
+    return calculateBMI(v.weightKg, v.heightCm)
+  }
+  if (v.bmi && v.bmi >= 8 && v.bmi <= 90) return v.bmi
+  return undefined
+}

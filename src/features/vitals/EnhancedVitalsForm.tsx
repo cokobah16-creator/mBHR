@@ -4,12 +4,7 @@ import { useAuthStore } from "@/stores/auth";
 import { db, generateId } from "@/db";
 import { recordStageEvent } from "@/services/stageEvents";
 import { VisualNumberInput } from "@/components/VisualNumberInput";
-import {
-  calculateBMI,
-  flagVitals,
-  getFlagColor,
-  getFlagLabel,
-} from "@/utils/vitals";
+import { assessVitals, getFlagColor, getFlagLabel } from "@/utils/vitals";
 import {
   HeartIcon,
   ExclamationTriangleIcon,
@@ -157,24 +152,9 @@ export default function EnhancedVitalsForm({
   };
 
   const calculateBMIAndFlags = () => {
-    let calculatedBmi = null;
-    if (vitals.heightCm > 0 && vitals.weightKg > 0) {
-      calculatedBmi = calculateBMI(vitals.heightCm, vitals.weightKg);
-      setBmi(calculatedBmi);
-    } else {
-      setBmi(null);
-    }
-
-    const vitalsForFlagging = {
-      systolic: vitals.systolic,
-      diastolic: vitals.diastolic,
-      tempC: vitals.tempC,
-      pulseBpm: vitals.pulseBpm,
-      bmi: calculatedBmi || undefined,
-    };
-
-    const newFlags = flagVitals(vitalsForFlagging);
-    setFlags(newFlags);
+    const assessment = assessVitals(vitals);
+    setBmi(assessment.bmi);
+    setFlags(assessment.flags);
   };
 
   const handleSubmit = async () => {

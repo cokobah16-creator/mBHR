@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { db, Patient, Visit, Vital, Consultation, Dispense } from "@/db";
-import { getFlagTone, getFlagLabel } from "@/utils/vitals";
+import { getFlagTone, getFlagLabel, resolveBmi } from "@/utils/vitals";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { AllergyManager } from "@/components/AllergyManager";
 import { PreferenceManager } from "@/components/PreferenceManager";
@@ -767,7 +767,7 @@ export function PatientDetail() {
                         </span>
                       )}
                       {vital.pulseBpm && <span>HR: {vital.pulseBpm} </span>}
-                      {vital.bmi && <span>BMI: {vital.bmi}</span>}
+                      {resolveBmi(vital) && <span>BMI: {resolveBmi(vital)}</span>}
                     </div>
                     {vital.flags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">

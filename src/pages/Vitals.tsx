@@ -3,7 +3,11 @@ import { useParams, useNavigate } from "react-router-dom";
 import { PatientSearch } from "@/components/PatientSearch";
 import { VitalsForm } from "@/components/VitalsForm";
 import { db, Visit, Patient, generateId } from "@/db";
-import { ArrowLeftIcon, HeartIcon } from "@heroicons/react/24/outline";
+import { HeartIcon } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PatientDetailSkeleton } from "@/components/ui/Skeleton";
+import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 import { getActiveSiteName } from "@/services/activeSite";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
@@ -81,33 +85,17 @@ export function Vitals() {
   // If no visitId provided, show patient search
   if (!visitId && !selectedPatient) {
     return (
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => startTransition(() => navigate("/queue"))}
-            className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
-          >
-            <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Record Vital Signs
-            </h1>
-            <p className="text-gray-600">
-              Search for a patient to record vitals
-            </p>
-          </div>
-        </div>
-
-        {/* Patient Search */}
-        <div className="card max-w-2xl mx-auto">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Select Patient
-          </h2>
+      <div>
+        <PageHeader
+          breadcrumbs={[{ label: "Queue", to: "/queue" }, { label: "Vitals" }]}
+          title="Record Vital Signs"
+          description="Find the patient, then record their measurements. Patients sent from registration are waiting in the queue."
+        />
+        <div className="panel max-w-2xl p-5">
+          <h2 className="text-h3 text-ink mb-3">Select Patient</h2>
           <PatientSearch
             onPatientSelect={handlePatientSelect}
-            placeholder="Search patients by name or phone..."
+            placeholder="Search by name or phone number"
             className="w-full"
           />
         </div>
@@ -117,84 +105,49 @@ export function Vitals() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading visit...</p>
-        </div>
+      <div>
+        <PageHeader title="Record Vital Signs" />
+        <PatientDetailSkeleton />
       </div>
     );
   }
 
   if (!visit || !patient) {
     return (
-      <div className="text-center py-12">
-        <HeartIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">
-          Visit not found
-        </h3>
-        <p className="text-gray-600 mb-6">
-          The visit you're looking for doesn't exist.
-        </p>
-        <button onClick={() => navigate("/queue")} className="btn-primary">
-          Back to Queue
-        </button>
+      <div className="panel">
+        <EmptyState
+          icon={HeartIcon}
+          title="Visit not found on this device"
+          description="It may have been closed, or not synced to this device yet."
+          action={
+            <button onClick={() => navigate("/queue")} className="btn-primary">
+              Back to queue
+            </button>
+          }
+        />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center space-x-4">
-        <button
-          onClick={() => navigate("/queue")}
-          className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
-        >
-          <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-        </button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Record Vital Signs
-          </h1>
-          <p className="text-gray-600">
-            Patient: {patient.givenName} {patient.familyName}
-          </p>
-        </div>
-      </div>
-
-      {/* Patient Info */}
-      <div className="card">
-        <div className="flex items-center space-x-4">
-          {patient.photoUrl ? (
-            <img
-              src={patient.photoUrl}
-              alt={`${patient.givenName} ${patient.familyName}`}
-              className="w-16 h-16 rounded-full object-cover"
-            />
-          ) : (
-            <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center">
-              <span className="text-xl font-medium text-gray-600">
-                {patient.givenName[0]}
-                {patient.familyName[0]}
-              </span>
-            </div>
-          )}
-          <div>
-            <h3 className="text-lg font-medium text-gray-900">
-              {patient.givenName} {patient.familyName}
-            </h3>
-            <p className="text-sm text-gray-600">
-              Visit ID: {visit.id.slice(-8).toUpperCase()}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Vitals Form */}
+    <div>
+      <PageHeader
+        breadcrumbs={[
+          { label: "Queue", to: "/queue" },
+          { label: `${patient.givenName} ${patient.familyName}`, to: `/patients/${patient.id}` },
+          { label: "Vitals" },
+        ]}
+        title="Record Vital Signs"
+      />
+      <PatientContextHeader
+        patientId={patient.id}
+        visitId={visit.id}
+        patient={patient}
+        linkToRecord
+      />
       <VitalsForm
         patientId={patient.id}
-        visitId={visit!.id}
+        visitId={visit.id}
         onSuccess={handleSuccess}
         onCancel={handleCancel}
       />

@@ -2,6 +2,7 @@
 // vitals, consultations, prescriptions/dispenses, referrals, messages,
 // and upcoming appointments — sorted newest first.
 import { db, Vital, Consultation, Dispense, Visit } from "@/db";
+import { resolveBmi } from "@/utils/vitals";
 
 export type TimelineEventKind =
   | "registration"
@@ -46,7 +47,8 @@ function vitalsSummary(v: Vital): string {
   if (v.pulseBpm) parts.push(`HR ${v.pulseBpm}`);
   if (v.tempC) parts.push(`Temp ${v.tempC}°C`);
   if (v.spo2) parts.push(`SpO₂ ${v.spo2}%`);
-  if (v.bmi) parts.push(`BMI ${v.bmi}`);
+  const bmi = resolveBmi(v);
+  if (bmi) parts.push(`BMI ${bmi}`);
   if (v.flags?.length) parts.push(`flags: ${v.flags.join(", ")}`);
   return parts.join(" • ");
 }

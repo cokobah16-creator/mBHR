@@ -269,3 +269,38 @@ describe("clinical classification", () => {
     expect(getFlagTone("something_else")).toBe("neutral");
   });
 });
+
+describe("assessVitals", () => {
+  it("computes BMI from height and weight in the right order", async () => {
+    const { assessVitals } = await import("./vitals");
+    const { bmi } = assessVitals({ heightCm: 170, weightKg: 70 });
+    expect(bmi).toBeCloseTo(24.2, 1);
+  });
+
+  it("flags fever, tachycardia and low SpO2 from record field names", async () => {
+    const { assessVitals } = await import("./vitals");
+    const { flags } = assessVitals({ tempC: 38.6, pulseBpm: 112, spo2: 91 });
+    expect(flags).toContain("high_temp");
+    expect(flags).toContain("high_pulse");
+    expect(flags).toContain("low_spo2");
+  });
+
+  it("returns no BMI without both measurements", async () => {
+    const { assessVitals } = await import("./vitals");
+    expect(assessVitals({ heightCm: 170 }).bmi).toBeNull();
+  });
+});
+
+describe("resolveBmi", () => {
+  it("corrects a BMI stored with height and weight swapped", async () => {
+    const { resolveBmi } = await import("./vitals");
+    // 170 cm / 70 kg was previously stored as ~346.9
+    expect(resolveBmi({ heightCm: 170, weightKg: 70, bmi: 346.9 })).toBeCloseTo(24.2, 1);
+  });
+
+  it("drops an implausible stored BMI when it cannot be recomputed", async () => {
+    const { resolveBmi } = await import("./vitals");
+    expect(resolveBmi({ bmi: 346.9 })).toBeUndefined();
+    expect(resolveBmi({ bmi: 23.1 })).toBe(23.1);
+  });
+});
