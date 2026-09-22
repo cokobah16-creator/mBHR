@@ -208,6 +208,7 @@ export default function Dispense() {
       pushToast({
         id: ulid(),
         title: "Prescription dispensed",
+        tone: "success",
         body: `${names[chosen.patientId] ?? "Patient"} · ${plans.length} item${plans.length === 1 ? "" : "s"}`,
       });
       setSelected("");

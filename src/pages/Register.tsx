@@ -26,6 +26,7 @@ export function Register() {
       const name = patient ? `${patient.givenName} ${patient.familyName}` : "Patient";
       pushToast({
         id: crypto.randomUUID(),
+        tone: queued || opts?.existing ? "success" : "warning",
         title: opts?.existing
           ? `Opened existing record for ${name}`
           : `${name} registered`,

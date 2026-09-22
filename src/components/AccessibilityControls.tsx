@@ -102,6 +102,7 @@ export function AccessibilityControls() {
         className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
         title="Accessibility Settings"
         aria-label="Open accessibility settings"
+        aria-expanded={isOpen}
       >
         <AdjustmentsHorizontalIcon className="h-5 w-5 text-gray-600" />
       </button>
@@ -124,7 +125,9 @@ export function AccessibilityControls() {
                   {(['small', 'normal', 'large', 'xlarge'] as const).map((size) => (
                     <button
                       key={size}
+                      type="button"
                       onClick={() => updateSetting('fontSize', size)}
+                      aria-pressed={settings.fontSize === size}
                       className={`px-3 py-2 text-xs rounded-lg border transition-colors ${
                         settings.fontSize === size
                           ? 'bg-primary text-white border-primary'
@@ -145,6 +148,10 @@ export function AccessibilityControls() {
                 </div>
                 <button
                   onClick={() => updateSetting('contrast', settings.contrast === 'high' ? 'normal' : 'high')}
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.contrast === 'high'}
+                  aria-label="High contrast"
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                     settings.contrast === 'high' ? 'bg-primary' : 'bg-gray-200'
                   }`}
@@ -165,6 +172,10 @@ export function AccessibilityControls() {
                 </div>
                 <button
                   onClick={() => updateSetting('reducedMotion', !settings.reducedMotion)}
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.reducedMotion}
+                  aria-label="Reduce motion"
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                     settings.reducedMotion ? 'bg-primary' : 'bg-gray-200'
                   }`}
@@ -185,6 +196,10 @@ export function AccessibilityControls() {
                 </div>
                 <button
                   onClick={() => updateSetting('audioEnabled', !settings.audioEnabled)}
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.audioEnabled}
+                  aria-label="Audio prompts"
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                     settings.audioEnabled ? 'bg-primary' : 'bg-gray-200'
                   }`}
@@ -205,6 +220,10 @@ export function AccessibilityControls() {
                 </div>
                 <button
                   onClick={() => updateSetting('largeTargets', !settings.largeTargets)}
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.largeTargets}
+                  aria-label="Large touch targets"
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                     settings.largeTargets ? 'bg-primary' : 'bg-gray-200'
                   }`}

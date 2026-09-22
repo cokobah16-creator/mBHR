@@ -262,6 +262,7 @@ export function PatientDetail() {
 
       pushToast({
         id: crypto.randomUUID(),
+        tone: cloudFailed ? "warning" : "success",
         title: cloudFailed
           ? "Deleted on this device only"
           : "Patient record deleted",

@@ -107,6 +107,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
           pushToast({
             id: crypto.randomUUID(),
             title: "Portal access not set up",
+            tone: "warning",
             body: `The patient is registered, but portal enrolment failed (${portalResult.error}). You can enable it later from their record.`,
           });
         } else {
@@ -114,6 +115,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
           pushToast({
             id: crypto.randomUUID(),
             title: "Portal access enabled",
+            tone: "success",
             body: "The patient can sign in to the patient portal with their phone or email.",
           });
         }

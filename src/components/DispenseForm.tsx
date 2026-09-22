@@ -160,6 +160,7 @@ export function DispenseForm({
       pushToast({
         id: generateId(),
         title: "Medicine dispensed",
+        tone: "success",
         body: `${data.qty} × ${data.itemName} recorded.`,
       });
       onSuccess?.();
