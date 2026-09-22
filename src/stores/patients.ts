@@ -104,7 +104,6 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       };
 
       await db.patients.add(patient);
-      console.log("Patient added to database:", patient.id);
 
       // Bump daily count
       await bumpDailyCount(epochDay(new Date()), "registrations");
@@ -128,7 +127,11 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
 
       return patient.id;
     } catch (error) {
-      console.error("Error adding patient:", error);
+      // A duplicate match is an expected outcome whose message carries
+      // patient records; never write it to the console.
+      if (!(error instanceof Error && error.message.startsWith("DUPLICATES_FOUND:"))) {
+        console.error("Error adding patient:", error instanceof Error ? error.name : "unknown");
+      }
       throw error;
     }
   },

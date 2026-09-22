@@ -69,10 +69,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const onSubmit = async (data: PatientFormData) => {
     setSubmitError("");
     setLoading(true);
-    console.log("PatientForm: Submitting patient data:", data);
     try {
       const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
-      console.log("PatientForm: Normalized phone:", normalizedPhone);
 
       const patientData = {
         givenName: data.givenName || "",
@@ -90,7 +88,6 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
       const patientId = await addPatient(patientData);
 
-      console.log("PatientForm: Patient created with ID:", patientId);
 
       // Automatically enroll in portal if contact info provided
       if ((normalizedPhone || data.email) && data.portalEnabled !== false) {
@@ -123,8 +120,6 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
       onSuccess?.(patientId);
     } catch (error) {
-      console.error("Error adding patient:", error);
-
       // Check if it's a duplicate error
       if (error.message.startsWith("DUPLICATES_FOUND:")) {
         const duplicateData = JSON.parse(
