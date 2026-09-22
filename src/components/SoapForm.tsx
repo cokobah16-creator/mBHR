@@ -1,17 +1,14 @@
-import React, { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatNigerianDate } from "@/utils/dateFormat";
-import { useForm } from "react-hook-form";
+import { useForm, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { db, generateId, createAuditLog } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { queueManagement } from "@/services/queueManagement";
 import { recordStageEvent } from "@/services/stageEvents";
-import {
-  DocumentTextIcon,
-  PlusIcon,
-  XMarkIcon,
-} from "@heroicons/react/24/outline";
+import { PlusIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { ExclamationTriangleIcon } from "@heroicons/react/20/solid";
 
 const soapSchema = z.object({
   soapSubjective: z.string().min(1, "Subjective findings required"),
@@ -22,21 +19,70 @@ const soapSchema = z.object({
 
 type SoapFormData = z.infer<typeof soapSchema>;
 
+export type SoapSection = "soap" | "diagnoses" | "referral";
+
 interface SoapFormProps {
   patientId: string;
   visitId: string;
   onSuccess?: () => void;
   onCancel?: () => void;
+  /** Which part to show; "all" shows every section stacked. */
+  section?: SoapSection | "all";
+  /** Called when validation needs the user to see another section. */
+  onShowSection?: (section: SoapSection) => void;
+  /** Keep the form mounted (and its state) while another tab is showing. */
+  hidden?: boolean;
+  onCountsChange?: (counts: { diagnoses: number; referred: boolean }) => void;
 }
+
+type SoapField = "soapSubjective" | "soapObjective" | "soapAssessment" | "soapPlan";
+
+const FIELDS: {
+  name: SoapField;
+  label: string;
+  hint: string;
+  rows: number;
+}[] = [
+  {
+    name: "soapSubjective",
+    label: "Subjective",
+    hint: "What the patient reports: complaint, history, symptoms.",
+    rows: 4,
+  },
+  {
+    name: "soapObjective",
+    label: "Objective",
+    hint: "Examination findings, vitals, test results.",
+    rows: 4,
+  },
+  {
+    name: "soapAssessment",
+    label: "Assessment",
+    hint: "Clinical impression, differential diagnosis.",
+    rows: 3,
+  },
+  {
+    name: "soapPlan",
+    label: "Plan",
+    hint: "Treatment, medicines, advice, follow-up.",
+    rows: 4,
+  },
+];
 
 export function SoapForm({
   patientId,
   visitId,
   onSuccess,
   onCancel,
+  section = "all",
+  onShowSection,
+  hidden = false,
+  onCountsChange,
 }: SoapFormProps) {
   const { currentUser } = useAuthStore();
   const [loading, setLoading] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saved, setSaved] = useState(false);
   const [diagnoses, setDiagnoses] = useState<string[]>([""]);
   const [referred, setReferred] = useState(false);
   const [referralNotes, setReferralNotes] = useState("");
@@ -44,10 +90,30 @@ export function SoapForm({
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<SoapFormData>({
     resolver: zodResolver(soapSchema),
   });
+
+  const hasUnsaved =
+    !saved &&
+    (isDirty || referred || diagnoses.some((d) => d.trim() !== ""));
+
+  // Warn before the tab/window closes with notes that were never saved.
+  useEffect(() => {
+    if (!hasUnsaved) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasUnsaved]);
+
+  const diagnosisCount = diagnoses.filter((d) => d.trim()).length;
+  useEffect(() => {
+    onCountsChange?.({ diagnoses: diagnosisCount, referred });
+  }, [diagnosisCount, referred, onCountsChange]);
 
   const addDiagnosis = () => {
     setDiagnoses([...diagnoses, ""]);
@@ -66,6 +132,7 @@ export function SoapForm({
   };
 
   const onSubmit = async (data: SoapFormData) => {
+    setSaveError("");
     setLoading(true);
     try {
       const consultation = {
@@ -107,272 +174,161 @@ export function SoapForm({
         console.warn("Failed to move patient to next queue stage:", error);
       }
 
+      setSaved(true);
       onSuccess?.();
     } catch (error) {
-      console.error("Error saving consultation:", error);
+      console.error("Error saving consultation:", error instanceof Error ? error.name : error);
+      setSaveError(
+        "The consultation was not saved. Your notes are still here — try again. If it keeps failing, copy the notes before leaving this page.",
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  const show = (s: SoapSection) => section === "all" || section === s;
+
+  const onInvalid = (errs: FieldErrors<SoapFormData>) => {
+    if (Object.keys(errs).length > 0) onShowSection?.("soap");
+  };
+
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="card">
-        <div className="flex items-center space-x-3 mb-6">
-          <DocumentTextIcon className="h-8 w-8 text-primary" />
-          <h2 className="text-2xl font-bold text-gray-900">
-            Consultation Notes
-          </h2>
+    <form
+      onSubmit={handleSubmit(onSubmit, onInvalid)}
+      className={`panel ${hidden ? "hidden" : ""}`}
+      noValidate
+      aria-label="Consultation notes"
+    >
+      <div className="panel-body space-y-5">
+        {saveError && (
+          <div className="banner banner-danger" role="alert">
+            <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <span>{saveError}</span>
+          </div>
+        )}
+
+        <div className={show("soap") ? "space-y-5" : "hidden"}>
+          {FIELDS.map((f) => (
+            <div key={f.name}>
+              <label htmlFor={f.name} className="field-label">
+                {f.label} <span className="text-danger-fg" aria-hidden>*</span>
+              </label>
+              <p id={`${f.name}-hint`} className="-mt-1 mb-1.5 text-caption text-ink-muted">
+                {f.hint}
+              </p>
+              <textarea
+                {...register(f.name)}
+                id={f.name}
+                className="input-field"
+                rows={f.rows}
+                aria-required="true"
+                aria-invalid={errors[f.name] ? "true" : "false"}
+                aria-describedby={
+                  errors[f.name] ? `${f.name}-hint ${f.name}-error` : `${f.name}-hint`
+                }
+              />
+              {errors[f.name] && (
+                <p id={`${f.name}-error`} role="alert" className="field-error">
+                  {errors[f.name]?.message}
+                </p>
+              )}
+            </div>
+          ))}
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          {/* Subjective */}
-          <div>
-            <label
-              htmlFor="soapSubjective"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
-              Subjective (Patient's History) *
-            </label>
-            <textarea
-              {...register("soapSubjective")}
-              id="soapSubjective"
-              className="input-field"
-              rows={4}
-              placeholder="Patient reports... Chief complaint, history of present illness, review of systems..."
-              aria-required="true"
-              aria-invalid={errors.soapSubjective ? "true" : "false"}
-              aria-describedby={
-                errors.soapSubjective ? "soapSubjective-error" : undefined
-              }
-            />
-            {errors.soapSubjective && (
-              <p
-                id="soapSubjective-error"
-                role="alert"
-                className="text-red-600 text-sm mt-1"
-              >
-                {errors.soapSubjective.message}
-              </p>
-            )}
-          </div>
-
-          {/* Objective */}
-          <div>
-            <label
-              htmlFor="soapObjective"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
-              Objective (Physical Examination) *
-            </label>
-            <textarea
-              {...register("soapObjective")}
-              id="soapObjective"
-              className="input-field"
-              rows={4}
-              placeholder="Physical examination findings, vital signs, laboratory results..."
-              aria-required="true"
-              aria-invalid={errors.soapObjective ? "true" : "false"}
-              aria-describedby={
-                errors.soapObjective ? "soapObjective-error" : undefined
-              }
-            />
-            {errors.soapObjective && (
-              <p
-                id="soapObjective-error"
-                role="alert"
-                className="text-red-600 text-sm mt-1"
-              >
-                {errors.soapObjective.message}
-              </p>
-            )}
-          </div>
-
-          {/* Assessment */}
-          <div>
-            <label
-              htmlFor="soapAssessment"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
-              Assessment (Clinical Impression) *
-            </label>
-            <textarea
-              {...register("soapAssessment")}
-              id="soapAssessment"
-              className="input-field"
-              rows={3}
-              placeholder="Clinical reasoning, differential diagnosis, problem list..."
-              aria-required="true"
-              aria-invalid={errors.soapAssessment ? "true" : "false"}
-              aria-describedby={
-                errors.soapAssessment ? "soapAssessment-error" : undefined
-              }
-            />
-            {errors.soapAssessment && (
-              <p
-                id="soapAssessment-error"
-                role="alert"
-                className="text-red-600 text-sm mt-1"
-              >
-                {errors.soapAssessment.message}
-              </p>
-            )}
-          </div>
-
-          {/* Plan */}
-          <div>
-            <label
-              htmlFor="soapPlan"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
-              Plan (Treatment Plan) *
-            </label>
-            <textarea
-              {...register("soapPlan")}
-              id="soapPlan"
-              className="input-field"
-              rows={4}
-              placeholder="Treatment plan, medications, follow-up instructions, patient education..."
-              aria-required="true"
-              aria-invalid={errors.soapPlan ? "true" : "false"}
-              aria-describedby={errors.soapPlan ? "soapPlan-error" : undefined}
-            />
-            {errors.soapPlan && (
-              <p
-                id="soapPlan-error"
-                role="alert"
-                className="text-red-600 text-sm mt-1"
-              >
-                {errors.soapPlan.message}
-              </p>
-            )}
-          </div>
-
-          {/* Referral */}
-          <fieldset className="rounded-lg border border-gray-200 p-4 space-y-3">
-            <legend className="text-sm font-medium text-gray-700 px-1">
-              Referral
-            </legend>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={referred}
-                onChange={(e) => setReferred(e.target.checked)}
-                className="mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary"
-              />
-              <span className="text-sm text-gray-700">
-                Patient referred to another facility or specialist
-              </span>
-            </label>
-            {referred && (
-              <div>
-                <label
-                  htmlFor="referralNotes"
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  Referral notes (optional)
-                </label>
-                <textarea
-                  id="referralNotes"
-                  value={referralNotes}
-                  onChange={(e) => setReferralNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Where to, reason, urgency..."
-                  className="input-field"
-                />
-              </div>
-            )}
-          </fieldset>
-
-          {/* Provisional Diagnoses */}
-          <fieldset>
-            <div className="flex items-center justify-between mb-3">
-              <legend className="block text-sm font-medium text-gray-700">
-                Provisional Diagnoses
-              </legend>
-              <button
-                type="button"
-                onClick={addDiagnosis}
-                className="flex items-center space-x-1 text-primary hover:text-primary/80 text-sm font-medium"
-                aria-label="Add another diagnosis"
-              >
-                <PlusIcon className="h-4 w-4" aria-hidden="true" />
-                <span>Add Diagnosis</span>
-              </button>
-            </div>
-
-            <div
-              className="space-y-3"
-              role="list"
-              aria-label="List of diagnoses"
-            >
-              {diagnoses.map((diagnosis, index) => (
-                <div
-                  key={index}
-                  className="flex items-center space-x-2"
-                  role="listitem"
-                >
-                  <label
-                    htmlFor={`diagnosis-${index}`}
-                    className="text-sm font-medium text-gray-500 w-8"
-                  >
-                    {index + 1}.
-                  </label>
-                  <input
-                    type="text"
-                    id={`diagnosis-${index}`}
-                    value={diagnosis}
-                    onChange={(e) => updateDiagnosis(index, e.target.value)}
-                    className="input-field flex-1"
-                    placeholder="Enter diagnosis (e.g., Hypertension, Type 2 Diabetes)"
-                    aria-label={`Diagnosis ${index + 1}`}
-                  />
-                  {diagnoses.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeDiagnosis(index)}
-                      className="text-red-600 hover:text-red-800 p-1 touch-target"
-                      aria-label={`Remove diagnosis ${index + 1}`}
-                    >
-                      <XMarkIcon className="h-5 w-5" aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </fieldset>
-
-          {/* Provider Info */}
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <p className="text-sm text-gray-600">
-              <strong>Provider:</strong> {currentUser?.fullName || "Unknown"}
-            </p>
-            <p className="text-sm text-gray-600">
-              <strong>Date:</strong> {formatNigerianDate(new Date())}
-            </p>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex space-x-4 pt-6">
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary flex-1"
-            >
-              {loading ? "Saving..." : "Save Consultation"}
+        <fieldset className={show("diagnoses") ? "" : "hidden"}>
+          <div className="mb-3 flex items-center justify-between">
+            <legend className="text-h3 text-ink">Provisional diagnoses</legend>
+            <button type="button" onClick={addDiagnosis} className="btn-ghost text-primary">
+              <PlusIcon className="h-4 w-4" aria-hidden="true" />
+              Add diagnosis
             </button>
-            {onCancel && (
-              <button
-                type="button"
-                onClick={onCancel}
-                className="btn-secondary flex-1"
-              >
-                Cancel
-              </button>
-            )}
           </div>
-        </form>
+          <ol className="space-y-2" aria-label="Diagnoses">
+            {diagnoses.map((diagnosis, index) => (
+              <li key={index} className="flex items-center gap-2">
+                <label
+                  htmlFor={`diagnosis-${index}`}
+                  className="w-6 shrink-0 text-label text-ink-muted tabular-nums"
+                >
+                  {index + 1}.
+                </label>
+                <input
+                  type="text"
+                  id={`diagnosis-${index}`}
+                  value={diagnosis}
+                  onChange={(e) => updateDiagnosis(index, e.target.value)}
+                  className="input-field flex-1"
+                  placeholder="e.g. Hypertension"
+                  aria-label={`Diagnosis ${index + 1}`}
+                />
+                {diagnoses.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeDiagnosis(index)}
+                    className="btn-ghost px-2 text-danger-fg"
+                    aria-label={`Remove diagnosis ${index + 1}`}
+                  >
+                    <XMarkIcon className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ol>
+        </fieldset>
+
+        <fieldset className={show("referral") ? "space-y-3" : "hidden"}>
+          <legend className="text-h3 text-ink">Referral</legend>
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={referred}
+              onChange={(e) => setReferred(e.target.checked)}
+              className="mt-1 h-4 w-4"
+            />
+            <span className="text-body text-ink">
+              Refer this patient to another facility or specialist
+            </span>
+          </label>
+          {referred && (
+            <div>
+              <label htmlFor="referralNotes" className="field-label">
+                Referral details
+              </label>
+              <textarea
+                id="referralNotes"
+                value={referralNotes}
+                onChange={(e) => setReferralNotes(e.target.value)}
+                rows={3}
+                placeholder="Where to, reason, urgency"
+                className="input-field"
+              />
+            </div>
+          )}
+        </fieldset>
       </div>
-    </div>
+
+      <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-caption text-ink-muted" aria-live="polite">
+          {hasUnsaved ? (
+            <span className="font-medium text-warning-fg">Unsaved changes</span>
+          ) : (
+            "No unsaved changes"
+          )}
+          {" · "}
+          {currentUser?.fullName || "Unknown"} · {formatNigerianDate(new Date())}
+        </p>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          {onCancel && (
+            <button type="button" onClick={onCancel} className="btn-secondary">
+              Cancel
+            </button>
+          )}
+          <button type="submit" disabled={loading} className="btn-primary">
+            {loading ? "Saving…" : "Complete consultation"}
+          </button>
+        </div>
+      </div>
+    </form>
   );
 }

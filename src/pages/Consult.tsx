@@ -9,6 +9,16 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ConsultationSkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 import { ClinicalSummaryPanel } from "@/components/patient/ClinicalSummaryPanel";
+import { Tabs } from "@/components/ui/Tabs";
+import { tabId, panelId } from "@/components/ui/tabIds";
+import type { SoapSection } from "@/components/SoapForm";
+import RxForm from "@/features/pharmacy/RxForm";
+import { LabOrderForm } from "@/features/labs/LabOrderForm";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
+
+type ConsultTab = SoapSection | "prescriptions" | "labs";
+const isNotesTab = (t: ConsultTab): t is SoapSection =>
+  t === "soap" || t === "diagnoses" || t === "referral";
 import { getActiveSiteName } from "@/services/activeSite";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
@@ -17,6 +27,22 @@ export function Consult() {
   const { visitId } = useParams<{ visitId: string }>();
   const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.currentUser);
+  const [tab, setTab] = useState<ConsultTab>("soap");
+  const [counts, setCounts] = useState({ diagnoses: 0, referred: false });
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => {
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+    };
+  }, []);
+  const labsAvailable = isSupabaseEnabled && online;
+  const canPrescribe =
+    !!currentUser && ["doctor", "nurse", "admin"].includes(currentUser.role);
   const [visit, setVisit] = useState<Visit | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
@@ -152,12 +178,66 @@ export function Consult() {
           <ClinicalSummaryPanel patientId={patient.id} visitId={visit.id} />
         </div>
         <div className="min-w-0">
-          <SoapForm
-            patientId={patient.id}
-            visitId={visit.id}
-            onSuccess={handleSuccess}
-            onCancel={handleCancel}
+          <Tabs
+            idPrefix="consult"
+            label="Consultation sections"
+            active={tab}
+            onChange={setTab}
+            className="mb-3"
+            tabs={[
+              { id: "soap", label: "SOAP" },
+              { id: "diagnoses", label: "Diagnoses", badge: counts.diagnoses || undefined },
+              { id: "referral", label: "Referral", badge: counts.referred ? "Yes" : undefined },
+              { id: "prescriptions", label: "Prescriptions" },
+              { id: "labs", label: "Labs" },
+            ]}
           />
+          <div
+            role="tabpanel"
+            id={panelId("consult", tab)}
+            aria-labelledby={tabId("consult", tab)}
+          >
+            {/* The notes form stays mounted across tabs so nothing typed is lost. */}
+            <SoapForm
+              patientId={patient.id}
+              visitId={visit.id}
+              onSuccess={handleSuccess}
+              onCancel={handleCancel}
+              section={isNotesTab(tab) ? tab : "soap"}
+              hidden={!isNotesTab(tab)}
+              onShowSection={setTab}
+              onCountsChange={setCounts}
+            />
+            {tab === "prescriptions" && (
+              <div className="panel p-4">
+                {canPrescribe ? (
+                  <RxForm patientId={patient.id} visitId={visit.id} embedded />
+                ) : (
+                  <p className="text-body text-ink-muted">
+                    Your role cannot write prescriptions. Record the treatment in the Plan.
+                  </p>
+                )}
+              </div>
+            )}
+            {tab === "labs" && (
+              <div className="space-y-3">
+                {labsAvailable ? (
+                  <LabOrderForm
+                    patientId={patient.id}
+                    visitId={visit.id}
+                    orderedBy={currentUser?.id ?? "unknown"}
+                  />
+                ) : (
+                  <div className="banner banner-warning" role="status">
+                    Lab orders are stored in the cloud and need a connection.{" "}
+                    {isSupabaseEnabled
+                      ? "This device is offline — note the tests in the Plan and order them when the connection returns."
+                      : "Cloud sync is not set up on this device, so record the tests in the Plan."}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
