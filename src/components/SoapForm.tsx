@@ -148,6 +148,7 @@ export function SoapForm({
         referred,
         referralNotes: referred ? referralNotes.trim() || undefined : undefined,
         createdAt: new Date(),
+        _dirty: 1,
       };
 
       await db.consultations.add(consultation);

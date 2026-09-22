@@ -124,6 +124,7 @@ export function DispenseForm({
         directions: data.directions,
         dispensedBy: currentUser?.fullName || "Unknown",
         dispensedAt: new Date(),
+        _dirty: 1,
       };
 
       // Record and stock decrement succeed or fail together, and stock is
@@ -139,6 +140,7 @@ export function DispenseForm({
         await db.inventory.update(selectedItem.id, {
           onHandQty: fresh.onHandQty - data.qty,
           updatedAt: new Date(),
+          _dirty: 1,
         });
       });
 

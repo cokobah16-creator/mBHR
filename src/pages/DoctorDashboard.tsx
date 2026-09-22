@@ -1,21 +1,28 @@
 import { useState, useEffect, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { db } from "@/db";
 import type { Patient, Visit, Vital, QueueItem } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { queueManagement } from "@/services/queueManagement";
-import { getFlagColor } from "@/utils/vitals";
+import {
+  classifyBloodPressure,
+  classifyPulse,
+  classifySpO2,
+  classifyTemperature,
+} from "@/utils/vitals";
+import { findTodaysOpenVisit, ensureTodaysVisit } from "@/services/visits";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
+import { QueueSkeleton } from "@/components/ui/Skeleton";
 import { palaverRoom } from "@/services/palaverRoom";
 import { PatientMessagesPanel } from "@/features/doctor/PatientMessagesPanel";
 import { PalaverRoom } from "@/features/doctor/PalaverRoom";
 import { supabase } from "@/lib/supabase";
 import { getPendingTelevisitRequests } from "@/services/televisits";
 import {
-  UserIcon,
   ClockIcon,
-  ChartBarIcon,
   CheckCircleIcon,
-  HeartIcon,
   ChatBubbleLeftRightIcon,
   InboxIcon,
   VideoCameraIcon,
@@ -25,6 +32,34 @@ interface PatientInQueue extends QueueItem {
   patient?: Patient;
   latestVitals?: Vital;
   openVisit?: Visit;
+}
+
+/** Latest vitals with abnormal readings as labelled badges. */
+function VitalsLine({ v }: { v?: Vital }) {
+  if (!v) return <span className="text-caption text-warning-fg">No vitals recorded</span>;
+  const bp = classifyBloodPressure(v.systolic, v.diastolic);
+  const temp = classifyTemperature(v.tempC);
+  const pulse = classifyPulse(v.pulseBpm);
+  const spo2 = classifySpO2(v.spo2);
+  const parts: { key: string; text: string; tone?: Tone }[] = [];
+  if (v.systolic && v.diastolic)
+    parts.push({ key: "bp", text: `BP ${v.systolic}/${v.diastolic}`, tone: bp && bp.tone !== "success" ? bp.tone : undefined });
+  if (v.tempC) parts.push({ key: "t", text: `${v.tempC} °C`, tone: temp && temp.tone !== "success" ? temp.tone : undefined });
+  if (v.pulseBpm) parts.push({ key: "p", text: `${v.pulseBpm} bpm`, tone: pulse && pulse.tone !== "success" ? pulse.tone : undefined });
+  if (v.spo2) parts.push({ key: "s", text: `SpO₂ ${v.spo2}%`, tone: spo2 && spo2.tone !== "success" ? spo2.tone : undefined });
+  return (
+    <span className="flex flex-wrap items-center gap-1.5 text-caption tabular-nums text-ink-secondary">
+      {parts.map((p) =>
+        p.tone ? (
+          <StatusBadge key={p.key} tone={p.tone}>
+            {p.text}
+          </StatusBadge>
+        ) : (
+          <span key={p.key}>{p.text}</span>
+        ),
+      )}
+    </span>
+  );
 }
 
 export function DoctorDashboard() {
@@ -42,6 +77,8 @@ export function DoctorDashboard() {
   const [unreadPatientMessages, setUnreadPatientMessages] = useState(0);
   const [pendingTelevisits, setPendingTelevisits] = useState(0);
   const userId = currentUser?.id;
+  const navigate = useNavigate();
+  const [actionError, setActionError] = useState("");
 
   const loadUnreadCount = useCallback(async () => {
     if (!userId) return;
@@ -116,17 +153,14 @@ export function DoctorDashboard() {
           queue.map(async (item) => {
             const patient = await db.patients.get(item.patientId);
 
-            const vitals = await db.vitals
-              .where("patientId")
-              .equals(item.patientId)
-              .reverse()
-              .first();
+            // Latest by time taken (primary-key order is not time order).
+            const vitals = (
+              await db.vitals.where("patientId").equals(item.patientId).toArray()
+            ).sort(
+              (a, b) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime(),
+            )[0];
 
-            const openVisit = await db.visits
-              .where("patientId")
-              .equals(item.patientId)
-              .and((v) => v.status === "open")
-              .first();
+            const openVisit = await findTodaysOpenVisit(item.patientId);
 
             return {
               ...item,
@@ -199,127 +233,167 @@ export function DoctorDashboard() {
     return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   };
 
-  const getVitalsFlags = (vitals?: Vital) => {
-    if (!vitals || !vitals.flags || vitals.flags.length === 0) {
-      return null;
+  const openConsultation = async (item: PatientInQueue) => {
+    try {
+      const visit = await ensureTodaysVisit(item.patientId);
+      navigate(`/consult/${visit.id}`);
+    } catch (error) {
+      console.error("Could not open consultation:", error instanceof Error ? error.name : error);
+      setActionError("Could not open the consultation on this device. Try again.");
     }
-
-    return (
-      <div className="flex flex-wrap gap-1 mt-2">
-        {vitals.flags.map((flag, idx) => (
-          <span
-            key={idx}
-            className={`text-xs px-2 py-0.5 rounded-full ${getFlagColor(flag)}`}
-          >
-            {flag}
-          </span>
-        ))}
-      </div>
-    );
   };
+
+  const startAndOpen = async (item: PatientInQueue) => {
+    await handleStartConsultation(item);
+    await openConsultation(item);
+  };
+
+  const isAbnormal = (v?: Vital) => !!v && Array.isArray(v.flags) && v.flags.length > 0;
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading consultation queue...</p>
-        </div>
+      <div>
+        <PageHeader title="Doctor station" />
+        <QueueSkeleton />
       </div>
     );
   }
 
-  const waiting = queuePatients.filter((item) => item.status === "waiting");
-  const inProgress = queuePatients.find(
-    (item) => item.status === "in_progress",
-  );
+  const inProgress = queuePatients.filter((p) => p.status === "in_progress");
+  const waiting = queuePatients.filter((p) => p.status === "waiting");
+  const abnormalWaiting = waiting.filter((p) => isAbnormal(p.latestVitals)).length;
+  const name = (p: PatientInQueue) =>
+    p.patient ? `${p.patient.givenName} ${p.patient.familyName}` : "Unknown patient";
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Doctor Consultation Station
-          </h1>
-          <p className="text-gray-600">
-            {currentUser?.fullName || "Doctor"} - Consultation Queue
-          </p>
+    <div className="space-y-4">
+      <PageHeader
+        title="Doctor station"
+        description="Patients waiting for consultation, and messages that need a reply."
+        actions={
+          <>
+            <button type="button" onClick={() => setShowPatientMessages(true)} className="btn-secondary">
+              <InboxIcon className="h-5 w-5" aria-hidden />
+              Patient messages
+              {unreadPatientMessages > 0 && (
+                <span className="badge badge-danger">{unreadPatientMessages}</span>
+              )}
+            </button>
+            <button type="button" onClick={() => setShowPalaverRoom(true)} className="btn-secondary">
+              <ChatBubbleLeftRightIcon className="h-5 w-5" aria-hidden />
+              Palaver Room
+              {unreadMessages > 0 && <span className="badge badge-danger">{unreadMessages}</span>}
+            </button>
+            <Link to="/televisits" className="btn-secondary">
+              <VideoCameraIcon className="h-5 w-5" aria-hidden />
+              Televisits
+              {pendingTelevisits > 0 && <span className="badge badge-warning">{pendingTelevisits} to schedule</span>}
+            </Link>
+          </>
+        }
+      />
+
+      {actionError && (
+        <div className="banner banner-danger" role="alert">
+          {actionError}
         </div>
-        <div className="flex items-center gap-4">
-          {/* Patient Messages Button */}
-          <button
-            onClick={() => setShowPatientMessages(true)}
-            className="relative flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-          >
-            <InboxIcon className="h-5 w-5" />
-            <span className="font-medium">Patient Messages</span>
-            {unreadPatientMessages > 0 && (
-              <span className="absolute -top-2 -right-2 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] text-center">
-                {unreadPatientMessages}
-              </span>
-            )}
-          </button>
+      )}
 
-          {/* Palaver Room Button */}
-          <button
-            onClick={() => setShowPalaverRoom(true)}
-            className="relative flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
-          >
-            <ChatBubbleLeftRightIcon className="h-5 w-5" />
-            <span className="font-medium">Palaver Room</span>
-            {unreadMessages > 0 && (
-              <span className="absolute -top-2 -right-2 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] text-center">
-                {unreadMessages}
-              </span>
-            )}
-          </button>
-
-          {/* Televisits Button */}
-          <Link
-            to="/televisits"
-            className="relative flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
-          >
-            <VideoCameraIcon className="h-5 w-5" />
-            <span className="font-medium">Televisits</span>
-            {pendingTelevisits > 0 && (
-              <span className="absolute -top-2 -right-2 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] text-center">
-                {pendingTelevisits}
-              </span>
-            )}
-          </Link>
-
-          {/* Stats */}
-          <div className="flex items-center space-x-4 bg-white rounded-lg shadow-sm p-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">
-                {stats.waiting}
-              </div>
-              <div className="text-xs text-gray-600">Waiting</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-yellow-600">
-                {stats.inProgress}
-              </div>
-              <div className="text-xs text-gray-600">In Progress</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">
-                {stats.completed}
-              </div>
-              <div className="text-xs text-gray-600">Completed Today</div>
-            </div>
+      <dl className="panel grid grid-cols-2 divide-line sm:grid-cols-4 sm:divide-x">
+        {[
+          { label: "Waiting", value: stats.waiting },
+          { label: "With a clinician", value: stats.inProgress },
+          { label: "Waiting with abnormal vitals", value: abnormalWaiting, warn: abnormalWaiting > 0 },
+          { label: "Completed today", value: stats.completed },
+        ].map((m) => (
+          <div key={m.label} className="px-4 py-3">
+            <dt className="text-caption text-ink-muted">{m.label}</dt>
+            <dd className={`mt-0.5 text-stat tabular-nums ${m.warn ? "text-warning-fg" : "text-ink"}`}>{m.value}</dd>
           </div>
-        </div>
-      </div>
+        ))}
+      </dl>
 
-      {/* Patient Messages Sliding Panel */}
+      {inProgress.length > 0 && (
+        <section className="panel" aria-labelledby="with-you">
+          <div className="panel-header">
+            <h2 id="with-you" className="panel-title">
+              In consultation
+            </h2>
+          </div>
+          <ul className="divide-y divide-line">
+            {inProgress.map((item) => (
+              <li key={item.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
+                <span className="w-16 shrink-0 font-mono text-h3 tabular-nums">{item.ticketNumber ?? `#${item.position}`}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-ink">{name(item)}</span>
+                  <span className="block text-caption text-ink-muted">
+                    {item.assignedName ? `With ${item.assignedName} · ` : ""}for {getWaitTime(item.updatedAt)}
+                  </span>
+                  <VitalsLine v={item.latestVitals} />
+                </span>
+                <span className="flex gap-2">
+                  <button type="button" onClick={() => openConsultation(item)} className="btn-primary">
+                    Continue consultation
+                  </button>
+                  <Link to={`/patients/${item.patientId}`} className="btn-secondary">
+                    Record
+                  </Link>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="panel" aria-labelledby="waiting-consult">
+        <div className="panel-header">
+          <h2 id="waiting-consult" className="panel-title">
+            Waiting for consultation ({waiting.length})
+          </h2>
+        </div>
+        {waiting.length === 0 ? (
+          <EmptyState
+            icon={CheckCircleIcon}
+            title="No patients waiting for consultation"
+            description="Patients appear here after their vitals are recorded."
+          />
+        ) : (
+          <ul className="divide-y divide-line">
+            {waiting.map((item, idx) => (
+              <li key={item.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
+                <span className="w-16 shrink-0 font-mono text-label tabular-nums text-ink">{item.ticketNumber ?? `#${item.position}`}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-ink">{name(item)}</span>
+                    {item.priority === "urgent" && <StatusBadge tone="danger">Urgent</StatusBadge>}
+                  </span>
+                  <VitalsLine v={item.latestVitals} />
+                </span>
+                <span className="flex items-center gap-3">
+                  <span className="flex items-center gap-1 text-caption tabular-nums text-ink-muted">
+                    <ClockIcon className="h-4 w-4" aria-hidden />
+                    {getWaitTime(item.queuedAt ?? item.updatedAt)}
+                  </span>
+                  {idx === 0 && inProgress.length === 0 ? (
+                    <button type="button" onClick={() => startAndOpen(item)} className="btn-primary">
+                      Start consultation
+                    </button>
+                  ) : (
+                    <Link to={`/patients/${item.patientId}`} className="btn-ghost">
+                      Record
+                    </Link>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       {showPatientMessages && (
         <>
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40"
-            onClick={() => setShowPatientMessages(false)}
-          />
-          <div className="fixed right-0 top-0 bottom-0 w-full max-w-md z-50 shadow-2xl">
+          <div className="fixed inset-0 z-40 bg-ink/40" onClick={() => setShowPatientMessages(false)} aria-hidden />
+          <div className="fixed bottom-0 right-0 top-0 z-50 w-full max-w-md shadow-2xl">
             <PatientMessagesPanel
               onClose={() => {
                 setShowPatientMessages(false);
@@ -330,14 +404,10 @@ export function DoctorDashboard() {
         </>
       )}
 
-      {/* Palaver Room Sliding Panel */}
       {showPalaverRoom && (
         <>
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40"
-            onClick={() => setShowPalaverRoom(false)}
-          />
-          <div className="fixed right-0 top-0 bottom-0 w-full max-w-md z-50 shadow-2xl">
+          <div className="fixed inset-0 z-40 bg-ink/40" onClick={() => setShowPalaverRoom(false)} aria-hidden />
+          <div className="fixed bottom-0 right-0 top-0 z-50 w-full max-w-md shadow-2xl">
             <PalaverRoom
               onClose={() => {
                 setShowPalaverRoom(false);
@@ -348,277 +418,6 @@ export function DoctorDashboard() {
           </div>
         </>
       )}
-
-      {/* Current Patient in Progress */}
-      {inProgress && (
-        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6">
-          <h3 className="text-sm font-semibold text-yellow-800 mb-3 uppercase">
-            Currently Consulting
-          </h3>
-          <div className="flex items-start justify-between">
-            <div className="flex items-start space-x-4 flex-1">
-              {inProgress.patient?.photoUrl ? (
-                <img
-                  src={inProgress.patient.photoUrl}
-                  alt={`${inProgress.patient.givenName} ${inProgress.patient.familyName}`}
-                  className="w-16 h-16 rounded-full object-cover"
-                />
-              ) : (
-                <div className="w-16 h-16 rounded-full bg-yellow-200 flex items-center justify-center">
-                  <UserIcon className="h-8 w-8 text-yellow-700" />
-                </div>
-              )}
-
-              <div className="flex-1">
-                <h3 className="text-xl font-semibold text-gray-900">
-                  {inProgress.patient?.givenName}{" "}
-                  {inProgress.patient?.familyName}
-                </h3>
-                <p className="text-gray-600 mt-1">
-                  {inProgress.patient?.sex} • {inProgress.patient?.dob}
-                </p>
-                <p className="text-gray-600">{inProgress.patient?.phone}</p>
-
-                {inProgress.latestVitals && (
-                  <div className="mt-3 grid grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-600">BP:</span>
-                      <span className="ml-1 font-medium">
-                        {inProgress.latestVitals.systolic}/
-                        {inProgress.latestVitals.diastolic}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Temp:</span>
-                      <span className="ml-1 font-medium">
-                        {inProgress.latestVitals.tempC}°C
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Pulse:</span>
-                      <span className="ml-1 font-medium">
-                        {inProgress.latestVitals.pulseBpm} bpm
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">SpO2:</span>
-                      <span className="ml-1 font-medium">
-                        {inProgress.latestVitals.spo2}%
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {getVitalsFlags(inProgress.latestVitals)}
-              </div>
-            </div>
-
-            <div className="flex flex-col space-y-2">
-              <Link
-                to={`/consult`}
-                state={{
-                  patientId: inProgress.patientId,
-                  visitId: inProgress.openVisit?.id,
-                }}
-                className="btn-primary text-sm"
-              >
-                Continue Consultation
-              </Link>
-              <Link
-                to={`/patients/${inProgress.patientId}`}
-                className="btn-secondary text-sm text-center"
-              >
-                View History
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Waiting Queue */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Waiting Queue ({waiting.length})
-        </h3>
-
-        {waiting.length === 0 && !inProgress ? (
-          <div className="text-center py-12">
-            <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              Queue Clear
-            </h3>
-            <p className="text-gray-600">
-              No patients waiting for consultation at this time.
-            </p>
-          </div>
-        ) : waiting.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <p>No additional patients waiting. Current patient in progress.</p>
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {waiting.map((item) => {
-              if (!item.patient) return null;
-
-              const isNext = item.position === 1;
-
-              return (
-                <div
-                  key={item.id}
-                  className={`border-2 rounded-lg p-4 transition-all ${
-                    isNext
-                      ? "border-green-300 bg-green-50"
-                      : "border-gray-200 bg-white hover:border-gray-300"
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start space-x-4 flex-1">
-                      <div
-                        className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${
-                          isNext ? "bg-green-600" : "bg-gray-500"
-                        }`}
-                      >
-                        {item.position}
-                      </div>
-
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-3">
-                          <h3 className="text-lg font-semibold text-gray-900">
-                            {item.patient.givenName} {item.patient.familyName}
-                          </h3>
-                          <span className="text-sm text-gray-500">
-                            {item.patient.sex} • {item.patient.dob}
-                          </span>
-                        </div>
-
-                        <div className="mt-1 text-sm text-gray-600">
-                          <p>{item.patient.phone}</p>
-                        </div>
-
-                        {item.latestVitals && (
-                          <div className="mt-2 grid grid-cols-4 gap-3 text-sm">
-                            <div>
-                              <span className="text-gray-600">BP:</span>
-                              <span className="ml-1 font-medium">
-                                {item.latestVitals.systolic}/
-                                {item.latestVitals.diastolic}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Temp:</span>
-                              <span className="ml-1 font-medium">
-                                {item.latestVitals.tempC}°C
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Pulse:</span>
-                              <span className="ml-1 font-medium">
-                                {item.latestVitals.pulseBpm} bpm
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">SpO2:</span>
-                              <span className="ml-1 font-medium">
-                                {item.latestVitals.spo2}%
-                              </span>
-                            </div>
-                          </div>
-                        )}
-
-                        {getVitalsFlags(item.latestVitals)}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col items-end space-y-2">
-                      <div className="flex items-center text-sm text-gray-500">
-                        <ClockIcon className="h-4 w-4 mr-1" />
-                        {getWaitTime(item.updatedAt)}
-                      </div>
-
-                      {isNext && !inProgress && (
-                        <button
-                          onClick={() => handleStartConsultation(item)}
-                          className="btn-primary text-sm"
-                        >
-                          Start Consultation
-                        </button>
-                      )}
-
-                      <Link
-                        to={`/patients/${item.patientId}`}
-                        className="btn-secondary text-sm"
-                      >
-                        View History
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Quick Actions */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Quick Actions
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-          <button
-            onClick={() => setShowPatientMessages(true)}
-            className="relative btn-secondary flex flex-col items-center justify-center p-4 h-24 bg-blue-50 border-blue-200 hover:bg-blue-100"
-          >
-            <InboxIcon className="h-6 w-6 mb-2 text-blue-600" />
-            <span className="text-sm text-blue-800">Patient Messages</span>
-            {unreadPatientMessages > 0 && (
-              <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full">
-                {unreadPatientMessages}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setShowPalaverRoom(true)}
-            className="relative btn-secondary flex flex-col items-center justify-center p-4 h-24 bg-emerald-50 border-emerald-200 hover:bg-emerald-100"
-          >
-            <ChatBubbleLeftRightIcon className="h-6 w-6 mb-2 text-emerald-600" />
-            <span className="text-sm text-emerald-800">Palaver Room</span>
-            {unreadMessages > 0 && (
-              <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full">
-                {unreadMessages}
-              </span>
-            )}
-          </button>
-          <Link
-            to="/queue"
-            className="btn-secondary flex flex-col items-center justify-center p-4 h-24"
-          >
-            <ChartBarIcon className="h-6 w-6 mb-2" />
-            <span className="text-sm">View All Queues</span>
-          </Link>
-          <Link
-            to="/patients"
-            className="btn-secondary flex flex-col items-center justify-center p-4 h-24"
-          >
-            <UserIcon className="h-6 w-6 mb-2" />
-            <span className="text-sm">All Patients</span>
-          </Link>
-          <Link
-            to="/vitals"
-            className="btn-secondary flex flex-col items-center justify-center p-4 h-24"
-          >
-            <HeartIcon className="h-6 w-6 mb-2" />
-            <span className="text-sm">Record Vitals</span>
-          </Link>
-          <Link
-            to="/pharmacy"
-            className="btn-secondary flex flex-col items-center justify-center p-4 h-24"
-          >
-            <span className="text-lg mb-2">Rx</span>
-            <span className="text-sm">Pharmacy</span>
-          </Link>
-        </div>
-      </div>
     </div>
   );
 }

@@ -2,13 +2,13 @@ import React, { useEffect, useState, startTransition } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { PatientSearch } from "@/components/PatientSearch";
 import { VitalsForm } from "@/components/VitalsForm";
-import { db, Visit, Patient, generateId } from "@/db";
+import { db, Visit, Patient } from "@/db";
 import { HeartIcon } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PatientDetailSkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
-import { getActiveSiteName } from "@/services/activeSite";
+import { ensureTodaysVisit } from "@/services/visits";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
 
@@ -46,16 +46,8 @@ export function Vitals() {
 
   const handlePatientSelect = async (selectedPatient: Patient) => {
     try {
-      // Create a new visit for this patient
-      const newVisit: Visit = {
-        id: generateId(),
-        patientId: selectedPatient.id,
-        startedAt: new Date(),
-        siteName: await getActiveSiteName(),
-        status: "open",
-      };
-
-      await db.visits.add(newVisit);
+      // Continue today's visit if there is one; otherwise start it.
+      const newVisit: Visit = await ensureTodaysVisit(selectedPatient.id);
 
       setPatient(selectedPatient);
       setVisit(newVisit);

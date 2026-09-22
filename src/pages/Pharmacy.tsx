@@ -2,13 +2,13 @@ import React, { useEffect, useState, startTransition } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { PatientSearch } from "@/components/PatientSearch";
 import { DispenseForm } from "@/components/DispenseForm";
-import { db, Visit, Patient, Consultation, generateId } from "@/db";
+import { db, Visit, Patient, Consultation } from "@/db";
 import { BeakerIcon } from "@heroicons/react/24/outline";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PharmacySkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
-import { getActiveSiteName } from "@/services/activeSite";
+import { ensureTodaysVisit } from "@/services/visits";
 
 export function Pharmacy() {
   const { visitId } = useParams<{ visitId: string }>();
@@ -48,16 +48,8 @@ export function Pharmacy() {
 
   const handlePatientSelect = async (selectedPatient: Patient) => {
     try {
-      // Create a new visit for this patient
-      const newVisit: Visit = {
-        id: generateId(),
-        patientId: selectedPatient.id,
-        startedAt: new Date(),
-        siteName: await getActiveSiteName(),
-        status: "open",
-      };
-
-      await db.visits.add(newVisit);
+      // Continue today's visit if there is one; otherwise start it.
+      const newVisit: Visit = await ensureTodaysVisit(selectedPatient.id);
 
       // Load consultation for this patient (most recent)
       const consultationData = await db.consultations

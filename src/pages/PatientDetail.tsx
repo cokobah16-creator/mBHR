@@ -191,6 +191,7 @@ export function PatientDetail() {
         startedAt: new Date(),
         siteName: await getActiveSiteName(),
         status: "open" as const,
+        _dirty: 1,
       };
 
       await db.visits.add(visit);
@@ -301,6 +302,7 @@ export function PatientDetail() {
         lga: data.lga,
         familyId: data.familyId,
         updatedAt: new Date(),
+        _dirty: 1,
       };
 
       await db.patients.update(patient.id, updatedPatient);

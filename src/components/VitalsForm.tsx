@@ -82,6 +82,7 @@ export function VitalsForm({
         bmi: bmi || undefined,
         flags,
         takenAt: new Date(),
+        _dirty: 1,
       };
 
       await db.vitals.add(vital);
