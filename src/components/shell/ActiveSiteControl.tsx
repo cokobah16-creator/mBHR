@@ -24,15 +24,28 @@ export function ActiveSiteControl() {
   const isAdmin = useAuthStore((s) => s.currentUser?.role === "admin");
   const { open, setOpen, ref } = usePopover();
   const [error, setError] = useState("");
+  // Switching away from a site already in use needs a second, explicit
+  // step: recording visits under the wrong outreach is hard to undo.
+  const [pending, setPending] = useState<{ id: string; name: string } | null>(null);
 
-  const choose = async (id: string | null) => {
+  const apply = async (id: string) => {
     setError("");
     try {
       await setActiveSite(id);
+      setPending(null);
       setOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not change site.");
     }
+  };
+
+  const choose = (id: string, name: string) => {
+    if (site?.id === id) {
+      setOpen(false);
+      return;
+    }
+    if (site) setPending({ id, name });
+    else apply(id);
   };
 
   const unset = !loading && !site;
@@ -41,7 +54,10 @@ export function ActiveSiteControl() {
     <div ref={ref} className="relative min-w-0">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          setPending(null);
+          setOpen(!open);
+        }}
         aria-haspopup="true"
         aria-expanded={open}
         className={`flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left min-h-touch-target max-w-full transition-colors ${
@@ -82,7 +98,26 @@ export function ActiveSiteControl() {
               {!site && ` Until one is chosen they are recorded as “${DEFAULT_SITE_NAME}”.`}
             </p>
           </div>
-          {options.length === 0 ? (
+          {pending ? (
+            <div className="space-y-3 px-3 py-3" role="alert">
+              <p className="text-body text-ink">
+                Switch from <strong>{site?.name}</strong> to{" "}
+                <strong>{pending.name}</strong>?
+              </p>
+              <p className="text-caption text-ink-muted">
+                Visits already recorded stay with {site?.name}. New visits on
+                this device will be recorded at {pending.name}.
+              </p>
+              <div className="flex gap-2">
+                <button type="button" className="btn-secondary flex-1 min-h-10 py-2" onClick={() => setPending(null)}>
+                  Keep {site?.name}
+                </button>
+                <button type="button" className="btn-primary flex-1 min-h-10 py-2" onClick={() => apply(pending.id)}>
+                  Switch
+                </button>
+              </div>
+            </div>
+          ) : options.length === 0 ? (
             <div className="px-3 py-3 text-body text-ink-secondary">
               No active sites yet.
               {isAdmin ? (
@@ -107,7 +142,7 @@ export function ActiveSiteControl() {
                 <li key={o.id} role="option" aria-selected={site?.id === o.id}>
                   <button
                     type="button"
-                    onClick={() => choose(o.id)}
+                    onClick={() => choose(o.id, o.name)}
                     className={`w-full text-left px-3 py-2.5 text-body hover:bg-surface-hover ${
                       site?.id === o.id ? "font-semibold text-primary" : "text-ink"
                     }`}

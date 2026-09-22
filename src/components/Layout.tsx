@@ -34,6 +34,9 @@ import {
   DocumentChartBarIcon,
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
+  UserPlusIcon,
+  DocumentTextIcon,
+  CalendarDaysIcon,
 } from "@heroicons/react/24/outline";
 
 // Pharmacy Overlay Component
@@ -230,8 +233,14 @@ export function Layout({ children }: LayoutProps) {
         { key: "dashboard", name: t("nav.dashboard"), href: "/dashboard", icon: HomeIcon },
         { key: "patients", name: t("nav.patients"), href: "/patients", icon: UserGroupIcon },
         { key: "queue", name: t("nav.queue"), href: "/queue", icon: QueueListIcon },
+        ...(hasPerm("register")
+          ? [{ key: "register", name: "Registration", href: "/register", icon: UserPlusIcon }]
+          : []),
         ...(hasPerm("vitals")
           ? [{ key: "vitals", name: "Vitals", href: "/vitals", icon: HeartIcon }]
+          : []),
+        ...(hasPerm("consult")
+          ? [{ key: "consult", name: "Consultation", href: "/consult", icon: DocumentTextIcon }]
           : []),
         ...(hasPerm("consult")
           ? [
@@ -247,6 +256,13 @@ export function Layout({ children }: LayoutProps) {
         ...(hasRole("doctor", "nurse", "admin")
           ? [
               { key: "labs", name: "Labs", href: "/labs", icon: DocumentMagnifyingGlassIcon },
+            ]
+          : []),
+        ...(hasRole("doctor", "nurse", "volunteer", "admin")
+          ? [{ key: "appointments", name: "Appointments", href: "/appointments", icon: CalendarDaysIcon }]
+          : []),
+        ...(hasRole("doctor", "nurse", "admin")
+          ? [
               { key: "televisits", name: t("nav.televisits"), href: "/televisits", icon: VideoCameraIcon },
             ]
           : []),
@@ -268,7 +284,7 @@ export function Layout({ children }: LayoutProps) {
       ],
     },
     {
-      label: "Training",
+      label: "Games & training",
       items: [
         { key: "games", name: t("nav.games"), href: "/games", icon: TrophyIcon },
         ...(hasRole("volunteer", "nurse", "admin")
