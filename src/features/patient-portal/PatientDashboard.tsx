@@ -1,22 +1,10 @@
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  CalendarIcon,
-  HeartIcon,
-  BeakerIcon,
-  EnvelopeIcon,
-  BellIcon,
-  ClipboardDocumentListIcon,
-  PlusIcon,
-  ArrowDownTrayIcon,
-  ShieldCheckIcon,
-  ChatBubbleLeftRightIcon,
-  InformationCircleIcon,
-  MapPinIcon,
-  WifiIcon,
-} from "@heroicons/react/24/outline";
+import { HeartIcon } from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
+import { PortalHome, type NextAppointment } from "./PortalHome";
+import { PortalSkeleton } from "@/components/ui/Skeleton";
+import { getPatientAppointments } from "@/services/appointments";
 import { useT } from "@/hooks/useT";
 import {
   getPatientProfile,
@@ -94,7 +82,7 @@ function VitalCard({
           {t(statusLabelKey[status])}
         </span>
       </div>
-      <p className="text-xl font-bold text-gray-900">{value}</p>
+      <p className="text-h2 text-ink">{value}</p>
       <p className="text-xs text-gray-500">{unit}</p>
     </div>
   );
@@ -118,6 +106,7 @@ function SupabaseDashboard() {
     medications: [],
     visits: [],
   });
+  const [nextAppointment, setNextAppointment] = useState<NextAppointment | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -151,6 +140,30 @@ function SupabaseDashboard() {
         getVisits(patientId),
       ]);
 
+      // Best effort: the home screen still works if appointments fail to load.
+      getPatientAppointments(patientId)
+        .then((appts) => {
+          const now = Date.now();
+          const next = appts
+            .filter(
+              (a) =>
+                (a.status === "scheduled" || a.status === "confirmed") &&
+                new Date(a.scheduledAt).getTime() >= now,
+            )
+            .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0];
+          setNextAppointment(
+            next
+              ? {
+                  scheduledAt: new Date(next.scheduledAt),
+                  type: next.appointmentType,
+                  televisit: next.visitMode === "televisit",
+                  meetingLink: next.meetingLink,
+                }
+              : null,
+          );
+        })
+        .catch(() => setNextAppointment(undefined));
+
       setState({
         profile: profileRes.data,
         vitals: vitalsResult.data ?? [],
@@ -176,53 +189,14 @@ function SupabaseDashboard() {
   const bpDia = latest?.diastolic ?? 0;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      {/* Welcome */}
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <div className="flex items-start justify-between flex-wrap gap-2">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              {t("portal.welcome", { name: profile.givenName })}
-            </h1>
-            <p className="text-gray-600 mt-1">{t("portal.welcomeSubtitle")}</p>
-          </div>
-          <span className="flex items-center gap-2 text-sm text-green-600">
-            <WifiIcon className="w-4 h-4" />
-            {t("portal.connected")}
-          </span>
-        </div>
-      </div>
-
-      {/* Stats row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <StatTile
-          icon={<CalendarIcon className="w-6 h-6 text-blue-600" />}
-          bg="bg-blue-100"
-          label={t("portal.stats.visits")}
-          value={visits.length}
-          to="/patient/appointments"
-        />
-        <StatTile
-          icon={<HeartIcon className="w-6 h-6 text-red-600" />}
-          bg="bg-red-100"
-          label={t("portal.stats.medications")}
-          value={medications.length}
-          to="/patient/medications"
-        />
-        <StatTile
-          icon={<BeakerIcon className="w-6 h-6 text-purple-600" />}
-          bg="bg-purple-100"
-          label={t("portal.stats.vitalRecords")}
-          value={vitals.length}
-          to="/patient/medical-history"
-        />
-      </div>
-
+    <div>
+      <PortalHome name={profile.givenName} nextAppointment={nextAppointment} />
+      <div className="mx-auto max-w-3xl space-y-5 px-4 pb-8">
       {/* Vitals */}
       {latest && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="panel p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-gray-900">
+            <h2 className="text-h2 text-ink">
               {t("portal.section.latestVitals")}
             </h2>
             <Link
@@ -266,13 +240,13 @@ function SupabaseDashboard() {
       )}
 
       {/* Medications */}
-      <div className="bg-white rounded-xl shadow-sm p-6">
+      <div className="panel p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-gray-900">
+          <h2 className="text-h2 text-ink">
             {t("portal.section.activeMedications")}
           </h2>
           <Link
-            to="/patient/medications"
+            to="/patient/prescriptions"
             className="text-sm text-blue-600 hover:text-blue-700 font-medium"
           >
             {t("portal.viewAll")} →
@@ -305,9 +279,9 @@ function SupabaseDashboard() {
 
       {/* Recent Visits */}
       {visits.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="panel p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-gray-900">
+            <h2 className="text-h2 text-ink">
               {t("portal.section.recentVisits")}
             </h2>
             <Link
@@ -337,7 +311,7 @@ function SupabaseDashboard() {
         </div>
       )}
 
-      <QuickActions />
+      </div>
     </div>
   );
 }
@@ -412,53 +386,25 @@ function OfflineDashboard() {
   const { patient, upcomingAppointments, recentVitals, activeMedications } =
     data;
 
+  const next = [...upcomingAppointments]
+    .filter((a) => new Date(a.scheduledAt).getTime() >= Date.now())
+    .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0];
+
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      {/* Welcome */}
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <div className="flex items-start justify-between flex-wrap gap-2">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              {t("portal.welcome", { name: patient.givenName })}
-            </h1>
-            <p className="text-gray-600 mt-1">{t("portal.welcomeSubtitle")}</p>
-          </div>
-          <span className="flex items-center gap-2 text-sm text-yellow-600">
-            <WifiIcon className="w-4 h-4" />
-            {t("portal.offlineMode")}
-          </span>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <StatTile
-          icon={<CalendarIcon className="w-6 h-6 text-blue-600" />}
-          bg="bg-blue-100"
-          label={t("portal.stats.appointments")}
-          value={upcomingAppointments.length}
-          to="/patient/appointments"
-        />
-        <StatTile
-          icon={<EnvelopeIcon className="w-6 h-6 text-green-600" />}
-          bg="bg-green-100"
-          label={t("portal.stats.unreadMessages")}
-          value={data.unreadMessages}
-          to="/patient/messages"
-        />
-        <StatTile
-          icon={<BellIcon className="w-6 h-6 text-yellow-600" />}
-          bg="bg-yellow-100"
-          label={t("portal.stats.notifications")}
-          value={data.unreadNotifications}
-          to="/patient/notifications"
-        />
-      </div>
-
+    <div>
+      <PortalHome
+        name={patient.givenName}
+        nextAppointment={next ? { scheduledAt: new Date(next.scheduledAt), type: next.appointmentType } : null}
+        unreadMessages={data.unreadMessages}
+      />
+      <div className="mx-auto max-w-3xl space-y-5 px-4 pb-8">
+        <p className="banner banner-warning text-caption" role="status">
+          {t("portal.offlineMode")}
+        </p>
       {/* Vitals */}
       {recentVitals && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
+        <div className="panel p-5">
+          <h2 className="text-h2 text-ink mb-4">
             {t("portal.section.recentVitals")}
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -484,8 +430,8 @@ function OfflineDashboard() {
 
       {/* Medications */}
       {activeMedications.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
+        <div className="panel p-5">
+          <h2 className="text-h2 text-ink mb-4">
             {t("portal.section.activeMedications")}
           </h2>
           <div className="space-y-3">
@@ -507,7 +453,7 @@ function OfflineDashboard() {
         </div>
       )}
 
-      <QuickActions />
+      </div>
     </div>
   );
 }
@@ -515,110 +461,14 @@ function OfflineDashboard() {
 // ─── Shared sub-components ────────────────────────────────────────────────────
 
 function Spinner() {
-  return (
-    <div className="flex items-center justify-center min-h-screen">
-      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
+  return <PortalSkeleton />;
 }
 
 function ErrorCard({ message }: { message: string }) {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-        <p className="text-red-800">{message}</p>
-      </div>
-    </div>
-  );
-}
-
-function StatTile({
-  icon,
-  bg,
-  label,
-  value,
-  to,
-}: {
-  icon: ReactNode;
-  bg: string;
-  label: string;
-  value: number;
-  to: string;
-}) {
-  return (
-    <Link
-      to={to}
-      className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-shadow"
-    >
-      <div className="flex items-center gap-4">
-        <div
-          className={`w-12 h-12 ${bg} rounded-lg flex items-center justify-center`}
-        >
-          {icon}
-        </div>
-        <div>
-          <p className="text-sm text-gray-600">{label}</p>
-          <p className="text-2xl font-bold text-gray-900">{value}</p>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-function QuickActions() {
-  const { t } = useT();
-  return (
-    <div className="bg-info rounded-lg p-6 text-white">
-      <h2 className="text-xl font-bold mb-4">
-        {t("portal.section.quickActions")}
-      </h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {[
-          {
-            to: "/patient/appointments",
-            icon: <PlusIcon className="w-5 h-5" />,
-            labelKey: "portal.action.bookVisit",
-          },
-          {
-            to: "/patient/medical-history",
-            icon: <ClipboardDocumentListIcon className="w-5 h-5" />,
-            labelKey: "portal.action.viewRecords",
-          },
-          {
-            to: "/patient/messages",
-            icon: <ChatBubbleLeftRightIcon className="w-5 h-5" />,
-            labelKey: "portal.action.talkToWorker",
-          },
-          {
-            to: "/patient/medications",
-            icon: <InformationCircleIcon className="w-5 h-5" />,
-            labelKey: "portal.action.medInfo",
-          },
-          {
-            to: "/patient/outreach",
-            icon: <MapPinIcon className="w-5 h-5" />,
-            labelKey: "portal.action.findOutreach",
-          },
-          {
-            to: "/patient/export",
-            icon: <ArrowDownTrayIcon className="w-5 h-5" />,
-            labelKey: "portal.action.downloadRecords",
-          },
-          {
-            to: "/patient/data-sharing",
-            icon: <ShieldCheckIcon className="w-5 h-5" />,
-            labelKey: "portal.action.dataSharing",
-          },
-        ].map(({ to, icon, labelKey }) => (
-          <Link
-            key={to}
-            to={to}
-            className="flex items-center gap-3 bg-white/10 hover:bg-white/20 rounded-lg p-4 transition-colors min-h-[60px]"
-          >
-            {icon}
-            <span className="font-medium">{t(labelKey)}</span>
-          </Link>
-        ))}
+      <div className="banner banner-danger" role="alert">
+        <p>{message}</p>
       </div>
     </div>
   );

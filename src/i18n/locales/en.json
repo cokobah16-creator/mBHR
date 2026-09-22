@@ -338,5 +338,25 @@
   "portal.error.loadInfo": "An error occurred loading your information.",
   "portal.error.loadDashboard": "Failed to load dashboard data.",
   "language.select": "Select Language",
-  "language.audioSupport": "Audio support available for key phrases"
+  "language.audioSupport": "Audio support available for key phrases",
+
+  "portal.home.greeting.morning": "Good morning, {{name}}",
+  "portal.home.greeting.afternoon": "Good afternoon, {{name}}",
+  "portal.home.greeting.evening": "Good evening, {{name}}",
+  "portal.home.nextAppointment": "Next appointment",
+  "portal.home.noAppointment": "No upcoming appointments.",
+  "portal.home.videoVisit": "Video visit",
+  "portal.home.joinVideo": "Join video visit",
+  "portal.home.yourHealth": "Your health",
+  "portal.home.visits": "Visits",
+  "portal.home.conditions": "Conditions",
+  "portal.home.medicines": "Medicines",
+  "portal.home.request": "Request",
+  "portal.home.appointment": "Appointment",
+  "portal.home.refill": "Prescription refill",
+  "portal.home.televisit": "Video visit",
+  "portal.home.messagesHint": "Send a message to the outreach team",
+  "portal.home.outreachHint": "Upcoming medical outreaches near you",
+  "portal.home.yourData": "Your records and privacy",
+  "portal.home.notEmergency": "Not for emergencies. If you need urgent help, go to the nearest hospital."
 }
