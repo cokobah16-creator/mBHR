@@ -132,7 +132,7 @@ export default defineConfig(({ command, mode }) => {
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,mp3}"],
           maximumFileSizeToCacheInBytes: 3000000,
-          // Runtime caching tuned per host. See docs/CACHING_STRATEGY.md.
+          // Runtime caching tuned per host. See docs/architecture/CACHING_STRATEGY.md.
           runtimeCaching: [
             {
               // Supabase REST (PostgREST). Network-first with a short timeout

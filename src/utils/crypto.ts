@@ -1,7 +1,7 @@
 /**
  * PHI field-level encryption for IndexedDB.
  *
- * Design: docs/PHI_ENCRYPTION_SPIKE.md
+ * Design: docs/security/PHI_ENCRYPTION_SPIKE.md
  * Tracking: github.com/cokobah16-creator/mBHR/issues/107
  *
  * Key hierarchy (all keys ephemeral — never written to storage):

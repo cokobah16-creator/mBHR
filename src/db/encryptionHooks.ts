@@ -1,7 +1,7 @@
 /**
  * Dexie creating/updating/reading hooks for PHI field-level encryption.
  *
- * Design: docs/PHI_ENCRYPTION_SPIKE.md
+ * Design: docs/security/PHI_ENCRYPTION_SPIKE.md
  * Tracking: github.com/cokobah16-creator/mBHR/issues/107
  *
  * Activation modes (stored in db.settings key="encryption_v1"):

@@ -1223,7 +1223,7 @@ export class MBHRDatabase extends Dexie {
     });
 
     // v16 — PHI field-level encryption (encryption_v1 sprint).
-    // See: docs/PHI_ENCRYPTION_SPIKE.md, github issue #107.
+    // See: docs/security/PHI_ENCRYPTION_SPIKE.md, github issue #107.
     //
     // No new Dexie indexes — encrypted columns (_enc, _iv, _v) are stored
     // but never queried directly. Operational/index columns stay plaintext.
