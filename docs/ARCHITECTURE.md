@@ -355,7 +355,7 @@ npm run build
 ## Resources
 
 - [Project README](../README.md)
-- [Sprint 2 Complete](../SPRINT_2_COMPLETE.md)
+- [Sprint 2 notes (archived)](./archive/development-history/SPRINT_2_COMPLETE.md)
 - [Testing Guide](./TESTING_GUIDE.md)
 - [Supabase Docs](https://supabase.com/docs)
 - [Dexie.js Docs](https://dexie.org)
