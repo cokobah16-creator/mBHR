@@ -4,6 +4,12 @@ import { db, QueueItem } from "@/db";
 
 type Stage = "registration" | "vitals" | "consult" | "pharmacy";
 const STAGES: Stage[] = ["registration", "vitals", "consult", "pharmacy"];
+const STAGE_LABEL: Record<Stage, string> = {
+  registration: "Registration",
+  vitals: "Vitals",
+  consult: "Consultation",
+  pharmacy: "Pharmacy",
+};
 
 interface Lane {
   stage: Stage;
@@ -53,32 +59,37 @@ export default function PublicDisplay() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-black text-white p-8 font-semibold">
-      <h1 className="text-4xl mb-6">Now Serving</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div className="min-h-screen bg-zinc-950 p-6 text-white sm:p-10">
+      <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
+        Now serving
+      </h1>
+      <ul className="mt-8 divide-y divide-zinc-800 border-y border-zinc-800">
         {lanes.map((l) => (
-          <div
+          <li
             key={l.stage}
-            className="rounded-2xl p-6 bg-zinc-900 border border-zinc-700"
+            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-6 py-6"
+            aria-live="polite"
           >
-            <div className="text-zinc-400 text-xl capitalize">{l.stage}</div>
-            <div className="text-5xl md:text-6xl my-2 tabular-nums">
-              {l.current ?? "—"}
+            <div className="min-w-0">
+              <div className="text-2xl text-zinc-400 sm:text-3xl">
+                {STAGE_LABEL[l.stage]}
+              </div>
+              <div className="mt-2 text-lg text-zinc-500 sm:text-xl">
+                Next:{" "}
+                <span className="tabular-nums text-zinc-300">
+                  {l.next.length ? l.next.join("   ") : "—"}
+                </span>
+              </div>
             </div>
-            <div className="text-zinc-400 text-sm">Up next</div>
-            <div className="flex gap-3 text-2xl mt-1 tabular-nums">
-              {l.next.length ? (
-                l.next.map((n) => <span key={n}>{n}</span>)
-              ) : (
-                <span>—</span>
-              )}
+            <div className="text-right text-6xl font-bold tabular-nums sm:text-8xl">
+              {l.current ?? <span className="text-zinc-700">—</span>}
             </div>
-          </div>
+          </li>
         ))}
-      </div>
-      <div className="mt-6 text-zinc-500 text-sm">
-        Auto-updates offline via IndexedDB
-      </div>
+      </ul>
+      <p className="mt-8 text-2xl text-zinc-400">
+        Please listen for your ticket number.
+      </p>
     </div>
   );
 }
