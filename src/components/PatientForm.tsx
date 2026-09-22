@@ -14,7 +14,8 @@ import { enrollPatientInPortal } from "@/services/unifiedPortalEnrollment";
 import { useToast } from "@/stores/toast";
 
 interface PatientFormProps {
-  onSuccess?: (patientId: string) => void;
+  /** `existing` is true when staff chose an already-registered patient. */
+  onSuccess?: (patientId: string, opts?: { existing?: boolean }) => void;
   onCancel?: () => void;
 }
 
@@ -164,7 +165,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
       }
     } else if (action === "merge" && winnerId) {
       // Use existing patient
-      onSuccess?.(winnerId);
+      onSuccess?.(winnerId, { existing: true });
     }
 
     setDedupeData(null);

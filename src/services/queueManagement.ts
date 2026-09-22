@@ -193,6 +193,22 @@ export class QueueManagement {
     if (nextStage) {
       // Add to next stage
       await this.addToQueue(patientId, nextStage, "normal");
+    } else {
+      // Pharmacy was the last stage: the patient has left the flow, so
+      // their open visit ends here. Without this, visits stayed open for
+      // ever and a returning patient's new care was filed under an old visit.
+      try {
+        const open = await db.visits
+          .where("patientId")
+          .equals(patientId)
+          .and((v) => v.status === "open")
+          .toArray();
+        for (const v of open) {
+          await db.visits.update(v.id, { status: "closed", _dirty: 1 });
+        }
+      } catch (err) {
+        logger.warn("Could not close visit after pharmacy:", err);
+      }
     }
 
     // Reorder current stage

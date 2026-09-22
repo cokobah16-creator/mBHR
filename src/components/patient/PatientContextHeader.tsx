@@ -59,7 +59,13 @@ export function PatientContextHeader({
               .toArray()
               .then((vs) =>
                 vs
-                  .filter((v) => v.status === "open")
+                  // Only today's visit counts as "in progress"; an old visit
+                  // left open is finished care, not the current stage.
+                  .filter(
+                    (v) =>
+                      v.status === "open" &&
+                      new Date(v.startedAt).toDateString() === new Date().toDateString(),
+                  )
                   .sort(
                     (a, b) =>
                       new Date(b.startedAt).getTime() -

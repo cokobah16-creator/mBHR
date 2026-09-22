@@ -561,7 +561,14 @@ function App() {
                           </RequirePermission>
                         }
                       />
-                      <Route path="/pharmacy" element={<Pharmacy />} />
+                      <Route
+                        path="/pharmacy"
+                        element={
+                          <RequirePermission permission="dispense">
+                            <Pharmacy />
+                          </RequirePermission>
+                        }
+                      />
                       <Route
                         path="/pharmacy/:visitId"
                         element={

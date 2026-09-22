@@ -24,8 +24,10 @@ import { PatientContextHeader } from "@/components/patient/PatientContextHeader"
 import {
   derivePatientFlow,
   currentFlowStage,
+  FLOW_STAGE_LABELS,
   type FlowStage,
 } from "@/services/patientFlow";
+import { can, type Permission } from "@/auth/roles";
 import { formatPatientId } from "@/utils/patient";
 import {
   UserIcon,
@@ -43,6 +45,13 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import { getActiveSiteName } from "@/services/activeSite";
+
+const STAGE_PERMISSION: Record<FlowStage, Permission> = {
+  registration: "vitals",
+  vitals: "vitals",
+  consult: "consult",
+  pharmacy: "dispense",
+};
 
 const STAGE_ROUTE: Record<FlowStage, string> = {
   registration: "/vitals",
@@ -133,7 +142,11 @@ export function PatientDetail() {
       ]);
 
       setPatient(patientData || null);
-      setVisits(visitsData);
+      setVisits(
+        [...visitsData].sort(
+          (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
+        ),
+      );
       setVitals(vitalsData);
       setConsultations(consultationsData);
       setDispenses(dispensesData);
@@ -334,15 +347,25 @@ export function PatientDetail() {
   }
 
   const fullName = `${patient.givenName} ${patient.familyName}`;
-  const openVisit = visits.find((v) => v.status === "open");
-  const openVisitStage = openVisit
+  // Only today's open visit with a stage still to do can be continued;
+  // anything older is finished care and must not receive new records.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const todaysOpenVisit = [...visits]
+    .filter((v) => v.status === "open" && new Date(v.startedAt) >= startOfToday)
+    .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())[0];
+  const todaysStage = todaysOpenVisit
     ? currentFlowStage(
-        derivePatientFlow({ visit: openVisit, vitals, consultations, dispenses }),
+        derivePatientFlow({ visit: todaysOpenVisit, vitals, consultations, dispenses }),
       )
     : null;
-  const continuePath = openVisit
-    ? `${STAGE_ROUTE[openVisitStage ?? "vitals"]}/${openVisit.id}`
-    : null;
+  const openVisit = todaysStage ? todaysOpenVisit : undefined;
+  const role = user?.role;
+  const canContinue =
+    !!openVisit && !!todaysStage && !!role && can(role, STAGE_PERMISSION[todaysStage]);
+  const continuePath =
+    openVisit && todaysStage ? `${STAGE_ROUTE[todaysStage]}/${openVisit.id}` : null;
+  const canStartVisit = !!role && can(role, "vitals");
 
   return (
     <div className="space-y-6">
@@ -371,18 +394,26 @@ export function PatientDetail() {
                 </button>
               )}
               {openVisit ? (
-                <button
-                  onClick={() => continuePath && navigate(continuePath)}
-                  className="btn-primary"
-                >
-                  <PlayIcon className="h-5 w-5" aria-hidden />
-                  Continue visit
-                </button>
+                canContinue ? (
+                  <button
+                    onClick={() => continuePath && navigate(continuePath)}
+                    className="btn-primary"
+                  >
+                    <PlayIcon className="h-5 w-5" aria-hidden />
+                    Continue visit
+                  </button>
+                ) : (
+                  <Link to="/queue" className="btn-secondary">
+                    In the queue for {todaysStage ? FLOW_STAGE_LABELS[todaysStage] : "care"}
+                  </Link>
+                )
               ) : (
-                <button onClick={startNewVisit} className="btn-primary">
-                  <PlayIcon className="h-5 w-5" aria-hidden />
-                  Start visit
-                </button>
+                canStartVisit && (
+                  <button onClick={startNewVisit} className="btn-primary">
+                    <PlayIcon className="h-5 w-5" aria-hidden />
+                    Start visit
+                  </button>
+                )
               )}
             </>
           )

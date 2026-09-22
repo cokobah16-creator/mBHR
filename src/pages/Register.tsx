@@ -9,7 +9,10 @@ export function Register() {
   const navigate = useNavigate();
   const { push: pushToast } = useToast();
 
-  const handleSuccess = async (patientId: string) => {
+  const handleSuccess = async (
+    patientId: string,
+    opts?: { existing?: boolean },
+  ) => {
     // Tell staff what happened and what comes next, then open the record.
     try {
       const [patient, queued] = await Promise.all([
@@ -23,10 +26,14 @@ export function Register() {
       const name = patient ? `${patient.givenName} ${patient.familyName}` : "Patient";
       pushToast({
         id: crypto.randomUUID(),
-        title: `${name} registered`,
-        body: queued?.ticketNumber
-          ? `Ticket ${queued.ticketNumber} · added to the queue.`
-          : "Added to the queue.",
+        title: opts?.existing
+          ? `Opened existing record for ${name}`
+          : `${name} registered`,
+        body: queued
+          ? `${queued.ticketNumber ? `Ticket ${queued.ticketNumber} · ` : ""}in the queue.`
+          : opts?.existing
+            ? "No new record was created. Start a visit from their record."
+            : "Not in the queue yet — start a visit from their record.",
       });
     } catch {
       pushToast({ id: crypto.randomUUID(), title: "Patient registered" });

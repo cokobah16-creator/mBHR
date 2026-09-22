@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   db as mbhrDb,
   ulid,
@@ -49,7 +49,7 @@ export default function Dispense() {
   const [error, setError] = useState("");
   const [allergyAck, setAllergyAck] = useState(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [rxData, batchesData, itemsData] = await Promise.all([
         mbhrDb.prescriptions.where("status").equals("open").toArray(),
@@ -72,31 +72,36 @@ export default function Dispense() {
     } catch (err) {
       console.error("Error loading dispense data:", err);
       setRx([]);
-      setError("Could not load prescriptions on this device.");
+      setError(
+        "Prescriptions could not be read on this device. Reload the page; nothing has been dispensed.",
+      );
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   const chosen = rx?.find((r) => r.id === selected);
+  const chosenPatientId = chosen?.patientId;
 
+  // Keyed on ids, not the object: reloading data after a failed dispense
+  // must not wipe the error the pharmacist needs to read.
   useEffect(() => {
     setAllergyAck(false);
     setError("");
-    if (!chosen) {
+    if (!chosenPatientId) {
       setAllergens([]);
       return;
     }
     db.patientAllergies
       .where("patientId")
-      .equals(chosen.patientId)
+      .equals(chosenPatientId)
       .filter((a) => a.isActive === 1 && a.allergyType === "medication")
       .toArray()
       .then((as) => setAllergens(as.map((a) => a.allergen)))
       .catch(() => setAllergens([]));
-  }, [chosen]);
+  }, [selected, chosenPatientId]);
 
   const plans: LinePlan[] = useMemo(() => {
     if (!chosen) return [];
@@ -236,6 +241,13 @@ export default function Dispense() {
         title="Dispense prescriptions"
         description="Stock is taken from the lot that expires first. Expired lots are never used."
       />
+
+      {error && !chosen && (
+        <div className="banner banner-danger mb-4" role="alert">
+          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          {error}
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start">
         <section className="panel" aria-labelledby="open-rx-title">

@@ -90,6 +90,10 @@ export function Dashboard() {
     [startOfToday],
   );
 
+  // Live, so the first-run guidance disappears as soon as a patient exists
+  // (undefined while loading, so it never flashes).
+  const patientCount = useLiveQuery(() => db.patients.count(), []);
+
   const registeredToday =
     useLiveQuery(
       () => db.patients.where("createdAt").above(startOfToday).count(),
@@ -388,7 +392,7 @@ export function Dashboard() {
       <ExportButtons />
 
       {/* First-run guidance: only on a device with no patients yet */}
-      {stats.totalPatients === 0 && (
+      {patientCount === 0 && (
         <section aria-labelledby="start-title" className="panel">
           <div className="panel-header">
             <h2 id="start-title" className="panel-title">
