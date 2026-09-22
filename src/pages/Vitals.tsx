@@ -4,10 +4,14 @@ import { PatientSearch } from "@/components/PatientSearch";
 import { VitalsForm } from "@/components/VitalsForm";
 import { db, Visit, Patient, generateId } from "@/db";
 import { ArrowLeftIcon, HeartIcon } from "@heroicons/react/24/outline";
+import { getActiveSiteName } from "@/services/activeSite";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 
 export function Vitals() {
   const { visitId } = useParams<{ visitId: string }>();
   const navigate = useNavigate();
+  const currentUser = useAuthStore((s) => s.currentUser);
   const [visit, setVisit] = useState<Visit | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
@@ -43,7 +47,7 @@ export function Vitals() {
         id: generateId(),
         patientId: selectedPatient.id,
         startedAt: new Date(),
-        siteName: "Mobile Clinic",
+        siteName: await getActiveSiteName(),
         status: "open",
       };
 
@@ -60,7 +64,7 @@ export function Vitals() {
   const handleSuccess = () => {
     // Navigate to consultation or back to queue
     startTransition(() => {
-      if (visit) {
+      if (visit && currentUser && can(currentUser.role, "consult")) {
         navigate(`/consult/${visit.id}`);
       } else {
         navigate("/queue");

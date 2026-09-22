@@ -32,6 +32,7 @@ import {
   EnvelopeIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
+import { getActiveSiteName } from "@/services/activeSite";
 
 export function PatientDetail() {
   const { id } = useParams<{ id: string }>();
@@ -158,7 +159,7 @@ export function PatientDetail() {
         id: crypto.randomUUID(),
         patientId: patient.id,
         startedAt: new Date(),
-        siteName: "Mobile Clinic",
+        siteName: await getActiveSiteName(),
         status: "open" as const,
       };
 

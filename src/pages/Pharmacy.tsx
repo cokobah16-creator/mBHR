@@ -4,6 +4,7 @@ import { PatientSearch } from "@/components/PatientSearch";
 import { DispenseForm } from "@/components/DispenseForm";
 import { db, Visit, Patient, Consultation, generateId } from "@/db";
 import { ArrowLeftIcon, BeakerIcon } from "@heroicons/react/24/outline";
+import { getActiveSiteName } from "@/services/activeSite";
 
 export function Pharmacy() {
   const { visitId } = useParams<{ visitId: string }>();
@@ -48,7 +49,7 @@ export function Pharmacy() {
         id: generateId(),
         patientId: selectedPatient.id,
         startedAt: new Date(),
-        siteName: "Mobile Clinic",
+        siteName: await getActiveSiteName(),
         status: "open",
       };
 

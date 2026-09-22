@@ -5,10 +5,14 @@ import { SoapForm } from "@/components/SoapForm";
 import { db, Visit, Patient, Vital, generateId } from "@/db";
 import { getFlagColor, getFlagLabel } from "@/utils/vitals";
 import { ArrowLeftIcon, DocumentTextIcon } from "@heroicons/react/24/outline";
+import { getActiveSiteName } from "@/services/activeSite";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 
 export function Consult() {
   const { visitId } = useParams<{ visitId: string }>();
   const navigate = useNavigate();
+  const currentUser = useAuthStore((s) => s.currentUser);
   const [visit, setVisit] = useState<Visit | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
@@ -49,7 +53,7 @@ export function Consult() {
         id: generateId(),
         patientId: selectedPatient.id,
         startedAt: new Date(),
-        siteName: "Mobile Clinic",
+        siteName: await getActiveSiteName(),
         status: "open",
       };
 
@@ -73,7 +77,7 @@ export function Consult() {
   const handleSuccess = () => {
     // Navigate to pharmacy or back to queue
     startTransition(() => {
-      if (visit) {
+      if (visit && currentUser && can(currentUser.role, "dispense")) {
         navigate(`/pharmacy/${visit.id}`);
       } else {
         navigate("/queue");

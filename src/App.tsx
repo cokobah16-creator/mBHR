@@ -4,6 +4,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Layout } from "@/components/Layout";
 import RequireRoles from "@/components/RequireRoles";
+import RequirePermission from "@/components/RequirePermission";
 import Login from "@/pages/Login";
 import FirstRunSetup from "@/pages/FirstRunSetup";
 import { useAuthStore } from "@/stores/auth";
@@ -505,12 +506,47 @@ function App() {
                       <Route path="/queue" element={<Queue />} />
                       <Route path="/inventory" element={<Inventory />} />
                       <Route path="/users" element={<Users />} />
-                      <Route path="/vitals" element={<Vitals />} />
-                      <Route path="/vitals/:visitId" element={<Vitals />} />
-                      <Route path="/consult" element={<Consult />} />
-                      <Route path="/consult/:visitId" element={<Consult />} />
+                      <Route
+                        path="/vitals"
+                        element={
+                          <RequirePermission permission="vitals">
+                            <Vitals />
+                          </RequirePermission>
+                        }
+                      />
+                      <Route
+                        path="/vitals/:visitId"
+                        element={
+                          <RequirePermission permission="vitals">
+                            <Vitals />
+                          </RequirePermission>
+                        }
+                      />
+                      <Route
+                        path="/consult"
+                        element={
+                          <RequirePermission permission="consult">
+                            <Consult />
+                          </RequirePermission>
+                        }
+                      />
+                      <Route
+                        path="/consult/:visitId"
+                        element={
+                          <RequirePermission permission="consult">
+                            <Consult />
+                          </RequirePermission>
+                        }
+                      />
                       <Route path="/pharmacy" element={<Pharmacy />} />
-                      <Route path="/pharmacy/:visitId" element={<Pharmacy />} />
+                      <Route
+                        path="/pharmacy/:visitId"
+                        element={
+                          <RequirePermission permission="dispense">
+                            <Pharmacy />
+                          </RequirePermission>
+                        }
+                      />
 
                       {/* New MBHR Features */}
                       <Route
