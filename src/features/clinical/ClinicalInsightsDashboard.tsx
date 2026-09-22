@@ -147,8 +147,8 @@ export function ClinicalInsightsDashboard() {
           Clinical Decision Support
         </h2>
         <p className="text-gray-600">
-          AI-powered insights to help clinicians make better decisions and
-          identify high-risk patients
+          Rule-based alerts from recorded vitals and history to help
+          clinicians spot high-risk patients
         </p>
       </div>
 
@@ -412,10 +412,9 @@ export function ClinicalInsightsDashboard() {
           <div className="text-sm text-blue-900">
             <p className="font-medium mb-1">About Clinical Decision Support</p>
             <p className="text-blue-800">
-              This AI-powered system analyzes patient vitals, medical history,
-              and risk factors to provide intelligent alerts and
-              recommendations. It helps identify high-risk patients early and
-              suggests evidence-based interventions.
+              These alerts come from fixed rules applied to recorded vitals,
+              history and risk factors. They are prompts to look again, not
+              diagnoses — the treating clinician decides.
             </p>
           </div>
         </div>

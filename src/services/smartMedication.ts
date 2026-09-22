@@ -263,7 +263,9 @@ class SmartMedicationSystem {
       drug2: name2,
       description,
       recommendation,
-      references: ["BNF", "Micromedex"],
+      // No per-interaction source is stored; do not attribute these
+      // built-in rules to a named reference.
+      references: [],
     };
   }
 

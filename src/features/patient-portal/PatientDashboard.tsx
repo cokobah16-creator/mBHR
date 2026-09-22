@@ -568,7 +568,7 @@ function StatTile({
 function QuickActions() {
   const { t } = useT();
   return (
-    <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl shadow-sm p-6 text-white">
+    <div className="bg-info rounded-lg p-6 text-white">
       <h2 className="text-xl font-bold mb-4">
         {t("portal.section.quickActions")}
       </h2>

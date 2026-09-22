@@ -214,9 +214,9 @@ export function BulkPortalMigration() {
                     </div>
                     <div className="text-sm text-gray-500 mt-1">
                       {patient.email && (
-                        <span className="mr-4">📧 {patient.email}</span>
+                        <span className="mr-4">Email: {patient.email}</span>
                       )}
-                      {patient.phone && <span>📱 {patient.phone}</span>}
+                      {patient.phone && <span>Phone: {patient.phone}</span>}
                     </div>
                   </div>
                 </div>

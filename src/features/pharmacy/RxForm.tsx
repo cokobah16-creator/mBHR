@@ -59,7 +59,7 @@ export default function RxForm() {
         notes: "",
       });
 
-      alert("✅ Prescription saved successfully!");
+      alert("Prescription saved.");
     } catch (error) {
       console.error("Error saving prescription:", error);
       alert("Failed to save prescription");
@@ -120,7 +120,7 @@ export default function RxForm() {
             selectedItem.onHandQty <= selectedItem.reorderThreshold && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                 <div className="text-sm text-yellow-800">
-                  ⚠️ <strong>Low Stock:</strong> Only {selectedItem.onHandQty}{" "}
+                  <strong>Low stock:</strong> Only {selectedItem.onHandQty}{" "}
                   {selectedItem.unit} remaining
                 </div>
               </div>

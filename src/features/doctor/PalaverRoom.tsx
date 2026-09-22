@@ -399,33 +399,35 @@ export function PalaverRoom({ onClose, isPanel = false }: PalaverRoomProps) {
   return (
     <div className={containerClass}>
       {/* Header */}
-      <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white p-4">
+      <div className="bg-surface text-ink border-b border-line p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             {viewMode !== "inbox" && (
               <button
                 onClick={() => setViewMode("inbox")}
-                className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                className="p-1 hover:bg-surface-hover rounded-md transition-colors"
+                aria-label="Back"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
             )}
-            <ChatBubbleLeftRightIcon className="h-8 w-8" />
+            <ChatBubbleLeftRightIcon className="h-6 w-6 text-ink-muted" aria-hidden />
             <div>
-              <h2 className="text-xl font-bold">Palaver Room</h2>
-              <p className="text-sm text-emerald-100">Staff Messaging</p>
+              <h2 className="text-h2 text-ink">Palaver Room</h2>
+              <p className="text-sm text-ink-muted">Staff Messaging</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {unreadCount > 0 && (
-              <span className="px-2 py-1 bg-red-500 text-white text-sm font-bold rounded-full">
+              <span className="badge badge-danger">
                 {unreadCount} new
               </span>
             )}
             {onClose && (
               <button
                 onClick={onClose}
-                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                className="p-2 hover:bg-surface-hover rounded-md transition-colors"
+                aria-label="Close"
               >
                 <XMarkIcon className="h-5 w-5" />
               </button>

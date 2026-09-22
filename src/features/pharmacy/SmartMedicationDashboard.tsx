@@ -292,9 +292,9 @@ export function SmartMedicationDashboard() {
               <div className="text-sm text-blue-900">
                 <p className="font-medium mb-1">Smart Medication Safety System</p>
                 <p className="text-blue-800">
-                  This AI-powered system checks for drug interactions, allergy conflicts, appropriate dosing,
-                  and predicts medication adherence. All checks run completely offline using clinical guidelines
-                  from BNF, Micromedex, and WHO Essential Medicines List.
+                  These checks use a built-in list of common interactions, the patient’s recorded allergies
+                  and standard dose ranges. They run offline and are not exhaustive — always confirm with a
+                  current drug reference and the prescriber.
                 </p>
               </div>
             </div>

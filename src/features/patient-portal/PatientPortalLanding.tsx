@@ -11,7 +11,7 @@ import {
 
 export function PatientPortalLanding() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
+    <div className="min-h-screen bg-canvas">
       <header className="bg-white/80 backdrop-blur-sm border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5">
@@ -209,7 +209,7 @@ export function PatientPortalLanding() {
         </div>
 
         {/* FAQ Section */}
-        <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl shadow-xl p-8 mb-12 text-white">
+        <div className="bg-info rounded-lg p-8 mb-12 text-white">
           <h2 className="text-3xl font-bold mb-6 text-center">
             Frequently Asked Questions
           </h2>

@@ -372,11 +372,11 @@ export default function QuickTriage({
 
         {/* Priority Selection */}
         <div className="space-y-6">
-          {/* AI Suggestion */}
+          {/* Rule-based suggestion */}
           <div className="card bg-blue-50 border-blue-200">
             <div className="flex items-center space-x-2 mb-3">
               <HeartIcon className="h-5 w-5 text-blue-600" />
-              <h3 className="font-medium text-blue-800">AI Suggestion</h3>
+              <h3 className="font-medium text-blue-800">Suggested priority</h3>
             </div>
             <div className="flex items-center space-x-3">
               <div className="text-2xl">
@@ -444,7 +444,7 @@ export default function QuickTriage({
                     Priority Override
                   </h4>
                   <p className="text-sm text-yellow-700">
-                    You selected {selectedPriority} but AI suggests{" "}
+                    You selected {selectedPriority} but the ABC rules suggest{" "}
                     {suggestedPriority}. Please confirm your clinical judgment.
                   </p>
                 </div>
