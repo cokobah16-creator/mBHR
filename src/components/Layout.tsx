@@ -80,7 +80,7 @@ function PharmacyOverlay({ onClose }: { onClose: () => void }) {
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={onClose}
-          className="inline-flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900 focus:outline-none focus:ring"
+          className="btn-ghost"
         >
           <ArrowLeftIcon className="h-4 w-4" aria-hidden />
           Back to Dashboard
@@ -89,14 +89,14 @@ function PharmacyOverlay({ onClose }: { onClose: () => void }) {
         <button
           onClick={onClose}
           aria-label="Close pharmacy menu"
-          className="rounded-full p-2 hover:bg-gray-100 focus:outline-none focus:ring"
+          className="btn-ghost px-2"
         >
-          <XMarkIcon className="h-5 w-5" />
+          <XMarkIcon className="h-5 w-5" aria-hidden />
         </button>
       </div>
 
-      <h1 className="text-2xl font-bold mb-2">Pharmacy</h1>
-      <p className="text-gray-600 mb-6">Choose what you'd like to do.</p>
+      <h1 className="text-h1 text-ink mb-1">Pharmacy</h1>
+      <p className="text-body text-ink-muted mb-6">Choose what you'd like to do.</p>
 
       <section
         aria-label="Pharmacy options"
@@ -107,15 +107,15 @@ function PharmacyOverlay({ onClose }: { onClose: () => void }) {
             key={to}
             to={to}
             onClick={onClose}
-            className="group rounded-2xl border border-gray-200 p-5 hover:shadow-md focus:outline-none focus:ring focus:ring-primary/30"
+            className="group rounded-lg border border-line bg-surface p-5 transition-colors hover:border-line-strong hover:bg-surface-hover"
           >
             <div className="flex items-center gap-3">
-              <span className="rounded-xl bg-gray-100 p-3">
+              <span className="rounded-md bg-surface-sunken p-3 text-ink-secondary">
                 <Icon className="h-6 w-6" aria-hidden />
               </span>
-              <h2 className="text-lg font-semibold">{title}</h2>
+              <h2 className="text-h3 text-ink">{title}</h2>
             </div>
-            <p className="mt-3 text-sm text-gray-600">{desc}</p>
+            <p className="mt-3 text-body text-ink-muted">{desc}</p>
             <span className="sr-only">Open {title}</span>
           </Link>
         ))}

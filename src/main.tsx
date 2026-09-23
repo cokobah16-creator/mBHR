@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 import * as Sentry from "@sentry/react";
 import App from "./App";
 import { GlobalErrorBoundary } from "./components/GlobalErrorBoundary";
+import { ScreenSkeleton } from "./components/ui/Skeleton";
 import i18n from "./i18n";
 import "./index.css";
 
@@ -147,14 +148,7 @@ function renderFatal(msg: string) {
       <I18nextProvider i18n={i18n}>
         <GlobalErrorBoundary>
           <Suspense
-            fallback={
-              <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-green-600 mx-auto"></div>
-                  <p className="mt-4 text-gray-600 text-lg">Loading mBHR...</p>
-                </div>
-              </div>
-            }
+            fallback={<ScreenSkeleton label="Loading mBHR" />}
           >
             <BrowserRouter>
               <App />
