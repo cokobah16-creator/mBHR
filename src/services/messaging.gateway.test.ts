@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/db/outbox", () => ({
   MessageQueue: {
@@ -9,7 +9,6 @@ vi.mock("@/db/outbox", () => ({
     getStats: vi.fn(),
     renderTemplate: vi.fn(),
   },
-  outboxDb: { messageTemplates: { where: vi.fn() } },
 }));
 vi.mock("@/db", () => ({ db: { patients: { get: vi.fn() } } }));
 vi.mock("./preferences", () => ({ getPatientPreference: vi.fn() }));
@@ -20,9 +19,9 @@ vi.mock("@/lib/logger", () => ({
   info: vi.fn(),
 }));
 
+import * as messaging from "./messaging";
 import {
   selectGateway,
-  TermiiGateway,
   MockGateway,
   MessageService,
   ReminderSkippedError,
@@ -53,51 +52,47 @@ function outboxMessage(overrides: Partial<OutboundMessage> = {}): OutboundMessag
   };
 }
 
-describe("selectGateway", () => {
+describe("selectGateway (no SMS provider in the browser)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn());
   });
 
-  it("returns MockGateway when no key provided", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("always returns the non-sending MockGateway", () => {
     const gateway = selectGateway();
     expect(gateway).toBeInstanceOf(MockGateway);
+    expect(gateway.configured).toBe(false);
   });
 
-  it("returns MockGateway when key is empty string", () => {
-    const gateway = selectGateway("");
-    expect(gateway).toBeInstanceOf(MockGateway);
+  it("no longer exports a browser Termii gateway", () => {
+    expect("TermiiGateway" in messaging).toBe(false);
+    expect(Object.keys(messaging).join(",")).not.toMatch(/termii/i);
   });
 
-  it("returns TermiiGateway when a key is provided", () => {
-    const gateway = selectGateway("termii-abc-123");
-    expect(gateway).toBeInstanceOf(TermiiGateway);
+  it("never calls an SMS provider from the browser", async () => {
+    const gateway = selectGateway();
+    const result = await gateway.send(outboxMessage());
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(SMS_PROVIDER_NOT_CONFIGURED_ERROR);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("passes sender id through to TermiiGateway", () => {
-    const gateway = selectGateway("termii-key", "MBHR_CLINIC") as TermiiGateway;
-    // Access private field via type cast to verify it was stored
-    expect((gateway as unknown as Record<string, unknown>).senderId).toBe(
-      "MBHR_CLINIC",
-    );
-  });
-
-  it("uses default sender id when none supplied", () => {
-    const gateway = selectGateway("termii-key") as TermiiGateway;
-    expect((gateway as unknown as Record<string, unknown>).senderId).toBe(
-      "MBHR",
-    );
-  });
-
-  it("logs a warning when falling back to MockGateway", () => {
+  it("says SMS goes through the server function", () => {
     selectGateway();
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("VITE_TERMII_API_KEY not set"),
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("send-sms-reminder"),
     );
   });
 
-  it("does NOT log a warning when TermiiGateway is selected", () => {
-    selectGateway("real-key");
-    expect(logger.warn).not.toHaveBeenCalled();
+  it("getMessageService leaves queued messages for the notification worker", async () => {
+    const result = await messaging.getMessageService().processOutbox();
+    expect(result).toEqual({ sent: 0, failed: 0, skipped: "not_configured" });
+    expect(MessageQueue.markSent).not.toHaveBeenCalled();
   });
 });
 

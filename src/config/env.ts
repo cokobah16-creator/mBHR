@@ -31,9 +31,9 @@ const envSchema = z.object({
   // Observability
   VITE_SENTRY_DSN: z.string().default(""),
 
-  // Outbound messaging (optional)
-  VITE_TERMII_API_KEY: z.string().optional(),
-  VITE_TERMII_SENDER_ID: z.string().optional(),
+  // Outbound messaging. SMS provider keys (TERMII_API_KEY, TERMII_SENDER_ID)
+  // are Supabase function secrets only and must never be VITE_ variables:
+  // anything prefixed VITE_ is shipped to every browser.
   VITE_INVITE_RATE_MS: z.coerce.number().int().nonnegative().default(60_000),
 
   // Televisits (video-room base URL; rooms are appended as /mbhr-<uuid>).
@@ -57,8 +57,6 @@ function readRaw(): Record<string, unknown> {
     VITE_SITE_NAME: e.VITE_SITE_NAME,
     VITE_ORGANIZATION: e.VITE_ORGANIZATION,
     VITE_SENTRY_DSN: e.VITE_SENTRY_DSN,
-    VITE_TERMII_API_KEY: e.VITE_TERMII_API_KEY,
-    VITE_TERMII_SENDER_ID: e.VITE_TERMII_SENDER_ID,
     VITE_INVITE_RATE_MS: e.VITE_INVITE_RATE_MS,
     VITE_TELEVISIT_BASE_URL: e.VITE_TELEVISIT_BASE_URL,
   };
