@@ -11,6 +11,11 @@ vi.mock("@supabase/supabase-js", () => ({
   createClient: mockCreateClient,
 }));
 
+// Sync refuses to start without an online sign-in; these tests run signed in.
+vi.mock("@/lib/cloudSession", () => ({
+  checkCloudSession: vi.fn(() => Promise.resolve(true)),
+}));
+
 vi.mock("@/db", () => ({
   db: {
     // Runs the callback directly; the real Dexie transaction adds atomicity.

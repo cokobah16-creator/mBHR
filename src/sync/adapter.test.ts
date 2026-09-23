@@ -7,6 +7,11 @@ vi.mock("@supabase/supabase-js", () => ({
   createClient: () => ({ from: mockFrom }),
 }));
 
+// Sync refuses to start without an online sign-in; these tests run signed in.
+vi.mock("@/lib/cloudSession", () => ({
+  checkCloudSession: vi.fn(() => Promise.resolve(true)),
+}));
+
 // The adapter queues conflicts through the conflict service; not under test.
 vi.mock("./queueConflicts", () => ({
   queueSyncConflicts: vi.fn(),

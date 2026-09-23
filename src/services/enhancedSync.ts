@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { checkCloudSession } from "@/lib/cloudSession";
 import { db } from "@/db";
 import { queryCache } from "@/utils/queryCache";
 import logger from "@/lib/logger";
@@ -810,6 +811,10 @@ export class EnhancedSync {
         ...emptyResult("Already syncing or not initialized"),
         failedTables: [],
       };
+    }
+    // Never sync without an online sign-in (e.g. after a PIN unlock).
+    if (!(await checkCloudSession())) {
+      return { ...emptyResult("NoCloudSession"), failedTables: [] };
     }
 
     this.syncing = true;

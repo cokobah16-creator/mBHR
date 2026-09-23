@@ -15,6 +15,7 @@ const PERMISSION_LABEL: Record<Permission, string> = {
   approve_phi_conflicts: "approve sensitive record conflicts",
   audit_access: "view audit logs",
   resolve_conflicts: "resolve data conflicts",
+  lab_review: "mark lab results reviewed",
 };
 
 type Props = {
