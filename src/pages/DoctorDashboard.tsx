@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { db } from "@/db";
 import type { Patient, Visit, Vital, QueueItem } from "@/db";
 import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import { queueManagement } from "@/services/queueManagement";
 import {
   classifyBloodPressure,
@@ -63,7 +64,7 @@ function VitalsLine({ v }: { v?: Vital }) {
 }
 
 export function DoctorDashboard() {
-  const { currentUser } = useAuthStore();
+  const currentUser = useAuthStore((s) => s.currentUser);
   const [queuePatients, setQueuePatients] = useState<PatientInQueue[]>([]);
   const [stats, setStats] = useState({
     waiting: 0,
@@ -71,6 +72,7 @@ export function DoctorDashboard() {
     completed: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [showPalaverRoom, setShowPalaverRoom] = useState(false);
   const [showPatientMessages, setShowPatientMessages] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -86,21 +88,39 @@ export function DoctorDashboard() {
       const count = await palaverRoom.getUnreadCount(userId);
       setUnreadMessages(count);
     } catch (err) {
-      console.error("Failed to load unread Palaver Room count:", err);
+      console.error(
+        "Failed to load unread Palaver Room count:",
+        err instanceof Error ? err.name : err,
+      );
     }
   }, [userId]);
 
   const loadUnreadPatientMessages = useCallback(async () => {
     if (!supabase) return;
     try {
-      const { count } = await supabase
+      // Same rule as the Patient messages panel: unread messages from
+      // patients, not archived.
+      const { count, error } = await supabase
         .from("patient_secure_messages")
         .select("*", { count: "exact", head: true })
         .eq("from_patient", true)
-        .eq("read", false);
+        .eq("read", false)
+        .eq("is_archived", false);
+      if (error) {
+        // Keep the last known count rather than showing 0 when the check
+        // fails. Log the error code only: server messages can echo data.
+        console.error(
+          "Failed to load unread patient message count:",
+          error.code || "query error",
+        );
+        return;
+      }
       setUnreadPatientMessages(count || 0);
     } catch (err) {
-      console.error("Failed to load unread patient message count:", err);
+      console.error(
+        "Failed to load unread patient message count:",
+        err instanceof Error ? err.name : err,
+      );
     }
   }, []);
 
@@ -110,7 +130,10 @@ export function DoctorDashboard() {
       const requests = await getPendingTelevisitRequests();
       setPendingTelevisits(requests.length);
     } catch (err) {
-      console.error("Failed to load pending televisit count:", err);
+      console.error(
+        "Failed to load pending televisit count:",
+        err instanceof Error ? err.name : err,
+      );
     }
   }, []);
 
@@ -174,8 +197,13 @@ export function DoctorDashboard() {
         patientsWithData.sort((a, b) => a.position - b.position);
 
         setQueuePatients(patientsWithData);
+        setLoadFailed(false);
       } catch (error) {
-        console.error("Error loading doctor dashboard:", error);
+        setLoadFailed(true);
+        console.error(
+          "Error loading doctor dashboard:",
+          error instanceof Error ? error.name : error,
+        );
       } finally {
         if (isInitial) {
           setLoading(false);
@@ -212,7 +240,16 @@ export function DoctorDashboard() {
     loadPendingTelevisits,
   ]);
 
+  // Starting or opening a consultation writes to this device (queue status,
+  // today's visit), so the role is checked here as well as by the route.
+  const mayConsult = () => {
+    if (currentUser && can(currentUser.role, "consult")) return true;
+    setActionError("Your role cannot start or open a consultation. Ask a doctor to see this patient.");
+    return false;
+  };
+
   const handleStartConsultation = async (item: PatientInQueue) => {
+    if (!mayConsult()) return;
     try {
       await queueManagement.startService(
         item.id,
@@ -220,7 +257,10 @@ export function DoctorDashboard() {
       );
       await loadDashboardData();
     } catch (error) {
-      console.error("Error starting consultation:", error);
+      console.error(
+        "Error starting consultation:",
+        error instanceof Error ? error.name : error,
+      );
     }
   };
 
@@ -234,6 +274,8 @@ export function DoctorDashboard() {
   };
 
   const openConsultation = async (item: PatientInQueue) => {
+    if (!mayConsult()) return;
+    setActionError("");
     try {
       const visit = await ensureTodaysVisit(item.patientId);
       navigate(`/consult/${visit.id}`);
@@ -241,6 +283,18 @@ export function DoctorDashboard() {
       console.error("Could not open consultation:", error instanceof Error ? error.name : error);
       setActionError("Could not open the consultation on this device. Try again.");
     }
+  };
+
+  // Closing a drawer (Close button, Escape or the backdrop) re-checks the
+  // header badge so it matches what was read or archived in the drawer.
+  const closePatientMessages = () => {
+    setShowPatientMessages(false);
+    void loadUnreadPatientMessages();
+  };
+
+  const closePalaverRoom = () => {
+    setShowPalaverRoom(false);
+    void loadUnreadCount();
   };
 
   const startAndOpen = async (item: PatientInQueue) => {
@@ -276,13 +330,21 @@ export function DoctorDashboard() {
               <InboxIcon className="h-5 w-5" aria-hidden />
               Patient messages
               {unreadPatientMessages > 0 && (
-                <span className="badge badge-danger">{unreadPatientMessages}</span>
+                <span className="badge badge-danger">
+                  {unreadPatientMessages}
+                  <span className="sr-only"> unread</span>
+                </span>
               )}
             </button>
             <button type="button" onClick={() => setShowPalaverRoom(true)} className="btn-secondary">
               <ChatBubbleLeftRightIcon className="h-5 w-5" aria-hidden />
               Palaver Room
-              {unreadMessages > 0 && <span className="badge badge-danger">{unreadMessages}</span>}
+              {unreadMessages > 0 && (
+                <span className="badge badge-danger">
+                  {unreadMessages}
+                  <span className="sr-only"> unread</span>
+                </span>
+              )}
             </button>
             <Link to="/televisits" className="btn-secondary">
               <VideoCameraIcon className="h-5 w-5" aria-hidden />
@@ -296,6 +358,12 @@ export function DoctorDashboard() {
       {actionError && (
         <div className="banner banner-danger" role="alert">
           {actionError}
+        </div>
+      )}
+
+      {loadFailed && (
+        <div className="banner banner-warning" role="status">
+          Could not read the consultation queue on this device. The list below may be out of date; it will try again in a few seconds.
         </div>
       )}
 
@@ -351,7 +419,9 @@ export function DoctorDashboard() {
             Waiting for consultation ({waiting.length})
           </h2>
         </div>
-        {waiting.length === 0 ? (
+        {waiting.length === 0 && loadFailed ? (
+          <p className="px-4 py-6 text-body text-ink-muted">The queue could not be read on this device yet.</p>
+        ) : waiting.length === 0 ? (
           <EmptyState
             icon={CheckCircleIcon}
             title="No patients waiting for consultation"
@@ -392,13 +462,11 @@ export function DoctorDashboard() {
 
       {showPatientMessages && (
         <>
-          <div className="fixed inset-0 z-40 bg-ink/40" onClick={() => setShowPatientMessages(false)} aria-hidden />
+          <div className="fixed inset-0 z-40 bg-ink/40" onClick={closePatientMessages} aria-hidden />
           <div className="fixed bottom-0 right-0 top-0 z-50 w-full max-w-md shadow-2xl">
             <PatientMessagesPanel
-              onClose={() => {
-                setShowPatientMessages(false);
-                loadUnreadPatientMessages();
-              }}
+              onClose={closePatientMessages}
+              onUnreadChange={setUnreadPatientMessages}
             />
           </div>
         </>
@@ -406,14 +474,12 @@ export function DoctorDashboard() {
 
       {showPalaverRoom && (
         <>
-          <div className="fixed inset-0 z-40 bg-ink/40" onClick={() => setShowPalaverRoom(false)} aria-hidden />
+          <div className="fixed inset-0 z-40 bg-ink/40" onClick={closePalaverRoom} aria-hidden />
           <div className="fixed bottom-0 right-0 top-0 z-50 w-full max-w-md shadow-2xl">
             <PalaverRoom
-              onClose={() => {
-                setShowPalaverRoom(false);
-                loadUnreadCount();
-              }}
+              onClose={closePalaverRoom}
               isPanel
+              onUnreadChange={setUnreadMessages}
             />
           </div>
         </>
