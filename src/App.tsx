@@ -17,6 +17,16 @@ import {
 import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { AuthCallback } from "@/components/AuthCallback";
+import {
+  PageSkeleton,
+  PortalSkeleton,
+  ScreenSkeleton,
+} from "@/components/ui/Skeleton";
+
+// Public legal pages
+const PrivacyPolicy = lazy(() => import("@/pages/legal/PrivacyPolicy"));
+const TermsOfUse = lazy(() => import("@/pages/legal/TermsOfUse"));
+
 // Eager: the reset page must load before supabase-js strips the token from the
 // URL, and services/passwordReset captures that URL when it is first imported.
 import ForgotPassword from "@/pages/ForgotPassword";

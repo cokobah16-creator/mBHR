@@ -17,6 +17,14 @@ import { LabOrderForm } from "@/features/labs/LabOrderForm";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 
 type ConsultTab = SoapSection | "prescriptions" | "labs";
+// Tabs is generic over string ids; validate at the boundary rather than
+// casting setTab, so an unknown id can never reach consultation state.
+const isConsultTab = (id: string): id is ConsultTab =>
+  id === "soap" ||
+  id === "diagnoses" ||
+  id === "referral" ||
+  id === "prescriptions" ||
+  id === "labs";
 const isNotesTab = (t: ConsultTab): t is SoapSection =>
   t === "soap" || t === "diagnoses" || t === "referral";
 import { ensureTodaysVisit } from "@/services/visits";
@@ -174,7 +182,9 @@ export function Consult() {
             idPrefix="consult"
             label="Consultation sections"
             active={tab}
-            onChange={setTab}
+            onChange={(id) => {
+              if (isConsultTab(id)) setTab(id);
+            }}
             className="mb-3"
             tabs={[
               { id: "soap", label: "SOAP" },

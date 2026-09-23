@@ -1,4 +1,4 @@
-import React from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { LockClosedIcon } from "@heroicons/react/24/outline";
 import { useAuthStore } from "@/stores/auth";
@@ -19,7 +19,7 @@ const PERMISSION_LABEL: Record<Permission, string> = {
 
 type Props = {
   permission: Permission;
-  children: React.ReactNode;
+  children: ReactNode;
 };
 
 /**
