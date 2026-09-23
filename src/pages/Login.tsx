@@ -3,7 +3,6 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
 import { isOnlineSyncEnabled } from "@/sync/adapter";
 import { needsFirstRunSetup } from "@/db/firstRun";
-import { DeviceResetPanel } from "@/components/DeviceResetPanel";
 
 export default function Login() {
   const [mode, setMode] = useState<"offline" | "online">("offline");
@@ -14,7 +13,6 @@ export default function Login() {
   const [attempts, setAttempts] = useState(0);
   const [loading, setLoading] = useState(false);
   const [checkingSetup, setCheckingSetup] = useState(true);
-  const [showRecovery, setShowRecovery] = useState(false);
 
   const onlineAvailable = isOnlineSyncEnabled();
   const navigate = useNavigate();
@@ -249,23 +247,6 @@ export default function Login() {
               {loading ? "Signing in…" : "Sign In"}
             </button>
           </form>
-
-          {/* Recovery for a device nobody can sign in to (e.g. corrupted
-              data). Erasing it needs an administrator's PIN — see
-              DeviceResetPanel — so this link alone does nothing. */}
-          <div className="mt-4 pt-4 border-t border-gray-100 text-sm">
-            {showRecovery ? (
-              <DeviceResetPanel onCancel={() => setShowRecovery(false)} />
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowRecovery(true)}
-                className="text-gray-500 hover:text-gray-700 underline"
-              >
-                Device recovery
-              </button>
-            )}
-          </div>
         </div>
       </div>
     </div>

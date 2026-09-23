@@ -107,6 +107,7 @@ const BulkPortalMigration = lazy(() =>
 );
 const EmailDiagnostics = lazy(() => import("@/pages/admin/EmailDiagnostics"));
 const ConflictDashboard = lazy(() => import("@/pages/admin/ConflictDashboard"));
+const AdminSettings = lazy(() => import("@/pages/admin/Settings"));
 
 // Patient Portal components
 const PatientPortalLanding = lazy(() =>
@@ -757,6 +758,14 @@ function App() {
                         element={
                           <RequireRoles roles={["admin", "doctor", "nurse"]}>
                             <ConflictDashboard />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/settings"
+                        element={
+                          <RequireRoles roles={["admin"]}>
+                            <AdminSettings />
                           </RequireRoles>
                         }
                       />

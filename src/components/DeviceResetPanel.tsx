@@ -2,20 +2,15 @@ import React, { useState } from "react";
 import { useAuthStore } from "@/stores/auth";
 import { findAdminByPin, wipeDevice } from "@/db/deviceReset";
 
-interface DeviceResetPanelProps {
-  /** Shown as a Cancel button when the panel can be dismissed. */
-  onCancel?: () => void;
-}
-
 /**
  * Erases this device's local data once an administrator enters their PIN.
  *
- * Used from admin settings and from the login page's recovery link. Either
- * way the admin PIN is asked for afresh — being signed in is not enough —
- * and wrong PINs count towards the same lockout as the sign-in form, so this
- * cannot be used to guess PINs faster than signing in.
+ * Only shown on the admin Settings page. The admin PIN is asked for afresh —
+ * being signed in is not enough — and wrong PINs count towards the same
+ * lockout as the sign-in form, so this cannot be used to guess PINs faster
+ * than signing in.
  */
-export function DeviceResetPanel({ onCancel }: DeviceResetPanelProps) {
+export function DeviceResetPanel() {
   const { checkLockout, incrementFailedAttempts } = useAuthStore();
   const [pin, setPin] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -101,25 +96,13 @@ export function DeviceResetPanel({ onCancel }: DeviceResetPanelProps) {
 
       {err && <div className="text-sm text-red-700">{err}</div>}
 
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={busy || pin.length !== 6}
-          className="flex-1 h-10 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
-        >
-          {busy ? "Checking…" : "Erase device data"}
-        </button>
-        {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            className="h-10 px-4 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-        )}
-      </div>
+      <button
+        type="submit"
+        disabled={busy || pin.length !== 6}
+        className="w-full h-10 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+      >
+        {busy ? "Checking…" : "Erase device data"}
+      </button>
     </form>
   );
 }

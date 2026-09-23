@@ -37,6 +37,7 @@ import {
   UserPlusIcon,
   DocumentTextIcon,
   CalendarDaysIcon,
+  Cog6ToothIcon,
 } from "@heroicons/react/24/outline";
 
 // Pharmacy Overlay Component
@@ -303,6 +304,9 @@ export function Layout({ children }: LayoutProps) {
           : []),
         ...(hasRole("admin", "doctor", "nurse") && hasPerm("resolve_conflicts")
           ? [{ key: "conflicts", name: "Sync conflicts", href: "/admin/conflicts", icon: DocumentDuplicateIcon }]
+          : []),
+        ...(hasRole("admin")
+          ? [{ key: "settings", name: "Settings", href: "/admin/settings", icon: Cog6ToothIcon }]
           : []),
       ],
     },

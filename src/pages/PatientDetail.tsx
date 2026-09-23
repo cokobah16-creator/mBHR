@@ -199,14 +199,19 @@ export function PatientDetail() {
 
       // A newly registered patient still sits in the registration queue.
       // Finish that stage first, or saving vitals would only advance them
-      // to vitals and leave them a stage behind.
-      const current = await db.queue
-        .where("patientId")
-        .equals(patient.id)
-        .and((i) => i.status !== "done")
-        .first();
-      if (current?.stage === "registration") {
-        await queueManagement.moveToNextStage(patient.id);
+      // to vitals and leave them a stage behind. The visit is already saved,
+      // so a queue error must not stop staff reaching vitals.
+      try {
+        const current = await db.queue
+          .where("patientId")
+          .equals(patient.id)
+          .and((i) => i.status !== "done")
+          .first();
+        if (current?.stage === "registration") {
+          await queueManagement.moveToNextStage(patient.id);
+        }
+      } catch (error) {
+        console.warn("Failed to complete registration queue stage:", error);
       }
 
       navigate(`/vitals/${visit.id}`);

@@ -60,13 +60,11 @@ The PIN hashing utility provides:
    PINs are never logged.
 
 2. **Reset the device** (administrator approval required):
-   - Signed in as an admin: **User Management** → **Reset this device**, then
-     re-enter your admin PIN.
-   - Nobody can sign in: on the login page, choose **Device recovery** and have
-     an administrator enter their PIN.
-   - Either way this deletes every patient, visit and staff account on the
-     device, including anything not yet synced, and the device returns to
-     first-run setup.
+   - Sign in as an admin, open **Settings** → **Device recovery**, then
+     re-enter your admin PIN. It is not available from the login page.
+   - This deletes every patient, visit and staff account on the device,
+     including anything not yet synced, and the device returns to first-run
+     setup.
 
 ### Common Issues:
 
