@@ -49,20 +49,11 @@ async function seedDemoUsers() {
       adminAccess: false,
       adminPermanent: false,
     },
-    {
-      fullName: "Kristopher Okobah",
-      role: "admin" as const,
-      pin: "070398",
-      adminAccess: true,
-      adminPermanent: true,
-    },
   ];
 
   for (const userData of users) {
     const pinSalt = newSaltB64();
     const pinHash = await derivePinHash(userData.pin, pinSalt);
-
-    console.log(`Creating user: ${userData.fullName}, PIN: ${userData.pin}`);
 
     await db.users.add({
       id: generateId(),
@@ -79,9 +70,7 @@ async function seedDemoUsers() {
     });
   }
 
-  console.log(
-    "✅ Users created with PINs: 123456, 234567, 345678, 456789, 567890, 070398",
-  );
+  console.log(`✅ Created ${users.length} demo users`);
 }
 
 /**
