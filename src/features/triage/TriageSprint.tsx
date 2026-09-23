@@ -1,14 +1,40 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
-import { db } from "@/db";
+import { db, type GameSession } from "@/db";
 import { GamificationService } from "@/services/gamification";
 import {
-  ExclamationTriangleIcon,
-  ClockIcon,
-  UserIcon,
+  ArrowPathIcon,
   CheckCircleIcon,
+  ClockIcon,
+  ExclamationCircleIcon,
+  ExclamationTriangleIcon,
+  PlayIcon,
+  UserIcon,
+  XCircleIcon,
 } from "@heroicons/react/24/outline";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
+import { TrainingModeFrame } from "@/components/training/TrainingModeFrame";
+import {
+  RoundTimer,
+  ScoringRules,
+  SessionSaveStatus,
+  TrainingStat,
+} from "@/components/training/TrainingWidgets";
+import {
+  EMPTY_ROUND_STATS,
+  TRIAGE_SPRINT,
+  multiplierText,
+  percent,
+  recordAnswer,
+  shuffled,
+  triageSprintMultipliers,
+  type RoundStats,
+  type SaveState,
+} from "@/components/training/trainingRules";
+import { useCountdown } from "@/components/training/useCountdown";
+
+type Priority = "urgent" | "normal" | "low";
 
 interface TriageCase {
   id: string;
@@ -22,564 +48,566 @@ interface TriageCase {
     pulse: "weak" | "normal" | "strong";
     skinColor: "normal" | "pale" | "cyanotic";
   };
-  correctPriority: "urgent" | "normal" | "low";
+  correctPriority: Priority;
   explanation: string;
 }
 
+// Practice cases. These are made up; none is a real patient.
+const TRIAGE_CASES: TriageCase[] = [
+  {
+    id: "1",
+    scenario: "Adult male collapsed at home",
+    patientAge: 45,
+    patientSex: "M",
+    symptoms: ["chest pain", "difficulty breathing", "sweating"],
+    vitals: {
+      conscious: true,
+      breathing: true,
+      pulse: "weak",
+      skinColor: "pale",
+    },
+    correctPriority: "urgent",
+    explanation:
+      "Chest pain with breathing difficulty and weak pulse suggests cardiac emergency",
+  },
+  {
+    id: "2",
+    scenario: "Child with fever and cough",
+    patientAge: 6,
+    patientSex: "F",
+    symptoms: ["fever", "cough", "runny nose"],
+    vitals: {
+      conscious: true,
+      breathing: true,
+      pulse: "normal",
+      skinColor: "normal",
+    },
+    correctPriority: "normal",
+    explanation:
+      "Common cold symptoms in stable child - routine care appropriate",
+  },
+  {
+    id: "3",
+    scenario: "Elderly woman with minor cut",
+    patientAge: 70,
+    patientSex: "F",
+    symptoms: ["small laceration", "no bleeding"],
+    vitals: {
+      conscious: true,
+      breathing: true,
+      pulse: "normal",
+      skinColor: "normal",
+    },
+    correctPriority: "low",
+    explanation: "Minor wound in stable patient can wait for routine care",
+  },
+  {
+    id: "4",
+    scenario: "Unconscious patient brought by family",
+    patientAge: 30,
+    patientSex: "M",
+    symptoms: ["unconscious", "unknown cause"],
+    vitals: {
+      conscious: false,
+      breathing: true,
+      pulse: "weak",
+      skinColor: "pale",
+    },
+    correctPriority: "urgent",
+    explanation:
+      "Unconsciousness requires immediate assessment and intervention",
+  },
+  {
+    id: "5",
+    scenario: "Pregnant woman with contractions",
+    patientAge: 28,
+    patientSex: "F",
+    symptoms: ["regular contractions", "back pain"],
+    vitals: {
+      conscious: true,
+      breathing: true,
+      pulse: "strong",
+      skinColor: "normal",
+    },
+    correctPriority: "urgent",
+    explanation: "Active labor requires immediate obstetric care",
+  },
+];
+
+const PRIORITIES: {
+  id: Priority;
+  label: string;
+  hint: string;
+  tone: Tone;
+}[] = [
+  { id: "urgent", label: "Urgent", hint: "Immediate attention required", tone: "danger" },
+  { id: "normal", label: "Normal", hint: "Standard care pathway", tone: "warning" },
+  { id: "low", label: "Low", hint: "Can wait for routine care", tone: "success" },
+];
+
+const PRIORITY_LABEL: Record<Priority, string> = {
+  urgent: "Urgent",
+  normal: "Normal",
+  low: "Low",
+};
+
+const SELECTED_CLASS: Record<Priority, string> = {
+  urgent: "border-danger bg-danger-soft",
+  normal: "border-warning bg-warning-soft",
+  low: "border-success bg-success-soft",
+};
+
+type Phase = "intro" | "playing" | "result";
+
+function PriorityIcon({ priority }: { priority: Priority }) {
+  if (priority === "urgent") {
+    return <ExclamationCircleIcon className="h-6 w-6 shrink-0 text-danger" aria-hidden />;
+  }
+  if (priority === "normal") {
+    return <ClockIcon className="h-6 w-6 shrink-0 text-warning" aria-hidden />;
+  }
+  return <CheckCircleIcon className="h-6 w-6 shrink-0 text-success" aria-hidden />;
+}
+
 export default function TriageSprint() {
-  const { currentUser } = useAuthStore();
-  const navigate = useNavigate();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [currentSession, setCurrentSession] = useState<any>(null);
-  const [currentCase, setCurrentCase] = useState<TriageCase | null>(null);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const [phase, setPhase] = useState<Phase>("intro");
+  const [session, setSession] = useState<GameSession | null>(null);
+  const [roundCases, setRoundCases] = useState<TriageCase[]>([]);
   const [caseIndex, setCaseIndex] = useState(0);
-  const [selectedPriority, setSelectedPriority] = useState<
-    "urgent" | "normal" | "low" | null
-  >(null);
-  const [sessionStats, setSessionStats] = useState({
-    correct: 0,
-    total: 0,
-    streak: 0,
-    maxStreak: 0,
-  });
-  const [timeLeft, setTimeLeft] = useState(120); // 2 minutes per case
-  const [gameStarted, setGameStarted] = useState(false);
-  const [showResult, setShowResult] = useState(false);
+  const [selectedPriority, setSelectedPriority] = useState<Priority | null>(null);
+  // The priority that was actually submitted for the current case (null
+  // when the case timed out with nothing chosen). Undefined until then.
+  const [submitted, setSubmitted] = useState<Priority | null | undefined>(undefined);
+  const [stats, setStats] = useState<RoundStats>(EMPTY_ROUND_STATS);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [tokens, setTokens] = useState<number | null>(null);
 
-  // Sample triage cases
-  const triageCases: TriageCase[] = [
-    {
-      id: "1",
-      scenario: "Adult male collapsed at home",
-      patientAge: 45,
-      patientSex: "M",
-      symptoms: ["chest pain", "difficulty breathing", "sweating"],
-      vitals: {
-        conscious: true,
-        breathing: true,
-        pulse: "weak",
-        skinColor: "pale",
-      },
-      correctPriority: "urgent",
-      explanation:
-        "Chest pain with breathing difficulty and weak pulse suggests cardiac emergency",
-    },
-    {
-      id: "2",
-      scenario: "Child with fever and cough",
-      patientAge: 6,
-      patientSex: "F",
-      symptoms: ["fever", "cough", "runny nose"],
-      vitals: {
-        conscious: true,
-        breathing: true,
-        pulse: "normal",
-        skinColor: "normal",
-      },
-      correctPriority: "normal",
-      explanation:
-        "Common cold symptoms in stable child - routine care appropriate",
-    },
-    {
-      id: "3",
-      scenario: "Elderly woman with minor cut",
-      patientAge: 70,
-      patientSex: "F",
-      symptoms: ["small laceration", "no bleeding"],
-      vitals: {
-        conscious: true,
-        breathing: true,
-        pulse: "normal",
-        skinColor: "normal",
-      },
-      correctPriority: "low",
-      explanation: "Minor wound in stable patient can wait for routine care",
-    },
-    {
-      id: "4",
-      scenario: "Unconscious patient brought by family",
-      patientAge: 30,
-      patientSex: "M",
-      symptoms: ["unconscious", "unknown cause"],
-      vitals: {
-        conscious: false,
-        breathing: true,
-        pulse: "weak",
-        skinColor: "pale",
-      },
-      correctPriority: "urgent",
-      explanation:
-        "Unconsciousness requires immediate assessment and intervention",
-    },
-    {
-      id: "5",
-      scenario: "Pregnant woman with contractions",
-      patientAge: 28,
-      patientSex: "F",
-      symptoms: ["regular contractions", "back pain"],
-      vitals: {
-        conscious: true,
-        breathing: true,
-        pulse: "strong",
-        skinColor: "normal",
-      },
-      correctPriority: "urgent",
-      explanation: "Active labor requires immediate obstetric care",
-    },
-  ];
+  const isAnswered = submitted !== undefined;
+  const { secondsLeft, reset } = useCountdown(
+    TRIAGE_SPRINT.secondsPerCase,
+    phase === "playing" && !isAnswered,
+  );
+  const lastRoundRef = useRef<{ stats: RoundStats; secondsLeft: number } | null>(null);
 
-  useEffect(() => {
-    if (gameStarted && timeLeft > 0 && !showResult) {
-      const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (timeLeft === 0 && !showResult) {
-      submitAnswer();
+  const currentCase = roundCases[caseIndex] ?? null;
+  const isLastCase = caseIndex >= roundCases.length - 1;
+
+  const saveResult = useCallback(async () => {
+    const round = lastRoundRef.current;
+    if (!round || !session || !currentUser) {
+      setSaveState("failed");
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameStarted, timeLeft, showResult]);
+    setSaveState("saving");
+    try {
+      const m = triageSprintMultipliers(round.stats, round.secondsLeft);
+      const wallet = await db.gamificationWallets.get(currentUser.id);
+      const tokensEarned = GamificationService.calculateTokens(
+        TRIAGE_SPRINT.baseTokens,
+        {
+          accuracy: m.accuracy,
+          streak: wallet?.streakDays || 0,
+          speedBonus: m.speedBonus,
+          qualityBonus: m.qualityBonus,
+        },
+      );
+      setTokens(tokensEarned);
+      await GamificationService.completeSession(session.id, {
+        score: Math.round(m.accuracy * 100),
+        tokensEarned,
+        badges: [],
+        multipliers: {
+          accuracy: m.accuracy,
+          speed: m.speedBonus,
+          quality: m.qualityBonus,
+        },
+      });
+      setSaveState("saved");
+    } catch (error) {
+      console.error(
+        "Could not save Triage Sprint result:",
+        error instanceof Error ? error.name : error,
+      );
+      setSaveState("failed");
+    }
+  }, [session, currentUser]);
+
+  const submitAnswer = useCallback(
+    (choice: Priority | null) => {
+      if (phase !== "playing" || !currentCase || submitted !== undefined) return;
+      const isCorrect = choice === currentCase.correctPriority;
+      const nextStats = recordAnswer(stats, isCorrect);
+      setStats(nextStats);
+      setSubmitted(choice);
+      if (isLastCase) {
+        // Save the round now, while the feedback is on screen, so leaving
+        // before "See results" does not lose a finished round.
+        lastRoundRef.current = { stats: nextStats, secondsLeft };
+        void saveResult();
+      }
+    },
+    [phase, currentCase, submitted, stats, isLastCase, secondsLeft, saveResult],
+  );
+
+  // Out of time on a case: submit whatever is chosen (nothing counts as wrong).
+  useEffect(() => {
+    if (phase === "playing" && !isAnswered && secondsLeft === 0) {
+      submitAnswer(selectedPriority);
+    }
+  }, [phase, isAnswered, secondsLeft, selectedPriority, submitAnswer]);
 
   const startGame = async () => {
-    if (!currentUser) return;
-
+    if (!currentUser || starting) return;
+    setStarting(true);
+    setStartError("");
     try {
-      // Shuffle cases and take 3 — Fisher-Yates with crypto RNG
-      const shuffled = [...triageCases];
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
-      shuffled.splice(3);
-
-      const session = await GamificationService.startSession(
+      const round = shuffled(TRIAGE_CASES).slice(0, TRIAGE_SPRINT.casesPerRound);
+      const newSession = await GamificationService.startSession(
         "triage",
         currentUser.id,
         {
-          totalCases: shuffled.length,
+          totalCases: round.length,
           startTime: new Date().toISOString(),
         },
       );
-
-      setCurrentSession(session);
-      setCurrentCase(shuffled[0]);
+      lastRoundRef.current = null;
+      setSession(newSession);
+      setRoundCases(round);
       setCaseIndex(0);
-      setGameStarted(true);
-      setTimeLeft(120);
-      setSessionStats({ correct: 0, total: 0, streak: 0, maxStreak: 0 });
       setSelectedPriority(null);
-      setShowResult(false);
+      setSubmitted(undefined);
+      setStats(EMPTY_ROUND_STATS);
+      setSaveState("idle");
+      setTokens(null);
+      reset(TRIAGE_SPRINT.secondsPerCase);
+      setPhase("playing");
     } catch (error) {
-      console.error("Error starting triage sprint:", error);
+      console.error(
+        "Could not start Triage Sprint:",
+        error instanceof Error ? error.name : error,
+      );
+      setStartError(
+        "The game could not start because this device could not save a new game session. Try again.",
+      );
+    } finally {
+      setStarting(false);
     }
   };
 
-  const submitAnswer = async () => {
-    if (!currentCase || !currentSession) return;
-
-    const isCorrect = selectedPriority === currentCase.correctPriority;
-    const newStats = {
-      ...sessionStats,
-      total: sessionStats.total + 1,
-      correct: sessionStats.correct + (isCorrect ? 1 : 0),
-      streak: isCorrect ? sessionStats.streak + 1 : 0,
-      maxStreak: Math.max(
-        sessionStats.maxStreak,
-        isCorrect ? sessionStats.streak + 1 : sessionStats.streak,
-      ),
-    };
-    setSessionStats(newStats);
-
-    // Show feedback
-    setTimeout(() => {
-      if (caseIndex < triageCases.length - 1) {
-        setCaseIndex(caseIndex + 1);
-        setCurrentCase(triageCases[caseIndex + 1]);
-        setSelectedPriority(null);
-        setTimeLeft(120);
-      } else {
-        endGame();
-      }
-    }, 2000);
-  };
-
-  const endGame = async () => {
-    if (!currentSession || !currentUser) return;
-
-    try {
-      setShowResult(true);
-
-      const accuracy =
-        sessionStats.total > 0 ? sessionStats.correct / sessionStats.total : 0;
-      const timeBonus = timeLeft > 30 ? 1.1 : 1.0;
-      const streakBonus = sessionStats.maxStreak >= 3 ? 1.2 : 1.0;
-
-      const wallet = await db.gamificationWallets.get(currentUser.id);
-      const tokensEarned = GamificationService.calculateTokens(15, {
-        accuracy,
-        streak: wallet?.streakDays || 0,
-        speedBonus: timeBonus,
-        qualityBonus: streakBonus,
-      });
-
-      await GamificationService.completeSession(currentSession.id, {
-        score: Math.round(accuracy * 100),
-        tokensEarned,
-        badges: [],
-        multipliers: { accuracy, speed: timeBonus, quality: streakBonus },
-      });
-
-      // Auto-navigate after showing results
-      setTimeout(() => {
-        navigate("/games");
-      }, 5000);
-    } catch (error) {
-      console.error("Error ending game:", error);
+  const goNext = () => {
+    if (!isAnswered) return;
+    if (isLastCase) {
+      // The round was saved when the last case was answered.
+      setPhase("result");
+      return;
     }
+    setCaseIndex((i) => i + 1);
+    setSelectedPriority(null);
+    setSubmitted(undefined);
+    reset(TRIAGE_SPRINT.secondsPerCase);
   };
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
+  const frameNote = "The patients in these cases are made up for practice.";
 
-  const getPriorityColor = (priority: "urgent" | "normal" | "low") => {
-    switch (priority) {
-      case "urgent":
-        return "bg-red-500 hover:bg-red-600 text-white";
-      case "normal":
-        return "bg-yellow-500 hover:bg-yellow-600 text-white";
-      case "low":
-        return "bg-green-500 hover:bg-green-600 text-white";
-    }
-  };
-
-  const getPriorityIcon = (priority: "urgent" | "normal" | "low") => {
-    switch (priority) {
-      case "urgent":
-        return "🚨";
-      case "normal":
-        return "⚠️";
-      case "low":
-        return "✅";
-    }
-  };
-
-  if (!gameStarted) {
+  if (phase === "intro") {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center space-x-3">
-          <ExclamationTriangleIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Triage Sprint</h1>
-            <p className="text-gray-600">
-              Quick priority assessment challenges
-            </p>
-          </div>
-        </div>
-
-        <div className="card max-w-2xl mx-auto">
-          <div className="text-center py-8">
-            <ExclamationTriangleIcon className="h-16 w-16 mx-auto text-orange-500 mb-4" />
-            <h2 className="text-xl font-bold text-gray-900 mb-4">
-              Ready for Triage Training?
-            </h2>
-
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
-              <div className="text-sm text-orange-800">
-                <div className="font-medium mb-2">🚨 Challenge Rules:</div>
-                <ul className="text-xs space-y-1 text-orange-700 text-left">
-                  <li>• 3 random patient scenarios</li>
-                  <li>• 2 minutes per case to assess priority</li>
-                  <li>• +15 tokens per correct triage decision</li>
-                  <li>• +20% bonus for 3-case streak</li>
-                  <li>• +10% speed bonus if time remaining</li>
-                  <li>• Focus: ABC assessment and priority</li>
-                </ul>
-              </div>
+      <TrainingModeFrame
+        title="Triage Sprint"
+        description="Read a practice case and choose the priority it should get."
+        note={frameNote}
+      >
+        <div className="card mx-auto max-w-2xl space-y-5">
+          <div className="flex items-start gap-3">
+            <ExclamationTriangleIcon className="h-8 w-8 shrink-0 text-ink-muted" aria-hidden />
+            <div>
+              <h2 className="text-h2 text-ink">Ready for triage practice?</h2>
+              <p className="text-body text-ink-secondary">
+                For each case, look at the airway, breathing and circulation
+                findings, then choose urgent, normal or low priority.
+              </p>
             </div>
-
-            <button onClick={startGame} className="btn-primary">
-              Start Triage Sprint
-            </button>
           </div>
+          <ScoringRules>
+            <li>
+              {TRIAGE_SPRINT.casesPerRound} cases picked at random from{" "}
+              {TRIAGE_CASES.length}, with {TRIAGE_SPRINT.secondsPerCase / 60}{" "}
+              minutes for each case.
+            </li>
+            <li>
+              Base {TRIAGE_SPRINT.baseTokens} tokens for the round, scaled by
+              the share you get right: all correct keeps the full amount, 80% or
+              fewer correct gives 0.8×.
+            </li>
+            <li>
+              {multiplierText(TRIAGE_SPRINT.streakBonus)} if you get{" "}
+              {TRIAGE_SPRINT.streakBonusAt} right in a row.
+            </li>
+            <li>
+              {multiplierText(TRIAGE_SPRINT.speedBonus)} if more than{" "}
+              {TRIAGE_SPRINT.speedBonusAboveSecondsLeft} seconds are left when
+              you answer the last case.
+            </li>
+            <li>+10% for each day of your activity streak, up to +50%.</li>
+            <li>
+              Tokens are added to your game wallet after an admin approves the
+              session.
+            </li>
+          </ScoringRules>
+          {startError && (
+            <div className="banner banner-danger" role="alert">
+              <ExclamationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <p>{startError}</p>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={startGame}
+            disabled={!currentUser || starting}
+            className="btn-primary w-full sm:w-auto"
+          >
+            <PlayIcon className="h-5 w-5" aria-hidden />
+            {starting ? "Starting…" : "Start Triage Sprint"}
+          </button>
         </div>
-      </div>
+      </TrainingModeFrame>
     );
   }
 
-  if (showResult) {
-    const accuracy = Math.round(
-      (sessionStats.correct / sessionStats.total) * 100,
-    );
-
+  if (phase === "result") {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center space-x-3">
-          <ExclamationTriangleIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Triage Sprint Complete!
-            </h1>
-            <p className="text-gray-600">
-              Excellent work on patient prioritization!
-            </p>
+      <TrainingModeFrame
+        title="Triage Sprint results"
+        description={`${stats.correct} of ${stats.total} cases given the right priority.`}
+        note={frameNote}
+      >
+        <div className="mx-auto max-w-3xl space-y-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <TrainingStat label="Correct" value={`${stats.correct}/${stats.total}`} />
+            <TrainingStat
+              label="Accuracy"
+              value={`${percent(stats.correct, stats.total)}%`}
+            />
+            <TrainingStat label="Longest streak" value={stats.maxStreak} />
           </div>
-        </div>
-
-        <div className="card max-w-2xl mx-auto">
-          <div className="text-center py-8">
-            <div className="text-6xl mb-4">
-              {accuracy >= 80 ? "🏆" : accuracy >= 60 ? "🥈" : "🥉"}
-            </div>
-
-            <div className="grid grid-cols-3 gap-6 mb-6">
-              <div>
-                <div className="text-3xl font-bold text-primary">
-                  {sessionStats.correct}/{sessionStats.total}
-                </div>
-                <div className="text-sm text-gray-600">Correct</div>
-              </div>
-              <div>
-                <div className="text-3xl font-bold text-orange-600">
-                  {accuracy}%
-                </div>
-                <div className="text-sm text-gray-600">Accuracy</div>
-              </div>
-              <div>
-                <div className="text-3xl font-bold text-red-600">
-                  {sessionStats.maxStreak}
-                </div>
-                <div className="text-sm text-gray-600">Max Streak</div>
-              </div>
-            </div>
-
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-              <p className="text-green-800 font-medium">
-                🎉 Session completed! Waiting for supervisor approval to mint
-                tokens.
-              </p>
-            </div>
-
-            <button onClick={() => navigate("/games")} className="btn-primary">
-              Back to Game Hub
+          <SessionSaveStatus
+            state={saveState}
+            tokens={tokens}
+            onRetry={() => void saveResult()}
+          />
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={startGame}
+              disabled={starting}
+              className="btn-primary"
+            >
+              <ArrowPathIcon className="h-5 w-5" aria-hidden />
+              Play again
             </button>
+            <Link to="/games" className="btn-secondary">
+              Back to training
+            </Link>
           </div>
+          {startError && (
+            <div className="banner banner-danger" role="alert">
+              <ExclamationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <p>{startError}</p>
+            </div>
+          )}
         </div>
-      </div>
+      </TrainingModeFrame>
     );
   }
 
   if (!currentCase) return null;
-
-  const isAnswered = selectedPriority !== null;
-  const isCorrect = selectedPriority === currentCase.correctPriority;
+  const wasCorrect = isAnswered && submitted === currentCase.correctPriority;
 
   return (
-    <div className="space-y-6">
-      {/* Header with Timer */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <ExclamationTriangleIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Triage Sprint</h1>
-            <p className="text-gray-600">
-              Case {caseIndex + 1} of {triageCases.length}
-            </p>
-          </div>
+    <TrainingModeFrame
+      title="Triage Sprint"
+      description={`Case ${caseIndex + 1} of ${roundCases.length}`}
+      note={frameNote}
+    >
+      <div className="space-y-5">
+        <div className="grid grid-cols-3 gap-3">
+          <TrainingStat label="Correct" value={`${stats.correct}/${stats.total}`} />
+          <TrainingStat label="Streak" value={stats.streak} />
+          <RoundTimer
+            secondsLeft={secondsLeft}
+            lowAt={30}
+            label="Time left for this case"
+          />
         </div>
 
-        <div className="flex items-center space-x-6">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-primary">
-              {sessionStats.correct}/{sessionStats.total}
-            </div>
-            <div className="text-sm text-gray-600">Correct</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-orange-600">
-              {sessionStats.streak}
-            </div>
-            <div className="text-sm text-gray-600">Streak</div>
-          </div>
-          <div className="text-center flex items-center space-x-1">
-            <ClockIcon className="h-5 w-5 text-red-500" />
-            <div
-              className={`text-2xl font-bold ${timeLeft <= 30 ? "text-red-600 animate-pulse" : "text-red-600"}`}
-            >
-              {formatTime(timeLeft)}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Case Presentation */}
-      <div className="card max-w-4xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Patient Info */}
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-gray-900 mb-4">
-                Patient Presentation
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <section className="panel" aria-labelledby="triage-case-title">
+            <div className="panel-header">
+              <h2 id="triage-case-title" className="panel-title">
+                Practice case
               </h2>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <div className="flex items-center space-x-3 mb-3">
-                  <UserIcon className="h-6 w-6 text-blue-600" />
-                  <div>
-                    <p className="font-medium text-blue-800">
-                      {currentCase.patientAge} year old{" "}
-                      {currentCase.patientSex === "M" ? "male" : "female"}
-                    </p>
+              <StatusBadge tone="neutral">Made-up patient</StatusBadge>
+            </div>
+            <div className="panel-body space-y-5">
+              <div className="flex items-start gap-3">
+                <UserIcon className="h-6 w-6 shrink-0 text-ink-muted" aria-hidden />
+                <div>
+                  <p className="text-label text-ink-secondary">
+                    {currentCase.patientAge} year old{" "}
+                    {currentCase.patientSex === "M" ? "male" : "female"}
+                  </p>
+                  <p className="text-h3 text-ink">{currentCase.scenario}</p>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="section-label mb-2">Symptoms</h3>
+                <ul className="flex flex-wrap gap-2">
+                  {currentCase.symptoms.map((symptom) => (
+                    <li key={symptom}>
+                      <StatusBadge tone="neutral">{symptom}</StatusBadge>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="section-label mb-2">Quick assessment</h3>
+                <dl className="grid grid-cols-2 gap-3">
+                  <div className="rounded-md border border-line bg-surface-sunken p-3">
+                    <dt className="text-caption text-ink-muted">Conscious</dt>
+                    <dd className="mt-1">
+                      <StatusBadge
+                        tone={currentCase.vitals.conscious ? "success" : "danger"}
+                        icon
+                      >
+                        {currentCase.vitals.conscious ? "Yes" : "No"}
+                      </StatusBadge>
+                    </dd>
                   </div>
-                </div>
-                <p className="text-blue-700 text-lg">{currentCase.scenario}</p>
+                  <div className="rounded-md border border-line bg-surface-sunken p-3">
+                    <dt className="text-caption text-ink-muted">Breathing</dt>
+                    <dd className="mt-1">
+                      <StatusBadge
+                        tone={currentCase.vitals.breathing ? "success" : "danger"}
+                        icon
+                      >
+                        {currentCase.vitals.breathing ? "Yes" : "No"}
+                      </StatusBadge>
+                    </dd>
+                  </div>
+                  <div className="rounded-md border border-line bg-surface-sunken p-3">
+                    <dt className="text-caption text-ink-muted">Pulse</dt>
+                    <dd className="mt-1 text-body font-semibold capitalize text-ink">
+                      {currentCase.vitals.pulse}
+                    </dd>
+                  </div>
+                  <div className="rounded-md border border-line bg-surface-sunken p-3">
+                    <dt className="text-caption text-ink-muted">Skin colour</dt>
+                    <dd className="mt-1 text-body font-semibold capitalize text-ink">
+                      {currentCase.vitals.skinColor}
+                    </dd>
+                  </div>
+                </dl>
               </div>
             </div>
+          </section>
 
-            {/* Symptoms */}
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 mb-3">
-                Symptoms
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {currentCase.symptoms.map((symptom, index) => (
-                  <span
-                    key={index}
-                    className="px-3 py-2 bg-gray-100 text-gray-800 rounded-full text-sm font-medium"
-                  >
-                    {symptom}
-                  </span>
-                ))}
-              </div>
+          <form
+            className="panel"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (selectedPriority) submitAnswer(selectedPriority);
+            }}
+          >
+            <div className="panel-header">
+              <h2 className="panel-title">Assign priority</h2>
             </div>
+            <div className="panel-body space-y-4">
+              <fieldset disabled={isAnswered}>
+                <legend className="mb-3 text-body text-ink-secondary">
+                  Based on this presentation, what priority should the case get?
+                </legend>
+                <div className="space-y-3">
+                  {PRIORITIES.map((p) => {
+                    const isSelected = selectedPriority === p.id;
+                    return (
+                      <label
+                        key={p.id}
+                        className={`flex min-h-touch-target cursor-pointer items-center gap-4 rounded-lg border-2 p-4 transition-colors ${
+                          isSelected
+                            ? SELECTED_CLASS[p.id]
+                            : "border-line bg-surface hover:bg-surface-hover"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="triage-priority"
+                          value={p.id}
+                          checked={isSelected}
+                          onChange={() => setSelectedPriority(p.id)}
+                          className="h-5 w-5 shrink-0 accent-primary"
+                        />
+                        <PriorityIcon priority={p.id} />
+                        <span>
+                          <span className="block text-h3 text-ink">{p.label}</span>
+                          <span className="block text-body text-ink-secondary">
+                            {p.hint}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
 
-            {/* Quick Assessment */}
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 mb-3">
-                Quick Assessment
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium">Conscious:</span>
-                  <span
-                    className={`text-sm font-bold ${currentCase.vitals.conscious ? "text-green-600" : "text-red-600"}`}
-                  >
-                    {currentCase.vitals.conscious ? "Yes" : "No"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium">Breathing:</span>
-                  <span
-                    className={`text-sm font-bold ${currentCase.vitals.breathing ? "text-green-600" : "text-red-600"}`}
-                  >
-                    {currentCase.vitals.breathing ? "Yes" : "No"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium">Pulse:</span>
-                  <span className="text-sm font-bold capitalize">
-                    {currentCase.vitals.pulse}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium">Skin Color:</span>
-                  <span className="text-sm font-bold capitalize">
-                    {currentCase.vitals.skinColor}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Priority Selection */}
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-gray-900 mb-4">
-                Assign Priority
-              </h2>
-              <p className="text-gray-600 mb-6">
-                Based on the patient presentation, what priority should this
-                case receive?
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              {(["urgent", "normal", "low"] as const).map((priority) => (
+              {!isAnswered && (
                 <button
-                  key={priority}
-                  onClick={() => setSelectedPriority(priority)}
-                  disabled={isAnswered}
-                  className={`w-full p-6 rounded-xl border-2 transition-all touch-target-large ${
-                    selectedPriority === priority
-                      ? `${getPriorityColor(priority)} ring-2 ring-primary/20`
-                      : "bg-white border-gray-200 hover:border-gray-300"
-                  } ${isAnswered ? "cursor-not-allowed" : ""}`}
+                  type="submit"
+                  disabled={!selectedPriority}
+                  className="btn-primary w-full"
                 >
-                  <div className="flex items-center space-x-4">
-                    <div className="text-4xl">{getPriorityIcon(priority)}</div>
-                    <div className="text-left">
-                      <div className="text-xl font-bold capitalize">
-                        {priority}
-                      </div>
-                      <div className="text-sm opacity-90">
-                        {priority === "urgent" &&
-                          "Immediate attention required"}
-                        {priority === "normal" && "Standard care pathway"}
-                        {priority === "low" && "Can wait for routine care"}
-                      </div>
+                  Submit priority
+                </button>
+              )}
+
+              <div aria-live="polite">
+                {isAnswered && (
+                  <div className={`banner ${wasCorrect ? "banner-success" : "banner-danger"}`}>
+                    {wasCorrect ? (
+                      <CheckCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                    ) : (
+                      <XCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                    )}
+                    <div>
+                      <p className="font-semibold">
+                        {wasCorrect
+                          ? "Correct."
+                          : submitted === null
+                            ? "Time ran out before a priority was chosen."
+                            : "Not the expected priority."}
+                      </p>
+                      <p>
+                        Expected priority:{" "}
+                        {PRIORITY_LABEL[currentCase.correctPriority]}.
+                      </p>
+                      <p className="mt-1">{currentCase.explanation}</p>
                     </div>
                   </div>
-                </button>
-              ))}
-            </div>
-
-            {/* Submit Button */}
-            <div className="text-center pt-4">
-              <button
-                onClick={submitAnswer}
-                disabled={!selectedPriority || isAnswered}
-                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Submit Priority Decision
-              </button>
-            </div>
-
-            {/* Feedback */}
-            {isAnswered && (
-              <div
-                className={`p-4 rounded-lg border ${
-                  isCorrect
-                    ? "bg-green-50 border-green-200"
-                    : "bg-red-50 border-red-200"
-                }`}
-              >
-                <div className="flex items-center space-x-2 mb-2">
-                  {isCorrect ? (
-                    <CheckCircleIcon className="h-5 w-5 text-green-600" />
-                  ) : (
-                    <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
-                  )}
-                  <span
-                    className={`font-medium ${isCorrect ? "text-green-800" : "text-red-800"}`}
-                  >
-                    {isCorrect ? "Correct!" : "Incorrect"}
-                  </span>
-                </div>
-                <p
-                  className={`text-sm ${isCorrect ? "text-green-700" : "text-red-700"}`}
-                >
-                  <strong>Correct Priority:</strong>{" "}
-                  {currentCase.correctPriority}
-                </p>
-                <p
-                  className={`text-sm mt-2 ${isCorrect ? "text-green-700" : "text-red-700"}`}
-                >
-                  {currentCase.explanation}
-                </p>
+                )}
               </div>
-            )}
-          </div>
+
+              {isAnswered && (
+                <button type="button" onClick={goNext} className="btn-primary w-full">
+                  {isLastCase ? "See results" : "Next case"}
+                </button>
+              )}
+            </div>
+          </form>
         </div>
       </div>
-    </div>
+    </TrainingModeFrame>
   );
 }
