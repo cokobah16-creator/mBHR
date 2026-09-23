@@ -1,303 +1,379 @@
-import { useEffect, useState } from "react";
-import { formatNigerianDate } from "@/utils/dateFormat";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeftIcon,
-  CalendarIcon,
-  HeartIcon,
-  ClipboardDocumentListIcon,
+  ArrowPathIcon,
+  ChatBubbleLeftRightIcon,
 } from "@heroicons/react/24/outline";
 import { getVisitDetails } from "@/services/patientPortalData";
 import type { PatientMedicalRecord } from "@/types/patientPortal";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
+import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
+import { formatPortalDate, formatPortalLongDate } from "./portalStatus";
+import { clearPortalSession, readPortalUser } from "./portalSession";
+import { useOnlineStatus } from "./useOnlineStatus";
+
+const BACK_CRUMB = { label: "Your visits", to: "/patient/medical-history" };
+
+function BackLink() {
+  return (
+    <Link to="/patient/medical-history" className="btn-secondary">
+      <ArrowLeftIcon className="h-5 w-5" aria-hidden />
+      Back to your visits
+    </Link>
+  );
+}
+
+function Section({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="panel" aria-labelledby={id}>
+      <div className="panel-header">
+        <h2 id={id} className="panel-title">
+          {title}
+        </h2>
+      </div>
+      <div className="panel-body">{children}</div>
+    </section>
+  );
+}
+
+function NoteBlock({ label, text }: { label: string; text: string }) {
+  return (
+    <div>
+      <h3 className="text-label text-ink-secondary">{label}</h3>
+      <p className="mt-1 whitespace-pre-wrap rounded-md bg-surface-sunken p-3 text-body text-ink">
+        {text}
+      </p>
+    </div>
+  );
+}
 
 export function VisitDetail() {
   const navigate = useNavigate();
+  const online = useOnlineStatus();
   const { visitId } = useParams<{ visitId: string }>();
   const [visit, setVisit] = useState<PatientMedicalRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const loadVisitDetails = useCallback(
+    async (id: string) => {
+      setLoading(true);
+      setError("");
+      // Never show a different visit under this link while loading.
+      setVisit((current) => (current && current.visitId === id ? current : null));
+      try {
+        const portalUser = readPortalUser();
+        if (!portalUser) {
+          navigate("/patient/login", { replace: true });
+          return;
+        }
+        if (!portalUser.patientId || !portalUser.id) {
+          clearPortalSession();
+          navigate("/patient/login", { replace: true });
+          return;
+        }
+        const visitData = await getVisitDetails(
+          portalUser.id,
+          portalUser.patientId,
+          id,
+        );
+        if (visitData) {
+          setVisit(visitData);
+        } else {
+          setVisit(null);
+          setError(
+            "We could not find this visit. It may not be uploaded yet, or it could not be loaded.",
+          );
+        }
+      } catch (err) {
+        logger.error(
+          "Error loading visit details:",
+          err instanceof Error ? err.name : "unknown",
+        );
+        setVisit(null);
+        setError("We could not load this visit. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [navigate],
+  );
+
+  // Try once even when offline (this phone may have kept a copy from the last
+  // time it was online), then reload when the connection comes back.
+  const attemptedFor = useRef<string | null>(null);
+
   useEffect(() => {
-    if (visitId) {
-      loadVisitDetails(visitId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visitId]);
-
-  const loadVisitDetails = async (id: string) => {
-    setLoading(true);
-    setError("");
-    try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
-        navigate("/patient/login", { replace: true });
-        return;
-      }
-
-      const portalUser = JSON.parse(portalUserStr);
-      if (!portalUser.patientId || !portalUser.id) {
-        localStorage.removeItem("patient_portal_user");
-        sessionStorage.removeItem("patient_session_token");
-        navigate("/patient/login", { replace: true });
-        return;
-      }
-      const visitData = await getVisitDetails(
-        portalUser.id,
-        portalUser.patientId,
-        id,
-      );
-      if (visitData) {
-        setVisit(visitData);
-      } else {
-        setError("Visit not found");
-      }
-    } catch (err) {
-      logger.error("Error loading visit details:", err);
-      setError("An error occurred loading visit details");
-    } finally {
+    if (!visitId) {
       setLoading(false);
+      setError("This link does not point to a visit.");
+      return;
     }
-  };
+    if (!isSupabaseEnabled) {
+      setLoading(false);
+      return;
+    }
+    if (!online && attemptedFor.current === visitId) return;
+    attemptedFor.current = visitId;
+    loadVisitDetails(visitId);
+  }, [visitId, online, loadVisitDetails]);
 
-  if (loading) {
+  if (!isSupabaseEnabled) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-      </div>
+      <PortalPage title="Visit details" breadcrumbs={[BACK_CRUMB, { label: "Visit" }]}>
+        <PortalNotice tone="info" title="Visit details are not available here">
+          This portal is not connected to the clinic&apos;s online records, so
+          visit details cannot be shown.
+        </PortalNotice>
+        <BackLink />
+      </PortalPage>
     );
   }
 
-  if (error || !visit) {
+  // A refresh of the visit already on screen (e.g. after reconnecting) keeps
+  // it visible; a different visit never shows here while loading.
+  if (loading && !visit) {
+    return <PortalListSkeleton label="Loading visit details" rows={3} />;
+  }
+
+  if (!visit) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-          <p className="text-red-800">{error || "Visit not found"}</p>
-        </div>
-        <Link
-          to="/patient/medical-history"
-          className="inline-flex items-center gap-2 mt-4 text-blue-600 hover:text-blue-700"
-        >
-          <ArrowLeftIcon className="w-4 h-4" />
-          Back to Medical History
-        </Link>
-      </div>
+      <PortalPage title="Visit details" breadcrumbs={[BACK_CRUMB, { label: "Visit" }]}>
+        {!online ? (
+          <PortalNotice tone="offline" title="You are offline">
+            Connect to the internet to see this visit.
+          </PortalNotice>
+        ) : (
+          <PortalNotice
+            tone="danger"
+            action={
+              visitId ? (
+                <button
+                  type="button"
+                  onClick={() => loadVisitDetails(visitId)}
+                  className="btn-secondary"
+                >
+                  <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                  Try again
+                </button>
+              ) : undefined
+            }
+          >
+            {error || "We could not load this visit."}
+          </PortalNotice>
+        )}
+        <BackLink />
+      </PortalPage>
     );
   }
+
+  const shortDate = formatPortalDate(visit.visitDate);
+  const vitals = visit.vitals;
+  const vitalItems: { label: string; value: string; unit: string }[] = [];
+  if (vitals) {
+    if (vitals.systolic && vitals.diastolic) {
+      vitalItems.push({
+        label: "Blood pressure",
+        value: `${vitals.systolic}/${vitals.diastolic}`,
+        unit: "mmHg",
+      });
+    }
+    if (vitals.pulseBpm) {
+      vitalItems.push({
+        label: "Heart rate",
+        value: `${vitals.pulseBpm}`,
+        unit: "beats per minute",
+      });
+    }
+    if (vitals.tempC) {
+      vitalItems.push({
+        label: "Temperature",
+        value: `${vitals.tempC}`,
+        unit: "°C",
+      });
+    }
+    if (vitals.spo2) {
+      vitalItems.push({
+        label: "Oxygen level (SpO2)",
+        value: `${vitals.spo2}`,
+        unit: "%",
+      });
+    }
+    if (vitals.heightCm) {
+      vitalItems.push({
+        label: "Height",
+        value: `${vitals.heightCm}`,
+        unit: "cm",
+      });
+    }
+    if (vitals.weightKg) {
+      vitalItems.push({
+        label: "Weight",
+        value: `${vitals.weightKg}`,
+        unit: "kg",
+      });
+    }
+    if (vitals.bmi) {
+      vitalItems.push({
+        label: "BMI",
+        value: vitals.bmi.toFixed(1),
+        unit: "kg/m²",
+      });
+    }
+  }
+
+  const consultation = visit.consultation;
+  const diagnoses = consultation?.diagnoses ?? [];
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <Link
-        to="/patient/medical-history"
-        className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-6"
-      >
-        <ArrowLeftIcon className="w-4 h-4" />
-        Back to Medical History
-      </Link>
-
-      <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-        <div className="flex items-center gap-4 mb-4">
-          <div className="w-16 h-16 bg-blue-100 rounded-xl flex items-center justify-center">
-            <CalendarIcon className="w-8 h-8 text-blue-600" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              {new Date(visit.visitDate).toLocaleDateString("en-US", {
-                weekday: "long",
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              })}
-            </h1>
-            {visit.chiefComplaint && (
-              <p className="text-gray-600 mt-1">{visit.chiefComplaint}</p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {visit.vitals && (
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <HeartIcon className="w-6 h-6 text-blue-600" />
-            Vital Signs
-          </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {visit.vitals.systolic && visit.vitals.diastolic && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Blood Pressure</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {visit.vitals.systolic}/{visit.vitals.diastolic}
-                </p>
-                <p className="text-xs text-gray-500">mmHg</p>
-              </div>
-            )}
-            {visit.vitals.pulseBpm && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Heart Rate</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {visit.vitals.pulseBpm}
-                </p>
-                <p className="text-xs text-gray-500">bpm</p>
-              </div>
-            )}
-            {visit.vitals.tempC && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Temperature</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {visit.vitals.tempC}°C
-                </p>
-                <p className="text-xs text-gray-500">celsius</p>
-              </div>
-            )}
-            {visit.vitals.spo2 && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">O2 Saturation</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {visit.vitals.spo2}%
-                </p>
-                <p className="text-xs text-gray-500">SpO2</p>
-              </div>
-            )}
-            {visit.vitals.heightCm && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Height</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {visit.vitals.heightCm}
-                </p>
-                <p className="text-xs text-gray-500">cm</p>
-              </div>
-            )}
-            {visit.vitals.weightKg && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Weight</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {visit.vitals.weightKg}
-                </p>
-                <p className="text-xs text-gray-500">kg</p>
-              </div>
-            )}
-            {visit.vitals.bmi && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">BMI</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {visit.vitals.bmi.toFixed(1)}
-                </p>
-                <p className="text-xs text-gray-500">kg/m²</p>
-              </div>
-            )}
-          </div>
-        </div>
+    <PortalPage
+      title={`Visit on ${shortDate}`}
+      breadcrumbs={[BACK_CRUMB, { label: shortDate }]}
+      description={
+        <>
+          Recorded by the outreach team at your visit on{" "}
+          {formatPortalLongDate(visit.visitDate)}.
+          {consultation?.providerName && (
+            <> Seen by {consultation.providerName}.</>
+          )}
+        </>
+      }
+    >
+      {!online && (
+        <PortalNotice tone="offline" title="You are offline">
+          You are seeing this visit as it was loaded when this phone was last
+          online. It may be out of date.
+        </PortalNotice>
       )}
 
-      {visit.consultation && (
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <ClipboardDocumentListIcon className="w-6 h-6 text-blue-600" />
-            Consultation Notes
-          </h2>
+      {visit.chiefComplaint && (
+        <p className="text-body text-ink-secondary">
+          <span className="text-ink-muted">Reason for visit: </span>
+          {visit.chiefComplaint}
+        </p>
+      )}
 
-          {visit.consultation.diagnoses.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                Diagnosis
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {visit.consultation.diagnoses.map((diagnosis, idx) => (
-                  <span
-                    key={idx}
-                    className="inline-flex items-center px-4 py-2 bg-blue-100 text-blue-800 rounded-lg text-sm font-medium"
-                  >
-                    {diagnosis}
+      {vitalItems.length > 0 && (
+        <Section id="visit-vitals" title="Measurements">
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {vitalItems.map((item) => (
+              <div
+                key={item.label}
+                className="rounded-lg border border-line bg-surface-sunken p-3"
+              >
+                <dt className="text-label text-ink-secondary">{item.label}</dt>
+                <dd className="mt-1 text-h2 tabular-nums text-ink">
+                  {item.value}
+                  <span className="ml-1 text-caption font-normal text-ink-muted">
+                    {item.unit}
                   </span>
-                ))}
+                </dd>
               </div>
-            </div>
-          )}
+            ))}
+          </dl>
+          <p className="mt-3 text-caption text-ink-muted">
+            Talk to your clinician if you have questions about these numbers.
+          </p>
+        </Section>
+      )}
 
+      {consultation && (
+        <Section id="visit-consultation" title="What the clinician recorded">
           <div className="space-y-4">
-            {visit.consultation.subjective && (
+            {diagnoses.length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                  Symptoms (Subjective)
-                </h3>
-                <p className="text-gray-900 bg-gray-50 rounded-lg p-4">
-                  {visit.consultation.subjective}
-                </p>
+                <h3 className="text-label text-ink-secondary">Diagnosis</h3>
+                <ul className="mt-1 flex flex-wrap gap-2">
+                  {diagnoses.map((diagnosis, idx) => (
+                    <li
+                      key={`${diagnosis}-${idx}`}
+                      className="rounded-md border border-line bg-surface-sunken px-3 py-1.5 text-body font-medium text-ink"
+                    >
+                      {diagnosis}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
-            {visit.consultation.objective && (
-              <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                  Examination (Objective)
-                </h3>
-                <p className="text-gray-900 bg-gray-50 rounded-lg p-4">
-                  {visit.consultation.objective}
-                </p>
-              </div>
+            {consultation.subjective && (
+              <NoteBlock
+                label="What you told the clinician"
+                text={consultation.subjective}
+              />
             )}
-            {visit.consultation.assessment && (
-              <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                  Assessment
-                </h3>
-                <p className="text-gray-900 bg-gray-50 rounded-lg p-4">
-                  {visit.consultation.assessment}
-                </p>
-              </div>
+            {consultation.objective && (
+              <NoteBlock
+                label="What the clinician found"
+                text={consultation.objective}
+              />
             )}
-            {visit.consultation.plan && (
-              <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">
-                  Treatment Plan
-                </h3>
-                <p className="text-gray-900 bg-gray-50 rounded-lg p-4">
-                  {visit.consultation.plan}
-                </p>
-              </div>
+            {consultation.assessment && (
+              <NoteBlock
+                label="Clinician's assessment"
+                text={consultation.assessment}
+              />
+            )}
+            {consultation.plan && (
+              <NoteBlock label="Treatment plan" text={consultation.plan} />
             )}
           </div>
-
-          {visit.consultation.providerName && (
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <p className="text-sm text-gray-600">
-                <span className="font-medium">Provider:</span>{" "}
-                {visit.consultation.providerName}
-              </p>
-            </div>
-          )}
-        </div>
+        </Section>
       )}
 
       {visit.prescriptions && visit.prescriptions.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
-            Medications Prescribed
-          </h2>
-          <div className="space-y-3">
+        <Section id="visit-medicines" title="Medicines given">
+          <ul className="divide-y divide-line">
             {visit.prescriptions.map((rx, idx) => (
-              <div
-                key={idx}
-                className="flex items-start gap-4 p-4 bg-gray-50 rounded-lg"
+              <li
+                key={`${rx.medicationName}-${idx}`}
+                className="py-3 first:pt-0 last:pb-0"
               >
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <HeartIcon className="w-6 h-6 text-blue-600" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-gray-900">
-                    {rx.medicationName}
-                  </h3>
-                  <p className="text-sm text-gray-600 mt-1">{rx.dosage}</p>
-                  <p className="text-sm text-gray-600 mt-1">{rx.directions}</p>
-                  <p className="text-xs text-gray-500 mt-2">
-                    Dispensed: {formatNigerianDate(rx.dispensedAt)}
+                <p className="text-body font-medium text-ink">
+                  {rx.medicationName}
+                </p>
+                {rx.dosage && (
+                  <p className="text-body text-ink-secondary">{rx.dosage}</p>
+                )}
+                {rx.directions && (
+                  <p className="text-body text-ink-secondary">
+                    {rx.directions}
                   </p>
-                </div>
-              </div>
+                )}
+                {rx.dispensedAt && (
+                  <p className="mt-0.5 text-caption text-ink-muted">
+                    Given on {formatPortalDate(rx.dispensedAt)}
+                  </p>
+                )}
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </Section>
       )}
-    </div>
+
+      {!vitals && !consultation && (visit.prescriptions?.length ?? 0) === 0 && (
+        <PortalNotice tone="info">
+          No measurements, notes or medicines were recorded for this visit.
+        </PortalNotice>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <BackLink />
+        <Link to="/patient/messages" className="btn-secondary">
+          <ChatBubbleLeftRightIcon className="h-5 w-5" aria-hidden />
+          Ask the clinic about this visit
+        </Link>
+      </div>
+    </PortalPage>
   );
 }

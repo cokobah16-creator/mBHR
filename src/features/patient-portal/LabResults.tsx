@@ -1,13 +1,19 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
-import { formatNigerianDate } from "@/utils/dateFormat";
 import {
+  ArrowLeftIcon,
+  ArrowPathIcon,
   BeakerIcon,
-  CheckCircleIcon,
-  ClockIcon,
+  ChevronRightIcon,
 } from "@heroicons/react/24/outline";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
+import { formatPortalDate, labHasResult, labStatusInfo } from "./portalStatus";
+import { readPortalUser } from "./portalSession";
+import { useOnlineStatus } from "./useOnlineStatus";
 
 interface LabResult {
   id: string;
@@ -23,30 +29,44 @@ interface LabResult {
   abnormal: boolean;
 }
 
+const PAGE_TITLE = "Lab results";
+const PAGE_DESCRIPTION =
+  "Tests the clinic has added to your portal, newest first. A result shows once the clinic enters it.";
+
+/** Shown only when the record itself marks the result as abnormal. */
+function OutsideRangeBadge() {
+  return (
+    <StatusBadge tone="warning" icon>
+      Outside the usual range
+    </StatusBadge>
+  );
+}
+
 export function LabResults() {
   const navigate = useNavigate();
+  const online = useOnlineStatus();
   const [results, setResults] = useState<LabResult[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [selectedResult, setSelectedResult] = useState<LabResult | null>(null);
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  const lastOpenedId = useRef<string | null>(null);
 
-  useEffect(() => {
-    loadLabResults();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadLabResults = async () => {
+  const loadLabResults = useCallback(async () => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
 
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
+      const portalUser = readPortalUser();
+      if (!portalUser) {
         navigate("/patient/login", { replace: true });
         return;
       }
-
-      const portalUser = JSON.parse(portalUserStr);
 
       const { data, error: resultsError } = await supabase
         .from("patient_lab_results")
@@ -57,179 +77,258 @@ export function LabResults() {
       if (resultsError) throw resultsError;
 
       setResults(data || []);
+      setLoaded(true);
     } catch (err) {
-      logger.error("Error loading lab results:", err);
-      setError("Failed to load lab results");
+      logger.error(
+        "Error loading lab results:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      // Offline, the "You are offline" notice already explains it.
+      setError(
+        navigator.onLine
+          ? "We could not load your lab results. Please try again."
+          : "",
+      );
     } finally {
       setLoading(false);
     }
+  }, [navigate]);
+
+  // Try once even when offline (this phone may have kept a copy from the last
+  // time it was online), then reload when the connection comes back.
+  const attempted = useRef(false);
+
+  useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+    if (!online && attempted.current) return;
+    attempted.current = true;
+    loadLabResults();
+  }, [online, loadLabResults]);
+
+  // Move focus with the view so keyboard and screen-reader users follow it.
+  useEffect(() => {
+    if (selectedResult) {
+      detailHeadingRef.current?.focus();
+    } else if (lastOpenedId.current) {
+      document
+        .getElementById(`lab-result-${lastOpenedId.current}`)
+        ?.focus();
+    }
+  }, [selectedResult]);
+
+  const openResult = (result: LabResult) => {
+    lastOpenedId.current = result.id;
+    setSelectedResult(result);
   };
 
-  if (loading) {
+  if (!supabase) {
     return (
-      <div className="min-h-screen bg-gray-50 px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading lab results...</p>
+      <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
+        <PortalNotice tone="info" title="Lab results are not available here">
+          This portal is not connected to the clinic&apos;s online records, so
+          lab results cannot be shown. Ask the outreach team about your results
+          at your next visit.
+        </PortalNotice>
+      </PortalPage>
+    );
+  }
+
+  if (loading && !loaded) {
+    return <PortalListSkeleton label="Loading your lab results" />;
+  }
+
+  if (selectedResult) {
+    const status = labStatusInfo(selectedResult.status);
+    const hasResult = labHasResult(selectedResult.status);
+    return (
+      <PortalPage title={PAGE_TITLE}>
+        <button
+          type="button"
+          onClick={() => setSelectedResult(null)}
+          className="btn-ghost -ml-3"
+        >
+          <ArrowLeftIcon className="h-5 w-5" aria-hidden />
+          Back to all results
+        </button>
+
+        <section className="panel" aria-labelledby="lab-detail-title">
+          <div className="panel-header flex-wrap">
+            <div className="min-w-0">
+              <h2
+                id="lab-detail-title"
+                ref={detailHeadingRef}
+                tabIndex={-1}
+                className="text-h2 text-ink focus:outline-none"
+              >
+                {selectedResult.test_name}
+              </h2>
+              {selectedResult.test_type && (
+                <p className="text-body text-ink-muted">
+                  {selectedResult.test_type}
+                </p>
+              )}
+            </div>
+            <StatusBadge tone={status.tone} icon>
+              {status.label}
+            </StatusBadge>
           </div>
-        </div>
-      </div>
+
+          <div className="panel-body space-y-4">
+            <p className="text-body text-ink-secondary">
+              Ordered on {formatPortalDate(selectedResult.ordered_date)}
+              {selectedResult.result_date && (
+                <>
+                  . Result recorded on{" "}
+                  {formatPortalDate(selectedResult.result_date)}
+                </>
+              )}
+              .
+            </p>
+
+            {hasResult ? (
+              <div className="rounded-lg border border-line bg-surface-sunken p-4">
+                <p className="text-label text-ink-secondary">Your result</p>
+                <p className="mt-1 text-display tabular-nums text-ink">
+                  {selectedResult.result_value || "—"}
+                  {selectedResult.unit && (
+                    <span className="ml-2 text-body font-normal text-ink-muted">
+                      {selectedResult.unit}
+                    </span>
+                  )}
+                </p>
+                {selectedResult.reference_range && (
+                  <p className="mt-1 text-body text-ink-secondary">
+                    Usual range: {selectedResult.reference_range}
+                  </p>
+                )}
+                {selectedResult.abnormal && (
+                  <div className="mt-3">
+                    <OutsideRangeBadge />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <PortalNotice tone="info">
+                There is no result for this test yet. It will show here once
+                the clinic enters it.
+              </PortalNotice>
+            )}
+
+            {selectedResult.notes && (
+              <div>
+                <h3 className="text-label text-ink-secondary">
+                  Notes on this test
+                </h3>
+                <p className="mt-1 whitespace-pre-wrap text-body text-ink">
+                  {selectedResult.notes}
+                </p>
+              </div>
+            )}
+
+            {hasResult && (
+              <PortalNotice tone={selectedResult.abnormal ? "warning" : "info"}>
+                {selectedResult.abnormal
+                  ? "This result is outside the usual range. Talk to your clinician about this result."
+                  : "Talk to your clinician about this result if you have questions."}
+              </PortalNotice>
+            )}
+          </div>
+        </section>
+      </PortalPage>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 px-4 py-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Lab Results</h1>
-          <p className="mt-2 text-gray-600">
-            View your test results and lab reports
-          </p>
+    <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
+      {!online && (
+        <PortalNotice tone="offline" title="You are offline">
+          {loaded
+            ? "You are seeing the results loaded when this phone was last online. They may be out of date."
+            : "Connect to the internet to see your lab results."}
+        </PortalNotice>
+      )}
+
+      {error && (
+        <PortalNotice
+          tone="danger"
+          action={
+            online ? (
+              <button
+                type="button"
+                onClick={loadLabResults}
+                className="btn-secondary"
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Try again
+              </button>
+            ) : undefined
+          }
+        >
+          {error}
+        </PortalNotice>
+      )}
+
+      {loaded && results.length === 0 && (
+        <div className="panel">
+          <EmptyState
+            icon={BeakerIcon}
+            title="No lab results yet"
+            description="When the clinic adds a test or a result for you, it will show here. If you are waiting for a result, ask the outreach team."
+          />
         </div>
+      )}
 
-        {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-800">{error}</p>
-          </div>
-        )}
-
-        {selectedResult ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <button
-              onClick={() => setSelectedResult(null)}
-              className="mb-4 text-blue-600 hover:text-blue-800"
-            >
-              ← Back to all results
-            </button>
-
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900">
-                  {selectedResult.test_name}
-                </h2>
-                <p className="text-gray-600">{selectedResult.test_type}</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-600">Status</p>
-                  <p className="font-medium capitalize">
-                    {selectedResult.status}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Ordered Date</p>
-                  <p className="font-medium">
-                    {formatNigerianDate(selectedResult.ordered_date)}
-                  </p>
-                </div>
-                {selectedResult.result_date && (
-                  <div>
-                    <p className="text-sm text-gray-600">Result Date</p>
-                    <p className="font-medium">
-                      {formatNigerianDate(selectedResult.result_date)}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {selectedResult.status === "completed" && (
-                <div
-                  className={`p-4 rounded-lg ${selectedResult.abnormal ? "bg-yellow-50 border border-yellow-200" : "bg-green-50 border border-green-200"}`}
+      {results.length > 0 && (
+        <ul className="panel divide-y divide-line" aria-label="Lab results">
+          {results.map((result) => {
+            const status = labStatusInfo(result.status);
+            return (
+              <li key={result.id}>
+                <button
+                  id={`lab-result-${result.id}`}
+                  type="button"
+                  onClick={() => openResult(result)}
+                  className="flex min-h-touch-target w-full items-start gap-3 p-4 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
                 >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-sm text-gray-600">Result</p>
-                      <p className="text-2xl font-bold text-gray-900">
-                        {selectedResult.result_value} {selectedResult.unit}
-                      </p>
-                      <p className="text-sm text-gray-600 mt-1">
-                        Reference Range: {selectedResult.reference_range}
-                      </p>
-                    </div>
-                    {selectedResult.abnormal && (
-                      <span className="px-2 py-1 bg-yellow-200 text-yellow-800 text-xs font-medium rounded">
-                        Abnormal
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-body font-medium text-ink">
+                      {result.test_name}
+                    </span>
+                    {result.test_type && (
+                      <span className="block text-caption text-ink-muted">
+                        {result.test_type}
                       </span>
                     )}
-                  </div>
-                </div>
-              )}
-
-              {selectedResult.notes && (
-                <div>
-                  <p className="text-sm text-gray-600 mb-2">Notes</p>
-                  <p className="text-gray-900">{selectedResult.notes}</p>
-                </div>
-              )}
-
-              {selectedResult.abnormal && (
-                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    <strong>Important:</strong> This result is outside the
-                    normal range. Please contact your healthcare provider to
-                    discuss these results.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            {results.length === 0 ? (
-              <div className="p-12 text-center">
-                <BeakerIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">
-                  No lab results
-                </h3>
-                <p className="text-gray-600">
-                  Your lab results will appear here once available
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {results.map((result) => (
-                  <button
-                    key={result.id}
-                    onClick={() => setSelectedResult(result)}
-                    className="w-full p-4 text-left hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-medium text-gray-900">
-                          {result.test_name}
-                        </h3>
-                        <p className="text-sm text-gray-600 mt-1">
-                          {result.test_type}
-                        </p>
-                        <div className="flex items-center gap-4 mt-2">
-                          <span className="inline-flex items-center gap-1 text-sm text-gray-600">
-                            {result.status === "completed" ? (
-                              <CheckCircleIcon className="h-4 w-4 text-green-600" />
-                            ) : (
-                              <ClockIcon className="h-4 w-4 text-yellow-600" />
-                            )}
-                            {result.status}
-                          </span>
-                          {result.abnormal && (
-                            <span className="px-2 py-0.5 bg-yellow-200 text-yellow-800 text-xs font-medium rounded">
-                              Abnormal
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <span className="text-xs text-gray-500 ml-4 whitespace-nowrap">
-                        {formatNigerianDate(result.ordered_date)}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+                    <span className="mt-2 flex flex-wrap items-center gap-2">
+                      <StatusBadge tone={status.tone} icon>
+                        {status.label}
+                      </StatusBadge>
+                      {result.abnormal && labHasResult(result.status) && (
+                        <OutsideRangeBadge />
+                      )}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className="block text-caption text-ink-muted">
+                      Ordered
+                    </span>
+                    <span className="block whitespace-nowrap text-caption text-ink-secondary">
+                      {formatPortalDate(result.ordered_date)}
+                    </span>
+                  </span>
+                  <ChevronRightIcon
+                    className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted"
+                    aria-hidden
+                  />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </PortalPage>
   );
 }

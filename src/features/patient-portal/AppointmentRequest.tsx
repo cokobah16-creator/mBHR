@@ -1,15 +1,32 @@
-import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  ArrowLeftIcon,
-  CalendarIcon,
+  ArrowPathIcon,
+  CalendarDaysIcon,
   CheckCircleIcon,
+  VideoCameraIcon,
 } from "@heroicons/react/24/outline";
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
+import { getPatientAppointments } from "@/services/appointments";
+import type { Appointment } from "@/services/appointments";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PortalNotice, PortalPage } from "./PortalPage";
+import {
+  appointmentRequestStatusInfo,
+  appointmentStatusInfo,
+  formatPortalDate,
+  formatPortalLongDate,
+  formatPortalTime,
+  upcomingAppointments,
+} from "./portalStatus";
+import { clearPortalSession, readPortalUser } from "./portalSession";
+import { useOnlineStatus } from "./useOnlineStatus";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 const appointmentTypes = [
   "General Consultation",
@@ -53,44 +70,145 @@ const appointmentSchema = z.object({
 
 type AppointmentForm = z.infer<typeof appointmentSchema>;
 
+const EMPTY_FORM: AppointmentForm = {
+  appointmentType: "",
+  preferredDate1: "",
+  preferredTime1: "",
+  preferredDate2: "",
+  preferredTime2: "",
+  preferredDate3: "",
+  preferredTime3: "",
+  reason: "",
+  notes: "",
+};
+
+interface AppointmentRequestRow {
+  id: string;
+  appointment_type: string;
+  preferred_date_1: string;
+  preferred_time_1?: string | null;
+  reason?: string | null;
+  status: string;
+  review_notes?: string | null;
+  visit_mode?: string | null;
+  created_at: string;
+}
+
+const REQUESTS_SHOWN = 10;
+
+const PAGE_DESCRIPTION =
+  "See your booked appointments and ask the clinic for a new one. A request is not a booking: the clinic team will contact you to confirm a time.";
+
+function OverviewSkeleton() {
+  return (
+    <div className="panel space-y-3 p-4" aria-hidden>
+      <Skeleton className="h-5 w-48" />
+      <Skeleton className="h-4 w-64 max-w-full" />
+      <Skeleton className="h-4 w-40" />
+    </div>
+  );
+}
+
 export function AppointmentRequest() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const online = useOnlineStatus();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const successRef = useRef<HTMLDivElement>(null);
+
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [requests, setRequests] = useState<AppointmentRequestRow[]>([]);
+  const [overviewLoading, setOverviewLoading] = useState(!!supabase);
+  const [overviewLoaded, setOverviewLoaded] = useState(false);
+  const [overviewError, setOverviewError] = useState("");
 
   const form = useForm<AppointmentForm>({
     resolver: zodResolver(appointmentSchema),
-    defaultValues: {
-      appointmentType: "",
-      preferredDate1: "",
-      preferredTime1: "",
-      preferredDate2: "",
-      preferredTime2: "",
-      preferredDate3: "",
-      preferredTime3: "",
-      reason: "",
-      notes: "",
-    },
+    defaultValues: EMPTY_FORM,
   });
+  const { errors } = form.formState;
 
   const minDate = new Date().toISOString().split("T")[0];
+  const isRequestRoute = location.pathname.endsWith("/request");
+
+  const loadOverview = useCallback(async () => {
+    if (!supabase) return;
+    const portalUser = readPortalUser();
+    if (!portalUser || !portalUser.patientId) {
+      setOverviewLoading(false);
+      return;
+    }
+    setOverviewLoading(true);
+    setOverviewError("");
+    try {
+      const [appts, requestRes] = await Promise.all([
+        getPatientAppointments(portalUser.patientId),
+        supabase
+          .from("patient_appointment_requests")
+          .select("*")
+          .eq("patient_id", portalUser.patientId)
+          .order("created_at", { ascending: false })
+          .limit(REQUESTS_SHOWN),
+      ]);
+      if (requestRes.error) throw requestRes.error;
+      setAppointments(upcomingAppointments(appts));
+      setRequests((requestRes.data || []) as AppointmentRequestRow[]);
+      setOverviewLoaded(true);
+    } catch (err) {
+      logger.error(
+        "Error loading appointments:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      // Offline, the "You are offline" notice already explains it.
+      setOverviewError(
+        navigator.onLine
+          ? "We could not load your appointments and requests. Please try again."
+          : "",
+      );
+    } finally {
+      setOverviewLoading(false);
+    }
+  }, []);
+
+  // Try once even when offline (this phone may have kept a copy from the last
+  // time it was online), then reload when the connection comes back.
+  const attempted = useRef(false);
+
+  useEffect(() => {
+    if (!supabase) {
+      setOverviewLoading(false);
+      return;
+    }
+    if (!online && attempted.current) return;
+    attempted.current = true;
+    loadOverview();
+  }, [online, loadOverview]);
+
+  useEffect(() => {
+    if (success) successRef.current?.focus();
+  }, [success]);
 
   const handleSubmit = async (data: AppointmentForm) => {
+    if (!supabase) return;
+    if (!navigator.onLine) {
+      setError(
+        "You are offline, so your request was not sent. Connect to the internet and try again.",
+      );
+      return;
+    }
     setLoading(true);
     setError("");
 
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
+      const portalUser = readPortalUser();
+      if (!portalUser) {
         navigate("/patient/login", { replace: true });
         return;
       }
-
-      const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId) {
-        localStorage.removeItem("patient_portal_user");
-        sessionStorage.removeItem("patient_session_token");
+        clearPortalSession();
         navigate("/patient/login", { replace: true });
         return;
       }
@@ -112,91 +230,287 @@ export function AppointmentRequest() {
         });
 
       if (insertError) {
-        logger.error("Error creating appointment request:", insertError);
-        setError("Failed to submit appointment request. Please try again.");
+        logger.error(
+          "Error creating appointment request:",
+          insertError instanceof Error ? insertError.name : "insert failed",
+        );
+        setError(
+          "Your request was not sent. Check your connection and try again.",
+        );
         return;
       }
 
+      form.reset(EMPTY_FORM);
       setSuccess(true);
-      setTimeout(() => navigate("/patient/appointments"), 2000);
+      loadOverview();
     } catch (err) {
-      logger.error("Error in appointment request:", err);
-      setError("An error occurred. Please try again.");
+      logger.error(
+        "Error in appointment request:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      setError(
+        "Your request was not sent. Check your connection and try again.",
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  if (success) {
+  if (!supabase) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        <div className="bg-white rounded-xl shadow-sm p-12 text-center">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-green-100 rounded-full mb-6">
-            <CheckCircleIcon className="w-12 h-12 text-green-600" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">
-            Request Submitted!
-          </h1>
-          <p className="text-gray-600 mb-6">
-            Your appointment request has been submitted successfully. Our team
-            will review it and get back to you soon.
-          </p>
-          <div className="flex justify-center">
-            <div className="w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full animate-spin" />
-          </div>
-        </div>
-      </div>
+      <PortalPage title="Appointments" description={PAGE_DESCRIPTION}>
+        <PortalNotice tone="info" title="Appointments are not available here">
+          This portal is not connected to the clinic&apos;s online system, so
+          you cannot see or request appointments here. Ask the outreach team
+          at your next visit.
+        </PortalNotice>
+        <Link to="/patient/dashboard" className="btn-secondary">
+          Go to home
+        </Link>
+      </PortalPage>
     );
   }
 
-  return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
-      <Link
-        to="/patient/dashboard"
-        className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-6"
-      >
-        <ArrowLeftIcon className="w-4 h-4" />
-        Back to Dashboard
-      </Link>
+  const fieldClass = "input-field";
+  const describe = (name: keyof AppointmentForm & string) =>
+    errors[name] ? `${name}-error` : undefined;
+  const reasonDescribedBy = ["reason-count", errors.reason && "reason-error"]
+    .filter(Boolean)
+    .join(" ");
 
-      <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-        <div className="flex items-center gap-4 mb-4">
-          <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-            <CalendarIcon className="w-6 h-6 text-blue-600" />
+  const overview = (
+    <>
+      {!online && (
+        <PortalNotice tone="offline" title="You are offline">
+          {overviewLoaded
+            ? "You are seeing the appointments loaded when this phone was last online. They may be out of date."
+            : "Connect to the internet to see your appointments."}
+        </PortalNotice>
+      )}
+
+      {overviewError && (
+        <PortalNotice
+          tone="danger"
+          action={
+            online ? (
+              <button
+                type="button"
+                onClick={loadOverview}
+                className="btn-secondary"
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Try again
+              </button>
+            ) : undefined
+          }
+        >
+          {overviewError}
+        </PortalNotice>
+      )}
+
+      <section className="panel" aria-labelledby="upcoming-title">
+        <div className="panel-header">
+          <h2 id="upcoming-title" className="panel-title">
+            Upcoming appointments
+          </h2>
+        </div>
+        {overviewLoading && !overviewLoaded ? (
+          <div className="p-4">
+            <span role="status" className="sr-only">
+              Loading your appointments
+            </span>
+            <OverviewSkeleton />
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Request an Appointment
-            </h1>
-            <p className="text-gray-600">
-              Tell us when you'd like to visit and we'll schedule it for you
-            </p>
+        ) : !overviewLoaded ? (
+          <p className="panel-body text-body text-ink-muted">
+            Not loaded yet.
+          </p>
+        ) : appointments.length === 0 ? (
+          <EmptyState
+            icon={CalendarDaysIcon}
+            title="No upcoming appointments"
+            description="When the clinic books an appointment for you, it will show here."
+          />
+        ) : (
+          <ul className="divide-y divide-line">
+            {appointments.map((appt, idx) => {
+              const status = appointmentStatusInfo(appt.status);
+              const video = appt.visitMode === "televisit";
+              return (
+                <li key={appt.id ?? idx} className="p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-h3 text-ink">
+                        {formatPortalLongDate(appt.scheduledAt)}
+                      </p>
+                      <p className="text-body tabular-nums text-ink-secondary">
+                        {formatPortalTime(appt.scheduledAt)}
+                        {appt.durationMinutes
+                          ? ` · ${appt.durationMinutes} minutes`
+                          : ""}
+                      </p>
+                      <p className="mt-1 flex items-center gap-1.5 text-body text-ink-secondary">
+                        {video && (
+                          <VideoCameraIcon
+                            className="h-4 w-4 shrink-0"
+                            aria-hidden
+                          />
+                        )}
+                        {video ? "Video visit" : appt.appointmentType}
+                      </p>
+                    </div>
+                    <StatusBadge tone={status.tone} icon>
+                      {status.label}
+                    </StatusBadge>
+                  </div>
+                  {video && (
+                    <Link
+                      to="/patient/telehealth"
+                      className="mt-2 inline-flex min-h-touch-target items-center text-label text-primary-fg underline-offset-2 hover:underline"
+                    >
+                      Open video visits
+                    </Link>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="panel" aria-labelledby="requests-title">
+        <div className="panel-header">
+          <h2 id="requests-title" className="panel-title">
+            Your requests
+          </h2>
+          {requests.length >= REQUESTS_SHOWN && (
+            <span className="text-caption text-ink-muted">
+              Latest {REQUESTS_SHOWN} shown
+            </span>
+          )}
+        </div>
+        {overviewLoading && !overviewLoaded ? (
+          <div className="p-4">
+            <OverviewSkeleton />
+          </div>
+        ) : !overviewLoaded ? (
+          <p className="panel-body text-body text-ink-muted">
+            Not loaded yet.
+          </p>
+        ) : requests.length === 0 ? (
+          <p className="panel-body text-body text-ink-muted">
+            You have not asked for an appointment in the portal yet.
+          </p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {requests.map((req) => {
+              const status = appointmentRequestStatusInfo(req.status);
+              const video = req.visit_mode === "televisit";
+              return (
+                <li key={req.id} className="p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-body font-medium text-ink">
+                        {video ? "Video visit" : req.appointment_type}
+                      </p>
+                      <p className="text-body text-ink-secondary">
+                        Preferred: {formatPortalDate(req.preferred_date_1)}
+                        {req.preferred_time_1
+                          ? ` · ${req.preferred_time_1}`
+                          : ""}
+                      </p>
+                      <p className="text-caption text-ink-muted">
+                        Sent on {formatPortalDate(req.created_at)}
+                      </p>
+                    </div>
+                    <StatusBadge tone={status.tone} icon>
+                      {status.label}
+                    </StatusBadge>
+                  </div>
+                  {req.review_notes && (
+                    <p className="mt-2 rounded-md bg-surface-sunken p-3 text-body text-ink">
+                      <span className="text-ink-muted">
+                        Note from the clinic:{" "}
+                      </span>
+                      {req.review_notes}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+
+  const formSection = success ? (
+    <div
+      ref={successRef}
+      tabIndex={-1}
+      className="panel focus:outline-none"
+      role="status"
+    >
+      <div className="panel-body flex items-start gap-3">
+        <CheckCircleIcon
+          className="h-6 w-6 shrink-0 text-success"
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-h2 text-ink">Request sent to the clinic</h2>
+          <p className="mt-1 text-body text-ink-secondary">
+            This is not a booking yet. The clinic team will contact you to
+            confirm a time. You can follow it under &quot;Your requests&quot;.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSuccess(false);
+                setError("");
+              }}
+              className="btn-secondary"
+            >
+              Ask for another appointment
+            </button>
+            <Link to="/patient/dashboard" className="btn-secondary">
+              Back to home
+            </Link>
           </div>
         </div>
       </div>
+    </div>
+  ) : (
+    <form
+      onSubmit={form.handleSubmit(handleSubmit)}
+      className="panel"
+      aria-labelledby="request-form-title"
+      noValidate
+    >
+      <div className="panel-header">
+        <h2 id="request-form-title" className="panel-title">
+          Ask for an appointment
+        </h2>
+      </div>
+      <div className="panel-body space-y-5">
+        {!online && (
+          <PortalNotice tone="offline">
+            You are offline. You can fill in this form, but it can only be sent
+            when you are connected to the internet.
+          </PortalNotice>
+        )}
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-          <p className="text-sm text-red-800">{error}</p>
-        </div>
-      )}
-
-      <form
-        onSubmit={form.handleSubmit(handleSubmit)}
-        className="bg-white rounded-xl shadow-sm p-6 space-y-6"
-      >
         <div>
-          <label
-            htmlFor="appointmentType"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
-            Type of Appointment *
+          <label htmlFor="appointmentType" className="field-label">
+            Type of appointment (required)
           </label>
           <select
             {...form.register("appointmentType")}
             id="appointmentType"
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className={fieldClass}
             disabled={loading}
+            aria-invalid={errors.appointmentType ? true : undefined}
+            aria-describedby={describe("appointmentType")}
           >
             <option value="">Select appointment type</option>
             {appointmentTypes.map((type) => (
@@ -205,232 +519,157 @@ export function AppointmentRequest() {
               </option>
             ))}
           </select>
-          {form.formState.errors.appointmentType && (
-            <p className="mt-2 text-sm text-red-600">
-              {form.formState.errors.appointmentType.message}
+          {errors.appointmentType && (
+            <p id="appointmentType-error" className="field-error">
+              {errors.appointmentType.message}
             </p>
           )}
         </div>
 
-        <div className="border-t border-gray-200 pt-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Preferred Dates & Times
-          </h3>
-          <p className="text-sm text-gray-600 mb-4">
-            Please provide up to 3 preferred dates to increase chances of
-            getting an appointment that works for you.
+        <fieldset className="space-y-4 border-t border-line pt-5">
+          <legend className="text-h3 text-ink">Days that suit you</legend>
+          <p className="text-body text-ink-muted">
+            Give up to 3 days. More choices make it easier for the clinic to
+            find a time.
           </p>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label
-                  htmlFor="preferredDate1"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  First Choice Date *
-                </label>
-                <input
-                  {...form.register("preferredDate1")}
-                  type="date"
-                  id="preferredDate1"
-                  min={minDate}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={loading}
-                />
-                {form.formState.errors.preferredDate1 && (
-                  <p className="mt-2 text-sm text-red-600">
-                    {form.formState.errors.preferredDate1.message}
-                  </p>
-                )}
+          {([1, 2, 3] as const).map((n) => {
+            const dateField = `preferredDate${n}` as const;
+            const timeField = `preferredTime${n}` as const;
+            const choice =
+              n === 1 ? "First choice" : n === 2 ? "Second choice" : "Third choice";
+            return (
+              <div key={n} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label htmlFor={dateField} className="field-label">
+                    {choice} date{n === 1 ? " (required)" : " (optional)"}
+                  </label>
+                  <input
+                    {...form.register(dateField)}
+                    type="date"
+                    id={dateField}
+                    min={minDate}
+                    className={fieldClass}
+                    disabled={loading}
+                    aria-invalid={errors[dateField] ? true : undefined}
+                    aria-describedby={describe(dateField)}
+                  />
+                  {errors[dateField] && (
+                    <p id={`${dateField}-error`} className="field-error">
+                      {errors[dateField]?.message}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor={timeField} className="field-label">
+                    {choice} time of day
+                  </label>
+                  <select
+                    {...form.register(timeField)}
+                    id={timeField}
+                    className={fieldClass}
+                    disabled={loading}
+                  >
+                    <option value="">Any time</option>
+                    {timeSlots.map((slot) => (
+                      <option key={slot} value={slot}>
+                        {slot}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div>
-                <label
-                  htmlFor="preferredTime1"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Preferred Time
-                </label>
-                <select
-                  {...form.register("preferredTime1")}
-                  id="preferredTime1"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={loading}
-                >
-                  <option value="">Any time</option>
-                  {timeSlots.map((slot) => (
-                    <option key={slot} value={slot}>
-                      {slot}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            );
+          })}
+        </fieldset>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label
-                  htmlFor="preferredDate2"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Second Choice Date (Optional)
-                </label>
-                <input
-                  {...form.register("preferredDate2")}
-                  type="date"
-                  id="preferredDate2"
-                  min={minDate}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={loading}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="preferredTime2"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Preferred Time
-                </label>
-                <select
-                  {...form.register("preferredTime2")}
-                  id="preferredTime2"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={loading}
-                >
-                  <option value="">Any time</option>
-                  {timeSlots.map((slot) => (
-                    <option key={slot} value={slot}>
-                      {slot}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label
-                  htmlFor="preferredDate3"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Third Choice Date (Optional)
-                </label>
-                <input
-                  {...form.register("preferredDate3")}
-                  type="date"
-                  id="preferredDate3"
-                  min={minDate}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={loading}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="preferredTime3"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Preferred Time
-                </label>
-                <select
-                  {...form.register("preferredTime3")}
-                  id="preferredTime3"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={loading}
-                >
-                  <option value="">Any time</option>
-                  {timeSlots.map((slot) => (
-                    <option key={slot} value={slot}>
-                      {slot}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-gray-200 pt-6">
+        <div className="space-y-4 border-t border-line pt-5">
           <div>
-            <label
-              htmlFor="reason"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
-              Reason for Visit *
+            <label htmlFor="reason" className="field-label">
+              Reason for the visit (required)
             </label>
             <textarea
               {...form.register("reason")}
               id="reason"
               rows={4}
-              placeholder="Please describe your symptoms or reason for the appointment..."
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              className={`${fieldClass} resize-none`}
               disabled={loading}
+              aria-invalid={errors.reason ? true : undefined}
+              aria-describedby={reasonDescribedBy}
             />
-            {form.formState.errors.reason && (
-              <p className="mt-2 text-sm text-red-600">
-                {form.formState.errors.reason.message}
+            {errors.reason && (
+              <p id="reason-error" className="field-error">
+                {errors.reason.message}
               </p>
             )}
-            <p className="mt-1 text-xs text-gray-500">
-              {form.watch("reason")?.length || 0} / 500 characters
+            <p id="reason-count" className="field-hint">
+              Describe how you feel or what you need. {form.watch("reason")?.length || 0} / 500
+              characters
             </p>
           </div>
 
-          <div className="mt-4">
-            <label
-              htmlFor="notes"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
-              Additional Notes (Optional)
+          <div>
+            <label htmlFor="notes" className="field-label">
+              Anything else the clinic should know (optional)
             </label>
             <textarea
               {...form.register("notes")}
               id="notes"
               rows={3}
-              placeholder="Any additional information you'd like us to know..."
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              className={`${fieldClass} resize-none`}
               disabled={loading}
+              aria-invalid={errors.notes ? true : undefined}
+              aria-describedby={describe("notes")}
             />
-            {form.formState.errors.notes && (
-              <p className="mt-2 text-sm text-red-600">
-                {form.formState.errors.notes.message}
+            {errors.notes && (
+              <p id="notes-error" className="field-error">
+                {errors.notes.message}
               </p>
             )}
           </div>
         </div>
 
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <p className="text-sm text-blue-800">
-            <strong>Note:</strong> This is a request, not a confirmed
-            appointment. Our staff will review your request and contact you to
-            confirm the appointment time.
-          </p>
-        </div>
+        <PortalNotice tone="info">
+          This is a request, not a confirmed appointment. The clinic team will
+          review it and contact you to confirm a time.
+        </PortalNotice>
 
-        <div className="flex gap-4">
+        {error && <PortalNotice tone="danger">{error}</PortalNotice>}
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="submit"
+            disabled={loading || !online}
+            className="btn-primary"
+          >
+            {loading ? "Sending…" : "Send request"}
+          </button>
           <button
             type="button"
             onClick={() => navigate("/patient/dashboard")}
-            className="flex-1 px-6 py-3 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+            className="btn-secondary"
             disabled={loading}
           >
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <>
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Submitting...
-              </>
-            ) : (
-              "Submit Request"
-            )}
-          </button>
         </div>
-      </form>
-    </div>
+      </div>
+    </form>
+  );
+
+  return (
+    <PortalPage title="Appointments" description={PAGE_DESCRIPTION}>
+      {isRequestRoute ? (
+        <>
+          {formSection}
+          {overview}
+        </>
+      ) : (
+        <>
+          {overview}
+          {formSection}
+        </>
+      )}
+    </PortalPage>
   );
 }

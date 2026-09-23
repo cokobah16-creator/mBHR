@@ -1,555 +1,259 @@
-import { useEffect, useState } from "react";
-import { formatNigerianDate } from "@/utils/dateFormat";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
-  BellAlertIcon,
-  ClockIcon,
-  CheckCircleIcon,
-  PlusCircleIcon,
-  XCircleIcon,
-  ExclamationTriangleIcon,
+  ArchiveBoxIcon,
+  ArrowPathIcon,
+  CalendarDaysIcon,
+  ChatBubbleLeftRightIcon,
 } from "@heroicons/react/24/outline";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { getMedications } from "@/services/patientService";
+import { getPatientDashboard } from "@/services/patientPortalData";
 import * as logger from "@/lib/logger";
+import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
+import { formatPortalDate } from "./portalStatus";
+import {
+  readActiveProfile,
+  readPortalUser,
+  resolveActivePatientId,
+} from "./portalSession";
+import { useOnlineStatus } from "./useOnlineStatus";
 
-interface Prescription {
-  id: string;
-  medicationName: string;
-  dosage: string;
-  frequency: string;
-  prescribedBy: string;
-  prescribedDate: Date;
-  lastDispensedDate: Date;
-  quantityDispensed: number;
-  daysSupply: number;
-  refillsRemaining: number;
-  totalRefills: number;
-  status: "active" | "refill_soon" | "refill_due" | "expired";
+interface MedicineItem {
+  key: string;
+  name: string;
+  dosage: string | null;
+  directions: string | null;
+  givenAt: string | Date;
+  visitId: string | null;
 }
 
-interface RefillRequest {
-  id: string;
-  prescriptionId: string;
-  medicationName: string;
-  requestedAt: Date;
-  status: "pending" | "approved" | "ready" | "dispensed" | "declined";
-  pharmacy: string;
-  notes?: string;
-  reviewedAt?: Date;
-  reviewedBy?: string;
-}
+const PAGE_TITLE = "Your medicines";
 
+// getPatientDashboard returns at most this many medicines from this device.
+const LOCAL_MEDICINES_LIMIT = 10;
+
+/**
+ * Medicines the pharmacy recorded as given to the patient. The portal cannot
+ * place refill orders, so it points to the ways a patient can really ask:
+ * a secure message or an appointment request.
+ */
 export function PrescriptionRefills() {
-  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
-  const [refillRequests, setRefillRequests] = useState<RefillRequest[]>([]);
+  const online = useOnlineStatus();
+  const [medicines, setMedicines] = useState<MedicineItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedPrescription, setSelectedPrescription] =
-    useState<Prescription | null>(null);
-  const [showRefillModal, setShowRefillModal] = useState(false);
-  const [refillNotes, setRefillNotes] = useState("");
-  const [requesting, setRequesting] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState("");
 
-  useEffect(() => {
-    loadPrescriptions();
-    loadRefillRequests();
-  }, []);
-
-  const loadPrescriptions = async () => {
+  const loadMedicines = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      const portalUser = JSON.parse(
-        localStorage.getItem("patient_portal_user") || "{}",
-      );
-      if (!portalUser.patientId) {
-        logger.error("No patient ID found");
+      const portalUser = readPortalUser();
+      if (!portalUser || !portalUser.patientId) {
+        setError(
+          "We could not find your sign-in on this phone. Please log in again.",
+        );
         return;
       }
 
-      setPrescriptions([]);
+      if (isSupabaseEnabled) {
+        const res = await getMedications(portalUser.patientId);
+        if (res.error || !res.data) {
+          // Offline, the "You are offline" notice already explains it.
+          setError(
+            navigator.onLine
+              ? "We could not load your medicines. Please try again."
+              : "",
+          );
+          return;
+        }
+        setMedicines(
+          res.data.map((m) => ({
+            key: m.id,
+            name: m.itemName,
+            dosage: m.dosage,
+            directions: m.directions,
+            givenAt: m.dispensedAt,
+            visitId: m.visitId,
+          })),
+        );
+      } else {
+        // No online portal: read what the pharmacy saved on this device, for
+        // the same profile the home page shows (only one this account owns).
+        const data = await getPatientDashboard(
+          portalUser.id,
+          resolveActivePatientId(portalUser, readActiveProfile()),
+        );
+        if (!data) {
+          setError("We could not load your medicines. Please try again.");
+          return;
+        }
+        setMedicines(
+          data.activeMedications.map((m, i) => ({
+            key: `${m.medicationName}-${i}`,
+            name: m.medicationName,
+            dosage: m.dosage || null,
+            directions: m.directions || null,
+            givenAt: m.dispensedAt,
+            visitId: null,
+          })),
+        );
+      }
+      setLoaded(true);
     } catch (err) {
-      logger.error("Error loading prescriptions:", err);
+      logger.error(
+        "Error loading medicines:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      // Offline, the "You are offline" notice already explains it.
+      setError(
+        isSupabaseEnabled && !navigator.onLine
+          ? ""
+          : "We could not load your medicines. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadRefillRequests = async () => {
-    try {
-      setRefillRequests([]);
-    } catch (err) {
-      logger.error("Error loading refill requests:", err);
-    }
-  };
+  // Try once even when offline (this phone may have kept a copy from the last
+  // time it was online), then reload when the connection comes back.
+  const attempted = useRef(false);
+  const canLoad = !isSupabaseEnabled || online;
 
-  const getStatusInfo = (status: Prescription["status"]) => {
-    switch (status) {
-      case "refill_due":
-        return {
-          color: "bg-red-100 text-red-800 border-red-200",
-          icon: ExclamationTriangleIcon,
-          label: "Refill Due Now",
-          message: "Your prescription is running out soon",
-        };
-      case "refill_soon":
-        return {
-          color: "bg-yellow-100 text-yellow-800 border-yellow-200",
-          icon: BellAlertIcon,
-          label: "Refill Soon",
-          message: "Consider requesting a refill",
-        };
-      case "active":
-        return {
-          color: "bg-green-100 text-green-800 border-green-200",
-          icon: CheckCircleIcon,
-          label: "Active",
-          message: "Prescription is active",
-        };
-      case "expired":
-        return {
-          color: "bg-gray-100 text-gray-800 border-gray-200",
-          icon: XCircleIcon,
-          label: "Expired",
-          message: "Contact your doctor for a new prescription",
-        };
-    }
-  };
+  useEffect(() => {
+    if (!canLoad && attempted.current) return;
+    attempted.current = true;
+    loadMedicines();
+  }, [canLoad, loadMedicines]);
 
-  const getRequestStatusColor = (status: RefillRequest["status"]) => {
-    switch (status) {
-      case "ready":
-        return "bg-green-100 text-green-800";
-      case "approved":
-        return "bg-blue-100 text-blue-800";
-      case "pending":
-        return "bg-yellow-100 text-yellow-800";
-      case "dispensed":
-        return "bg-gray-100 text-gray-800";
-      case "declined":
-        return "bg-red-100 text-red-800";
-    }
-  };
-
-  const handleRequestRefill = (prescription: Prescription) => {
-    setSelectedPrescription(prescription);
-    setRefillNotes("");
-    setShowRefillModal(true);
-  };
-
-  const submitRefillRequest = async () => {
-    if (!selectedPrescription) return;
-
-    setRequesting(true);
-    try {
-      // Mock submission - replace with actual API call
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      const newRequest: RefillRequest = {
-        id: `req-${Date.now()}`,
-        prescriptionId: selectedPrescription.id,
-        medicationName: `${selectedPrescription.medicationName} ${selectedPrescription.dosage}`,
-        requestedAt: new Date(),
-        status: "pending",
-        pharmacy: "Main Pharmacy",
-        notes: refillNotes || undefined,
-      };
-
-      setRefillRequests([newRequest, ...refillRequests]);
-      setShowRefillModal(false);
-      setSelectedPrescription(null);
-      setRefillNotes("");
-
-      alert(
-        "Refill request submitted successfully! We will notify you when it's ready.",
-      );
-    } catch (err) {
-      logger.error("Refill request error:", err);
-      alert("Failed to submit refill request. Please try again.");
-    } finally {
-      setRequesting(false);
-    }
-  };
-
-  const getDaysUntilRefill = (prescription: Prescription) => {
-    const lastDispensed = new Date(prescription.lastDispensedDate);
-    const nextRefillDate = new Date(
-      lastDispensed.getTime() + prescription.daysSupply * 24 * 60 * 60 * 1000,
-    );
-    const today = new Date();
-    const daysRemaining = Math.ceil(
-      (nextRefillDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000),
-    );
-    return daysRemaining;
-  };
-
-  const needsAttention = prescriptions.filter(
-    (p) => p.status === "refill_due" || p.status === "refill_soon",
-  );
-  const activePrescriptions = prescriptions.filter(
-    (p) => p.status === "active",
-  );
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+  if (loading && !loaded) {
+    return <PortalListSkeleton label="Loading your medicines" />;
   }
 
+  const description = isSupabaseEnabled
+    ? "Medicines the outreach pharmacy recorded as given to you, newest first."
+    : "Medicines the outreach pharmacy saved on this device for you, newest first.";
+
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <h1 className="text-3xl font-bold text-gray-900">
-          Prescription Refills
-        </h1>
-        <p className="text-gray-600 mt-2">
-          Manage your prescriptions and request refills
+    <PortalPage title={PAGE_TITLE} description={description}>
+      {isSupabaseEnabled && !online && (
+        <PortalNotice tone="offline" title="You are offline">
+          {loaded
+            ? "You are seeing the medicines loaded when this phone was last online. They may be out of date."
+            : "Connect to the internet to see your medicines."}
+        </PortalNotice>
+      )}
+
+      {error && (
+        <PortalNotice
+          tone="danger"
+          action={
+            canLoad ? (
+              <button
+                type="button"
+                onClick={loadMedicines}
+                className="btn-secondary"
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Try again
+              </button>
+            ) : undefined
+          }
+        >
+          {error}
+        </PortalNotice>
+      )}
+
+      {loaded && medicines.length === 0 && (
+        <div className="panel">
+          <EmptyState
+            icon={ArchiveBoxIcon}
+            title="No medicines recorded yet"
+            description="Medicines given to you at an outreach visit will show here once the pharmacy records them."
+          />
+        </div>
+      )}
+
+      {!isSupabaseEnabled && medicines.length >= LOCAL_MEDICINES_LIMIT && (
+        <p className="text-caption text-ink-muted">
+          Showing the {LOCAL_MEDICINES_LIMIT} most recent medicines saved on
+          this device.
         </p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
-              <BellAlertIcon className="w-6 h-6 text-red-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Need Attention</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {needsAttention.length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <CheckCircleIcon className="w-6 h-6 text-green-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Active</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {activePrescriptions.length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <ClockIcon className="w-6 h-6 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Pending Requests</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {
-                  refillRequests.filter(
-                    (r) => r.status === "pending" || r.status === "approved",
-                  ).length
-                }
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {refillRequests.filter((r) => r.status !== "dispensed").length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200 bg-blue-50">
-            <h2 className="text-xl font-bold text-gray-900">
-              Recent Refill Requests
-            </h2>
-          </div>
-
-          <div className="divide-y divide-gray-200">
-            {refillRequests
-              .filter((r) => r.status !== "dispensed")
-              .map((request) => (
-                <div
-                  key={request.id}
-                  className="p-6 hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3">
-                        <h3 className="font-semibold text-gray-900">
-                          {request.medicationName}
-                        </h3>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${getRequestStatusColor(request.status)}`}
-                        >
-                          {request.status.charAt(0).toUpperCase() +
-                            request.status.slice(1).replace("_", " ")}
-                        </span>
-                      </div>
-                      <p className="text-gray-600 mt-1">
-                        Requested: {formatNigerianDate(request.requestedAt)}
-                      </p>
-                      <p className="text-gray-600">
-                        Pharmacy: {request.pharmacy}
-                      </p>
-                      {request.status === "ready" && (
-                        <p className="text-green-600 font-medium mt-2">
-                          Ready for pickup!
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-          </div>
-        </div>
       )}
 
-      {needsAttention.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200 bg-yellow-50">
-            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <BellAlertIcon className="w-6 h-6 text-yellow-600" />
-              Needs Attention
-            </h2>
-          </div>
-
-          <div className="divide-y divide-gray-200">
-            {needsAttention.map((prescription) => {
-              const statusInfo = getStatusInfo(prescription.status);
-              const StatusIcon = statusInfo.icon;
-              const daysUntilRefill = getDaysUntilRefill(prescription);
-
-              return (
-                <div
-                  key={prescription.id}
-                  className="p-6 hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3">
-                        <StatusIcon className="w-6 h-6 text-yellow-600" />
-                        <h3 className="font-semibold text-gray-900 text-lg">
-                          {prescription.medicationName} {prescription.dosage}
-                        </h3>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium border ${statusInfo.color}`}
-                        >
-                          {statusInfo.label}
-                        </span>
-                      </div>
-
-                      <p className="text-gray-600 mt-2">
-                        {prescription.frequency}
-                      </p>
-                      <p className="text-gray-600">
-                        Prescribed by: {prescription.prescribedBy}
-                      </p>
-
-                      <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                          <p className="text-gray-500">Days until refill</p>
-                          <p className="font-semibold text-gray-900">
-                            {daysUntilRefill} days
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Last filled</p>
-                          <p className="font-semibold text-gray-900">
-                            {formatNigerianDate(prescription.lastDispensedDate)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Refills remaining</p>
-                          <p className="font-semibold text-gray-900">
-                            {prescription.refillsRemaining} of{" "}
-                            {prescription.totalRefills}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Days supply</p>
-                          <p className="font-semibold text-gray-900">
-                            {prescription.daysSupply} days
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4">
-                        <button
-                          onClick={() => handleRequestRefill(prescription)}
-                          disabled={prescription.refillsRemaining === 0}
-                          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <PlusCircleIcon className="w-5 h-5" />
-                          Request Refill
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      {medicines.length > 0 && (
+        <ul className="panel divide-y divide-line" aria-label="Your medicines">
+          {medicines.map((med) => (
+            <li key={med.key} className="p-4">
+              <h2 className="text-h3 text-ink">{med.name}</h2>
+              {med.dosage && (
+                <p className="text-body text-ink-secondary">{med.dosage}</p>
+              )}
+              {med.directions && (
+                <p className="mt-1 text-body text-ink">
+                  <span className="text-ink-muted">How to take it: </span>
+                  {med.directions}
+                </p>
+              )}
+              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-ink-muted">
+                <span>Given on {formatPortalDate(med.givenAt)}</span>
+                {med.visitId && isSupabaseEnabled && (
+                  <Link
+                    to={`/patient/visit/${med.visitId}`}
+                    className="inline-flex min-h-touch-target items-center text-label text-primary-fg underline-offset-2 hover:underline"
+                  >
+                    See the visit
+                  </Link>
+                )}
+              </p>
+            </li>
+          ))}
+        </ul>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900">
-            All Active Prescriptions
+      <section className="panel" aria-labelledby="refill-title">
+        <div className="panel-header">
+          <h2 id="refill-title" className="panel-title">
+            Need more of a medicine?
           </h2>
         </div>
-
-        <div className="divide-y divide-gray-200">
-          {prescriptions.map((prescription) => {
-            const statusInfo = getStatusInfo(prescription.status);
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const _StatusIcon = statusInfo.icon;
-            const daysUntilRefill = getDaysUntilRefill(prescription);
-
-            return (
-              <div
-                key={prescription.id}
-                className="p-6 hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-semibold text-gray-900 text-lg">
-                        {prescription.medicationName} {prescription.dosage}
-                      </h3>
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium border ${statusInfo.color}`}
-                      >
-                        {statusInfo.label}
-                      </span>
-                    </div>
-
-                    <p className="text-gray-600 mt-2">
-                      {prescription.frequency}
-                    </p>
-
-                    <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                      <div>
-                        <p className="text-gray-500">Prescribed by</p>
-                        <p className="font-semibold text-gray-900">
-                          {prescription.prescribedBy}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500">Last filled</p>
-                        <p className="font-semibold text-gray-900">
-                          {formatNigerianDate(prescription.lastDispensedDate)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500">Refills remaining</p>
-                        <p className="font-semibold text-gray-900">
-                          {prescription.refillsRemaining} of{" "}
-                          {prescription.totalRefills}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500">Days until refill</p>
-                        <p className="font-semibold text-gray-900">
-                          {daysUntilRefill} days
-                        </p>
-                      </div>
-                    </div>
-
-                    {prescription.status !== "expired" &&
-                      prescription.refillsRemaining > 0 && (
-                        <div className="mt-4">
-                          <button
-                            onClick={() => handleRequestRefill(prescription)}
-                            className="px-4 py-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition-colors text-sm font-medium flex items-center gap-2"
-                          >
-                            <PlusCircleIcon className="w-4 h-4" />
-                            Request Refill
-                          </button>
-                        </div>
-                      )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {showRefillModal && selectedPrescription && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">
-              Request Refill
-            </h2>
-
-            <div className="bg-gray-50 rounded-lg p-4 mb-6">
-              <p className="font-semibold text-gray-900 text-lg">
-                {selectedPrescription.medicationName}{" "}
-                {selectedPrescription.dosage}
+        <div className="panel-body space-y-3">
+          {isSupabaseEnabled ? (
+            <>
+              <p className="text-body text-ink-secondary">
+                You cannot order a refill in the portal. Send a message to the
+                clinic team or ask for an appointment. The clinic team can tell
+                you what to do next.
               </p>
-              <p className="text-gray-600 mt-1">
-                {selectedPrescription.frequency}
-              </p>
-              <p className="text-sm text-gray-600 mt-2">
-                Refills remaining: {selectedPrescription.refillsRemaining} of{" "}
-                {selectedPrescription.totalRefills}
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Additional Notes (Optional)
-                </label>
-                <textarea
-                  value={refillNotes}
-                  onChange={(e) => setRefillNotes(e.target.value)}
-                  rows={3}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Any special instructions or questions?"
-                />
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
-                  Your refill request will be reviewed by our pharmacy team.
-                  We'll notify you when it's ready for pickup.
-                </p>
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowRefillModal(false);
-                    setSelectedPrescription(null);
-                    setRefillNotes("");
-                  }}
-                  disabled={requesting}
-                  className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  to="/patient/messages"
+                  state={{ compose: "refill" }}
+                  className="btn-primary"
                 >
-                  Cancel
-                </button>
-                <button
-                  onClick={submitRefillRequest}
-                  disabled={requesting}
-                  className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  <ChatBubbleLeftRightIcon className="h-5 w-5" aria-hidden />
+                  Message the clinic
+                </Link>
+                <Link
+                  to="/patient/appointments/request"
+                  className="btn-secondary"
                 >
-                  {requesting ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Requesting...
-                    </>
-                  ) : (
-                    <>
-                      <PlusCircleIcon className="w-5 h-5" />
-                      Submit Request
-                    </>
-                  )}
-                </button>
+                  <CalendarDaysIcon className="h-5 w-5" aria-hidden />
+                  Ask for an appointment
+                </Link>
               </div>
-            </div>
-          </div>
+            </>
+          ) : (
+            <p className="text-body text-ink-secondary">
+              You cannot order a refill in the portal. Ask the outreach team at
+              your next visit.
+            </p>
+          )}
         </div>
-      )}
-    </div>
+      </section>
+    </PortalPage>
   );
 }
