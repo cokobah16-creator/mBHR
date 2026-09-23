@@ -3,80 +3,112 @@ import {
   BeakerIcon,
   CubeIcon,
   ClipboardDocumentListIcon,
-  ArrowLeftIcon,
+  ChartBarIcon,
+  ChevronRightIcon,
   EnvelopeIcon,
+  LockClosedIcon,
 } from "@heroicons/react/24/outline";
+import type { ComponentType, SVGProps } from "react";
+import { useAuthStore } from "@/stores/auth";
+import type { Role } from "@/auth/roles";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
 
-const cards = [
+interface MenuEntry {
+  to: string;
+  title: string;
+  desc: string;
+  Icon: ComponentType<SVGProps<SVGSVGElement>>;
+  /** Mirrors the route guard in App.tsx so staff only see what they can open. */
+  roles: Role[];
+}
+
+const ENTRIES: MenuEntry[] = [
   {
     to: "/rx/dispense",
     title: "Dispense",
-    desc: "Record prescriptions & counsel patients",
+    desc: "Record what was given and counsel the patient.",
     Icon: BeakerIcon,
+    roles: ["pharmacist", "admin"],
   },
   {
     to: "/rx/stock",
-    title: "Inventory",
-    desc: "Stock counts, restock & FEFO tracking",
+    title: "Stock and expiry",
+    desc: "Stock counts, lots, restocking and first-expiry-first-out.",
     Icon: CubeIcon,
+    roles: ["pharmacist", "admin"],
   },
   {
     to: "/rx/new",
-    title: "New Stock",
-    desc: "Receive deliveries / add new items",
+    title: "New prescription",
+    desc: "Write a prescription for a patient to collect at pharmacy.",
     Icon: ClipboardDocumentListIcon,
+    roles: ["doctor", "nurse", "admin"],
   },
   {
     to: "/pharmacy/sms-reminders",
-    title: "SMS Reminders",
-    desc: "Manage medication reminders & alerts",
+    title: "SMS reminders",
+    desc: "Medication reminders for patients and whether each has been sent.",
     Icon: EnvelopeIcon,
+    roles: ["pharmacist", "admin"],
   },
   {
     to: "/pharmacy/reports",
     title: "Reports",
-    desc: "Daily summary & controlled log",
-    Icon: ClipboardDocumentListIcon,
+    desc: "Dispensing summary, expiring lots and stock levels.",
+    Icon: ChartBarIcon,
+    roles: ["pharmacist", "admin"],
   },
 ];
 
 export default function PharmacyMenu() {
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const available = ENTRIES.filter((e) => !!role && e.roles.includes(role));
+
   return (
-    <main className="p-4 sm:p-6 max-w-5xl mx-auto">
-      <div className="mb-4">
-        <Link
-          to="/dashboard"
-          className="inline-flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900 focus:outline-none focus:ring"
-        >
-          <ArrowLeftIcon className="h-4 w-4" aria-hidden />
-          Back to Dashboard
-        </Link>
-      </div>
+    <div className="mx-auto max-w-5xl">
+      <PageHeader
+        title="Pharmacy"
+        description="Choose a pharmacy task."
+        breadcrumbs={[{ label: "Dashboard", to: "/dashboard" }, { label: "Pharmacy" }]}
+      />
 
-      <h1 className="text-2xl font-bold mb-2">Pharmacy</h1>
-      <p className="text-gray-600 mb-6">Choose what you'd like to do.</p>
-
-      <section
-        aria-label="Pharmacy options"
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
-      >
-        {cards.map(({ to, title, desc, Icon }) => (
-          <Link
-            key={to}
-            to={to}
-            className="group rounded-2xl border border-gray-200 p-5 hover:shadow-md focus:outline-none focus:ring focus:ring-primary/30"
-          >
-            <div className="flex items-center gap-3">
-              <span className="rounded-xl bg-gray-100 p-3">
-                <Icon className="h-6 w-6" aria-hidden />
-              </span>
-              <h2 className="text-lg font-semibold">{title}</h2>
-            </div>
-            <p className="mt-3 text-sm text-gray-600">{desc}</p>
-            <span className="sr-only">Open {title}</span>
-          </Link>
-        ))}
-      </section>
-    </main>
+      {available.length === 0 ? (
+        <div className="panel">
+          <EmptyState
+            icon={LockClosedIcon}
+            title="No pharmacy tasks for your role"
+            description="Dispensing, stock and reports are for pharmacists and administrators. Ask an administrator if you need access."
+            action={
+              <Link to="/dashboard" className="btn-secondary">
+                Back to dashboard
+              </Link>
+            }
+          />
+        </div>
+      ) : (
+        <nav aria-label="Pharmacy tasks">
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {available.map(({ to, title, desc, Icon }) => (
+              <li key={to}>
+                <Link
+                  to={to}
+                  className="flex h-full min-h-touch-target items-start gap-3 rounded-lg border border-line bg-surface p-4 transition-colors hover:border-line-strong hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                >
+                  <span className="rounded-md border border-line bg-surface-sunken p-2">
+                    <Icon className="h-5 w-5 text-ink-secondary" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-h3 text-ink">{title}</span>
+                    <span className="mt-0.5 block text-body text-ink-muted">{desc}</span>
+                  </span>
+                  <ChevronRightIcon className="mt-1 h-4 w-4 shrink-0 text-ink-disabled" aria-hidden />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+    </div>
   );
 }

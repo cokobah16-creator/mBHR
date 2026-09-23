@@ -1,190 +1,208 @@
-import React, { useEffect, useState } from "react";
-import { db } from "@/db";
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { db, type Consultation, type Dispense, type Patient, type Vital } from "@/db";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { loadInRange } from "@/features/reports/localRecords";
+import {
+  addLocalDays,
+  startOfLocalDay,
+  toTime,
+  type TimestampLike,
+} from "@/features/reports/reportUtils";
+import { formatTime } from "@/utils/dateFormat";
 import {
   HeartIcon,
   DocumentTextIcon,
   BeakerIcon,
-  UserIcon,
+  ClockIcon,
 } from "@heroicons/react/24/outline";
 
 interface ActivityItem {
   id: string;
   type: "vital" | "consultation" | "dispense";
+  patientId: string;
   patientName: string;
-  timestamp: Date;
+  timestamp: number;
   details: string;
+}
+
+const TYPE_META: Record<
+  ActivityItem["type"],
+  { label: string; icon: typeof HeartIcon; marker: string }
+> = {
+  vital: { label: "Vitals", icon: HeartIcon, marker: "bg-stage-vitals" },
+  consultation: { label: "Consultation", icon: DocumentTextIcon, marker: "bg-stage-consult" },
+  dispense: { label: "Dispensed", icon: BeakerIcon, marker: "bg-stage-pharmacy" },
+};
+
+const LIMIT = 10;
+
+function newestFirst<T>(rows: T[], at: (row: T) => TimestampLike): T[] {
+  return [...rows]
+    .sort((a, b) => (toTime(at(b)) ?? 0) - (toTime(at(a)) ?? 0))
+    .slice(0, LIMIT);
 }
 
 export function RecentActivity() {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    loadRecentActivity();
-  }, []);
-
-  const loadRecentActivity = async () => {
+  const loadRecentActivity = useCallback(async () => {
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const today = startOfLocalDay(new Date());
+      const tomorrow = addLocalDays(today, 1);
 
-      // Get recent vitals, consultations, and dispenses
       const [vitals, consultations, dispenses] = await Promise.all([
-        db.vitals.where("takenAt").above(today).reverse().limit(10).toArray(),
-        db.consultations
-          .where("createdAt")
-          .above(today)
-          .reverse()
-          .limit(10)
-          .toArray(),
-        db.dispenses
-          .where("dispensedAt")
-          .above(today)
-          .reverse()
-          .limit(10)
-          .toArray(),
+        loadInRange<Vital>(db.vitals, "takenAt", today, tomorrow),
+        loadInRange<Consultation>(db.consultations, "createdAt", today, tomorrow),
+        loadInRange<Dispense>(db.dispenses, "dispensedAt", today, tomorrow),
       ]);
 
-      // Get patient names for each activity
-      const activities: ActivityItem[] = [];
+      const recentVitals = newestFirst(vitals, (v) => v.takenAt);
+      const recentConsults = newestFirst(consultations, (c) => c.createdAt);
+      const recentDispenses = newestFirst(dispenses, (d) => d.dispensedAt);
 
-      for (const vital of vitals) {
-        const patient = await db.patients.get(vital.patientId);
-        if (patient) {
-          activities.push({
-            id: vital.id,
-            type: "vital",
-            patientName: `${patient.givenName} ${patient.familyName}`,
-            timestamp: vital.takenAt,
-            details: `BP: ${vital.systolic}/${vital.diastolic}, HR: ${vital.pulseBpm}`,
-          });
-        }
+      const patientIds = [
+        ...new Set([
+          ...recentVitals.map((v) => v.patientId),
+          ...recentConsults.map((c) => c.patientId),
+          ...recentDispenses.map((d) => d.patientId),
+        ]),
+      ];
+      const patients = await db.patients.bulkGet(patientIds);
+      const byId = new Map<string, Patient>();
+      patients.forEach((p) => p && byId.set(p.id, p));
+      const nameOf = (id: string) => {
+        const p = byId.get(id);
+        return p ? `${p.givenName} ${p.familyName}` : null;
+      };
+
+      const items: ActivityItem[] = [];
+      for (const vital of recentVitals) {
+        const name = nameOf(vital.patientId);
+        if (!name) continue;
+        const parts: string[] = [];
+        if (vital.systolic && vital.diastolic) parts.push(`BP ${vital.systolic}/${vital.diastolic}`);
+        if (vital.pulseBpm) parts.push(`Pulse ${vital.pulseBpm}`);
+        items.push({
+          id: vital.id,
+          type: "vital",
+          patientId: vital.patientId,
+          patientName: name,
+          timestamp: toTime(vital.takenAt) ?? 0,
+          details: parts.length ? parts.join(" · ") : "Vitals recorded",
+        });
+      }
+      for (const consultation of recentConsults) {
+        const name = nameOf(consultation.patientId);
+        if (!name) continue;
+        items.push({
+          id: consultation.id,
+          type: "consultation",
+          patientId: consultation.patientId,
+          patientName: name,
+          timestamp: toTime(consultation.createdAt) ?? 0,
+          details: consultation.providerName ? `Seen by ${consultation.providerName}` : "Consultation saved",
+        });
+      }
+      for (const dispense of recentDispenses) {
+        const name = nameOf(dispense.patientId);
+        if (!name) continue;
+        items.push({
+          id: dispense.id,
+          type: "dispense",
+          patientId: dispense.patientId,
+          patientName: name,
+          timestamp: toTime(dispense.dispensedAt) ?? 0,
+          details: `${dispense.itemName} × ${dispense.qty}`,
+        });
       }
 
-      for (const consultation of consultations) {
-        const patient = await db.patients.get(consultation.patientId);
-        if (patient) {
-          activities.push({
-            id: consultation.id,
-            type: "consultation",
-            patientName: `${patient.givenName} ${patient.familyName}`,
-            timestamp: consultation.createdAt,
-            details: `Provider: ${consultation.providerName}`,
-          });
-        }
-      }
-
-      for (const dispense of dispenses) {
-        const patient = await db.patients.get(dispense.patientId);
-        if (patient) {
-          activities.push({
-            id: dispense.id,
-            type: "dispense",
-            patientName: `${patient.givenName} ${patient.familyName}`,
-            timestamp: dispense.dispensedAt,
-            details: `${dispense.itemName} x${dispense.qty}`,
-          });
-        }
-      }
-
-      // Sort by timestamp and take most recent 10
-      activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      setActivities(activities.slice(0, 10));
+      // Most recent 10 across all three kinds.
+      items.sort((a, b) => b.timestamp - a.timestamp);
+      setActivities(items.slice(0, LIMIT));
+      setFailed(false);
     } catch (error) {
-      console.error("Error loading recent activity:", error);
+      console.error("Error loading recent activity:", error instanceof Error ? error.name : error);
+      setFailed(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const getActivityIcon = (type: ActivityItem["type"]) => {
-    switch (type) {
-      case "vital":
-        return HeartIcon;
-      case "consultation":
-        return DocumentTextIcon;
-      case "dispense":
-        return BeakerIcon;
-      default:
-        return UserIcon;
-    }
-  };
-
-  const getActivityColor = (type: ActivityItem["type"]) => {
-    switch (type) {
-      case "vital":
-        return "text-green-600 bg-green-50";
-      case "consultation":
-        return "text-purple-600 bg-purple-50";
-      case "dispense":
-        return "text-orange-600 bg-orange-50";
-      default:
-        return "text-gray-600 bg-gray-50";
-    }
-  };
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
+  useEffect(() => {
+    loadRecentActivity();
+  }, [loadRecentActivity]);
 
   if (loading) {
     return (
-      <div className="space-y-3">
-        {[...Array(5)].map((_, i) => (
-          <div
-            key={i}
-            className="flex items-center space-x-3 p-3 animate-pulse"
-          >
-            <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
-            <div className="flex-1">
-              <div className="h-4 bg-gray-200 rounded w-32 mb-1"></div>
-              <div className="h-3 bg-gray-200 rounded w-48"></div>
+      <div className="divide-y divide-line">
+        <span role="status" className="sr-only">Loading recent activity</span>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3 px-4 py-3" aria-hidden>
+            <Skeleton className="h-8 w-8" />
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-48" />
             </div>
-            <div className="h-3 bg-gray-200 rounded w-12"></div>
+            <Skeleton className="h-3 w-10" />
           </div>
         ))}
       </div>
     );
   }
 
-  return (
-    <div className="space-y-3">
-      {activities.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <UserIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p>No recent activity</p>
-        </div>
-      ) : (
-        activities.map((activity) => {
-          const Icon = getActivityIcon(activity.type);
-          const colorClass = getActivityColor(activity.type);
+  if (failed) {
+    return (
+      <div className="banner banner-danger" role="alert">
+        Recent activity could not be read from this device. Reload the page to try again.
+      </div>
+    );
+  }
 
-          return (
-            <div
-              key={activity.id}
-              className="flex items-center space-x-3 p-3 hover:bg-gray-50 rounded-lg transition-colors"
-            >
-              <div className={`p-2 rounded-full ${colorClass}`}>
-                <Icon className="h-5 w-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">
-                  {activity.patientName}
-                </p>
-                <p className="text-xs text-gray-500 truncate">
-                  {activity.details}
-                </p>
-              </div>
-              <div className="text-xs text-gray-400">
-                {formatTime(activity.timestamp)}
-              </div>
+  if (activities.length === 0) {
+    return (
+      <EmptyState
+        icon={ClockIcon}
+        title="No activity recorded today"
+        description="Vitals, consultations and dispensing saved on this device today will appear here."
+      />
+    );
+  }
+
+  return (
+    <ul className="divide-y divide-line" aria-label="Recent activity today">
+      {activities.map((activity) => {
+        const meta = TYPE_META[activity.type];
+        const Icon = meta.icon;
+        return (
+          <li key={`${activity.type}-${activity.id}`} className="relative flex items-center gap-3 px-4 py-3">
+            <span className={`absolute inset-y-2 left-0 w-1 rounded-full ${meta.marker}`} aria-hidden />
+            <span className="rounded-md border border-line bg-surface-sunken p-1.5">
+              <Icon className="h-4 w-4 text-ink-secondary" aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1">
+              <Link
+                to={`/patients/${activity.patientId}`}
+                className="block truncate text-label text-ink hover:underline"
+              >
+                {activity.patientName}
+              </Link>
+              <p className="truncate text-caption text-ink-muted">
+                <span className="text-ink-secondary">{meta.label}</span> · {activity.details}
+              </p>
             </div>
-          );
-        })
-      )}
-    </div>
+            <time
+              className="shrink-0 text-caption tabular-nums text-ink-muted"
+              dateTime={new Date(activity.timestamp).toISOString()}
+            >
+              {formatTime(activity.timestamp)}
+            </time>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
