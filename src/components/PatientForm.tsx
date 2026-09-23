@@ -120,7 +120,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             body: `The patient is registered, but portal enrolment failed (${portalResult.error}). You can enable it later from their record.`,
           });
         } else {
-          console.log("Portal account created:", portalResult.portalUserId);
+          console.log("Portal account created");
           pushToast({
             id: crypto.randomUUID(),
             title: "Portal access enabled",

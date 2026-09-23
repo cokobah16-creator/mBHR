@@ -12,6 +12,7 @@ import { pharmacyTasksForRole } from "@/features/pharmacy/pharmacyTasks";
 import { ActiveSiteControl } from "@/components/shell/ActiveSiteControl";
 import { SyncStatusControl } from "@/components/shell/SyncStatusControl";
 import { hasAnyAdminEntry } from "@/features/admin/adminSections";
+import { startBackgroundSync, stopBackgroundSync } from "@/sync/adapter";
 import {
   HomeIcon,
   UserGroupIcon,
@@ -149,6 +150,17 @@ export function Layout({ children }: LayoutProps) {
 
   // Start low stock monitoring
   useLowStockWatcher();
+
+  // Background sync runs only while a staff member is signed in (the shell
+  // is not rendered on the patient portal or the waiting-room display). It
+  // skips itself when cloud sync is not configured or the device is offline,
+  // backs off after failures, and queues any conflicts it finds for review.
+  const userId = currentUser?.id;
+  React.useEffect(() => {
+    if (!userId) return;
+    startBackgroundSync();
+    return () => stopBackgroundSync();
+  }, [userId]);
 
   // Close the mobile menu and the pharmacy menu on route change, so a nav
   // link chosen while the pharmacy menu is open shows its page.

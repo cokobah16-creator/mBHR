@@ -167,7 +167,8 @@ export function BulkFHIRExport() {
         await saveExportHistory({
           id: Date.now().toString(),
           exportedAt: new Date().toISOString(),
-          patientCount: exportResult.progress.processedPatients,
+          // Only patients whose records are in the files count as exported.
+          patientCount: exportResult.progress.exportedPatients,
           resourceCount: Array.from(exportResult.files.values()).reduce(
             (sum, content) => sum + content.split("\n").length,
             0,
@@ -178,7 +179,7 @@ export function BulkFHIRExport() {
         await saveExportHistory({
           id: Date.now().toString(),
           exportedAt: new Date().toISOString(),
-          patientCount: exportResult.progress.processedPatients,
+          patientCount: exportResult.progress.exportedPatients,
           resourceCount: 0,
           status: "failed",
           error: exportResult.progress.error,
@@ -389,8 +390,9 @@ export function BulkFHIRExport() {
                     {downloadName ? `: ${downloadName}` : ""}.
                   </p>
                   <p>
-                    {result.progress.processedPatients.toLocaleString("en-NG")}{" "}
-                    patients processed · {result.files.size} file
+                    {result.progress.exportedPatients.toLocaleString("en-NG")}{" "}
+                    {result.progress.exportedPatients === 1 ? "patient" : "patients"} exported ·{" "}
+                    {result.files.size} file
                     {result.files.size === 1 ? "" : "s"} created (plus the
                     manifest).
                   </p>
@@ -399,6 +401,13 @@ export function BulkFHIRExport() {
                       US Core check: {result.validation.validResources} of{" "}
                       {result.validation.totalResources} resources passed
                       {result.validation.valid ? "." : ". Some resources have problems; open the files to review them."}
+                    </p>
+                  )}
+                  {result.progress.failedPatients > 0 && (
+                    <p className="flex items-start gap-2 font-medium text-warning-fg">
+                      <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+                      {result.warning ??
+                        `${result.progress.failedPatients} patients could not be exported and are not in the files.`}
                     </p>
                   )}
                   <p className="text-caption">

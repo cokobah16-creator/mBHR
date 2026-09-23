@@ -48,6 +48,10 @@ interface RunResult {
   pushed: number;
   pulled: number;
   failedUploads: number;
+  /** Downloaded updates not applied because this device has unsent changes. */
+  keptLocalEdits: number;
+  /** Tables that did not finish, by this device's table name. */
+  failedTables: string[];
   error?: string;
 }
 
@@ -142,13 +146,22 @@ export function SyncDashboard() {
         success: result.success,
         pushed: result.pushed,
         pulled: result.pulled,
-        // enhancedSync counts uploads the server refused as "conflicts".
-        failedUploads: result.conflicts,
+        failedUploads: result.failedUploads,
+        keptLocalEdits: result.keptLocalEdits,
+        failedTables: (result.failedTables ?? []).map((f) => f.table),
         error: result.error,
       });
     } catch (error) {
       console.error("Sync run failed:", error instanceof Error ? error.name : "unknown");
-      setRun({ at: new Date(), success: false, pushed: 0, pulled: 0, failedUploads: 0 });
+      setRun({
+        at: new Date(),
+        success: false,
+        pushed: 0,
+        pulled: 0,
+        failedUploads: 0,
+        keptLocalEdits: 0,
+        failedTables: [],
+      });
     } finally {
       setRunning(false);
       setSessionTimes(readSessionTimes());
@@ -287,8 +300,17 @@ export function SyncDashboard() {
                 {!run.success &&
                   (run.error === "Already syncing or not initialized"
                     ? " A sync was already running. Try again in a moment."
-                    : " Check the connection and try again.")}
+                    : run.failedTables.length > 0
+                      ? ` Did not finish for: ${run.failedTables.join(", ")}. Check the connection and try again.`
+                      : " Check the connection and try again.")}
               </p>
+              {run.keptLocalEdits > 0 && (
+                <p className="mt-1">
+                  {plural(run.keptLocalEdits, "downloaded update")} {run.keptLocalEdits === 1 ? "was" : "were"} not
+                  applied because this device has unsent changes to {run.keptLocalEdits === 1 ? "that record" : "those records"}.
+                  They upload first; any disagreement appears under sync conflicts.
+                </p>
+              )}
             </div>
           </div>
         )}

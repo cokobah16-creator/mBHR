@@ -28,25 +28,9 @@ import { loadLocalRecord } from "@/features/conflicts/localContext";
 import { conflictQueueService } from "@/services/conflictQueue";
 import { ConflictResolutionModal, type ConflictData } from "../ConflictResolutionModal";
 import { usePopover } from "./usePopover";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 type Kind = "offline" | "local" | "syncing" | "error" | "conflict" | "pending" | "synced" | "idle";
-
-function useOnline() {
-  const [online, setOnline] = useState(
-    typeof navigator === "undefined" ? true : navigator.onLine,
-  );
-  useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener("online", on);
-    window.addEventListener("offline", off);
-    return () => {
-      window.removeEventListener("online", on);
-      window.removeEventListener("offline", off);
-    };
-  }, []);
-  return online;
-}
 
 function clock(ts: number) {
   return new Date(ts).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" });
@@ -59,7 +43,7 @@ function clock(ts: number) {
  */
 export function SyncStatusControl() {
   const navigate = useNavigate();
-  const online = useOnline();
+  const online = useOnlineStatus();
   const syncEnabled = isOnlineSyncEnabled();
   const syncStore = useSyncStore();
   const queueStore = useOperationsQueue();
