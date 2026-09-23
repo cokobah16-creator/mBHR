@@ -4,18 +4,20 @@
 
 The mBHR application uses a secure PIN-based authentication system for offline operation. Each user has a 6-digit PIN that is hashed using PBKDF2 with a random salt before being stored in the local IndexedDB database.
 
-## Default Admin PINs
+## Demo PINs (development only)
 
-The following PINs are created automatically when the database is seeded:
+`npm run dev` seeds these demo accounts so the app can be tried locally.
+Production builds create **no** accounts: a new device goes to first-run
+setup (`/setup`), where the first administrator chooses their own PIN.
+Real PINs must never be written into this repository.
 
-| User Name | Role | PIN | Admin Access | Permanent |
-|-----------|------|-----|--------------|-----------|
-| Admin User | admin | `123456` | Yes | No |
-| Dr. Sarah Johnson | doctor | `234567` | No | No |
-| Nurse Mary | nurse | `345678` | No | No |
-| Pharmacist John | pharmacist | `456789` | No | No |
-| Volunteer Mike | volunteer | `567890` | No | No |
-| Kristopher Okobah | admin | `070398` | Yes | Yes |
+| User Name | Role | PIN |
+|-----------|------|-----|
+| Admin User | admin | `123456` |
+| Dr. Sarah Johnson | doctor | `234567` |
+| Nurse Mary | nurse | `345678` |
+| Pharmacist John | pharmacist | `456789` |
+| Volunteer Mike | volunteer | `567890` |
 
 ## Security Features
 
@@ -54,44 +56,26 @@ The PIN hashing utility provides:
 
 ### If PINs don't work:
 
-1. **Check the browser console** - Look for seed logs:
-   ```
-   🌱 Starting database seeding...
-   🌱 Creating demo users...
-   Creating user: Admin User, PIN: 123456
-   ✅ Users created with PINs: 123456, 234567, 345678, 456789, 567890, 070398
-   ```
+1. **Check the browser console** for authentication errors from the auth store.
+   PINs are never logged.
 
-2. **Clear the database** - Use the "Reset local data" button on the login page:
-   - This clears IndexedDB and localStorage
-   - The app will reload and reseed automatically
-
-3. **Check for errors** - Look for authentication errors:
-   ```
-   [auth] Found users: 6
-   [auth] Checking PIN for user: Admin User admin
-   [auth] PIN valid for Admin User: true
-   ```
-
-4. **Verify database state** - Click "Show debug" on login page to see:
-   - Number of active users
-   - Partial salt and hash values
-   - List of known PINs
+2. **Reset the device** (administrator approval required):
+   - Signed in as an admin: **User Management** → **Reset this device**, then
+     re-enter your admin PIN.
+   - Nobody can sign in: on the login page, choose **Device recovery** and have
+     an administrator enter their PIN.
+   - Either way this deletes every patient, visit and staff account on the
+     device, including anything not yet synced, and the device returns to
+     first-run setup.
 
 ### Common Issues:
 
-**"No users found"**
-- Database hasn't been seeded
-- Click "Reset local data" to reseed
-
 **"Invalid PIN" with correct PIN**
-- Database might be corrupted
-- Salt/hash mismatch (shouldn't happen with current implementation)
-- Try "Reset local data"
+- Database might be corrupted — ask an administrator to reset the device
 
 **Lockout after 5 attempts**
-- Wait 15 minutes or clear browser data
-- Use "Reset local data" to immediately clear lockout
+- Wait 15 minutes. Wrong admin PINs in the reset form count towards the same
+  lockout.
 
 ## Development Notes
 
@@ -118,7 +102,6 @@ Edit validation in `src/stores/auth.ts`:
 
 ```typescript
 if (!/^\d{6}$/.test(pin)) {  // Change regex for different format
-  console.log('Invalid PIN format:', pin)
   state.incrementFailedAttempts()
   return false
 }
@@ -133,12 +116,7 @@ const PBKDF2_ITERATIONS = 100_000  // Higher = more secure but slower
 const SALT_LENGTH = 16  // 16 bytes = 128 bits
 ```
 
-## Testing
+## Confidentiality
 
-The system includes detailed logging for debugging:
-
-1. **Seed logs** show user creation with PIN/salt/hash
-2. **Auth logs** show PIN verification attempts
-3. **Debug panel** shows active users and hash computation
-
-All PINs should work immediately after a database reset. If they don't, check the browser console for detailed error messages.
+The login page has no debug panel: it never shows staff names, salts or
+hashes, and PINs are never written to the console.

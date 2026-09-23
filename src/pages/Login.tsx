@@ -2,9 +2,8 @@ import React, { useState, useEffect, startTransition } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
 import { isOnlineSyncEnabled } from "@/sync/adapter";
-import { db } from "@/db";
 import { needsFirstRunSetup } from "@/db/firstRun";
-import { derivePinHash } from "@/utils/pin";
+import { DeviceResetPanel } from "@/components/DeviceResetPanel";
 
 export default function Login() {
   const [mode, setMode] = useState<"offline" | "online">("offline");
@@ -14,17 +13,12 @@ export default function Login() {
   const [err, setErr] = useState<string | null>(null);
   const [attempts, setAttempts] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
   const [checkingSetup, setCheckingSetup] = useState(true);
+  const [showRecovery, setShowRecovery] = useState(false);
 
   const onlineAvailable = isOnlineSyncEnabled();
   const navigate = useNavigate();
   const { login, loginOnline } = useAuthStore();
-
-  // Debug panel state
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [debugUsers, setDebugUsers] = useState<any[]>([]);
-  const [computed, setComputed] = useState<string>("");
 
   // Production builds ship no demo staff, so a freshly installed device has no
   // PIN that could ever work here — first-run setup is the only way in.
@@ -52,87 +46,8 @@ export default function Login() {
     };
   }, [navigate]);
 
-  // Reset local data function
-  const resetLocal = async () => {
-    const confirmed = window.confirm(
-      "This deletes every patient, visit and staff account stored on this device. " +
-        "Anything not yet synced is lost, and you will have to set the device up again. Continue?",
-    );
-    if (!confirmed) return;
-
-    try {
-      setLoading(true);
-      await db.delete();
-      localStorage.clear();
-      sessionStorage.clear();
-
-      // Clear Zustand persisted state
-      const keys = Object.keys(localStorage);
-      keys.forEach((key) => {
-        if (key.includes("mbhr") || key.includes("auth")) {
-          localStorage.removeItem(key);
-        }
-      });
-
-      alert(
-        "Local data cleared. The app will now reload and ask you to set up this device again.",
-      );
-      window.location.reload();
-    } catch (e) {
-      console.error("Failed to reset local data:", e);
-      alert("Failed to reset local data. Check console for details.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Load debug users
-  useEffect(() => {
-    if (showDebug) {
-      (async () => {
-        try {
-          const users = await db.users.where("isActive").equals(1).toArray();
-          setDebugUsers(
-            users.map((u) => ({
-              name: u.fullName,
-              role: u.role,
-              salt: u.pinSalt?.slice(0, 10) + "…",
-              hash: u.pinHash?.slice(0, 12) + "…",
-            })),
-          );
-        } catch (error) {
-          console.error("Error loading debug users:", error);
-          setDebugUsers([]);
-        }
-      })();
-    }
-  }, [showDebug, attempts]);
-
-  // Compute hash for debugging
-  useEffect(() => {
-    if (pin && debugUsers.length > 0) {
-      (async () => {
-        try {
-          const first = await db.users.where("isActive").equals(1).first();
-          if (first?.pinSalt) {
-            const h = await derivePinHash(pin, first.pinSalt);
-            setComputed(h.slice(0, 12) + "…");
-          } else {
-            setComputed("");
-          }
-        } catch (error) {
-          console.error("Error computing hash:", error);
-          setComputed("Error");
-        }
-      })();
-    } else {
-      setComputed("");
-    }
-  }, [pin, debugUsers]);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("[login] form submitted, mode:", mode, "pin:", pin);
 
     setErr(null);
     setLoading(true);
@@ -267,7 +182,6 @@ export default function Login() {
                     const newPin = e.target.value
                       .replace(/\D/g, "")
                       .slice(0, 6);
-                    console.log("[login] PIN changed:", newPin);
                     setPin(newPin);
                   }}
                   className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none transition focus:ring-2 focus:ring-primary focus:border-transparent"
@@ -324,89 +238,25 @@ export default function Login() {
             >
               {loading ? "Signing in…" : "Sign In"}
             </button>
-
-            {/* Utility buttons */}
-            <div className="flex items-center justify-between text-sm mt-2 pt-4 border-t border-gray-100">
-              <button
-                type="button"
-                onClick={resetLocal}
-                className="text-red-600 hover:text-red-800 underline"
-                disabled={loading}
-              >
-                Reset local data
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowDebug((s) => !s)}
-                className="text-blue-600 hover:text-blue-800 underline"
-              >
-                {showDebug ? "Hide" : "Show"} debug
-              </button>
-            </div>
           </form>
-        </div>
 
-        {/* Debug panel */}
-        {showDebug && (
-          <div className="mt-4 rounded-lg border p-3 bg-gray-50 text-sm">
-            <div className="font-semibold mb-2">Debug Panel (Offline Mode)</div>
-            <div className="mb-2">Active users: {debugUsers.length}</div>
-
-            {debugUsers.length > 0 ? (
-              <div className="space-y-2">
-                {debugUsers.map((user, index) => (
-                  <div
-                    key={index}
-                    className="bg-white p-2 rounded border text-xs"
-                  >
-                    <div>
-                      <strong>{user.name}</strong> ({user.role})
-                    </div>
-                    <div>
-                      Salt: <code>{user.salt}</code>
-                    </div>
-                    <div>
-                      Hash: <code>{user.hash}</code>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {/* Recovery for a device nobody can sign in to (e.g. corrupted
+              data). Erasing it needs an administrator's PIN — see
+              DeviceResetPanel — so this link alone does nothing. */}
+          <div className="mt-4 pt-4 border-t border-gray-100 text-sm">
+            {showRecovery ? (
+              <DeviceResetPanel onCancel={() => setShowRecovery(false)} />
             ) : (
-              <div className="text-gray-600 italic">
-                No users found. This device needs first-run setup.
-              </div>
-            )}
-
-            {pin && computed && (
-              <div className="mt-3 p-2 bg-blue-50 rounded">
-                <div className="text-xs">
-                  <strong>
-                    Computed hash for PIN "{pin}" (using first user's salt):
-                  </strong>
-                </div>
-                <code className="text-xs">{computed}</code>
-              </div>
-            )}
-
-            {/* Demo staff are seeded in development only, so these PINs do not
-                exist in a production build — showing them there would be a
-                lie. Keep this list in step with src/db/seed.ts. */}
-            {import.meta.env.DEV && (
-              <div className="mt-3 text-xs text-gray-600 border-t pt-2">
-                <strong>Demo PINs (development only):</strong>
-                <br />
-                • 123456 (Admin User)
-                <br />
-                • 234567 (Dr. Sarah Johnson)
-                <br />
-                • 345678 (Nurse Mary)
-                <br />
-                • 456789 (Pharmacist John)
-                <br />• 567890 (Volunteer Mike)
-              </div>
+              <button
+                type="button"
+                onClick={() => setShowRecovery(true)}
+                className="text-gray-500 hover:text-gray-700 underline"
+              >
+                Device recovery
+              </button>
             )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

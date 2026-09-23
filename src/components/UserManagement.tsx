@@ -17,7 +17,6 @@ import {
 // reveal is the published PIN of a demo account. Those exist in development
 // only (see src/db/seed.ts) — in a production build every row is masked.
 const DEMO_SEED_PINS: Record<string, string> = {
-  "Kristopher Okobah": "070398",
   "Admin User": "123456",
   "Dr. Sarah Johnson": "234567",
   "Nurse Mary": "345678",

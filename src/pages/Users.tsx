@@ -2,6 +2,7 @@ import React from 'react'
 import { useAuthStore } from '@/stores/auth'
 import { can } from '@/auth/roles'
 import { UserManagement } from '@/components/UserManagement'
+import { DeviceResetPanel } from '@/components/DeviceResetPanel'
 import { UsersIcon } from '@heroicons/react/24/outline'
 
 export function Users() {
@@ -31,6 +32,9 @@ export function Users() {
 
       {/* User Management Component */}
       <UserManagement />
+
+      {/* Wipes every record on this device; asks for an admin PIN again */}
+      <DeviceResetPanel />
     </div>
   )
 }
