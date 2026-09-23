@@ -6,11 +6,20 @@ import { db } from '@/db'
 vi.mock('@/db', () => ({
   db: {
     patients: {
+      get: vi.fn(),
+      update: vi.fn(),
+      put: vi.fn()
+    },
+    patientAllergies: {
+      get: vi.fn(),
       update: vi.fn(),
       put: vi.fn()
     }
   }
 }))
+
+type MockFn = ReturnType<typeof vi.fn>
+const patients = db.patients as unknown as { get: MockFn; update: MockFn; put: MockFn }
 
 describe('Conflict Resolver', () => {
   beforeEach(() => {
@@ -82,6 +91,62 @@ describe('Conflict Resolver', () => {
         })
       )
     })
+
+    it('keeps fields that exist only on this device', async () => {
+      patients.get.mockResolvedValueOnce({
+        id: 'patient-123',
+        givenName: 'John',
+        nameKey: 'JN-T',
+        mergeInto: 'patient-999',
+        _dirty: 1
+      })
+
+      await resolveConflict(mockConflict, 'keep-remote', undefined, undefined, {
+        id: 'patient-123',
+        given_name: 'Jonathan',
+        updated_at: '2024-01-01T11:00:00Z'
+      })
+
+      expect(db.patients.put).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'patient-123',
+          givenName: 'Jonathan',
+          nameKey: 'JN-T',
+          mergeInto: 'patient-999',
+          _dirty: 0
+        })
+      )
+    })
+
+    it('writes allergy conflicts to the local allergy table', async () => {
+      const allergyConflict: ConflictData = {
+        ...mockConflict,
+        entityType: 'patient_allergies',
+        entityId: 'allergy-1'
+      }
+
+      await resolveConflict(allergyConflict, 'keep-remote', undefined, undefined, {
+        id: 'allergy-1',
+        patient_id: 'patient-123',
+        allergy_type: 'medication',
+        updated_at: '2024-01-01T11:00:00Z'
+      })
+
+      expect(db.patientAllergies.put).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'allergy-1',
+          patientId: 'patient-123',
+          allergyType: 'medication',
+          _dirty: 0
+        })
+      )
+    })
+
+    it('throws if remote data is missing', async () => {
+      await expect(resolveConflict(mockConflict, 'keep-remote')).rejects.toThrow(
+        'Remote data not available'
+      )
+    })
   })
 
   describe('manual strategy', () => {
@@ -105,6 +170,8 @@ describe('Conflict Resolver', () => {
         phone: 'remote' as const
       }
 
+      patients.update.mockResolvedValueOnce(1)
+
       await resolveConflict(
         mockConflict,
         'manual',
@@ -113,14 +180,48 @@ describe('Conflict Resolver', () => {
         remoteData
       )
 
-      expect(db.patients.put).toHaveBeenCalledWith(
+      // Updates only the chosen fields; a put would replace the whole record.
+      expect(db.patients.update).toHaveBeenCalledWith(
+        'patient-123',
         expect.objectContaining({
-          id: 'patient-123',
           givenName: 'John',
           phone: '08087654321',
-          _dirty: 1
+          _dirty: 1,
+          _syncedAt: null
         })
       )
+      expect(db.patients.put).not.toHaveBeenCalled()
+    })
+
+    it('leaves fields that were not chosen untouched', async () => {
+      patients.update.mockResolvedValueOnce(1)
+
+      await resolveConflict(
+        mockConflict,
+        'manual',
+        { phone: 'remote' },
+        { id: 'patient-123', givenName: 'John', phone: '08012345678' },
+        { id: 'patient-123', given_name: 'Jonathan', phone: '08087654321' }
+      )
+
+      const changes = patients.update.mock.calls[0][1] as Record<string, unknown>
+      expect(changes.phone).toBe('08087654321')
+      expect(changes).not.toHaveProperty('givenName')
+      expect(changes).not.toHaveProperty('id')
+    })
+
+    it('fails when the record is no longer on this device', async () => {
+      patients.update.mockResolvedValueOnce(0)
+
+      await expect(
+        resolveConflict(
+          mockConflict,
+          'manual',
+          { phone: 'remote' },
+          { id: 'patient-123', phone: '08012345678' },
+          { id: 'patient-123', phone: '08087654321' }
+        )
+      ).rejects.toThrow('LocalRecordMissing')
     })
 
     it('should throw error if local or remote data missing', async () => {

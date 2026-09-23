@@ -9,10 +9,22 @@ import {
   ServerIcon,
 } from "@heroicons/react/20/solid";
 import { useLiveQuery } from "dexie-react-hooks";
-import { syncNow, isOnlineSyncEnabled, countUnsyncedRecords } from "@/sync/adapter";
+import {
+  syncNow,
+  isOnlineSyncEnabled,
+  countUnsyncedRecords,
+  fetchRemoteRecord,
+} from "@/sync/adapter";
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
+import { useAuthStore } from "@/stores/auth";
+import { useToast } from "@/stores/toast";
+import { can } from "@/auth/roles";
+import { createAuditLog, generateId } from "@/db";
 import { resolveConflict } from "@/sync/conflictResolver";
+import { queueSyncConflicts } from "@/sync/queueConflicts";
+import { namedSyncError, syncErrorCode } from "@/sync/errorCode";
+import { loadLocalRecord } from "@/features/conflicts/localContext";
 import { conflictQueueService } from "@/services/conflictQueue";
 import { ConflictResolutionModal, type ConflictData } from "../ConflictResolutionModal";
 import { usePopover } from "./usePopover";
@@ -52,6 +64,9 @@ export function SyncStatusControl() {
   const syncStore = useSyncStore();
   const queueStore = useOperationsQueue();
   const { open, setOpen, ref } = usePopover();
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const canResolve = !!currentUser && can(currentUser.role, "resolve_conflicts");
+  const { push } = useToast();
   const [conflicts, setConflicts] = useState<ConflictData[]>([]);
   const [currentConflict, setCurrentConflict] = useState<ConflictData | null>(null);
   const [conflictCount, setConflictCount] = useState(0);
@@ -76,28 +91,39 @@ export function SyncStatusControl() {
     syncStore.setStatus("syncing");
     try {
       const result = await syncNow();
-      if (result.conflicts && result.conflicts.length > 0) {
-        for (const conflict of result.conflicts) {
-          await conflictQueueService.createConflict({
-            conflictType: "sync_conflict",
-            entityType: conflict.entityType,
-            entityId: conflict.entityId,
-            conflictDetails: {
-              fields: conflict.conflicts.map((c) => ({
-                ...c,
-                phiSensitivity: "low" as const,
-              })),
-              localTimestamp: conflict.localTimestamp,
-              remoteTimestamp: conflict.remoteTimestamp,
-            },
+      if (result.conflicts.length > 0) {
+        // Put them in the shared review queue (skips records already there).
+        const queued = await queueSyncConflicts(
+          result.conflicts,
+          currentUser ? { id: currentUser.id, role: currentUser.role } : undefined,
+        );
+        if (canResolve) {
+          setConflicts(result.conflicts);
+          setCurrentConflict(result.conflicts[0]);
+        } else {
+          const n = result.conflicts.length;
+          push({
+            id: generateId(),
+            tone: "warning",
+            title: `${n} record${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} review`,
+            body:
+              queued.notQueued > 0
+                ? "Changed on this device and on the server. Your changes stay on this device and are not uploaded. They are not on the review list yet: sign in online, or ask someone who can resolve sync conflicts to run Sync now on this device."
+                : "Changed on this device and on the server. Your changes stay on this device and are not uploaded until someone who can resolve sync conflicts reviews them.",
           });
         }
-        setConflicts(result.conflicts);
-        setCurrentConflict(result.conflicts[0]);
         await loadConflicts();
       }
+      if (result.downloadFailedTables && result.downloadFailedTables.length > 0) {
+        push({
+          id: generateId(),
+          tone: "warning",
+          title: "Some updates were not downloaded",
+          body: "Some record types could not be downloaded from the server, so this device may not show the latest changes from other devices. Try Sync now again later.",
+        });
+      }
     } catch (error) {
-      console.error("Manual sync failed:", error);
+      console.error("Manual sync failed:", syncErrorCode(error));
     }
   };
 
@@ -106,16 +132,65 @@ export function SyncStatusControl() {
     resolution?: Record<string, "local" | "remote">,
   ) => {
     if (!currentConflict) return;
-    try {
-      await resolveConflict(currentConflict, strategy, resolution);
-      const remaining = conflicts.slice(1);
-      setConflicts(remaining);
-      setCurrentConflict(remaining[0] || null);
-      if (remaining.length === 0) await handleSync();
-      await loadConflicts();
-    } catch (error) {
-      console.error("Failed to resolve conflict:", error);
+    const conflict = currentConflict;
+    // Checked here, not only by hiding the dialog: this writes patient data.
+    if (!currentUser || !can(currentUser.role, "resolve_conflicts")) {
+      console.error("Failed to resolve conflict:", "NotPermitted");
+      throw namedSyncError("NotPermitted");
     }
+    const actorRole = currentUser.role;
+    try {
+      // Keeping this device's copy needs nothing else. The other choices
+      // need both copies: this device's record and the server's current
+      // record (which needs a connection).
+      let localData: Record<string, unknown> | undefined;
+      let remoteData: Record<string, unknown> | undefined;
+      if (strategy !== "keep-local") {
+        const [local, remote] = await Promise.all([
+          loadLocalRecord(conflict.entityType, conflict.entityId),
+          fetchRemoteRecord(conflict.entityType, conflict.entityId),
+        ]);
+        localData = local ?? undefined;
+        remoteData = remote ?? undefined;
+      }
+      await resolveConflict(conflict, strategy, resolution, localData, remoteData);
+    } catch (error) {
+      console.error("Failed to resolve conflict:", syncErrorCode(error));
+      // The dialog shows a general failure message when this rejects; say
+      // why when the reason is the connection, so staff do not keep retrying.
+      const reason = error instanceof Error ? error.name : "";
+      if (reason === "Offline" || reason === "RemoteReadFailed") {
+        push({
+          id: generateId(),
+          tone: "warning",
+          title: "Server copy not available",
+          body:
+            reason === "Offline"
+              ? "You are offline. Keeping the server's values or choosing field by field needs the server copy. Try again when you are back online, or keep this device's values."
+              : "The server copy could not be read. Try again when the connection is steadier, or keep this device's values.",
+        });
+      }
+      throw error;
+    }
+
+    try {
+      await createAuditLog(
+        actorRole,
+        `sync_conflict_resolved_${strategy.replace("-", "_")}`,
+        conflict.entityType,
+        conflict.entityId,
+      );
+    } catch (error) {
+      // The record is already written; a missing audit entry is not a
+      // failed resolution.
+      console.error("Audit entry for a sync conflict was not saved:", syncErrorCode(error));
+    }
+
+    const remaining = conflicts.slice(1);
+    setConflicts(remaining);
+    setCurrentConflict(remaining[0] || null);
+    if (remaining.length === 0) await handleSync();
+    await loadConflicts();
   };
 
   const unsynced = useLiveQuery(() => countUnsyncedRecords(), [], 0) ?? 0;
