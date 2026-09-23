@@ -1,14 +1,14 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ArrowDownTrayIcon,
-  ShieldCheckIcon,
-  CheckCircleIcon,
   ExclamationTriangleIcon,
-  CloudIcon,
-  ServerIcon,
-  ClockIcon,
-  DocumentCheckIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import * as logger from "@/lib/logger";
+import { formatNigerianDateTime } from "@/utils/dateFormat";
+import { US_CORE_VERSION } from "../../config/tefca";
 import {
   exportPatientEHI,
   getExportPreview,
@@ -17,22 +17,65 @@ import {
   type ExportOptions,
   type ExportResult,
 } from "../../services/fhir/dexieExporter";
-import type { BundleValidationResult } from "../../services/fhir/uscore-validator";
+import {
+  exportErrorMessage,
+  exportFileBase,
+  type ExportOutcome,
+  type ExportSectionKey,
+} from "./account/exportSummary";
+import {
+  ExportAboutDetails,
+  ExportContentOptions,
+  ExportPrivacyNotice,
+  ExportResultPanel,
+} from "./account/ExportParts";
+import { useOnlineStatus } from "./account/useOnlineStatus";
+import { errorName } from "./account/portalSession";
 
 interface Props {
   patientId: string;
 }
 
 type DateRange = "all" | "1year" | "2years" | "5years";
+type Format = "fhir-bundle" | "ndjson";
 
+const DATE_RANGES: { value: DateRange; label: string }[] = [
+  { value: "all", label: "Everything available" },
+  { value: "1year", label: "The last year" },
+  { value: "2years", label: "The last 2 years" },
+  { value: "5years", label: "The last 5 years" },
+];
+
+const FORMATS: { value: Format; label: string; hint: string }[] = [
+  {
+    value: "fhir-bundle",
+    label: "FHIR bundle (.json)",
+    hint: "One file. The best choice for most people.",
+  },
+  {
+    value: "ndjson",
+    label: "NDJSON (.ndjson)",
+    hint: "One record per line, for bulk import into another system.",
+  },
+];
+
+function isDateRange(v: string): v is DateRange {
+  return DATE_RANGES.some((r) => r.value === v);
+}
+
+function isFormat(v: string): v is Format {
+  return FORMATS.some((f) => f.value === v);
+}
+
+/**
+ * Health-record export that always works from the records saved on this
+ * device (no network needed).
+ */
 export function FHIRExportOffline({ patientId }: Props) {
+  const isOnline = useOnlineStatus();
   const [exporting, setExporting] = useState(false);
-  const [exportComplete, setExportComplete] = useState(false);
+  const [outcome, setOutcome] = useState<ExportOutcome | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [validation, setValidation] = useState<BundleValidationResult | null>(
-    null,
-  );
 
   const [preview, setPreview] = useState<{
     resourceCounts: Record<string, number>;
@@ -40,6 +83,7 @@ export function FHIRExportOffline({ patientId }: Props) {
     lastExport?: string;
     estimatedSize: string;
   } | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
 
   const [options, setOptions] = useState<ExportOptions>({
     includePatient: true,
@@ -55,38 +99,36 @@ export function FHIRExportOffline({ patientId }: Props) {
 
   const [useIncremental, setUseIncremental] = useState(false);
 
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
-
-  useEffect(() => {
-    loadPreview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId]);
-
-  async function loadPreview() {
+  const loadPreview = useCallback(async () => {
+    if (!patientId) return;
     try {
       const previewData = await getExportPreview(patientId);
       setPreview(previewData);
+      setPreviewFailed(false);
     } catch (err) {
-      console.error("Failed to load export preview:", err);
+      logger.error("[FHIRExportOffline] preview failed:", errorName(err));
+      setPreviewFailed(true);
     }
-  }
+  }, [patientId]);
+
+  useEffect(() => {
+    void loadPreview();
+  }, [loadPreview]);
+
+  const nothingSelected = !(
+    options.includePatient ||
+    options.includeVitals ||
+    options.includeMedications ||
+    options.includeEncounters ||
+    options.includeConsultations ||
+    options.includeAllergies
+  );
 
   const handleExport = async () => {
+    if (!patientId) return;
     setExporting(true);
     setError(null);
-    setExportComplete(false);
-    setValidation(null);
+    setOutcome(null);
 
     try {
       const result: ExportResult = await exportPatientEHI(patientId, {
@@ -95,400 +137,257 @@ export function FHIRExportOffline({ patientId }: Props) {
       });
 
       if (!result.success) {
-        throw new Error(result.error || "Export failed");
+        setError(exportErrorMessage(result.error));
+        return;
       }
 
-      if (result.validation) {
-        setValidation(result.validation);
-      }
-
-      const dateStr = new Date().toISOString().split("T")[0];
-      const filename = `health-data-${patientId}-${dateStr}`;
-
+      const filename = exportFileBase(patientId);
+      let fileName: string;
       if (result.bundle) {
-        downloadBundle(result.bundle, `${filename}.json`);
-      } else if (result.ndjson) {
-        downloadNDJSON(result.ndjson, `${filename}.ndjson`);
+        fileName = `${filename}.json`;
+        downloadBundle(result.bundle, fileName);
+      } else if (result.ndjson !== undefined) {
+        fileName = `${filename}.ndjson`;
+        downloadNDJSON(result.ndjson, fileName);
+      } else {
+        setError(exportErrorMessage(undefined));
+        return;
       }
 
-      setExportComplete(true);
-      loadPreview();
+      setOutcome({
+        fileName,
+        source: "device",
+        counts: result.metadata.resourceCounts,
+        since: result.metadata.since,
+        validation: result.validation,
+      });
+      void loadPreview();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Export failed");
+      logger.error("[FHIRExportOffline] export failed:", errorName(err));
+      setError(exportErrorMessage(undefined));
     } finally {
       setExporting(false);
     }
   };
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return "Never";
-    return new Date(dateStr).toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
+  const toggleSection = (key: ExportSectionKey, checked: boolean) =>
+    setOptions((o) => ({ ...o, [key]: checked }));
+
+  const format: Format = options.format ?? FORMATS[0].value;
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-              <ArrowDownTrayIcon className="w-6 h-6 text-blue-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">
-                Export Health Data
-              </h2>
-              <p className="text-gray-600">
-                Download your medical records in FHIR format
-              </p>
-            </div>
-          </div>
+    <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+      <PageHeader
+        title="Download your health record"
+        description="Make a file of the health records saved on this device. No internet needed."
+      />
 
-          <div
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${
-              isOnline
-                ? "bg-green-100 text-green-700"
-                : "bg-amber-100 text-amber-700"
-            }`}
-          >
-            {isOnline ? (
-              <>
-                <CloudIcon className="w-4 h-4" />
-                Online
-              </>
-            ) : (
-              <>
-                <ServerIcon className="w-4 h-4" />
-                Offline Mode
-              </>
-            )}
-          </div>
+      <ExportPrivacyNotice />
+
+      {!patientId && (
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>
+            We could not find your patient record. Log out, log in again, then
+            try once more.
+          </p>
         </div>
+      )}
 
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-          <div className="flex gap-3">
-            <ShieldCheckIcon className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-medium text-blue-900">
-                US Core 6.1.0 Compliant Export
-              </h3>
-              <p className="text-sm text-blue-700 mt-1">
-                Your health data is exported in FHIR R4 format validated against
-                US Core 6.1.0 profiles. This format is accepted by healthcare
-                providers and apps that support TEFCA Individual Access
-                Services.
-              </p>
-            </div>
-          </div>
+      <section className="panel" aria-labelledby="fxo-source-title">
+        <div className="panel-header">
+          <h2 id="fxo-source-title" className="panel-title">
+            Where the file comes from
+          </h2>
+          <StatusBadge tone={isOnline ? "success" : "neutral"} icon>
+            {isOnline ? "Online" : "Offline"}
+          </StatusBadge>
         </div>
-
-        {preview && (
-          <div className="bg-gray-50 rounded-lg p-4 mb-6">
-            <h3 className="font-medium text-gray-900 mb-3">Export Preview</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {Object.entries(preview.resourceCounts).map(([type, count]) => (
-                <div
-                  key={type}
-                  className="bg-white rounded-lg p-3 border border-gray-200"
-                >
-                  <div className="text-2xl font-bold text-gray-900">
-                    {count}
-                  </div>
-                  <div className="text-sm text-gray-600">{type}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 flex items-center justify-between text-sm text-gray-600">
-              <div className="flex items-center gap-4">
-                <span>Total: {preview.totalResources} resources</span>
-                <span>Size: ~{preview.estimatedSize}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <ClockIcon className="w-4 h-4" />
-                <span>Last export: {formatDate(preview.lastExport)}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="space-y-4 mb-6">
-          <h3 className="font-medium text-gray-900">Select data to include:</h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-              <input
-                type="checkbox"
-                checked={options.includePatient}
-                onChange={(e) =>
-                  setOptions({ ...options, includePatient: e.target.checked })
-                }
-                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <div>
-                <span className="font-medium text-gray-900">Demographics</span>
-                <p className="text-sm text-gray-600">Name, DOB, contact info</p>
-              </div>
-            </label>
-
-            <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-              <input
-                type="checkbox"
-                checked={options.includeVitals}
-                onChange={(e) =>
-                  setOptions({ ...options, includeVitals: e.target.checked })
-                }
-                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <div>
-                <span className="font-medium text-gray-900">Vital Signs</span>
-                <p className="text-sm text-gray-600">
-                  BP, heart rate, temp, etc.
-                </p>
-              </div>
-            </label>
-
-            <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-              <input
-                type="checkbox"
-                checked={options.includeMedications}
-                onChange={(e) =>
-                  setOptions({
-                    ...options,
-                    includeMedications: e.target.checked,
-                  })
-                }
-                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <div>
-                <span className="font-medium text-gray-900">Medications</span>
-                <p className="text-sm text-gray-600">
-                  Prescriptions & dispenses
-                </p>
-              </div>
-            </label>
-
-            <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-              <input
-                type="checkbox"
-                checked={options.includeEncounters}
-                onChange={(e) =>
-                  setOptions({
-                    ...options,
-                    includeEncounters: e.target.checked,
-                  })
-                }
-                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <div>
-                <span className="font-medium text-gray-900">Visits</span>
-                <p className="text-sm text-gray-600">Clinic encounters</p>
-              </div>
-            </label>
-
-            <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-              <input
-                type="checkbox"
-                checked={options.includeConsultations}
-                onChange={(e) =>
-                  setOptions({
-                    ...options,
-                    includeConsultations: e.target.checked,
-                  })
-                }
-                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <div>
-                <span className="font-medium text-gray-900">
-                  Clinical Notes
-                </span>
-                <p className="text-sm text-gray-600">SOAP notes & diagnoses</p>
-              </div>
-            </label>
-
-            <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-              <input
-                type="checkbox"
-                checked={options.includeAllergies}
-                onChange={(e) =>
-                  setOptions({ ...options, includeAllergies: e.target.checked })
-                }
-                className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <div>
-                <span className="font-medium text-gray-900">Allergies</span>
-                <p className="text-sm text-gray-600">
-                  Known allergies & reactions
-                </p>
-              </div>
-            </label>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div>
-            <h3 className="font-medium text-gray-900 mb-3">Time range:</h3>
-            <select
-              value={options.dateRange}
-              onChange={(e) =>
-                setOptions({
-                  ...options,
-                  dateRange: e.target.value as DateRange,
-                })
-              }
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="all">All available records</option>
-              <option value="1year">Last 1 year</option>
-              <option value="2years">Last 2 years</option>
-              <option value="5years">Last 5 years</option>
-            </select>
-          </div>
-
-          <div>
-            <h3 className="font-medium text-gray-900 mb-3">Export format:</h3>
-            <select
-              value={options.format}
-              onChange={(e) =>
-                setOptions({
-                  ...options,
-                  format: e.target.value as "fhir-bundle" | "ndjson",
-                })
-              }
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="fhir-bundle">FHIR Bundle (JSON)</option>
-              <option value="ndjson">NDJSON (for bulk import)</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-4 mb-6">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={options.validate}
-              onChange={(e) =>
-                setOptions({ ...options, validate: e.target.checked })
-              }
-              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <span className="text-sm text-gray-700">
-              Validate against US Core 6.1.0
+        <div className="panel-body space-y-2">
+          <p className="flex items-start gap-2 text-body text-ink-secondary">
+            <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
+            <span>
+              The file is made from records saved on this device. Visits that
+              have not reached this device yet will not be in it.
             </span>
-          </label>
+          </p>
+          {preview && (
+            <p className="text-caption text-ink-muted tabular-nums">
+              About {preview.totalResources} items saved on this device · file
+              size about {preview.estimatedSize} · last file made:{" "}
+              {preview.lastExport
+                ? formatNigerianDateTime(preview.lastExport)
+                : "never"}
+            </p>
+          )}
+        </div>
+      </section>
 
-          {preview?.lastExport && (
-            <label className="flex items-center gap-2 cursor-pointer">
+      <section className="panel" aria-labelledby="fxo-content-title">
+        <div className="panel-header">
+          <h2 id="fxo-content-title" className="panel-title">
+            Choose what goes in the file
+          </h2>
+        </div>
+        <div className="panel-body space-y-5">
+          <ExportContentOptions
+            idPrefix="fxo"
+            values={options}
+            onToggle={toggleSection}
+            counts={preview?.resourceCounts}
+            disabled={exporting}
+          />
+          {previewFailed && (
+            <p className="text-caption text-ink-muted">
+              We could not count the records saved on this device. You can still
+              make the file.
+            </p>
+          )}
+          {nothingSelected && (
+            <p className="field-error" role="alert">
+              Choose at least one kind of record to include.
+            </p>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="fxo-range" className="field-label">
+                Time period
+              </label>
+              <select
+                id="fxo-range"
+                value={options.dateRange}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (isDateRange(v)) setOptions((o) => ({ ...o, dateRange: v }));
+                }}
+                disabled={exporting}
+                className="input-field"
+              >
+                {DATE_RANGES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="fxo-format" className="field-label">
+                File format
+              </label>
+              <select
+                id="fxo-format"
+                value={format}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (isFormat(v)) setOptions((o) => ({ ...o, format: v }));
+                }}
+                disabled={exporting}
+                aria-describedby="fxo-format-hint"
+                className="input-field"
+              >
+                {FORMATS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+              <p id="fxo-format-hint" className="field-hint">
+                {FORMATS.find((f) => f.value === format)?.hint}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label
+              htmlFor="fxo-validate"
+              className="flex min-h-touch-target cursor-pointer items-start gap-3"
+            >
               <input
+                id="fxo-validate"
                 type="checkbox"
-                checked={useIncremental}
-                onChange={(e) => setUseIncremental(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                checked={!!options.validate}
+                onChange={(e) =>
+                  setOptions((o) => ({ ...o, validate: e.target.checked }))
+                }
+                disabled={exporting}
+                className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
               />
-              <span className="text-sm text-gray-700">
-                Incremental export (only changes since{" "}
-                {formatDate(preview.lastExport)})
+              <span>
+                <span className="block text-body text-ink">
+                  Check the file against the US Core {US_CORE_VERSION} standard
+                </span>
+                <span className="block text-caption text-ink-muted">
+                  Tells you if any item may not be accepted by other health
+                  systems.
+                </span>
               </span>
             </label>
-          )}
-        </div>
 
-        {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-            <ExclamationTriangleIcon className="w-5 h-5 text-red-600" />
-            <p className="text-red-700">{error}</p>
-          </div>
-        )}
-
-        {exportComplete && (
-          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <div className="flex items-center gap-3">
-              <CheckCircleIcon className="w-5 h-5 text-green-600" />
-              <p className="text-green-700 font-medium">
-                Your health data has been exported successfully!
-              </p>
-            </div>
-            {validation && (
-              <div className="mt-3 text-sm">
-                <div className="flex items-center gap-2">
-                  <DocumentCheckIcon className="w-4 h-4 text-green-600" />
-                  <span className="text-green-700">
-                    Validation: {validation.validResources}/
-                    {validation.totalResources} resources passed US Core 6.1.0
+            {preview?.lastExport && (
+              <label
+                htmlFor="fxo-incremental"
+                className="flex min-h-touch-target cursor-pointer items-start gap-3"
+              >
+                <input
+                  id="fxo-incremental"
+                  type="checkbox"
+                  checked={useIncremental}
+                  onChange={(e) => setUseIncremental(e.target.checked)}
+                  disabled={exporting}
+                  className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
+                />
+                <span>
+                  <span className="block text-body text-ink">
+                    Only include changes since my last file (
+                    {formatNigerianDateTime(preview.lastExport)})
                   </span>
-                </div>
-                {validation.summary.warnings > 0 && (
-                  <p className="text-amber-600 mt-1">
-                    {validation.summary.warnings} warnings (non-blocking)
-                  </p>
-                )}
-              </div>
+                  <span className="block text-caption text-ink-muted">
+                    Files made on this device after the first one include only
+                    changes since the last file, even when this is not ticked.
+                    Keep your earlier files. The result below always says
+                    whether a file only has recent changes.
+                  </span>
+                </span>
+              </label>
             )}
           </div>
-        )}
+        </div>
+      </section>
 
-        <button
-          onClick={handleExport}
-          disabled={exporting}
-          className="w-full py-4 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-        >
-          {exporting ? (
-            <>
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Exporting from {isOnline ? "Cloud" : "Local Device"}...
-            </>
-          ) : (
-            <>
-              <ArrowDownTrayIcon className="w-5 h-5" />
-              Download Health Data (FHIR)
-            </>
-          )}
-        </button>
-
-        {!isOnline && (
-          <p className="mt-3 text-sm text-center text-amber-600">
-            Exporting from local device storage. Some records may not be fully
-            synced.
+      <div aria-live="polite" className="space-y-3">
+        {exporting && (
+          <p role="status" className="flex items-center gap-2 text-body text-ink-secondary">
+            <span
+              className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent"
+              aria-hidden
+            />
+            Making your file from records saved on this device…
           </p>
         )}
+        {error && (
+          <div className="banner banner-danger" role="alert">
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>{error}</p>
+          </div>
+        )}
+        {outcome && (
+          <ExportResultPanel outcome={outcome} usCoreVersion={US_CORE_VERSION} />
+        )}
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <h3 className="font-semibold text-gray-900 mb-4">
-          What can you do with your FHIR export?
-        </h3>
-        <ul className="space-y-3">
-          <li className="flex items-start gap-3">
-            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-            <span className="text-gray-700">
-              Share with other healthcare providers for continuity of care
-            </span>
-          </li>
-          <li className="flex items-start gap-3">
-            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-            <span className="text-gray-700">
-              Import into personal health apps (Apple Health, CommonHealth)
-            </span>
-          </li>
-          <li className="flex items-start gap-3">
-            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-            <span className="text-gray-700">
-              Use for insurance claims or benefits applications
-            </span>
-          </li>
-          <li className="flex items-start gap-3">
-            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-            <span className="text-gray-700">
-              Keep as a personal backup of your medical records
-            </span>
-          </li>
-        </ul>
-      </div>
+      <button
+        type="button"
+        onClick={handleExport}
+        disabled={exporting || !patientId || nothingSelected}
+        className="btn-primary w-full"
+      >
+        <ArrowDownTrayIcon className="h-5 w-5" aria-hidden />
+        {exporting ? "Making your file…" : "Download my health record"}
+      </button>
+
+      <ExportAboutDetails />
     </div>
   );
 }

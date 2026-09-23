@@ -1,14 +1,26 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/lib/supabase";
+import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
+  ArrowLeftIcon,
+  ArrowPathIcon,
+  ChevronRightIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
   UserGroupIcon,
-  ClockIcon,
-  CheckCircleIcon,
-  XCircleIcon,
 } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonText } from "@/components/ui/Skeleton";
+import {
+  referralPriorityDisplay,
+  referralStatusDisplay,
+} from "./account/displayStatus";
+import { errorName, readPortalUser } from "./account/portalSession";
+import { useOnlineStatus } from "./account/useOnlineStatus";
 
 interface Referral {
   id: string;
@@ -25,30 +37,28 @@ interface Referral {
 
 export function Referrals() {
   const navigate = useNavigate();
+  const isOnline = useOnlineStatus();
   const [referrals, setReferrals] = useState<Referral[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(isSupabaseEnabled);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [selectedReferral, setSelectedReferral] = useState<Referral | null>(
     null,
   );
 
-  useEffect(() => {
-    loadReferrals();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadReferrals = async () => {
+  const loadReferrals = useCallback(async () => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    setError("");
+    setLoadFailed(false);
 
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
+      const portalUser = readPortalUser();
+      if (!portalUser) {
         navigate("/patient/login", { replace: true });
         return;
       }
-
-      const portalUser = JSON.parse(portalUserStr);
 
       const { data, error: referralsError } = await supabase
         .from("patient_referrals")
@@ -60,234 +70,260 @@ export function Referrals() {
 
       setReferrals(data || []);
     } catch (err) {
-      logger.error("Error loading referrals:", err);
-      setError("Failed to load referrals");
+      logger.error("[Referrals] load failed:", errorName(err));
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, [navigate]);
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "completed":
-        return <CheckCircleIcon className="h-5 w-5 text-green-600" />;
-      case "cancelled":
-        return <XCircleIcon className="h-5 w-5 text-red-600" />;
-      case "scheduled":
-        return <CheckCircleIcon className="h-5 w-5 text-blue-600" />;
-      default:
-        return <ClockIcon className="h-5 w-5 text-yellow-600" />;
-    }
-  };
+  useEffect(() => {
+    void loadReferrals();
+  }, [loadReferrals]);
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "emergency":
-        return "bg-red-100 text-red-800";
-      case "urgent":
-        return "bg-orange-100 text-orange-800";
-      default:
-        return "bg-blue-100 text-blue-800";
-    }
-  };
+  const header = (
+    <PageHeader
+      title="Referrals"
+      description="Specialists and services your care team has referred you to."
+    />
+  );
 
-  if (loading) {
+  const helpNote = (
+    <div className="banner banner-info">
+      <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+      <p>
+        Questions about a referral, or need help booking? Contact the clinic
+        that referred you.
+      </p>
+    </div>
+  );
+
+  if (!isSupabaseEnabled) {
     return (
-      <div className="min-h-screen bg-gray-50 px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading referrals...</p>
-          </div>
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <div className="banner banner-info">
+          <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>
+            Referrals are kept in the clinic&apos;s online system. This device is
+            not connected to it, so referrals cannot be shown here. Ask clinic
+            staff about any referral you were given.
+          </p>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50 px-4 py-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Referrals</h1>
-          <p className="mt-2 text-gray-600">
-            View your specialist referrals and appointments
-          </p>
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <span role="status" className="sr-only">
+          Loading your referrals
+        </span>
+        <div className="panel p-5" aria-hidden>
+          <Skeleton className="mb-4 h-5 w-40" />
+          <SkeletonText lines={4} />
         </div>
+      </div>
+    );
+  }
 
-        {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-800">{error}</p>
+  if (selectedReferral) {
+    const status = referralStatusDisplay(selectedReferral.status);
+    const priority = referralPriorityDisplay(selectedReferral.priority);
+    return (
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        <button
+          type="button"
+          onClick={() => setSelectedReferral(null)}
+          className="btn-ghost -ml-3"
+        >
+          <ArrowLeftIcon className="h-5 w-5" aria-hidden />
+          All referrals
+        </button>
+
+        <PageHeader
+          title={selectedReferral.specialty}
+          description={
+            selectedReferral.specialist_name
+              ? `Dr. ${selectedReferral.specialist_name}`
+              : undefined
+          }
+        />
+
+        {selectedReferral.priority === "emergency" && (
+          <div className="banner banner-danger" role="alert">
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>
+              <strong>Emergency referral.</strong> Please seek immediate
+              attention.
+            </p>
           </div>
         )}
 
-        {selectedReferral ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <button
-              onClick={() => setSelectedReferral(null)}
-              className="mb-4 text-blue-600 hover:text-blue-800"
-            >
-              ← Back to all referrals
-            </button>
-
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900">
-                  {selectedReferral.specialty}
-                </h2>
-                {selectedReferral.specialist_name && (
-                  <p className="text-gray-600 mt-1">
-                    Dr. {selectedReferral.specialist_name}
-                  </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-600">Referring Provider</p>
-                  <p className="font-medium">
-                    {selectedReferral.referring_provider}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Priority</p>
-                  <span
-                    className={`inline-block px-2 py-1 text-xs font-medium rounded capitalize ${getPriorityColor(selectedReferral.priority)}`}
-                  >
-                    {selectedReferral.priority}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Referral Date</p>
-                  <p className="font-medium">
-                    {formatNigerianDate(selectedReferral.referral_date)}
-                  </p>
-                </div>
-                {selectedReferral.appointment_date && (
-                  <div>
-                    <p className="text-sm text-gray-600">Appointment Date</p>
-                    <p className="font-medium">
-                      {formatNigerianDate(selectedReferral.appointment_date)}
-                    </p>
-                  </div>
-                )}
-                <div>
-                  <p className="text-sm text-gray-600">Status</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    {getStatusIcon(selectedReferral.status)}
-                    <span className="capitalize">
-                      {selectedReferral.status}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm text-gray-600 mb-2">
-                  Reason for Referral
-                </p>
-                <p className="text-gray-900">{selectedReferral.reason}</p>
-              </div>
-
-              {selectedReferral.notes && (
-                <div>
-                  <p className="text-sm text-gray-600 mb-2">Additional Notes</p>
-                  <p className="text-gray-900">{selectedReferral.notes}</p>
-                </div>
-              )}
-
-              {selectedReferral.status === "pending" && (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm text-yellow-800">
-                    <strong>Action Required:</strong> Please contact the
-                    specialist's office to schedule your appointment.
-                  </p>
-                </div>
-              )}
-
-              {selectedReferral.priority === "emergency" && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-800">
-                    <strong>URGENT:</strong> This is an emergency referral.
-                    Please seek immediate attention.
-                  </p>
-                </div>
-              )}
-            </div>
+        {selectedReferral.status === "pending" && (
+          <div className="banner banner-warning">
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>
+              <strong>Action needed:</strong> contact the specialist&apos;s office
+              to book your appointment.
+            </p>
           </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            {referrals.length === 0 ? (
-              <div className="p-12 text-center">
-                <UserGroupIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">
-                  No referrals
-                </h3>
-                <p className="text-gray-600">
-                  Your specialist referrals will appear here
-                </p>
+        )}
+
+        <section className="panel" aria-labelledby="referral-detail-title">
+          <div className="panel-header">
+            <h2 id="referral-detail-title" className="panel-title">
+              Referral details
+            </h2>
+          </div>
+          <dl className="panel-body grid gap-4 text-body sm:grid-cols-2">
+            <div>
+              <dt className="text-label text-ink-muted">Status</dt>
+              <dd className="mt-1">
+                <StatusBadge tone={status.tone} icon>
+                  {status.label}
+                </StatusBadge>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-label text-ink-muted">Priority</dt>
+              <dd className="mt-1">
+                <StatusBadge tone={priority.tone}>{priority.label}</StatusBadge>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-label text-ink-muted">Referred by</dt>
+              <dd className="mt-1 text-ink">{selectedReferral.referring_provider}</dd>
+            </div>
+            <div>
+              <dt className="text-label text-ink-muted">Referral date</dt>
+              <dd className="mt-1 text-ink tabular-nums">
+                {formatNigerianDate(selectedReferral.referral_date)}
+              </dd>
+            </div>
+            {selectedReferral.appointment_date && (
+              <div>
+                <dt className="text-label text-ink-muted">Appointment date</dt>
+                <dd className="mt-1 text-ink tabular-nums">
+                  {formatNigerianDate(selectedReferral.appointment_date)}
+                </dd>
               </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {referrals.map((referral) => (
-                  <button
-                    key={referral.id}
-                    onClick={() => setSelectedReferral(referral)}
-                    className="w-full p-4 text-left hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-medium text-gray-900">
+            )}
+            <div className="sm:col-span-2">
+              <dt className="text-label text-ink-muted">Reason for referral</dt>
+              <dd className="mt-1 whitespace-pre-line text-ink">
+                {selectedReferral.reason}
+              </dd>
+            </div>
+            {selectedReferral.notes && (
+              <div className="sm:col-span-2">
+                <dt className="text-label text-ink-muted">Additional notes</dt>
+                <dd className="mt-1 whitespace-pre-line text-ink">
+                  {selectedReferral.notes}
+                </dd>
+              </div>
+            )}
+          </dl>
+        </section>
+
+        {helpNote}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+      {header}
+
+      {loadFailed ? (
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <div className="space-y-3">
+            <p>
+              {isOnline
+                ? "We could not load your referrals. Please try again."
+                : "You are offline. Connect to the internet to see your referrals."}
+            </p>
+            <button
+              type="button"
+              onClick={() => void loadReferrals()}
+              className="btn-secondary"
+            >
+              <ArrowPathIcon className="h-5 w-5" aria-hidden />
+              Try again
+            </button>
+          </div>
+        </div>
+      ) : (
+        <section className="panel" aria-labelledby="referral-list-title">
+          <div className="panel-header">
+            <h2 id="referral-list-title" className="panel-title">
+              Your referrals
+            </h2>
+            <span className="text-caption text-ink-muted tabular-nums">
+              {referrals.length}
+            </span>
+          </div>
+          {referrals.length === 0 ? (
+            <EmptyState
+              icon={UserGroupIcon}
+              title="No referrals"
+              description="If your care team refers you to a specialist, it will be listed here."
+            />
+          ) : (
+            <ul className="divide-y divide-line">
+              {referrals.map((referral) => {
+                const status = referralStatusDisplay(referral.status);
+                const priority = referralPriorityDisplay(referral.priority);
+                return (
+                  <li key={referral.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedReferral(referral)}
+                      className="flex w-full min-h-touch-target items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="text-body font-medium text-ink">
                             {referral.specialty}
-                          </h3>
-                          <span
-                            className={`px-2 py-0.5 text-xs font-medium rounded capitalize ${getPriorityColor(referral.priority)}`}
-                          >
-                            {referral.priority}
                           </span>
-                        </div>
+                          {referral.priority !== "routine" && (
+                            <StatusBadge tone={priority.tone}>{priority.label}</StatusBadge>
+                          )}
+                        </span>
                         {referral.specialist_name && (
-                          <p className="text-sm text-gray-600 mt-1">
+                          <span className="block text-caption text-ink-secondary">
                             Dr. {referral.specialist_name}
-                          </p>
-                        )}
-                        <p className="text-sm text-gray-600 mt-1">
-                          Referred by: {referral.referring_provider}
-                        </p>
-                        <div className="flex items-center gap-2 mt-2">
-                          {getStatusIcon(referral.status)}
-                          <span className="text-sm text-gray-600 capitalize">
-                            {referral.status}
                           </span>
-                        </div>
-                      </div>
-                      <div className="text-right ml-4">
-                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                        )}
+                        <span className="block text-caption text-ink-muted">
+                          Referred by {referral.referring_provider} on{" "}
                           {formatNigerianDate(referral.referral_date)}
                         </span>
                         {referral.appointment_date && (
-                          <p className="text-xs text-blue-600 mt-1">
-                            Appt:{" "}
-                            {formatNigerianDate(referral.appointment_date)}
-                          </p>
+                          <span className="block text-caption text-ink-secondary">
+                            Appointment: {formatNigerianDate(referral.appointment_date)}
+                          </span>
                         )}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                        <span className="mt-1 block">
+                          <StatusBadge tone={status.tone} icon>
+                            {status.label}
+                          </StatusBadge>
+                        </span>
+                      </span>
+                      <ChevronRightIcon className="mt-1 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
 
-        <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-          <p className="text-sm text-blue-800">
-            <strong>Need help?</strong> Contact your healthcare provider if you
-            have questions about a referral or need assistance scheduling an
-            appointment.
-          </p>
-        </div>
-      </div>
+      {helpNote}
     </div>
   );
 }

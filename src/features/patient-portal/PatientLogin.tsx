@@ -1,13 +1,18 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowRightIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowRightIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
+} from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
+import { AuthShell } from "./account/AuthShell";
 
 const onlineSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -32,6 +37,7 @@ export function PatientLogin() {
     resolver: zodResolver(schema),
     defaultValues: { email: "", credential: "" },
   });
+  const { errors } = form.formState;
 
   const handleSupabaseLogin = async (data: LoginForm) => {
     const authError = await login(data.email, data.credential);
@@ -130,157 +136,148 @@ export function PatientLogin() {
     }
   };
 
+  const hintId = "credential-hint";
+  const credentialDescribedBy = [
+    hintId,
+    errors.credential ? "credential-error" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-              <ShieldCheckIcon className="w-8 h-8 text-blue-600" />
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              Patient Portal Login
-            </h1>
-            <p className="text-gray-600">
-              {isSupabaseEnabled
-                ? "Sign in with your email and password."
-                : "Sign in with your email and 6-digit PIN."}
+    <AuthShell>
+      <div className="mb-6">
+        <h1 className="text-h1 text-ink">Patient portal login</h1>
+        <p className="mt-1 text-body text-ink-muted">
+          {isSupabaseEnabled ? (
+            <>Log in with your email and password.</>
+          ) : (
+            <>Log in with your email and 6-digit PIN.</>
+          )}
+        </p>
+      </div>
+
+      {!isSupabaseEnabled && (
+        <div className="banner banner-info mb-5">
+          <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <div className="space-y-1">
+            <p className="font-medium">This device is in offline mode</p>
+            <p className="text-label font-normal">
+              Your account and records are stored on this device only. Email
+              invitations are not available without an internet connection, so
+              register directly with the link below.
             </p>
           </div>
+        </div>
+      )}
 
-          {!isSupabaseEnabled && (
-            <div className="mb-6 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-xs text-yellow-800 font-medium mb-1">
-                Running in offline mode
-              </p>
-              <p className="text-xs text-yellow-700">
-                Data is stored on this device only. Email invitations are not
-                available without an internet connection — register directly
-                using the link below.
-              </p>
-            </div>
+      {error && (
+        <div className="banner banner-danger mb-5" role="alert">
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>{error}</p>
+        </div>
+      )}
+
+      <form
+        onSubmit={form.handleSubmit(handleSubmit)}
+        className="space-y-5"
+        noValidate
+      >
+        <div>
+          <label htmlFor="email" className="field-label">
+            Email Address
+          </label>
+          <input
+            {...form.register("email")}
+            type="email"
+            id="email"
+            placeholder="your.email@example.com"
+            className="input-field"
+            disabled={loading}
+            autoComplete="email"
+            aria-invalid={errors.email ? true : undefined}
+            aria-describedby={errors.email ? "email-error" : undefined}
+          />
+          {errors.email && (
+            <p id="email-error" className="field-error">
+              {errors.email.message}
+            </p>
           )}
-
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-800">{error}</p>
-            </div>
-          )}
-
-          <form
-            onSubmit={form.handleSubmit(handleSubmit)}
-            className="space-y-5"
-          >
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
-                Email Address
-              </label>
-              <input
-                {...form.register("email")}
-                type="email"
-                id="email"
-                placeholder="your.email@example.com"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={loading}
-                autoComplete="email"
-              />
-              {form.formState.errors.email && (
-                <p className="mt-2 text-sm text-red-600">
-                  {form.formState.errors.email.message}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label
-                htmlFor="credential"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
-                {isSupabaseEnabled ? "Password" : "6-Digit PIN"}
-              </label>
-              <input
-                {...form.register("credential")}
-                type="password"
-                id="credential"
-                inputMode={isSupabaseEnabled ? undefined : "numeric"}
-                placeholder={isSupabaseEnabled ? "Your password" : "••••••"}
-                maxLength={isSupabaseEnabled ? undefined : 6}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={loading}
-                autoComplete="current-password"
-              />
-              {isSupabaseEnabled ? (
-                <div className="mt-2 text-right">
-                  <button
-                    type="button"
-                    onClick={() => navigate("/patient/forgot-password")}
-                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                  >
-                    Forgot password?
-                  </button>
-                </div>
-              ) : (
-                <p className="mt-1 text-xs text-gray-500">
-                  Enter the 6-digit PIN you chose when you registered. Forgot
-                  it? Ask clinic staff to help you reset it.
-                </p>
-              )}
-              {form.formState.errors.credential && (
-                <p className="mt-2 text-sm text-red-600">
-                  {form.formState.errors.credential.message}
-                </p>
-              )}
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Logging in...
-                </>
-              ) : (
-                <>
-                  Login
-                  <ArrowRightIcon className="w-5 h-5" />
-                </>
-              )}
-            </button>
-
-            <div className="text-center">
-              <p className="text-sm text-gray-600">
-                Don't have an account?{" "}
-                <button
-                  type="button"
-                  onClick={() => navigate("/patient/register")}
-                  className="text-blue-600 hover:text-blue-700 font-medium"
-                >
-                  Register here
-                </button>
-              </p>
-            </div>
-          </form>
         </div>
 
-        <div className="mt-6 text-center space-y-2">
-          <button
-            type="button"
-            onClick={() => navigate("/patient")}
-            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-          >
-            Back to Home
-          </button>
-          <p className="text-sm text-gray-500">
-            Med Bridge Health Reach · Secure patient portal
-          </p>
+        <div>
+          <label htmlFor="credential" className="field-label">
+            {isSupabaseEnabled ? "Password" : "6-Digit PIN"}
+          </label>
+          <input
+            {...form.register("credential")}
+            type="password"
+            id="credential"
+            inputMode={isSupabaseEnabled ? undefined : "numeric"}
+            placeholder={isSupabaseEnabled ? "Your password" : "••••••"}
+            maxLength={isSupabaseEnabled ? undefined : 6}
+            className="input-field"
+            disabled={loading}
+            autoComplete="current-password"
+            aria-invalid={errors.credential ? true : undefined}
+            aria-describedby={credentialDescribedBy}
+          />
+          {isSupabaseEnabled ? (
+            <div className="mt-1 flex items-center justify-between gap-3">
+              <p id={hintId} className="field-hint mt-0">
+                The password you chose when you registered.
+              </p>
+              <Link
+                to="/patient/forgot-password"
+                className="inline-flex min-h-touch-target shrink-0 items-center text-label text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                Forgot password?
+              </Link>
+            </div>
+          ) : (
+            <p id={hintId} className="field-hint">
+              Enter the 6-digit PIN you chose when you registered. Forgot it?
+              Ask clinic staff to help you reset it.
+            </p>
+          )}
+          {errors.credential && (
+            <p id="credential-error" className="field-error">
+              {errors.credential.message}
+            </p>
+          )}
         </div>
-      </div>
-    </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="btn-primary w-full"
+        >
+          {loading ? (
+            <>
+              <span
+                className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"
+                aria-hidden
+              />
+              Logging in...
+            </>
+          ) : (
+            <>
+              Login
+              <ArrowRightIcon className="h-5 w-5" aria-hidden />
+            </>
+          )}
+        </button>
+
+        <p className="text-center text-body text-ink-secondary">
+          Don&apos;t have an account?{" "}
+          <Link
+            to="/patient/register"
+            className="font-medium text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            Register here
+          </Link>
+        </p>
+      </form>
+    </AuthShell>
   );
 }
