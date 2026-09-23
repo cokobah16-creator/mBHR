@@ -33,8 +33,10 @@ at the home page, a reset link just opens the home page and nothing happens.
 
 | Setting | Value |
 | --- | --- |
-| Site URL | `https://m-bhr.vercel.app` |
-| Redirect URLs | `https://m-bhr.vercel.app/reset-password**` |
+| Site URL | `https://mbhr.app` |
+| Redirect URLs | `https://mbhr.app/reset-password**` |
+| | `https://mbhr.app/auth/callback` |
+| | `https://m-bhr.vercel.app/reset-password**` (old Vercel alias, redirects to `mbhr.app`; keeps links sent before the move working) |
 | | `https://m-bhr.vercel.app/auth/callback` |
 | | `http://localhost:5173/**` (only if you run the app locally against the hosted project) |
 
@@ -42,11 +44,11 @@ Rules that matter here:
 
 - An entry matches the whole URL. `*` never crosses `.` or `/`; `**` matches
   anything, including a query string. The reset link carries `?for=`, which is
-  why its entry ends in `**`. (A plain `https://m-bhr.vercel.app/reset-password`
-  entry also works today, only because the host is the Site URL's host.)
-- Any URL on the Site URL's host is accepted, so the two `m-bhr.vercel.app`
-  entries are belt-and-braces: they keep working if the Site URL is ever moved
-  to another host.
+  why its entry ends in `**`. A plain `https://<host>/reset-password` entry
+  only works while that host is the Site URL's host (that is exactly what
+  broke the `m-bhr.vercel.app` entries when the Site URL moved).
+- Any URL on the Site URL's host is accepted, so the two `mbhr.app` entries
+  are belt-and-braces: they keep working if the Site URL is ever moved again.
 - **No wildcard hosts.** Not `https://*.vercel.app/...`, and not
   `https://*-cokobah16-3045s-projects.vercel.app/**` either. Vercel hands out
   `.vercel.app` project names and team slugs first come, first served, so a
@@ -58,8 +60,10 @@ Rules that matter here:
   reset page on one specific preview, add its exact URL temporarily, e.g.
   `https://m-bhr-git-<branch>-cokobah16-3045s-projects.vercel.app/reset-password**`,
   and remove it afterwards.
-- If the production domain changes (for example `mbhr.ng`), update the Site URL
-  and add the same two entries for the new host.
+- If the production domain changes again, update the Site URL and add the
+  same two entries for the new host; keep the old host's entries until every
+  link sent before the move has expired (an hour) or the old host stops
+  redirecting to the new one.
 
 Optional hardening: Authentication → Sign In / Providers → Email → **Secure
 password change** makes Supabase refuse a password change from a session that

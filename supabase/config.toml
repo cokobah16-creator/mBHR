@@ -52,9 +52,14 @@ site_url = "http://localhost:5173"
 # claimed by a stranger and would receive this project's recovery tokens. A
 # reset link opened from a preview deployment falls back to site_url, where
 # the production app completes the reset.
+# Production is https://mbhr.app; m-bhr.vercel.app is the old Vercel alias,
+# which now redirects there (browsers keep the URL fragment, so the token
+# survives), and stays listed for links that were sent before the move.
 additional_redirect_urls = [
   "http://localhost:5173/auth/callback",
   "http://localhost:5173/reset-password**",
+  "https://mbhr.app/auth/callback",
+  "https://mbhr.app/reset-password**",
   "https://m-bhr.vercel.app/auth/callback",
   "https://m-bhr.vercel.app/reset-password**",
 ]
