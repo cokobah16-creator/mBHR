@@ -1,6 +1,11 @@
 import React, { useEffect, useState, startTransition } from "react";
-import { useNavigate } from "react-router-dom";
-import { createFirstAdmin, needsFirstRunSetup } from "@/db/firstRun";
+import { Link, useNavigate } from "react-router-dom";
+import { ExclamationCircleIcon } from "@heroicons/react/20/solid";
+import {
+  FIRST_ADMIN_EXISTS_MESSAGE,
+  createFirstAdmin,
+  needsFirstRunSetup,
+} from "@/db/firstRun";
 import { useAuthStore } from "@/stores/auth";
 import * as logger from "@/lib/logger";
 
@@ -37,7 +42,10 @@ export default function FirstRunSetup() {
         setChecking(false);
       } catch (e) {
         if (cancelled) return;
-        logger.error("[setup] could not read the local user count", e);
+        logger.error(
+          "[setup] could not read the local user count",
+          e instanceof Error ? e.name : e,
+        );
         setErr("Could not read the local database. Reload and try again.");
         setChecking(false);
       }
@@ -56,7 +64,10 @@ export default function FirstRunSetup() {
     try {
       await createFirstAdmin({ fullName, pin, confirmPin });
     } catch (ex) {
-      logger.error("[setup] first admin creation failed", ex);
+      logger.error(
+        "[setup] first admin creation failed",
+        ex instanceof Error ? ex.name : ex,
+      );
       setErr(ex?.message || "Could not create the administrator account");
       setSaving(false);
       return;
@@ -69,7 +80,10 @@ export default function FirstRunSetup() {
     try {
       signedIn = await login(pin);
     } catch (ex) {
-      logger.error("[setup] sign-in after setup failed", ex);
+      logger.error(
+        "[setup] sign-in after setup failed",
+        ex instanceof Error ? ex.name : ex,
+      );
     }
 
     startTransition(() => {
@@ -81,14 +95,17 @@ export default function FirstRunSetup() {
 
   if (checking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-canvas">
-        <p className="text-gray-600">Checking this device…</p>
+      <div
+        className="min-h-screen flex items-center justify-center bg-canvas p-4"
+        role="status"
+      >
+        <p className="text-body text-ink-muted">Checking this device…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-canvas">
+    <div className="min-h-screen flex items-center justify-center bg-canvas px-4 py-8 sm:p-6">
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
           <img
@@ -97,29 +114,24 @@ export default function FirstRunSetup() {
             aria-hidden
             className="inline-block w-14 h-14 rounded-lg mb-4"
           />
-          <h1 className="text-h1 text-ink">
-            MedBridge Health Reach
-          </h1>
-          <p className="text-sm text-gray-600 mt-1">
+          <h1 className="text-h1 text-ink">MedBridge Health Reach</h1>
+          <p className="text-body text-ink-muted mt-1">
             Bridging Care, Reaching All.
           </p>
         </div>
 
-        <div className="panel p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-1">
-            Set up this device
-          </h2>
-          <p className="text-sm text-gray-500 mb-5">
-            No staff account exists on this device yet. Create the administrator
-            who will add everyone else.
-          </p>
+        <div className="panel">
+          <div className="panel-header flex-col items-start gap-0.5">
+            <h2 className="panel-title">Set up this device</h2>
+            <p className="text-caption text-ink-muted">
+              No staff account exists on this device yet. Create the
+              administrator who will add everyone else.
+            </p>
+          </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="flex flex-col gap-1.5">
-              <label
-                className="text-sm font-medium text-gray-900"
-                htmlFor="setup-full-name"
-              >
+          <form onSubmit={handleSubmit} className="panel-body space-y-4">
+            <div>
+              <label className="field-label" htmlFor="setup-full-name">
                 Full name
               </label>
               <input
@@ -127,18 +139,15 @@ export default function FirstRunSetup() {
                 aria-label="Full name"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none transition focus:ring-2 focus:ring-primary focus:border-transparent"
+                className="input-field h-12 text-base"
                 placeholder="e.g. Amina Bello"
                 autoComplete="name"
                 required
               />
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label
-                className="text-sm font-medium text-gray-900"
-                htmlFor="setup-pin"
-              >
+            <div>
+              <label className="field-label" htmlFor="setup-pin">
                 Choose a 6-digit PIN
               </label>
               <input
@@ -149,44 +158,60 @@ export default function FirstRunSetup() {
                 maxLength={6}
                 value={pin}
                 onChange={(e) => setPin(onlyDigits(e.target.value))}
-                className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none transition focus:ring-2 focus:ring-primary focus:border-transparent"
+                className="input-field h-12 text-base tabular-nums"
                 placeholder="Enter a 6-digit PIN"
                 required
               />
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label
-                className="text-sm font-medium text-gray-900"
-                htmlFor="setup-confirm-pin"
-              >
+            <div>
+              <label className="field-label" htmlFor="setup-confirm-pin">
                 Confirm PIN
               </label>
               <input
                 id="setup-confirm-pin"
                 aria-label="Confirm PIN"
+                aria-describedby="setup-pin-note"
                 inputMode="numeric"
                 pattern="\d{6}"
                 maxLength={6}
                 value={confirmPin}
                 onChange={(e) => setConfirmPin(onlyDigits(e.target.value))}
-                className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none transition focus:ring-2 focus:ring-primary focus:border-transparent"
+                className="input-field h-12 text-base tabular-nums"
                 placeholder="Re-enter the PIN"
                 required
               />
+              <p id="setup-pin-note" className="field-hint">
+                This PIN is stored only on this device and cannot be recovered.
+                Write it down somewhere safe.
+              </p>
             </div>
 
-            <p className="text-xs text-gray-500">
-              This PIN is stored only on this device and cannot be recovered.
-              Write it down somewhere safe.
-            </p>
-
-            {err && <div className="text-sm text-red-600">{err}</div>}
+            {err && (
+              <div className="banner banner-danger" role="alert">
+                <ExclamationCircleIcon
+                  className="h-5 w-5 shrink-0 mt-0.5"
+                  aria-hidden
+                />
+                <div>
+                  <p>{err}</p>
+                  {err === FIRST_ADMIN_EXISTS_MESSAGE && (
+                    <Link
+                      to="/login"
+                      replace
+                      className="mt-1 inline-flex min-h-touch-target items-center font-medium underline"
+                    >
+                      Go to sign in
+                    </Link>
+                  )}
+                </div>
+              </div>
+            )}
 
             <button
               type="submit"
               disabled={saving}
-              className="w-full h-12 bg-primary text-white font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-primary"
+              className="btn-primary w-full h-12"
             >
               {saving ? "Creating account…" : "Create administrator"}
             </button>

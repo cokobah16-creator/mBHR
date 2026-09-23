@@ -6,31 +6,20 @@ interface RoleBadgeProps {
   className?: string
 }
 
-export function RoleBadge({ role, className = '' }: RoleBadgeProps) {
-  const getRoleColor = (role: User['role']) => {
-    switch (role) {
-      case 'admin':
-        return 'bg-purple-100 text-purple-800'
-      case 'doctor':
-        return 'bg-blue-100 text-blue-800'
-      case 'nurse':
-        return 'bg-green-100 text-green-800'
-      case 'pharmacist':
-        return 'bg-orange-100 text-orange-800'
-      case 'volunteer':
-        return 'bg-gray-100 text-gray-800'
-      default:
-        return 'bg-gray-100 text-gray-800'
-    }
-  }
+/** "lead_clinician" → "Lead clinician". */
+function roleLabel(role: User['role']): string {
+  const words = String(role).replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
 
+/**
+ * A staff role is an identity, not a state, so every role uses the neutral
+ * badge: colour stays reserved for clinical and operational meaning.
+ */
+export function RoleBadge({ role, className = '' }: RoleBadgeProps) {
   return (
-    <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(
-        role
-      )} ${className}`}
-    >
-      {role.charAt(0).toUpperCase() + role.slice(1)}
+    <span className={`badge badge-neutral ${className}`}>
+      {roleLabel(role)}
     </span>
   )
 }
