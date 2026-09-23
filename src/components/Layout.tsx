@@ -7,7 +7,8 @@ import Toasts from "@/components/Toasts";
 import useLowStockWatcher from "@/features/inventory/useLowStockWatcher";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { AccessibilityControls } from "@/components/AccessibilityControls";
-import { can, getRoleDisplayName } from "@/auth/roles";
+import { can, getRoleDisplayName, type Role } from "@/auth/roles";
+import { pharmacyTasksForRole } from "@/features/pharmacy/pharmacyTasks";
 import { ActiveSiteControl } from "@/components/shell/ActiveSiteControl";
 import { SyncStatusControl } from "@/components/shell/SyncStatusControl";
 import { hasAnyAdminEntry } from "@/features/admin/adminSections";
@@ -25,7 +26,6 @@ import {
   ClipboardDocumentListIcon,
   ChartBarIcon,
   CheckCircleIcon,
-  ArrowLeftIcon,
   XMarkIcon,
   Bars3Icon,
   DocumentDuplicateIcon,
@@ -42,87 +42,63 @@ import {
   Squares2X2Icon,
 } from "@heroicons/react/24/outline";
 
-// Pharmacy Overlay Component
-function PharmacyOverlay({ onClose }: { onClose: () => void }) {
+// Pharmacy menu shown in place of the page content when the nav's
+// Pharmacy item is chosen. Tasks are filtered by the same route guards as
+// /pharmacy/menu (features/pharmacy/pharmacyTasks).
+function PharmacyOverlay({ onClose, role }: { onClose: () => void; role?: Role }) {
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
   React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    headingRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const cards = [
-    {
-      to: "/rx/dispense",
-      title: "Dispense",
-      desc: "Record prescriptions & counsel patients",
-      Icon: BeakerIcon,
-    },
-    {
-      to: "/rx/stock",
-      title: "Inventory",
-      desc: "Stock counts, restock & FEFO tracking",
-      Icon: CubeIcon,
-    },
-    {
-      to: "/rx/new",
-      title: "New Stock",
-      desc: "Receive deliveries / add new items",
-      Icon: ClipboardDocumentListIcon,
-    },
-    {
-      to: "/pharmacy/reports",
-      title: "Reports",
-      desc: "Daily summary & controlled log",
-      Icon: ClipboardDocumentListIcon,
-    },
-  ];
+  const tasks = pharmacyTasksForRole(role);
 
   return (
-    <main className="p-4 sm:p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
-        <button
-          onClick={onClose}
-          className="btn-ghost"
-        >
-          <ArrowLeftIcon className="h-4 w-4" aria-hidden />
-          Back to Dashboard
-        </button>
-
-        <button
-          onClick={onClose}
-          aria-label="Close pharmacy menu"
-          className="btn-ghost px-2"
-        >
+    <div className="mx-auto max-w-5xl p-4 sm:p-6">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h1 ref={headingRef} tabIndex={-1} className="text-h1 text-ink focus:outline-none">
+            Pharmacy
+          </h1>
+          <p className="mt-1 text-body text-ink-muted">Choose a pharmacy task.</p>
+        </div>
+        <button type="button" onClick={onClose} className="btn-ghost">
           <XMarkIcon className="h-5 w-5" aria-hidden />
+          Close
         </button>
       </div>
 
-      <h1 className="text-h1 text-ink mb-1">Pharmacy</h1>
-      <p className="text-body text-ink-muted mb-6">Choose what you'd like to do.</p>
-
-      <section
-        aria-label="Pharmacy options"
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
-      >
-        {cards.map(({ to, title, desc, Icon }) => (
-          <Link
-            key={to}
-            to={to}
-            onClick={onClose}
-            className="group rounded-lg border border-line bg-surface p-5 transition-colors hover:border-line-strong hover:bg-surface-hover"
-          >
-            <div className="flex items-center gap-3">
-              <span className="rounded-md bg-surface-sunken p-3 text-ink-secondary">
-                <Icon className="h-6 w-6" aria-hidden />
-              </span>
-              <h2 className="text-h3 text-ink">{title}</h2>
-            </div>
-            <p className="mt-3 text-body text-ink-muted">{desc}</p>
-            <span className="sr-only">Open {title}</span>
-          </Link>
-        ))}
-      </section>
-    </main>
+      {tasks.length === 0 ? (
+        <p className="panel p-5 text-body text-ink-secondary">
+          Dispensing, stock and reports are for pharmacists and administrators. Ask an administrator if you need access.
+        </p>
+      ) : (
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {tasks.map(({ to, title, desc, Icon }) => (
+            <li key={to}>
+              <Link
+                to={to}
+                onClick={onClose}
+                className="flex h-full min-h-touch-target items-start gap-3 rounded-lg border border-line bg-surface p-4 transition-colors hover:border-line-strong hover:bg-surface-hover"
+              >
+                <span className="rounded-md border border-line bg-surface-sunken p-2 text-ink-secondary">
+                  <Icon className="h-5 w-5" aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-h3 text-ink">{title}</span>
+                  <span className="mt-0.5 block text-body text-ink-muted">{desc}</span>
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -151,6 +127,7 @@ export function Layout({ children }: LayoutProps) {
   const { currentUser, logout, updateActivity, checkSessionExpiry } =
     useAuthStore();
   const [overlay, setOverlay] = React.useState<null | "pharmacy">(null);
+  const closeOverlay = React.useCallback(() => setOverlay(null), []);
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [collapsed, setCollapsed] = React.useState<boolean>(() => {
     try {
@@ -173,9 +150,11 @@ export function Layout({ children }: LayoutProps) {
   // Start low stock monitoring
   useLowStockWatcher();
 
-  // Close mobile menu on route change
+  // Close the mobile menu and the pharmacy menu on route change, so a nav
+  // link chosen while the pharmacy menu is open shows its page.
   React.useEffect(() => {
     setMobileMenuOpen(false);
+    setOverlay(null);
   }, [location.pathname]);
 
   // Simple session check on mount and periodically
@@ -378,7 +357,7 @@ export function Layout({ children }: LayoutProps) {
               setMobileMenuOpen(false);
             }}
             className={`${cls} text-left`}
-            aria-haspopup="dialog"
+            aria-expanded={overlay === "pharmacy"}
             aria-controls="pharmacy-menu"
             aria-current={active ? "page" : undefined}
             title={collapsed ? item.name : undefined}
@@ -568,9 +547,9 @@ export function Layout({ children }: LayoutProps) {
           className="min-w-0 flex-1 overflow-x-hidden"
         >
           {overlay === "pharmacy" ? (
-            <div id="pharmacy-menu" role="dialog" aria-modal="true" aria-label="Pharmacy">
-              <PharmacyOverlay onClose={() => setOverlay(null)} />
-            </div>
+            <section id="pharmacy-menu" aria-label="Pharmacy menu">
+              <PharmacyOverlay onClose={closeOverlay} role={currentUser?.role} />
+            </section>
           ) : (
             <div className="mx-auto max-w-7xl p-4 sm:p-6">{children}</div>
           )}

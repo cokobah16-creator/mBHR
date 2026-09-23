@@ -6,7 +6,7 @@ export default function SMSReminders() {
     <div>
       <PageHeader
         title="SMS reminders"
-        breadcrumbs={[{ label: 'Pharmacy', to: '/pharmacy' }, { label: 'SMS reminders' }]}
+        breadcrumbs={[{ label: 'Pharmacy', to: '/pharmacy/menu' }, { label: 'SMS reminders' }]}
         description="Medication reminders for patients, where each one is stored and whether it has really been sent."
       />
       <SMSReminderManager />

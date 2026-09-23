@@ -794,7 +794,9 @@ function App() {
                         path="/simple/register"
                         element={<SimpleRegister />}
                       />
-                      <Route path="/pharmacy" element={<PharmacyMenu />} />
+                      {/* "/pharmacy" is the visit dispensing screen (above); the
+                          task menu has its own path so it is reachable. */}
+                      <Route path="/pharmacy/menu" element={<PharmacyMenu />} />
                       <Route
                         path="/pharmacy/reports"
                         element={

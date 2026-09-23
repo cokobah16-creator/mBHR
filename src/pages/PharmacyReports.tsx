@@ -151,7 +151,7 @@ export default function PharmacyReports() {
     <PageHeader
       title="Pharmacy reports"
       description="Dispensing, lots close to expiry and stock levels."
-      breadcrumbs={[{ label: "Pharmacy", to: "/pharmacy" }, { label: "Reports" }]}
+      breadcrumbs={[{ label: "Pharmacy", to: "/pharmacy/menu" }, { label: "Reports" }]}
       actions={
         // Stays mounted while loading so keyboard focus is not lost.
         <button type="button" onClick={loadData} disabled={loading} className="btn-secondary">

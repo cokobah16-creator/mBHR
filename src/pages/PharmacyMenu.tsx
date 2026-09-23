@@ -1,69 +1,13 @@
 import { Link } from "react-router-dom";
-import {
-  BeakerIcon,
-  CubeIcon,
-  ClipboardDocumentListIcon,
-  ChartBarIcon,
-  ChevronRightIcon,
-  EnvelopeIcon,
-  LockClosedIcon,
-} from "@heroicons/react/24/outline";
-import type { ComponentType, SVGProps } from "react";
+import { ChevronRightIcon, LockClosedIcon } from "@heroicons/react/24/outline";
 import { useAuthStore } from "@/stores/auth";
-import type { Role } from "@/auth/roles";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
-
-interface MenuEntry {
-  to: string;
-  title: string;
-  desc: string;
-  Icon: ComponentType<SVGProps<SVGSVGElement>>;
-  /** Mirrors the route guard in App.tsx so staff only see what they can open. */
-  roles: Role[];
-}
-
-const ENTRIES: MenuEntry[] = [
-  {
-    to: "/rx/dispense",
-    title: "Dispense",
-    desc: "Record what was given and counsel the patient.",
-    Icon: BeakerIcon,
-    roles: ["pharmacist", "admin"],
-  },
-  {
-    to: "/rx/stock",
-    title: "Stock and expiry",
-    desc: "Stock counts, lots, restocking and first-expiry-first-out.",
-    Icon: CubeIcon,
-    roles: ["pharmacist", "admin"],
-  },
-  {
-    to: "/rx/new",
-    title: "New prescription",
-    desc: "Write a prescription for a patient to collect at pharmacy.",
-    Icon: ClipboardDocumentListIcon,
-    roles: ["doctor", "nurse", "admin"],
-  },
-  {
-    to: "/pharmacy/sms-reminders",
-    title: "SMS reminders",
-    desc: "Medication reminders for patients and whether each has been sent.",
-    Icon: EnvelopeIcon,
-    roles: ["pharmacist", "admin"],
-  },
-  {
-    to: "/pharmacy/reports",
-    title: "Reports",
-    desc: "Dispensing summary, expiring lots and stock levels.",
-    Icon: ChartBarIcon,
-    roles: ["pharmacist", "admin"],
-  },
-];
+import { pharmacyTasksForRole } from "@/features/pharmacy/pharmacyTasks";
 
 export default function PharmacyMenu() {
   const role = useAuthStore((s) => s.currentUser?.role);
-  const available = ENTRIES.filter((e) => !!role && e.roles.includes(role));
+  const available = pharmacyTasksForRole(role);
 
   return (
     <div className="mx-auto max-w-5xl">
