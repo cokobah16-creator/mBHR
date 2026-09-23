@@ -1,5 +1,6 @@
 // src/sync/adapter.ts
-import { createClient } from "@supabase/supabase-js";
+import { supabase as sharedClient } from "@/lib/supabase";
+import { checkCloudSession } from "@/lib/cloudSession";
 import { db } from "../db";
 import { PendingOperation, processQueue } from "../stores/operationsQueue";
 import { useSyncStore } from "../stores/syncStore";
@@ -24,9 +25,13 @@ const isValidUrl =
   key !== "your_supabase_anon_key_here" &&
   (url.startsWith("http://") || url.startsWith("https://"));
 
-const sb = isValidUrl
-  ? createClient(url, key, { auth: { persistSession: false } })
-  : null;
+// The shared client carries the staff member's online sign-in, so the
+// server's row-level security sees who is syncing. (A private client with
+// persistSession: false synced as the anonymous role and was refused.)
+const sb = isValidUrl ? sharedClient : null;
+
+/** syncNow result error when there is no online sign-in (not a failure). */
+export const NO_CLOUD_SESSION = "NoCloudSession";
 
 export function isOnlineSyncEnabled() {
   return !!sb;
@@ -42,7 +47,16 @@ type Tbl =
   | "inventory"
   | "queue"
   | "patient_allergies"
-  | "patient_preferences";
+  | "patient_preferences"
+  | "queue_transitions";
+
+/**
+ * Append-only audit tables. Rows are created on a device and never edited,
+ * so they are uploaded with insert-if-absent (no conflict check, no update
+ * of a server row) and never downloaded: the server copy is read by
+ * admins, auditors and lead clinicians, not by devices.
+ */
+const APPEND_ONLY: ReadonlySet<Tbl> = new Set<Tbl>(["queue_transitions"]);
 
 const mapToDB: Record<Tbl, Record<string, string>> = {
   app_users: {
@@ -132,6 +146,10 @@ const mapToDB: Record<Tbl, Record<string, string>> = {
     stage: "stage",
     position: "position",
     status: "status",
+    // Urgent status must reach every device (owner decision): sync it.
+    priority: "priority",
+    queuedAt: "queued_at",
+    createdBy: "created_by",
     updatedAt: "updated_at",
   },
   patient_allergies: {
@@ -161,6 +179,24 @@ const mapToDB: Record<Tbl, Record<string, string>> = {
     notes: "notes",
     createdAt: "created_at",
     updatedAt: "updated_at",
+  },
+  queue_transitions: {
+    id: "id",
+    queueItemId: "queue_item_id",
+    toQueueItemId: "to_queue_item_id",
+    patientId: "patient_id",
+    kind: "kind",
+    fromStage: "from_stage",
+    toStage: "to_stage",
+    fromStatus: "from_status",
+    toStatus: "to_status",
+    fromPriority: "from_priority",
+    toPriority: "to_priority",
+    reason: "reason",
+    userId: "user_id",
+    userRole: "user_role",
+    deviceId: "device_id",
+    at: "at",
   },
 };
 
@@ -200,6 +236,7 @@ const tables: Tbl[] = [
   "queue",
   "patient_allergies",
   "patient_preferences",
+  "queue_transitions",
 ];
 
 // Map remote table names to local Dexie table names
@@ -214,6 +251,7 @@ const localTableMap: Record<Tbl, string> = {
   queue: "queue",
   patient_allergies: "patientAllergies",
   patient_preferences: "patientPreferences",
+  queue_transitions: "queueTransitions",
 };
 
 /**
@@ -339,8 +377,10 @@ export async function pushChanges() {
     if (!dirty?.length) continue;
 
     for (const record of dirty) {
-      // Check for conflicts before pushing
-      const conflictCheck = await detectConflict(t, record.id, record);
+      // Check for conflicts before pushing (append-only rows cannot conflict)
+      const conflictCheck = APPEND_ONLY.has(t)
+        ? { hasConflict: false as const }
+        : await detectConflict(t, record.id, record);
 
       if (conflictCheck.hasConflict && conflictCheck.conflicts) {
         detectedConflicts.push({
@@ -355,7 +395,12 @@ export async function pushChanges() {
 
       // No conflict, proceed with push
       const payload = toDB(record, mapToDB[t]);
-      const { error } = await sb.from(t).upsert(payload, { onConflict: "id" });
+      // Append-only rows: insert if absent, so a retry after a lost reply
+      // succeeds without needing (or getting) update rights on the server.
+      const { error } = await sb.from(t).upsert(payload, {
+        onConflict: "id",
+        ignoreDuplicates: APPEND_ONLY.has(t),
+      });
 
       if (!error) {
         // Mark it clean only if it was not edited during the upload; a
@@ -401,6 +446,7 @@ export async function pullChanges(): Promise<PullSummary> {
   };
   if (!sb) return summary;
   for (const t of tables) {
+    if (APPEND_ONLY.has(t)) continue; // upload-only audit tables
     const localTable = localTableMap[t];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const table = (db as any)[localTable];
@@ -546,6 +592,11 @@ export interface SyncNowResult {
 
 export async function syncNow(): Promise<SyncNowResult> {
   if (!isOnlineSyncEnabled()) return { success: false, conflicts: [] };
+  // A PIN unlock after logout opens the local workspace only: never sync
+  // (or show a sync error) without an online sign-in.
+  if (!(await checkCloudSession())) {
+    return { success: false, conflicts: [], error: NO_CLOUD_SESSION };
+  }
   if (syncInProgress) {
     return { success: false, conflicts: [], error: SYNC_IN_PROGRESS };
   }
@@ -693,7 +744,7 @@ async function runBackgroundSync(): Promise<void> {
     }
     // syncNow reports failure in its result rather than throwing; count it
     // so repeated failures back off.
-    if (!result.success && result.error !== SYNC_IN_PROGRESS) {
+    if (!result.success && result.error !== SYNC_IN_PROGRESS && result.error !== NO_CLOUD_SESSION) {
       throw namedSyncError("BackgroundSyncFailed");
     }
     backgroundSyncFailures = 0;

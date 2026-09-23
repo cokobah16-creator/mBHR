@@ -184,6 +184,65 @@ export interface QueueItem {
   _syncedAt?: string;
 }
 
+/**
+ * Kinds of queue change recorded in the queue transition audit trail.
+ * - enqueue / requeue: a ticket was added (requeue: the patient already had
+ *   a ticket earlier today and is back in the queue).
+ * - call: the ticket was called (waiting -> in service).
+ * - send_on: finished at this stage and sent to the next one (or, after
+ *   pharmacy, the visit finished).
+ * - end_here: finished at this stage without being sent on.
+ * - prioritise: moved to the front of the waiting line (manual, or the
+ *   automatic long-wait escalation recorded with user "system").
+ * - remove: taken out of every queue.
+ * - priority_escalate / priority_downgrade: triage priority raised or
+ *   lowered. A downgrade always carries a reason.
+ */
+export type QueueTransitionKind =
+  | "enqueue"
+  | "requeue"
+  | "call"
+  | "send_on"
+  | "end_here"
+  | "prioritise"
+  | "remove"
+  | "priority_escalate"
+  | "priority_downgrade";
+
+/**
+ * One row per queue change. Append-only: app code adds rows and never edits
+ * or deletes them (the sync layer only sets the _dirty/_syncedAt markers).
+ * Written in the same Dexie transaction as the queue change it describes.
+ * Priority downgrades (kind "priority_downgrade") are the triage-downgrade
+ * record: who, when, from, to and why.
+ */
+export interface QueueTransition {
+  id: string;
+  /** Queue row the change was made on. */
+  queueItemId: string;
+  /** For send_on: the queue row created at the next stage. */
+  toQueueItemId?: string;
+  patientId: string;
+  kind: QueueTransitionKind;
+  /** null for a new ticket. */
+  fromStage: QueueItem["stage"] | null;
+  /** Stage after the change; "done" when the ticket or visit finished, "removed" when taken out. */
+  toStage: QueueItem["stage"] | "done" | "removed";
+  fromStatus?: QueueItem["status"] | null;
+  toStatus?: QueueItem["status"];
+  fromPriority?: "urgent" | "normal" | "low";
+  toPriority?: "urgent" | "normal" | "low";
+  reason?: string;
+  /** Staff user id, or "system" for automatic changes. */
+  userId: string;
+  userRole: string;
+  /** Stable id of this device (see services/queueAudit getDeviceId). */
+  deviceId: string;
+  at: Date;
+  _dirty?: number;
+  _syncedAt?: string;
+}
+
 export interface AuditLog {
   id: string;
   actorRole: string;
@@ -535,6 +594,7 @@ export class MBHRDatabase extends Dexie {
   inventory!: Table<InventoryItem>;
   visits!: Table<Visit>;
   queue!: Table<QueueItem>;
+  queueTransitions!: Table<QueueTransition>;
   auditLogs!: Table<AuditLog>;
   gameSessions!: Table<GameSession>;
   gamificationWallets!: Table<GamificationWallet>;
@@ -1296,6 +1356,12 @@ export class MBHRDatabase extends Dexie {
         // "active" after the soak period.
         await tx.table("settings").put({ key: "encryption_v1", value: "off" });
       });
+
+    // v17 — queue transition audit trail (append-only). Dexie 3 carries every
+    // other table forward from v16 unchanged.
+    this.version(17).stores({
+      queueTransitions: "id, patientId, queueItemId, kind, at, _dirty, _syncedAt",
+    });
   }
 }
 
