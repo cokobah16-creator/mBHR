@@ -211,6 +211,25 @@ const localTableMap: Record<Tbl, string> = {
   patient_preferences: "patientPreferences",
 };
 
+/**
+ * Records saved on this device that have not been uploaded yet (rows with
+ * _dirty = 1 in every synced table). Safe to call inside a Dexie liveQuery.
+ */
+export async function countUnsyncedRecords(): Promise<number> {
+  let total = 0;
+  for (const t of tables) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const table = (db as any)[localTableMap[t]];
+    if (!table) continue;
+    total += await table
+      .where("_dirty")
+      .equals(1)
+      .count()
+      .catch(() => 0);
+  }
+  return total;
+}
+
 // --- Cursor helpers (per-table) ---
 const DEFAULT_TS = "1970-01-01T00:00:00.000Z";
 const CURSOR_KEY = (t: Tbl) => `sync_cursor:${t}`;
@@ -382,8 +401,13 @@ export async function pullChanges() {
     let maxTs = since;
     for (const row of data ?? []) {
       const mapped = fromDB(row, mapFromDB[t]);
+      // Queue rows carry device-local fields the column map does not sync
+      // (assignee, ticket number, priority); lay the remote row over the
+      // local one instead of replacing it, so those survive a pull.
+      const localRow = t === "queue" ? await db.queue.get(mapped.id) : undefined;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (db as any)[localTable].put({
+        ...localRow,
         ...mapped,
         _dirty: 0,
         _syncedAt: new Date().toISOString(),

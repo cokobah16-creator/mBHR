@@ -80,7 +80,10 @@ export default function QueueBoard() {
   const handleCallNext = async () => {
     const next = waiting[0];
     if (!next) return;
-    await queueManagement.startService(next.id);
+    await queueManagement.startService(
+      next.id,
+      currentUser ? { id: currentUser.id, name: currentUser.fullName } : undefined,
+    );
     await recordStageEvent({
       stage: selectedStage,
       kind: "start",

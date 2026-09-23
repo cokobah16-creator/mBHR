@@ -2,8 +2,13 @@ import React, { useEffect, useState, startTransition } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { PatientSearch } from "@/components/PatientSearch";
 import { DispenseForm } from "@/components/DispenseForm";
-import { db, Visit, Patient, Consultation, generateId } from "@/db";
-import { ArrowLeftIcon, BeakerIcon } from "@heroicons/react/24/outline";
+import { db, Visit, Patient, Consultation } from "@/db";
+import { BeakerIcon } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PharmacySkeleton } from "@/components/ui/Skeleton";
+import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
+import { ensureTodaysVisit } from "@/services/visits";
 
 export function Pharmacy() {
   const { visitId } = useParams<{ visitId: string }>();
@@ -43,16 +48,8 @@ export function Pharmacy() {
 
   const handlePatientSelect = async (selectedPatient: Patient) => {
     try {
-      // Create a new visit for this patient
-      const newVisit: Visit = {
-        id: generateId(),
-        patientId: selectedPatient.id,
-        startedAt: new Date(),
-        siteName: "Mobile Clinic",
-        status: "open",
-      };
-
-      await db.visits.add(newVisit);
+      // Continue today's visit if there is one; otherwise start it.
+      const newVisit: Visit = await ensureTodaysVisit(selectedPatient.id);
 
       // Load consultation for this patient (most recent)
       const consultationData = await db.consultations
@@ -87,50 +84,20 @@ export function Pharmacy() {
     });
   };
 
-  const getPatientAge = (dob: string) => {
-    const birthDate = new Date(dob);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-
-    if (
-      monthDiff < 0 ||
-      (monthDiff === 0 && today.getDate() < birthDate.getDate())
-    ) {
-      age--;
-    }
-
-    return age;
-  };
-
   // If no visitId provided, show patient search
   if (!visitId && !selectedPatient) {
     return (
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => navigate("/queue")}
-            className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
-          >
-            <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Pharmacy</h1>
-            <p className="text-gray-600">
-              Search for a patient to dispense medication
-            </p>
-          </div>
-        </div>
-
-        {/* Patient Search */}
-        <div className="card max-w-2xl mx-auto">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Select Patient
-          </h2>
+      <div>
+        <PageHeader
+          breadcrumbs={[{ label: "Queue", to: "/queue" }, { label: "Pharmacy" }]}
+          title="Pharmacy"
+          description="Find the patient to dispense their medicines. Patients who have seen a clinician are waiting in the queue."
+        />
+        <div className="panel max-w-2xl p-5">
+          <h2 className="text-h3 text-ink mb-3">Select Patient</h2>
           <PatientSearch
             onPatientSelect={handlePatientSelect}
-            placeholder="Search patients by name or phone..."
+            placeholder="Search by name or phone number"
             className="w-full"
           />
         </div>
@@ -140,135 +107,94 @@ export function Pharmacy() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading pharmacy...</p>
-        </div>
+      <div>
+        <PageHeader title="Pharmacy" />
+        <PharmacySkeleton />
       </div>
     );
   }
 
   if (!visit || !patient) {
     return (
-      <div className="text-center py-12">
-        <BeakerIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">
-          Visit not found
-        </h3>
-        <p className="text-gray-600 mb-6">
-          The visit you're looking for doesn't exist.
-        </p>
-        <button onClick={() => navigate("/queue")} className="btn-primary">
-          Back to Queue
-        </button>
+      <div className="panel">
+        <EmptyState
+          icon={BeakerIcon}
+          title="Visit not found on this device"
+          description="It may have been closed, or not synced to this device yet."
+          action={
+            <button onClick={() => navigate("/queue")} className="btn-primary">
+              Back to queue
+            </button>
+          }
+        />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center space-x-4">
-        <button
-          onClick={() => navigate("/queue")}
-          className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
-        >
-          <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-        </button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Pharmacy</h1>
-          <p className="text-gray-600">
-            Patient: {patient.givenName} {patient.familyName}
-          </p>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        breadcrumbs={[
+          { label: "Queue", to: "/queue" },
+          { label: `${patient.givenName} ${patient.familyName}`, to: `/patients/${patient.id}` },
+          { label: "Pharmacy" },
+        ]}
+        title="Pharmacy"
+      />
+      <PatientContextHeader
+        patientId={patient.id}
+        visitId={visit.id}
+        patient={patient}
+        linkToRecord
+      />
 
-      {/* Patient & Consultation Summary */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Patient Info */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Patient Information
-          </h3>
-          <div className="flex items-center space-x-4 mb-4">
-            {patient.photoUrl ? (
-              <img
-                src={patient.photoUrl}
-                alt={`${patient.givenName} ${patient.familyName}`}
-                className="w-16 h-16 rounded-full object-cover"
-              />
-            ) : (
-              <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center">
-                <span className="text-xl font-medium text-gray-600">
-                  {patient.givenName[0]}
-                  {patient.familyName[0]}
-                </span>
-              </div>
-            )}
-            <div>
-              <h4 className="text-lg font-medium text-gray-900">
-                {patient.givenName} {patient.familyName}
-              </h4>
-              <p className="text-sm text-gray-600">
-                Age: {getPatientAge(patient.dob)} • {patient.sex} •{" "}
-                {patient.phone}
-              </p>
-            </div>
+      <div className="grid gap-4 lg:grid-cols-[20rem_minmax(0,1fr)] lg:items-start">
+        <section className="panel" aria-labelledby="rx-summary-title">
+          <div className="panel-header">
+            <h2 id="rx-summary-title" className="panel-title">
+              From the consultation
+            </h2>
           </div>
-        </div>
-
-        {/* Consultation Summary */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Consultation Summary
-          </h3>
           {consultation ? (
-            <div className="space-y-3">
+            <dl className="panel-body space-y-3 text-body">
               <div>
-                <p className="text-sm font-medium text-gray-700">Provider:</p>
-                <p className="text-sm text-gray-600">
-                  {consultation.providerName}
-                </p>
+                <dt className="section-label">Clinician</dt>
+                <dd className="text-ink">{consultation.providerName}</dd>
               </div>
-
               {consultation.provisionalDx.length > 0 && (
                 <div>
-                  <p className="text-sm font-medium text-gray-700">
-                    Diagnoses:
-                  </p>
-                  <ul className="text-sm text-gray-600 list-disc list-inside">
-                    {consultation.provisionalDx.map((dx, index) => (
-                      <li key={index}>{dx}</li>
-                    ))}
-                  </ul>
+                  <dt className="section-label">Diagnoses</dt>
+                  <dd>
+                    <ul className="list-disc pl-5 text-ink">
+                      {consultation.provisionalDx.map((dx, index) => (
+                        <li key={index}>{dx}</li>
+                      ))}
+                    </ul>
+                  </dd>
                 </div>
               )}
-
               <div>
-                <p className="text-sm font-medium text-gray-700">
-                  Treatment Plan:
-                </p>
-                <p className="text-sm text-gray-600 line-clamp-3">
-                  {consultation.soapPlan}
-                </p>
+                <dt className="section-label">Plan</dt>
+                <dd className="whitespace-pre-line text-ink">
+                  {consultation.soapPlan || "No plan recorded."}
+                </dd>
               </div>
-            </div>
+            </dl>
           ) : (
-            <p className="text-gray-500 text-sm">
-              No consultation notes available
+            <p className="panel-body text-body text-warning-fg">
+              No consultation recorded for this patient. Confirm the
+              prescription with a clinician before dispensing.
             </p>
           )}
-        </div>
-      </div>
+        </section>
 
-      {/* Dispense Form */}
-      <DispenseForm
-        patientId={patient.id}
-        visitId={visit!.id}
-        onSuccess={handleSuccess}
-        onCancel={handleCancel}
-      />
+        <DispenseForm
+          patientId={patient.id}
+          visitId={visit.id}
+          onSuccess={handleSuccess}
+          onCancel={handleCancel}
+        />
+      </div>
     </div>
   );
 }

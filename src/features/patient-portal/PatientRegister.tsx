@@ -208,7 +208,7 @@ export function PatientRegister() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-green-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl shadow-xl p-8">
           {step === "form" && (
@@ -517,13 +517,23 @@ export function PatientRegister() {
                   />
                   <label htmlFor="consent" className="text-sm text-gray-700">
                     I agree to the{" "}
-                    <span className="text-green-600 font-medium">
-                      Terms of Service
-                    </span>{" "}
+                    <a
+                      href="/terms"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary font-medium underline"
+                    >
+                      Terms of Use
+                    </a>{" "}
                     and{" "}
-                    <span className="text-green-600 font-medium">
-                      Privacy Policy
-                    </span>
+                    <a
+                      href="/privacy"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary font-medium underline"
+                    >
+                      Privacy Notice
+                    </a>
                     . I consent to access my medical records through this
                     portal.
                   </label>

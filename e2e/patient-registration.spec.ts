@@ -46,7 +46,8 @@ test.describe("Patient Registration Flow", () => {
 
     await page.click('button[type="submit"]');
 
-    await expect(page).toHaveURL(/\/dashboard/, { timeout: 10000 });
+    // Registration opens the new patient's record.
+    await expect(page).toHaveURL(/\/patients\/[^/]+$/, { timeout: 10000 });
   });
 
   test("should show phone validation error for invalid format", async ({
@@ -101,7 +102,8 @@ test.describe("Patient Registration Flow", () => {
 
     await page.click('button[type="submit"]');
 
-    await expect(page).toHaveURL(/\/dashboard/, { timeout: 10000 });
+    // Registration opens the new patient's record.
+    await expect(page).toHaveURL(/\/patients\/[^/]+$/, { timeout: 10000 });
   });
 
   test("should navigate back to dashboard when cancel is clicked", async ({

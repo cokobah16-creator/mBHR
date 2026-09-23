@@ -11,9 +11,11 @@ import { normalizePhone } from "@/utils/phone";
 import { patientSchema, PatientFormData } from "@/validation/schemas";
 import { CameraIcon, UserIcon } from "@heroicons/react/24/outline";
 import { enrollPatientInPortal } from "@/services/unifiedPortalEnrollment";
+import { useToast } from "@/stores/toast";
 
 interface PatientFormProps {
-  onSuccess?: (patientId: string) => void;
+  /** `existing` is true when staff chose an already-registered patient. */
+  onSuccess?: (patientId: string, opts?: { existing?: boolean }) => void;
   onCancel?: () => void;
 }
 
@@ -21,6 +23,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const { t } = useTranslation();
   const { addPatient } = usePatientsStore();
   const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const { push: pushToast } = useToast();
   const [photo, setPhoto] = useState<string | null>(null);
   const [showPhotoCapture, setShowPhotoCapture] = useState(false);
   const [showDedupeModal, setShowDedupeModal] = useState(false);
@@ -64,11 +68,10 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   };
 
   const onSubmit = async (data: PatientFormData) => {
+    setSubmitError("");
     setLoading(true);
-    console.log("PatientForm: Submitting patient data:", data);
     try {
       const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
-      console.log("PatientForm: Normalized phone:", normalizedPhone);
 
       const patientData = {
         givenName: data.givenName || "",
@@ -86,7 +89,6 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
       const patientId = await addPatient(patientData);
 
-      console.log("PatientForm: Patient created with ID:", patientId);
 
       // Automatically enroll in portal if contact info provided
       if ((normalizedPhone || data.email) && data.portalEnabled !== false) {
@@ -102,21 +104,25 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
         if (!portalResult.success) {
           console.warn("Portal enrollment failed:", portalResult.error);
-          alert(
-            `Patient registered but portal enrollment failed: ${portalResult.error}. You can enable portal access later from patient details.`,
-          );
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Portal access not set up",
+            tone: "warning",
+            body: `The patient is registered, but portal enrolment failed (${portalResult.error}). You can enable it later from their record.`,
+          });
         } else {
           console.log("Portal account created:", portalResult.portalUserId);
-          alert(
-            "Patient registered successfully! Portal access enabled. Patient can login at /patient/login",
-          );
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Portal access enabled",
+            tone: "success",
+            body: "The patient can sign in to the patient portal with their phone or email.",
+          });
         }
       }
 
       onSuccess?.(patientId);
     } catch (error) {
-      console.error("Error adding patient:", error);
-
       // Check if it's a duplicate error
       if (error.message.startsWith("DUPLICATES_FOUND:")) {
         const duplicateData = JSON.parse(
@@ -125,7 +131,9 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         setDedupeData(duplicateData);
         setShowDedupeModal(true);
       } else {
-        alert("Failed to register patient: " + error.message);
+        setSubmitError(
+          "The patient was not registered — the record could not be saved. Check the form and try again.",
+        );
       }
     } finally {
       setLoading(false);
@@ -141,20 +149,25 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     if (action === "create_new" && dedupeData) {
       // Force create new patient (bypass duplicate check)
       try {
-        const patientId = await addPatient({
-          ...dedupeData.patient,
-          photoUrl: photo || undefined,
-          // Add a suffix to make it unique
-          givenName: dedupeData.patient.givenName + " (New)",
-        });
+        // Staff confirmed this is a different person: keep their real name
+        // and skip the duplicate check rather than altering the record.
+        const patientId = await addPatient(
+          {
+            ...dedupeData.patient,
+            photoUrl: photo || undefined,
+          },
+          { skipDuplicateCheck: true },
+        );
         onSuccess?.(patientId);
       } catch (error) {
         console.error("Error creating new patient:", error);
-        alert("Failed to create new patient");
+        setSubmitError(
+          "The patient was not registered — the record could not be saved. Try again.",
+        );
       }
     } else if (action === "merge" && winnerId) {
       // Use existing patient
-      onSuccess?.(winnerId);
+      onSuccess?.(winnerId, { existing: true });
     }
 
     setDedupeData(null);
@@ -163,14 +176,18 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     <>
       <div className="max-w-2xl mx-auto">
         <div className="card">
-          <div className="flex items-center space-x-3 mb-6">
-            <UserIcon className="h-8 w-8 text-primary" />
-            <h2 className="text-2xl font-bold text-gray-900">
-              {t("patient.register")}
-            </h2>
+          <div className="mb-5 flex items-center gap-2">
+            <UserIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+            <h2 className="text-h2 text-ink">{t("patient.register")}</h2>
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+            {submitError && (
+              <div className="banner banner-danger" role="alert">
+                {submitError}
+              </div>
+            )}
+            <h3 className="section-label border-b border-line pb-1.5">Identity</h3>
             {/* Photo Section */}
             <div className="flex flex-col items-center space-y-4">
               <div className="relative">
@@ -330,6 +347,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               </div>
             </div>
 
+            <h3 className="section-label border-b border-line pb-1.5">Contact</h3>
             {/* Phone and Email */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -416,6 +434,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               )}
             </div>
 
+            <h3 className="section-label border-b border-line pb-1.5">Location</h3>
             {/* State and LGA */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -501,6 +520,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               </div>
             </div>
 
+            <h3 className="section-label border-b border-line pb-1.5">Additional information</h3>
             {/* Family ID (Optional) */}
             <div>
               <label
@@ -611,15 +631,15 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex space-x-4 pt-6">
+            <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row-reverse">
               <AudioButton
                 audioKey="action.register"
-                fallbackText="Register Patient"
+                fallbackText="Register and issue ticket"
                 type="submit"
                 disabled={loading}
-                className="btn-primary flex-1"
+                className="btn-primary sm:flex-1"
               >
-                {loading ? "Registering..." : "Register Patient"}
+                {loading ? "Registering…" : "Register & issue ticket"}
               </AudioButton>
               {onCancel && (
                 <AudioButton

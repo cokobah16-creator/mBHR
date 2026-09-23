@@ -19,6 +19,7 @@ import type {
   PatientNotification,
   PatientMessage,
 } from "@/types/patientPortal";
+import { resolveBmi } from "@/utils/vitals";
 
 /**
  * Get patient dashboard summary data
@@ -68,7 +69,7 @@ export async function getPatientDashboard(
               takenAt: new Date(latestVital.takenAt),
               heightCm: latestVital.heightCm,
               weightKg: latestVital.weightKg,
-              bmi: latestVital.bmi,
+              bmi: resolveBmi(latestVital),
               tempC: latestVital.tempC,
               pulseBpm: latestVital.pulseBpm,
               systolic: latestVital.systolic,
@@ -175,7 +176,11 @@ export async function getPatientDashboard(
             takenAt: new Date(recentVitalsData.taken_at),
             heightCm: recentVitalsData.height_cm,
             weightKg: recentVitalsData.weight_kg,
-            bmi: recentVitalsData.bmi,
+            bmi: resolveBmi({
+              heightCm: recentVitalsData.height_cm,
+              weightKg: recentVitalsData.weight_kg,
+              bmi: recentVitalsData.bmi,
+            }),
             tempC: recentVitalsData.temp_c,
             pulseBpm: recentVitalsData.pulse_bpm,
             systolic: recentVitalsData.systolic,
@@ -273,7 +278,11 @@ export async function getPatientMedicalHistory(
           ? {
               heightCm: visitVitals.height_cm,
               weightKg: visitVitals.weight_kg,
-              bmi: visitVitals.bmi,
+              bmi: resolveBmi({
+                heightCm: visitVitals.height_cm,
+                weightKg: visitVitals.weight_kg,
+                bmi: visitVitals.bmi,
+              }),
               tempC: visitVitals.temp_c,
               pulseBpm: visitVitals.pulse_bpm,
               systolic: visitVitals.systolic,
@@ -366,7 +375,11 @@ export async function getVisitDetails(
         ? {
             heightCm: vitals.height_cm,
             weightKg: vitals.weight_kg,
-            bmi: vitals.bmi,
+            bmi: resolveBmi({
+              heightCm: vitals.height_cm,
+              weightKg: vitals.weight_kg,
+              bmi: vitals.bmi,
+            }),
             tempC: vitals.temp_c,
             pulseBpm: vitals.pulse_bpm,
             systolic: vitals.systolic,

@@ -115,3 +115,132 @@ export function getFlagLabel(flag: string): string {
       return flag
   }
 }
+// ---------------------------------------------------------------------------
+// Clinical classification — gives staff a word, not just a number.
+// Tones map to the design system's semantic colours (see StatusBadge).
+// ---------------------------------------------------------------------------
+
+export type ClinicalTone = 'neutral' | 'success' | 'warning' | 'danger' | 'critical'
+
+export interface Classification {
+  label: string
+  tone: ClinicalTone
+}
+
+/** WHO adult BMI categories. */
+export function classifyBMI(bmi?: number | null): Classification | null {
+  if (!bmi || bmi <= 0 || !Number.isFinite(bmi)) return null
+  if (bmi < 16) return { label: 'Severely underweight', tone: 'danger' }
+  if (bmi < 18.5) return { label: 'Underweight', tone: 'warning' }
+  if (bmi < 25) return { label: 'Normal', tone: 'success' }
+  if (bmi < 30) return { label: 'Overweight', tone: 'warning' }
+  return { label: 'Obese', tone: 'danger' }
+}
+
+/**
+ * Blood pressure category. Thresholds align with flagVitals (≥140/90 high,
+ * <90/60 low) and add a "severely elevated" band at ≥180/120, where staff
+ * should escalate to a clinician immediately.
+ */
+export function classifyBloodPressure(
+  systolic?: number | null,
+  diastolic?: number | null,
+): Classification | null {
+  if (!systolic && !diastolic) return null
+  const s = systolic ?? 0
+  const d = diastolic ?? 0
+  if (s >= 180 || d >= 120) return { label: 'Severely elevated', tone: 'critical' }
+  if (s >= 140 || d >= 90) return { label: 'High', tone: 'danger' }
+  if ((s && s < 90) || (d && d < 60)) return { label: 'Low', tone: 'danger' }
+  if (s >= 130 || d >= 80) return { label: 'Elevated', tone: 'warning' }
+  return { label: 'Normal', tone: 'success' }
+}
+
+export function classifyTemperature(tempC?: number | null): Classification | null {
+  if (!tempC) return null
+  if (tempC >= 39.5) return { label: 'High fever', tone: 'critical' }
+  if (tempC >= 38) return { label: 'Fever', tone: 'danger' }
+  if (tempC < 35) return { label: 'Hypothermia', tone: 'danger' }
+  return { label: 'Normal', tone: 'success' }
+}
+
+export function classifyPulse(pulse?: number | null): Classification | null {
+  if (!pulse) return null
+  if (pulse >= 130 || pulse < 40) return { label: pulse < 40 ? 'Very low' : 'Very high', tone: 'critical' }
+  if (pulse >= 100) return { label: 'High', tone: 'danger' }
+  if (pulse < 60) return { label: 'Low', tone: 'warning' }
+  return { label: 'Normal', tone: 'success' }
+}
+
+export function classifySpO2(spo2?: number | null): Classification | null {
+  if (!spo2) return null
+  if (spo2 < 90) return { label: 'Critically low', tone: 'critical' }
+  if (spo2 < 95) return { label: 'Low', tone: 'danger' }
+  return { label: 'Normal', tone: 'success' }
+}
+
+/** Semantic tone for a stored flag code (from flagVitals). */
+export function getFlagTone(flag: string): ClinicalTone {
+  switch (flag) {
+    case 'low_bmi':
+    case 'high_bmi':
+      return 'warning'
+    case 'high_bp':
+    case 'low_bp':
+    case 'high_temp':
+    case 'low_temp':
+    case 'high_pulse':
+    case 'low_pulse':
+    case 'low_spo2':
+      return 'danger'
+    default:
+      return 'neutral'
+  }
+}
+
+/**
+ * BMI and flags for a vitals record, taking the record's own field names.
+ * Use this instead of calling calculateBMI/flagVitals directly: both have
+ * positional/renamed parameters that were previously passed incorrectly
+ * (height and weight swapped; tempC/pulseBpm/spo2 never reaching the flags).
+ */
+export function assessVitals(v: {
+  heightCm?: number | null
+  weightKg?: number | null
+  tempC?: number | null
+  pulseBpm?: number | null
+  systolic?: number | null
+  diastolic?: number | null
+  spo2?: number | null
+}): { bmi: number | null; flags: string[] } {
+  const bmi =
+    v.heightCm && v.weightKg && v.heightCm > 0 && v.weightKg > 0
+      ? calculateBMI(v.weightKg, v.heightCm)
+      : null
+  const flags = flagVitals({
+    systolic: v.systolic ?? undefined,
+    diastolic: v.diastolic ?? undefined,
+    temperature: v.tempC ?? undefined,
+    pulse: v.pulseBpm ?? undefined,
+    spo2: v.spo2 ?? undefined,
+    bmi: bmi ?? undefined,
+  })
+  return { bmi, flags }
+}
+
+/**
+ * BMI to display for a stored vitals record. Recomputes from height and
+ * weight when both exist (records saved before the argument-order fix hold
+ * a wrong stored BMI); otherwise uses the stored value only if plausible.
+ */
+export function resolveBmi(v: {
+  heightCm?: number | null
+  weightKg?: number | null
+  bmi?: number | null
+}): number | undefined {
+  if (v.heightCm && v.weightKg && v.heightCm > 0 && v.weightKg > 0) {
+    return calculateBMI(v.weightKg, v.heightCm)
+  }
+  if (v.bmi && v.bmi >= 8 && v.bmi <= 90) return v.bmi
+  return undefined
+}

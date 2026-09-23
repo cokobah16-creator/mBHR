@@ -57,7 +57,7 @@ export function AuthCallback() {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+        <div className="panel p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <span className="text-2xl">✕</span>
           </div>
@@ -75,8 +75,8 @@ export function AuthCallback() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+    <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
+      <div className="panel p-8 max-w-md w-full text-center">
         <div className="flex justify-center mb-6">
           <div className="w-14 h-14 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
         </div>

@@ -4,6 +4,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Layout } from "@/components/Layout";
 import RequireRoles from "@/components/RequireRoles";
+import RequirePermission from "@/components/RequirePermission";
 import Login from "@/pages/Login";
 import FirstRunSetup from "@/pages/FirstRunSetup";
 import { useAuthStore } from "@/stores/auth";
@@ -14,9 +15,18 @@ import {
   stopPortalSyncWorker,
 } from "@/services/portalSyncWorker";
 import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
-import { NigeriaLoaderScreen } from "@/components/NigeriaLoader";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { AuthCallback } from "@/components/AuthCallback";
+import {
+  PageSkeleton,
+  PortalSkeleton,
+  ScreenSkeleton,
+} from "@/components/ui/Skeleton";
+
+// Public legal pages
+const PrivacyPolicy = lazy(() => import("@/pages/legal/PrivacyPolicy"));
+const TermsOfUse = lazy(() => import("@/pages/legal/TermsOfUse"));
+
 // Eager: the reset page must load before supabase-js strips the token from the
 // URL, and services/passwordReset captures that URL when it is first imported.
 import ForgotPassword from "@/pages/ForgotPassword";
@@ -370,12 +380,7 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (isValidating) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Validating session...</p>
-        </div>
-      </div>
+      <ScreenSkeleton label="Checking your sign-in" />
     );
   }
 
@@ -401,6 +406,22 @@ function App() {
           {/* Public Routes - Must be defined before catch-all */}
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
+          <Route
+            path="/privacy"
+            element={
+              <Suspense fallback={<ScreenSkeleton />}>
+                <PrivacyPolicy />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/terms"
+            element={
+              <Suspense fallback={<ScreenSkeleton />}>
+                <TermsOfUse />
+              </Suspense>
+            }
+          />
 
           {/* First-run administrator setup. Eagerly imported: a freshly
               installed device may be offline, and this is the only route that
@@ -429,8 +450,9 @@ function App() {
             path="/patient/*"
             element={
               <PatientProtectedRoute>
-                <Suspense fallback={<NigeriaLoaderScreen />}>
+                <Suspense fallback={<PortalSkeleton />}>
                   <PatientPortalLayout>
+                    <Suspense fallback={<PortalSkeleton />}>
                     <Routes>
                       <Route path="/dashboard" element={<PatientDashboard />} />
                       <Route
@@ -481,6 +503,7 @@ function App() {
                         element={<Navigate to="/patient/dashboard" replace />}
                       />
                     </Routes>
+                    </Suspense>
                   </PatientPortalLayout>
                 </Suspense>
               </PatientProtectedRoute>
@@ -492,8 +515,10 @@ function App() {
             path="*"
             element={
               <ProtectedRoute>
-                <Suspense fallback={<NigeriaLoaderScreen />}>
-                  <Layout>
+                <Layout>
+                  {/* Suspense sits inside the shell so the header, site
+                      context and navigation stay put while a page loads. */}
+                  <Suspense fallback={<PageSkeleton />}>
                     <Routes>
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route
@@ -520,12 +545,54 @@ function App() {
                       <Route path="/queue" element={<Queue />} />
                       <Route path="/inventory" element={<Inventory />} />
                       <Route path="/users" element={<Users />} />
-                      <Route path="/vitals" element={<Vitals />} />
-                      <Route path="/vitals/:visitId" element={<Vitals />} />
-                      <Route path="/consult" element={<Consult />} />
-                      <Route path="/consult/:visitId" element={<Consult />} />
-                      <Route path="/pharmacy" element={<Pharmacy />} />
-                      <Route path="/pharmacy/:visitId" element={<Pharmacy />} />
+                      <Route
+                        path="/vitals"
+                        element={
+                          <RequirePermission permission="vitals">
+                            <Vitals />
+                          </RequirePermission>
+                        }
+                      />
+                      <Route
+                        path="/vitals/:visitId"
+                        element={
+                          <RequirePermission permission="vitals">
+                            <Vitals />
+                          </RequirePermission>
+                        }
+                      />
+                      <Route
+                        path="/consult"
+                        element={
+                          <RequirePermission permission="consult">
+                            <Consult />
+                          </RequirePermission>
+                        }
+                      />
+                      <Route
+                        path="/consult/:visitId"
+                        element={
+                          <RequirePermission permission="consult">
+                            <Consult />
+                          </RequirePermission>
+                        }
+                      />
+                      <Route
+                        path="/pharmacy"
+                        element={
+                          <RequirePermission permission="dispense">
+                            <Pharmacy />
+                          </RequirePermission>
+                        }
+                      />
+                      <Route
+                        path="/pharmacy/:visitId"
+                        element={
+                          <RequirePermission permission="dispense">
+                            <Pharmacy />
+                          </RequirePermission>
+                        }
+                      />
 
                       {/* New MBHR Features */}
                       <Route
@@ -764,8 +831,8 @@ function App() {
                         }
                       />
                     </Routes>
-                  </Layout>
-                </Suspense>
+                  </Suspense>
+                </Layout>
               </ProtectedRoute>
             }
           />

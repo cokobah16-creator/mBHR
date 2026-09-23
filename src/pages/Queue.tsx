@@ -1,396 +1,518 @@
-import React, { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, Patient, QueueItem } from "@/db";
 import { queueManagement, QueueStage } from "@/services/queueManagement";
-import { patientStatusFromQueue } from "@/services/patientStatus";
+import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
+import { useAuthStore } from "@/stores/auth";
+import { recordStageEvent } from "@/services/stageEvents";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { QueueSkeleton } from "@/components/ui/Skeleton";
 import {
-  QueueListIcon,
   PlayIcon,
   CheckIcon,
-  ClockIcon,
-  UserIcon,
-  HeartIcon,
-  DocumentTextIcon,
-  BeakerIcon,
-  ArrowRightIcon,
-} from "@heroicons/react/24/outline";
+  ArrowUpIcon,
+  TicketIcon,
+} from "@heroicons/react/20/solid";
+import { QueueListIcon } from "@heroicons/react/24/outline";
 
 const STAGES: QueueStage[] = ["registration", "vitals", "consult", "pharmacy"];
 
-const stageIcons = {
-  registration: UserIcon,
-  vitals: HeartIcon,
-  consult: DocumentTextIcon,
-  pharmacy: BeakerIcon,
+// Stage colour identifies workflow position; it is used as a small marker,
+// never to fill whole rows.
+const STAGE_MARKER: Record<QueueStage, string> = {
+  registration: "bg-stage-registration",
+  vitals: "bg-stage-vitals",
+  consult: "bg-stage-consult",
+  pharmacy: "bg-stage-pharmacy",
 };
 
-const stageColors = {
-  registration: "bg-blue-50 border-blue-200 text-blue-800",
-  vitals: "bg-green-50 border-green-200 text-green-800",
-  consult: "bg-purple-50 border-purple-200 text-purple-800",
-  pharmacy: "bg-orange-50 border-orange-200 text-orange-800",
-};
+/** Waits longer than this are highlighted for the stage lead. */
+const LONG_WAIT_MINUTES = 30;
 
 interface QueueWithPatient extends QueueItem {
   patient?: Patient;
 }
 
+function minutesSince(d: Date | string | undefined, now: number) {
+  if (!d) return 0;
+  return Math.max(0, Math.floor((now - new Date(d).getTime()) / 60000));
+}
+
+function formatMinutes(m: number) {
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function isToday(d: Date | string) {
+  const x = new Date(d);
+  const n = new Date();
+  return (
+    x.getFullYear() === n.getFullYear() &&
+    x.getMonth() === n.getMonth() &&
+    x.getDate() === n.getDate()
+  );
+}
+
+function useNow(intervalMs = 30000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 export function Queue() {
-  const { t } = useTranslation();
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const role = currentUser?.role;
+  const [filter, setFilter] = useState<"all" | "urgent" | "long" | "mine">("all");
   const [selectedStage, setSelectedStage] = useState<QueueStage>("vitals");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [stats, setStats] = useState<any>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
+  const now = useNow();
 
-  // Live query for all queue items
-  const allQueueItems = useLiveQuery(() => db.queue.toArray(), [], []);
-
-  // Live query for selected stage
-  const stageQueueItems = useLiveQuery(
-    () =>
-      db.queue
-        .where("stage")
-        .equals(selectedStage)
-        .and((item) => item.status !== "done")
-        .sortBy("position"),
-    [selectedStage],
-    [],
+  // One live query drives every number on the page, so counts never drift
+  // from the list.
+  const allQueueItems = useLiveQuery(() => db.queue.toArray(), []);
+  const patientIds = useMemo(
+    () => [...new Set((allQueueItems ?? []).map((q) => q.patientId))],
+    [allQueueItems],
+  );
+  const patients = useLiveQuery(
+    () => db.patients.bulkGet(patientIds),
+    [patientIds.join(",")],
   );
 
-  // Load patients for queue items
-  const [queueWithPatients, setQueueWithPatients] = useState<
-    QueueWithPatient[]
-  >([]);
+  const patientById = useMemo(() => {
+    const map = new Map<string, Patient>();
+    (patients ?? []).forEach((p) => p && map.set(p.id, p));
+    return map;
+  }, [patients]);
 
-  useEffect(() => {
-    loadQueueWithPatients();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stageQueueItems]);
-
-  useEffect(() => {
-    loadStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStage]);
-
-  const loadQueueWithPatients = async () => {
-    if (!stageQueueItems || stageQueueItems.length === 0) {
-      setQueueWithPatients([]);
-      return;
-    }
-
-    const withPatients = await Promise.all(
-      stageQueueItems.map(async (item) => {
-        const patient = await db.patients.get(item.patientId);
-        return { ...item, patient };
+  const stageSummary = useMemo(
+    () =>
+      STAGES.map((stage) => {
+        const items = (allQueueItems ?? []).filter((i) => i.stage === stage);
+        return {
+          stage,
+          waiting: items.filter((i) => i.status === "waiting").length,
+          inProgress: items.filter((i) => i.status === "in_progress").length,
+          doneToday: items.filter(
+            (i) => i.status === "done" && isToday(i.updatedAt),
+          ).length,
+        };
       }),
+    [allQueueItems],
+  );
+
+  const stageItems: QueueWithPatient[] = useMemo(
+    () =>
+      (allQueueItems ?? [])
+        .filter((i) => i.stage === selectedStage && i.status !== "done")
+        .sort((a, b) => a.position - b.position)
+        .map((i) => ({ ...i, patient: patientById.get(i.patientId) })),
+    [allQueueItems, selectedStage, patientById],
+  );
+
+  if (allQueueItems === undefined) {
+    return (
+      <>
+        <PageHeader title="Patient queue" />
+        <QueueSkeleton />
+      </>
+    );
+  }
+
+  const allWaiting = stageItems.filter((i) => i.status === "waiting");
+  const waiting = allWaiting.filter((i) => {
+    if (filter === "urgent") return i.priority === "urgent";
+    if (filter === "long")
+      return minutesSince(i.queuedAt ?? i.updatedAt, now) >= LONG_WAIT_MINUTES;
+    return true;
+  });
+  const inService = stageItems.filter(
+    (i) =>
+      i.status === "in_progress" &&
+      (filter !== "mine" || i.assignedTo === currentUser?.id),
+  );
+  const summary = stageSummary.find((s) => s.stage === selectedStage)!;
+  const longestWait = allWaiting.reduce(
+    (max, i) => Math.max(max, minutesSince(i.queuedAt ?? i.updatedAt, now)),
+    0,
+  );
+  const canIssueTickets =
+    !!role && ["volunteer", "nurse", "doctor", "admin"].includes(role);
+
+  const run = async (id: string, fn: () => Promise<unknown>) => {
+    setBusyId(id);
+    setActionError("");
+    try {
+      await fn();
+    } catch (err) {
+      console.error("Queue action failed:", err);
+      setActionError("That change was not saved. Try again.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const start = (item: QueueItem) =>
+    run(item.id, async () => {
+      await queueManagement.startService(
+        item.id,
+        currentUser ? { id: currentUser.id, name: currentUser.fullName } : undefined,
+      );
+      await recordStageEvent({
+        stage: item.stage,
+        kind: "start",
+        patientId: item.patientId,
+        actorId: currentUser?.id,
+      });
+    });
+  const complete = (item: QueueItem) =>
+    run(item.id, () => queueManagement.moveToNextStage(item.patientId));
+  const prioritise = (item: QueueItem) =>
+    run(item.id, () =>
+      queueManagement.skipQueue(item.patientId, "Manual priority"),
     );
 
-    setQueueWithPatients(withPatients);
-  };
-
-  const loadStats = async () => {
-    const statsData = await queueManagement.getQueueStats(selectedStage);
-    setStats(statsData);
-  };
-
-  const handleStartService = async (queueItemId: string) => {
-    await queueManagement.startService(queueItemId);
-    await loadStats();
-  };
-
-  const handleCompleteService = async (queueItemId: string) => {
-    const item = await db.queue.get(queueItemId);
-    if (item) {
-      await queueManagement.moveToNextStage(item.patientId);
-      await loadStats();
-    }
-  };
-
-  const handleSkipToFront = async (patientId: string) => {
-    await queueManagement.skipQueue(patientId, "Manual priority");
-    await loadStats();
-  };
-
-  // Calculate stage counts for all stages
-  const stageCounts = STAGES.map((stage) => {
-    const items =
-      allQueueItems?.filter(
-        (item) => item.stage === stage && item.status !== "done",
-      ) || [];
-    return {
-      stage,
-      count: items.length,
-      waiting: items.filter((i) => i.status === "waiting").length,
-      inProgress: items.filter((i) => i.status === "in_progress").length,
-    };
-  });
-
-  const waiting = queueWithPatients.filter((item) => item.status === "waiting");
-  const inProgress = queueWithPatients.find(
-    (item) => item.status === "in_progress",
-  );
-
-  const getWaitTime = (updatedAt: Date) => {
-    const now = new Date();
-    const diff = now.getTime() - new Date(updatedAt).getTime();
-    const minutes = Math.floor(diff / 60000);
-
-    if (minutes < 60) return `${minutes}m`;
-    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-  };
+  const patientName = (item: QueueWithPatient) =>
+    item.patient
+      ? `${item.patient.givenName} ${item.patient.familyName}`
+      : "Unknown patient";
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center space-x-3">
-        <QueueListIcon className="h-8 w-8 text-primary" />
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">{t("nav.queue")}</h1>
-          <p className="text-gray-600">
-            Manage patient flow through care stages
-          </p>
-        </div>
+    <div>
+      <PageHeader
+        title="Patient queue"
+        description="Who is waiting at each stage and who is being seen now."
+        actions={
+          canIssueTickets && (
+            <Link to="/tickets/issue" className="btn-secondary">
+              <TicketIcon className="h-4 w-4" aria-hidden />
+              Issue ticket
+            </Link>
+          )
+        }
+      />
+
+      {/* Stage tabs double as the queue overview */}
+      <div
+        role="tablist"
+        aria-label="Care stage"
+        className="grid grid-cols-2 gap-2 lg:grid-cols-4"
+      >
+        {stageSummary.map((s) => {
+          const selected = s.stage === selectedStage;
+          return (
+            <button
+              key={s.stage}
+              role="tab"
+              id={`tab-${s.stage}`}
+              aria-selected={selected}
+              aria-controls="queue-panel"
+              onClick={() => setSelectedStage(s.stage)}
+              className={`relative overflow-hidden rounded-lg border bg-surface px-4 py-3 text-left transition-colors ${
+                selected
+                  ? "border-primary ring-1 ring-primary"
+                  : "border-line hover:border-line-strong"
+              }`}
+            >
+              <span
+                className={`absolute inset-y-0 left-0 w-1 ${STAGE_MARKER[s.stage]}`}
+                aria-hidden
+              />
+              <span className="block text-label text-ink">
+                {FLOW_STAGE_LABELS[s.stage]}
+              </span>
+              <span className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-stat text-ink">{s.waiting}</span>
+                <span className="text-caption text-ink-muted">waiting</span>
+              </span>
+              <span className="block text-caption text-ink-muted">
+                {s.inProgress} in service · {s.doneToday} done today
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Queue Overview - All Stages */}
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Queue Overview
-        </h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {stageCounts.map(({ stage, count, waiting, inProgress }) => {
-            const Icon = stageIcons[stage];
-
-            return (
-              <div
-                key={stage}
-                className={`p-4 rounded-lg border ${stageColors[stage]}`}
-              >
-                <div className="flex items-center space-x-2 mb-2">
-                  <Icon className="h-5 w-5" />
-                  <span className="font-medium capitalize">{stage}</span>
-                </div>
-                <p className="text-2xl font-bold">{count}</p>
-                <p className="text-sm opacity-75">
-                  {inProgress} active, {waiting} waiting
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Stage Selector */}
-      <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Queue Management
-        </h2>
-        <div className="flex space-x-2 overflow-x-auto mb-6">
-          {STAGES.map((stage) => {
-            const stageData = stageCounts.find((s) => s.stage === stage);
-            return (
-              <button
-                key={stage}
-                onClick={() => setSelectedStage(stage)}
-                className={`px-4 py-2 rounded-lg border font-medium capitalize whitespace-nowrap ${
-                  selectedStage === stage
-                    ? stageColors[stage]
-                    : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
-                }`}
-              >
-                {stage} ({stageData?.count || 0})
-              </button>
-            );
-          })}
+      <section
+        id="queue-panel"
+        role="tabpanel"
+        aria-labelledby={`tab-${selectedStage}`}
+        className="mt-4 space-y-4"
+      >
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter queue">
+          {(
+            [
+              ["all", "All"],
+              ["urgent", "Urgent"],
+              ["long", `Waiting ${LONG_WAIT_MINUTES}+ min`],
+              ["mine", "Called by me"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              aria-pressed={filter === key}
+              className={`rounded-md border px-3 py-1.5 text-label transition-colors ${
+                filter === key
+                  ? "border-primary bg-primary-soft text-primary-fg"
+                  : "border-line bg-surface text-ink-secondary hover:bg-surface-hover"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {filter !== "all" && (
+            <button type="button" onClick={() => setFilter("all")} className="btn-ghost text-caption">
+              Clear filter
+            </button>
+          )}
         </div>
 
-        {/* Queue Stats */}
-        {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="text-sm text-blue-600">Waiting</div>
-              <div className="text-2xl font-bold text-blue-800">
-                {stats.waiting}
-              </div>
-            </div>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-              <div className="text-sm text-yellow-600">In Progress</div>
-              <div className="text-2xl font-bold text-yellow-800">
-                {stats.inProgress}
-              </div>
-            </div>
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <div className="text-sm text-green-600">Completed Today</div>
-              <div className="text-2xl font-bold text-green-800">
-                {stats.done}
-              </div>
-            </div>
+        {actionError && (
+          <div className="banner banner-danger" role="alert">
+            {actionError}
           </div>
         )}
 
-        {/* Current Patient */}
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Now Serving
-          </h3>
-          {inProgress ? (
-            <div className="p-6 bg-yellow-50 border-2 border-yellow-300 rounded-lg">
-              <div className="flex items-start justify-between">
-                <div className="flex items-start space-x-4 flex-1">
-                  <div className="w-16 h-16 bg-yellow-600 rounded-full flex items-center justify-center text-white font-bold text-xl">
-                    {inProgress.position}
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h4 className="text-xl font-bold text-gray-900">
-                        {inProgress.patient?.givenName}{" "}
-                        {inProgress.patient?.familyName}
-                      </h4>
-                      {(() => {
-                        const s = patientStatusFromQueue(inProgress);
-                        return (
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
-                          >
-                            {s.label}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                    <p className="text-gray-600 mt-1">
-                      {inProgress.patient?.sex} • {inProgress.patient?.dob}
-                    </p>
-                    <p className="text-gray-600">{inProgress.patient?.phone}</p>
-                    <div className="mt-2 flex items-center text-sm text-gray-500">
-                      <ClockIcon className="h-4 w-4 mr-1" />
-                      Service time: {getWaitTime(inProgress.updatedAt)}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex flex-col space-y-2">
-                  <button
-                    className="btn-primary flex items-center space-x-2"
-                    onClick={() => handleCompleteService(inProgress.id)}
-                  >
-                    <CheckIcon className="h-5 w-5" />
-                    <span>Complete</span>
-                  </button>
-                  <Link
-                    to={`/patients/${inProgress.patientId}`}
-                    className="btn-secondary text-center"
-                  >
-                    View Details
-                  </Link>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-8 bg-gray-50 border border-gray-200 rounded-lg">
-              <ClockIcon className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <p className="text-gray-600">No patient currently being served</p>
-              {waiting.length > 0 && (
+        {/* In service */}
+        <div className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">
+              In service · {FLOW_STAGE_LABELS[selectedStage]}
+            </h2>
+          </div>
+          {inService.length === 0 ? (
+            <div className="flex flex-col items-start gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-body text-ink-muted">
+                Nobody is being seen at this stage.
+              </p>
+              {allWaiting.length > 0 && (
                 <button
-                  onClick={() => handleStartService(waiting[0].id)}
-                  className="btn-primary mt-4 inline-flex items-center space-x-2"
+                  onClick={() => start(allWaiting[0])}
+                  disabled={busyId !== null}
+                  className="btn-primary"
                 >
-                  <PlayIcon className="h-5 w-5" />
-                  <span>Start Next Patient</span>
+                  <PlayIcon className="h-4 w-4" aria-hidden />
+                  Call {allWaiting[0].ticketNumber ?? "next patient"}
                 </button>
               )}
             </div>
-          )}
-        </div>
-
-        {/* Waiting Queue */}
-        <div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Waiting Queue ({waiting.length})
-          </h3>
-
-          {waiting.length === 0 ? (
-            <div className="text-center py-12 bg-gray-50 border border-gray-200 rounded-lg">
-              <CheckIcon className="h-12 w-12 mx-auto mb-4 text-green-500" />
-              <p className="text-gray-600">
-                No patients waiting in {selectedStage}
-              </p>
-            </div>
           ) : (
-            <div className="space-y-3">
-              {waiting.map((item, index) => (
-                <div
+            <ul className="divide-y divide-line">
+              {inService.map((item) => (
+                <li
                   key={item.id}
-                  className={`flex items-center justify-between p-4 border rounded-lg ${
-                    index === 0
-                      ? "border-green-300 bg-green-50"
-                      : "border-gray-200 bg-white"
-                  }`}
+                  className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"
                 >
-                  <div className="flex items-center space-x-4">
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
-                        index === 0 ? "bg-green-600" : "bg-gray-500"
-                      }`}
-                    >
-                      {item.position}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-gray-900">
-                          {item.patient?.givenName} {item.patient?.familyName}
-                        </span>
-                        {(() => {
-                          const s = patientStatusFromQueue(item);
-                          return (
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
-                            >
-                              {s.label}
-                            </span>
-                          );
-                        })()}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {item.patient?.phone}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        Waiting: {getWaitTime(item.updatedAt)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    {index === 0 && !inProgress && (
-                      <button
-                        onClick={() => handleStartService(item.id)}
-                        className="btn-primary text-sm flex items-center space-x-1"
-                      >
-                        <PlayIcon className="h-4 w-4" />
-                        <span>Start</span>
-                      </button>
-                    )}
-                    {index > 0 && (
-                      <button
-                        onClick={() => handleSkipToFront(item.patientId)}
-                        className="btn-secondary text-sm flex items-center space-x-1"
-                        title="Move to front of queue"
-                      >
-                        <ArrowRightIcon className="h-4 w-4" />
-                        <span>Priority</span>
-                      </button>
-                    )}
+                  <span className="w-20 shrink-0 font-mono text-h3 text-ink">
+                    {item.ticketNumber ?? `#${item.position}`}
+                  </span>
+                  <span className="min-w-0 flex-1">
                     <Link
                       to={`/patients/${item.patientId}`}
-                      className="btn-secondary text-sm"
+                      className="block truncate text-h3 text-ink hover:underline"
                     >
-                      View
+                      {patientName(item)}
                     </Link>
-                  </div>
-                </div>
+                    <span className="text-caption text-ink-muted">
+                      In service for{" "}
+                      {formatMinutes(minutesSince(item.updatedAt, now))}
+                      {item.assignedName ? ` · with ${item.assignedName}` : ""}
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => complete(item)}
+                    disabled={busyId === item.id}
+                    className="btn-primary"
+                  >
+                    <CheckIcon className="h-4 w-4" aria-hidden />
+                    {selectedStage === "pharmacy"
+                      ? "Finish visit"
+                      : `Send to ${FLOW_STAGE_LABELS[STAGES[STAGES.indexOf(selectedStage) + 1]]}`}
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </div>
-      </div>
+
+        {/* Waiting */}
+        <div className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">
+              Waiting ({waiting.length}
+              {filter !== "all" && filter !== "mine" ? ` of ${allWaiting.length}` : ""})
+            </h2>
+            {waiting.length > 0 && (
+              <span
+                className={`text-caption ${
+                  longestWait >= LONG_WAIT_MINUTES
+                    ? "font-semibold text-warning-fg"
+                    : "text-ink-muted"
+                }`}
+              >
+                Longest wait {formatMinutes(longestWait)}
+              </span>
+            )}
+          </div>
+
+          {waiting.length === 0 && allWaiting.length > 0 ? (
+            <p className="panel-body text-body text-ink-muted">
+              No waiting patients match this filter.
+            </p>
+          ) : waiting.length === 0 ? (
+            <EmptyState
+              icon={QueueListIcon}
+              title={`No one waiting for ${FLOW_STAGE_LABELS[selectedStage].toLowerCase()}`}
+              description={
+                summary.doneToday > 0
+                  ? `${summary.doneToday} patient${summary.doneToday === 1 ? "" : "s"} completed this stage today.`
+                  : "Patients appear here when they are sent from the previous stage."
+              }
+            />
+          ) : (
+            <>
+              {/* Desktop / tablet table */}
+              <table className="data-table hidden md:table">
+                <thead>
+                  <tr>
+                    <th scope="col">Ticket</th>
+                    <th scope="col">Patient</th>
+                    <th scope="col">Waiting</th>
+                    <th scope="col">Priority</th>
+                    <th scope="col" className="text-right">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {waiting.map((item) => {
+                    const mins = minutesSince(item.queuedAt ?? item.updatedAt, now);
+                    return (
+                      <tr key={item.id}>
+                        <td className="font-mono">
+                          {item.ticketNumber ?? `#${item.position}`}
+                        </td>
+                        <td>
+                          <Link
+                            to={`/patients/${item.patientId}`}
+                            className="font-medium text-ink hover:underline"
+                          >
+                            {patientName(item)}
+                          </Link>
+                        </td>
+                        <td>
+                          <span
+                            className={
+                              mins >= LONG_WAIT_MINUTES
+                                ? "font-semibold text-warning-fg"
+                                : "text-ink-secondary"
+                            }
+                          >
+                            {formatMinutes(mins)}
+                          </span>
+                        </td>
+                        <td>
+                          {item.priority === "urgent" ? (
+                            <StatusBadge tone="danger">Urgent</StatusBadge>
+                          ) : (
+                            <span className="text-ink-muted">Normal</span>
+                          )}
+                        </td>
+                        <td className="text-right">
+                          <div className="flex justify-end gap-2">
+                            {item.id === allWaiting[0]?.id && inService.length === 0 ? (
+                              <button
+                                onClick={() => start(item)}
+                                disabled={busyId !== null}
+                                className="btn-primary min-h-10 py-1.5"
+                              >
+                                <PlayIcon className="h-4 w-4" aria-hidden />
+                                Call
+                              </button>
+                            ) : item.id !== allWaiting[0]?.id ? (
+                              <button
+                                onClick={() => prioritise(item)}
+                                disabled={busyId !== null}
+                                className="btn-ghost"
+                                aria-label={`Move ${patientName(item)} to the front of the queue`}
+                                title="Move to front"
+                              >
+                                <ArrowUpIcon className="h-4 w-4" aria-hidden />
+                                Move to front
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {/* Phone list */}
+              <ul className="divide-y divide-line md:hidden">
+                {waiting.map((item) => {
+                  const mins = minutesSince(item.queuedAt ?? item.updatedAt, now);
+                  return (
+                    <li key={item.id} className="flex items-center gap-3 px-4 py-3">
+                      <span className="w-14 shrink-0 font-mono text-label text-ink">
+                        {item.ticketNumber ?? `#${item.position}`}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <Link
+                          to={`/patients/${item.patientId}`}
+                          className="block truncate font-medium text-ink"
+                        >
+                          {patientName(item)}
+                        </Link>
+                        <span className="flex items-center gap-2 text-caption text-ink-muted">
+                          <span
+                            className={
+                              mins >= LONG_WAIT_MINUTES ? "font-semibold text-warning-fg" : ""
+                            }
+                          >
+                            Waiting {formatMinutes(mins)}
+                          </span>
+                          {item.priority === "urgent" && (
+                            <StatusBadge tone="danger">Urgent</StatusBadge>
+                          )}
+                        </span>
+                      </span>
+                      {item.id === allWaiting[0]?.id && inService.length === 0 ? (
+                        <button
+                          onClick={() => start(item)}
+                          disabled={busyId !== null}
+                          className="btn-primary px-3"
+                        >
+                          Call
+                        </button>
+                      ) : item.id !== allWaiting[0]?.id ? (
+                        <button
+                          onClick={() => prioritise(item)}
+                          disabled={busyId !== null}
+                          className="btn-ghost px-2"
+                          aria-label={`Move ${patientName(item)} to the front of the queue`}
+                        >
+                          <ArrowUpIcon className="h-5 w-5" aria-hidden />
+                        </button>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

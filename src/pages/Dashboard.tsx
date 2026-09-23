@@ -1,126 +1,32 @@
-import React, { useEffect, useState, useMemo, useCallback, memo } from "react";
+import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useAuthStore } from "@/stores/auth";
 import { db } from "@/db";
 import { mbhrDb } from "@/db/mbhr";
 import { can } from "@/auth/roles";
-import { queryCache, createCacheKey } from "@/utils/queryCache";
 import { OfflineAnalytics } from "@/components/OfflineAnalytics";
 import { EnhancedQueueBoard } from "@/components/EnhancedQueueBoard";
 import { ExportButtons } from "@/components/ExportButtons";
-import { AudioButton } from "@/components/AudioButton";
 import { MessageOutbox } from "@/components/MessageOutbox";
 import { SyncDashboard } from "@/components/SyncDashboard";
 import { AppointmentCalendar } from "@/features/appointments/AppointmentCalendar";
 import {
   UserPlusIcon,
-  UsersIcon,
-  HeartIcon,
-  DocumentTextIcon,
-  BeakerIcon,
   CubeIcon,
-  Cog6ToothIcon,
   QueueListIcon,
   CalendarIcon,
-  EnvelopeIcon,
   ArrowPathIcon,
-  ClipboardDocumentCheckIcon,
-  UserIcon,
-  ShieldExclamationIcon,
 } from "@heroicons/react/24/outline";
-
-// Memoized stat card component
-const StatCard = memo(
-  ({
-    icon: Icon,
-    label,
-    value,
-    colorClass,
-    trend,
-  }: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    icon: any;
-    label: string;
-    value: number;
-    colorClass: string;
-    trend?: string;
-  }) => (
-    <div className="bg-white rounded-lg shadow-md p-5 border border-gray-100">
-      <div className="flex items-start gap-4">
-        <div
-          className={`shrink-0 w-12 h-12 rounded-xl flex items-center justify-center ${colorClass}`}
-        >
-          <Icon className="h-6 w-6" aria-hidden />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-500">{label}</p>
-          <p className="text-3xl font-bold text-gray-900 leading-tight">
-            {value.toLocaleString()}
-          </p>
-          {trend && <p className="text-xs text-gray-500 mt-0.5">{trend}</p>}
-        </div>
-      </div>
-    </div>
-  ),
-);
-StatCard.displayName = "StatCard";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { LiveQueueTable } from "@/components/dashboard/LiveQueueTable";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { getFlagLabel, getFlagTone } from "@/utils/vitals";
 
 export function Dashboard() {
   const { currentUser } = useAuthStore();
-  const [stats, setStats] = useState({
-    totalPatients: 0,
-    todayRegistrations: 0,
-    totalUsers: 0,
-  });
   const [showAppointments, setShowAppointments] = useState(false);
   const [showSync, setShowSync] = useState(false);
-
-  const loadStats = useCallback(async () => {
-    try {
-      // Check cache first
-      const cacheKey = createCacheKey(
-        "dashboard",
-        "stats",
-        new Date().toDateString(),
-      );
-      const cached = queryCache.get<typeof stats>(cacheKey);
-
-      if (cached) {
-        setStats(cached);
-        return;
-      }
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const [totalPatients, todayRegistrations, totalUsers] = await Promise.all(
-        [
-          db.patients.count(),
-          db.patients.where("createdAt").between(today, tomorrow).count(),
-          db.users.count(),
-        ],
-      );
-
-      const newStats = {
-        totalPatients,
-        todayRegistrations,
-        totalUsers,
-      };
-
-      setStats(newStats);
-      // Cache for 5 minutes
-      queryCache.set(cacheKey, newStats, 5 * 60 * 1000);
-    } catch (error) {
-      console.error("Error loading stats:", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadStats();
-  }, [loadStats]);
 
   const startOfToday = useMemo(() => {
     const d = new Date();
@@ -131,6 +37,30 @@ export function Dashboard() {
     () => startOfToday.toISOString(),
     [startOfToday],
   );
+
+  // Live, so the first-run guidance disappears as soon as a patient exists
+  // (undefined while loading, so it never flashes).
+  const patientCount = useLiveQuery(() => db.patients.count(), []);
+
+  const registeredToday =
+    useLiveQuery(
+      () => db.patients.where("createdAt").above(startOfToday).count(),
+      [startOfToday],
+      0,
+    ) ?? 0;
+
+  // Patients whose pharmacy stage finished today, i.e. left the flow.
+  const completedToday =
+    useLiveQuery(
+      () =>
+        db.queue
+          .where("stage")
+          .equals("pharmacy")
+          .and((q) => q.status === "done" && new Date(q.updatedAt) >= startOfToday)
+          .count(),
+      [startOfToday],
+      0,
+    ) ?? 0;
 
   const waitingForVitals =
     useLiveQuery(
@@ -168,127 +98,62 @@ export function Dashboard() {
       0,
     ) ?? 0;
 
+  // Both dispensing paths: visit dispensing (db.dispenses) and
+  // prescription dispensing (mbhrDb.dispenses).
   const dispensedToday =
     useLiveQuery(
-      () => mbhrDb.dispenses.where("dispensedAt").above(startOfTodayIso).count(),
-      [startOfTodayIso],
+      async () => {
+        const [rx, visit] = await Promise.all([
+          mbhrDb.dispenses.where("dispensedAt").above(startOfTodayIso).count(),
+          db.dispenses.where("dispensedAt").above(startOfToday).count(),
+        ]);
+        return rx + visit;
+      },
+      [startOfTodayIso, startOfToday],
       0,
     ) ?? 0;
 
-  // Distinct patients with at least one vitals row today carrying any abnormal flag
-  const highRiskFlaggedToday =
+  // Patients with at least one abnormal vital sign recorded today
+  const flaggedToday =
     useLiveQuery(
       async () => {
         const todaysVitals = await db.vitals
           .where("takenAt")
           .above(startOfToday)
           .toArray();
-        const flaggedPatients = new Set<string>();
+        const byPatient = new Map<string, Set<string>>();
         for (const v of todaysVitals) {
           if (Array.isArray(v.flags) && v.flags.length > 0) {
-            flaggedPatients.add(v.patientId);
+            const set = byPatient.get(v.patientId) ?? new Set<string>();
+            v.flags.forEach((f) => set.add(f));
+            byPatient.set(v.patientId, set);
           }
         }
-        return flaggedPatients.size;
+        const patients = await db.patients.bulkGet([...byPatient.keys()]);
+        return patients
+          .filter((p): p is NonNullable<typeof p> => Boolean(p))
+          .map((p) => ({
+            id: p.id,
+            name: `${p.givenName} ${p.familyName}`,
+            flags: [...(byPatient.get(p.id) ?? [])],
+          }));
       },
       [startOfToday],
-      0,
-    ) ?? 0;
+      [],
+    ) ?? [];
 
-  // Memoize quick actions based on user role
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _quickActions = useMemo(() => {
-    const actions = [
-      {
-        name: "Register Patient",
-        href: "/register",
-        icon: UserPlusIcon,
-        color: "bg-blue-500 hover:bg-blue-600",
-        description: "Add new patient",
-      },
-      {
-        name: "View Patients",
-        href: "/patients",
-        icon: UsersIcon,
-        color: "bg-green-500 hover:bg-green-600",
-        description: "Patient records",
-      },
-      {
-        name: "View Queue",
-        href: "/queue",
-        icon: HeartIcon,
-        color: "bg-purple-500 hover:bg-purple-600",
-        description: "Patient flow",
-      },
-      {
-        name: "Inventory",
-        href: "/inventory",
-        icon: CubeIcon,
-        color: "bg-orange-500 hover:bg-orange-600",
-        description: "Stock management",
-      },
-    ];
-
-    // Add role-specific actions
-    if (currentUser) {
-      // Doctor Station for doctors
-      if (can(currentUser.role, "consult")) {
-        actions.unshift({
-          name: "Doctor Station",
-          href: "/doctor/dashboard",
-          icon: DocumentTextIcon,
-          color: "bg-blue-600 hover:bg-blue-700",
-          description: "Consultation queue & tools",
-        });
-
-        actions.push({
-          name: "Lab Results",
-          href: "/labs",
-          icon: BeakerIcon,
-          color: "bg-teal-500 hover:bg-teal-600",
-          description: "Lab orders & results",
-        });
-      }
-
-      // Appointments for all clinical staff
-      if (can(currentUser.role, "vitals")) {
-        actions.push({
-          name: "Appointments",
-          href: "/appointments",
-          icon: CalendarIcon,
-          color: "bg-indigo-500 hover:bg-indigo-600",
-          description: "Schedule & manage",
-        });
-      }
-
-      // SMS reminders for pharmacists
-      if (can(currentUser.role, "dispense")) {
-        actions.push({
-          name: "SMS Reminders",
-          href: "/pharmacy/sms-reminders",
-          icon: EnvelopeIcon,
-          color: "bg-pink-500 hover:bg-pink-600",
-          description: "Medication alerts",
-        });
-      }
-
-      // Admin actions
-      if (can(currentUser.role, "users")) {
-        actions.push({
-          name: "User Management",
-          href: "/users",
-          icon: Cog6ToothIcon,
-          color: "bg-purple-500 hover:bg-purple-600",
-          description: "Manage users",
-        });
-      }
-    }
-
-    return actions;
-  }, [currentUser]);
+  const lowStock =
+    useLiveQuery(
+      async () =>
+        (await db.inventory.toArray())
+          .filter((i) => i.onHandQty <= i.reorderThreshold)
+          .sort((a, b) => a.onHandQty - b.onHandQty),
+      [],
+      [],
+    ) ?? [];
 
   const formattedDate = useMemo(() => {
-    return new Date().toLocaleDateString("en-US", {
+    return new Date().toLocaleDateString("en-NG", {
       weekday: "long",
       year: "numeric",
       month: "long",
@@ -296,82 +161,136 @@ export function Dashboard() {
     });
   }, []);
   return (
-    <div className="space-y-4 sm:space-y-6">
-      {/* Welcome Header */}
-      <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
-              Welcome back, {currentUser?.fullName}
-            </h1>
-            <p className="text-sm sm:text-base text-gray-600 mt-1">
-              Here's what's happening at your clinic today
-            </p>
-          </div>
-          <div className="text-left sm:text-right">
-            <p className="text-xs sm:text-sm text-gray-500">{formattedDate}</p>
-          </div>
-        </div>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        title={`Today · ${formattedDate}`}
+        description={`Signed in as ${currentUser?.fullName ?? ""}. What needs attention at this outreach.`}
+        actions={
+          <>
+            {currentUser && can(currentUser.role, "register") && (
+              <Link to="/register" className="btn-primary">
+                <UserPlusIcon className="h-5 w-5" aria-hidden />
+                Register patient
+              </Link>
+            )}
+            <Link to="/queue" className="btn-secondary">
+              <QueueListIcon className="h-5 w-5" aria-hidden />
+              Open queue
+            </Link>
+          </>
+        }
+      />
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          icon={UsersIcon}
-          label="Total Patients"
-          value={stats.totalPatients}
-          colorClass="bg-blue-100 text-blue-600"
-          trend="Local registry"
-        />
-        <StatCard
-          icon={UserPlusIcon}
-          label="Today's Registrations"
-          value={stats.todayRegistrations}
-          colorClass="bg-green-100 text-green-600"
-          trend="Since midnight"
-        />
-        <StatCard
-          icon={HeartIcon}
-          label="Waiting for Vitals"
-          value={waitingForVitals}
-          colorClass="bg-emerald-100 text-emerald-600"
-          trend="Active in queue"
-        />
-        <StatCard
-          icon={UserIcon}
-          label="Waiting for Doctor"
-          value={waitingForDoctor}
-          colorClass="bg-purple-100 text-purple-600"
-          trend="Active in queue"
-        />
-        <StatCard
-          icon={BeakerIcon}
-          label="Waiting for Pharmacy"
-          value={waitingForPharmacy}
-          colorClass="bg-amber-100 text-amber-600"
-          trend="Active in queue"
-        />
-        <StatCard
-          icon={ClipboardDocumentCheckIcon}
-          label="Dispensed Today"
-          value={dispensedToday}
-          colorClass="bg-teal-100 text-teal-600"
-          trend="Medication events"
-        />
-        <StatCard
-          icon={ShieldExclamationIcon}
-          label="High-Risk Flagged"
-          value={highRiskFlaggedToday}
-          colorClass="bg-red-100 text-red-600"
-          trend="Patients today"
-        />
-        <StatCard
-          icon={Cog6ToothIcon}
-          label="System Users"
-          value={stats.totalUsers}
-          colorClass="bg-orange-100 text-orange-600"
-          trend="Staff accounts"
-        />
+      {/* Patient flow right now */}
+      <section aria-labelledby="flow-title" className="panel">
+        <div className="panel-header">
+          <h2 id="flow-title" className="panel-title">
+            Patient flow now
+          </h2>
+          <Link to="/queue" className="text-label text-primary hover:underline">
+            Manage queue
+          </Link>
+        </div>
+        <dl className="grid grid-cols-2 divide-line sm:grid-cols-5 sm:divide-x">
+          {[
+            { label: "Registered today", value: registeredToday, marker: "bg-stage-registration" },
+            { label: "Waiting for vitals", value: waitingForVitals, marker: "bg-stage-vitals" },
+            { label: "Waiting for a clinician", value: waitingForDoctor, marker: "bg-stage-consult" },
+            { label: "Waiting at pharmacy", value: waitingForPharmacy, marker: "bg-stage-pharmacy" },
+            { label: "Completed today", value: completedToday, marker: "bg-success" },
+          ].map((m) => (
+            <div key={m.label} className="px-4 py-4">
+              <dt className="flex items-center gap-2 text-caption text-ink-muted">
+                <span className={`h-2 w-2 rounded-full ${m.marker}`} aria-hidden />
+                {m.label}
+              </dt>
+              <dd className="mt-1 text-stat text-ink tabular-nums">{m.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <section aria-labelledby="live-queue-title" className="panel">
+        <div className="panel-header">
+          <h2 id="live-queue-title" className="panel-title">
+            Live queue
+          </h2>
+          <span className="text-caption text-ink-muted">
+            Urgent first, then longest wait
+          </span>
+        </div>
+        <LiveQueueTable />
+      </section>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Abnormal vitals */}
+        <section aria-labelledby="flagged-title" className="panel">
+          <div className="panel-header">
+            <h2 id="flagged-title" className="panel-title">
+              Abnormal vitals today
+            </h2>
+            <span className="text-caption text-ink-muted">
+              {flaggedToday.length} patient{flaggedToday.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          {flaggedToday.length === 0 ? (
+            <p className="panel-body text-body text-ink-muted">
+              No abnormal readings recorded today.
+            </p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {flaggedToday.slice(0, 6).map((p) => (
+                <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                  <Link to={`/patients/${p.id}`} className="font-medium text-ink hover:underline">
+                    {p.name}
+                  </Link>
+                  <span className="flex flex-wrap gap-1">
+                    {p.flags.map((f) => (
+                      <StatusBadge key={f} tone={getFlagTone(f)}>
+                        {getFlagLabel(f)}
+                      </StatusBadge>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Stock */}
+        <section aria-labelledby="stock-title" className="panel">
+          <div className="panel-header">
+            <h2 id="stock-title" className="panel-title">
+              Low stock
+            </h2>
+            <span className="text-caption text-ink-muted">
+              {dispensedToday} dispensed today
+            </span>
+          </div>
+          {lowStock.length === 0 ? (
+            <p className="panel-body text-body text-ink-muted">
+              All items are above their reorder level.
+            </p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {lowStock.slice(0, 6).map((i) => (
+                <li key={i.id} className="flex items-center justify-between gap-2 px-4 py-2.5">
+                  <span className="text-ink">{i.itemName}</span>
+                  <StatusBadge tone={i.onHandQty === 0 ? "danger" : "warning"}>
+                    {i.onHandQty === 0 ? "Out of stock" : `${i.onHandQty} ${i.unit} left`}
+                  </StatusBadge>
+                </li>
+              ))}
+              {lowStock.length > 6 && (
+                <li className="px-4 py-2.5">
+                  <Link to="/inventory" className="text-label text-primary hover:underline">
+                    See all {lowStock.length} items
+                  </Link>
+                </li>
+              )}
+            </ul>
+          )}
+        </section>
       </div>
 
       {/* Control Buttons */}
@@ -379,18 +298,20 @@ export function Dashboard() {
         {currentUser && can(currentUser.role, "vitals") && (
           <button
             onClick={() => setShowAppointments(!showAppointments)}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            className="btn-secondary"
+            aria-expanded={showAppointments}
           >
-            <CalendarIcon className="h-5 w-5 mr-2 text-gray-400" />
+            <CalendarIcon className="h-5 w-5 text-ink-muted" aria-hidden />
             {showAppointments ? "Hide Appointments" : "Show Appointments"}
           </button>
         )}
         {currentUser && can(currentUser.role, "users") && (
           <button
             onClick={() => setShowSync(!showSync)}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            className="btn-secondary"
+            aria-expanded={showSync}
           >
-            <ArrowPathIcon className="h-5 w-5 mr-2 text-gray-400" />
+            <ArrowPathIcon className="h-5 w-5 text-ink-muted" aria-hidden />
             {showSync ? "Hide Sync Dashboard" : "Show Sync Dashboard"}
           </button>
         )}
@@ -418,76 +339,46 @@ export function Dashboard() {
       {/* Data Export */}
       <ExportButtons />
 
-      {/* Getting Started */}
-      <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
-        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">
-          Getting Started
-        </h2>
-        <div className="space-y-3">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-              <span className="text-blue-600 font-semibold text-sm">1</span>
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">
-                Register your first patient
-              </p>
-              <p className="text-sm text-gray-600">
-                Start by adding patient information to the system
-              </p>
-            </div>
+      {/* First-run guidance: only on a device with no patients yet */}
+      {patientCount === 0 && (
+        <section aria-labelledby="start-title" className="panel">
+          <div className="panel-header">
+            <h2 id="start-title" className="panel-title">
+              Getting this device ready
+            </h2>
           </div>
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-              <span className="text-green-600 font-semibold text-sm">2</span>
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">Record vital signs</p>
-              <p className="text-sm text-gray-600">
-                Take measurements and track patient health
-              </p>
-            </div>
+          <ol className="panel-body space-y-3 text-body">
+            <li>
+              <span className="font-medium text-ink">1. Choose the outreach site</span>
+              <span className="block text-ink-muted">
+                Use the site selector at the top of the screen so visits are recorded against the right outreach.
+              </span>
+            </li>
+            <li>
+              <span className="font-medium text-ink">2. Check stock</span>
+              <span className="block text-ink-muted">
+                Add the medicines you brought in Inventory so dispensing and low-stock alerts work.
+              </span>
+            </li>
+            <li>
+              <span className="font-medium text-ink">3. Register the first patient</span>
+              <span className="block text-ink-muted">
+                Registration puts them in the queue for vitals.
+              </span>
+            </li>
+          </ol>
+          <div className="flex flex-wrap gap-2 border-t border-line px-4 py-3">
+            <Link to="/register" className="btn-primary">
+              <UserPlusIcon className="h-5 w-5" aria-hidden />
+              Register patient
+            </Link>
+            <Link to="/inventory" className="btn-secondary">
+              <CubeIcon className="h-5 w-5" aria-hidden />
+              Open inventory
+            </Link>
           </div>
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
-              <span className="text-purple-600 font-semibold text-sm">3</span>
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">Manage inventory</p>
-              <p className="text-sm text-gray-600">
-                Keep track of medications and supplies
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 pt-4 border-t border-gray-200">
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-            <AudioButton
-              audioKey="action.register"
-              fallbackText="Register Patient"
-              onClick={() => {}}
-              className="btn-primary"
-            >
-              <Link to="/register" className="flex items-center space-x-2">
-                <UserPlusIcon className="h-5 w-5" />
-                <span>Register Patient</span>
-              </Link>
-            </AudioButton>
-            <AudioButton
-              audioKey="nav.queue"
-              fallbackText="View Queue"
-              onClick={() => {}}
-              className="btn-secondary"
-            >
-              <Link to="/queue" className="flex items-center space-x-2">
-                <QueueListIcon className="h-5 w-5" />
-                <span>View Queue</span>
-              </Link>
-            </AudioButton>
-          </div>
-        </div>
-      </div>
+        </section>
+      )}
     </div>
   );
 }

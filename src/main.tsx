@@ -30,7 +30,31 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     tracesSampleRate: import.meta.env.MODE === "production" ? 0.1 : 1.0,
     replaysSessionSampleRate: 0.1,
     replaysOnErrorSampleRate: 1.0,
+    // Health data must never leave the device through error reporting.
+    // Console output can contain patient records (e.g. duplicate-check
+    // payloads), so console breadcrumbs are dropped entirely, and URLs are
+    // reduced to their path.
+    sendDefaultPii: false,
+    beforeBreadcrumb(breadcrumb) {
+      if (breadcrumb.category === "console") return null;
+      if (breadcrumb.data && typeof breadcrumb.data.url === "string") {
+        breadcrumb.data.url = breadcrumb.data.url.split("?")[0];
+      }
+      return breadcrumb;
+    },
     beforeSend(event, _hint) {
+      if (event.request?.url) event.request.url = event.request.url.split("?")[0];
+      if (event.request) {
+        delete event.request.query_string;
+        delete event.request.data;
+        delete event.request.cookies;
+      }
+      if (event.user) event.user = event.user.id ? { id: event.user.id } : undefined;
+      // Exception messages can embed record data; keep type and stack only
+      // for our own DUPLICATES_FOUND signal.
+      event.exception?.values?.forEach((v) => {
+        if (v.value?.startsWith("DUPLICATES_FOUND:")) v.value = "DUPLICATES_FOUND";
+      });
       if (import.meta.env.MODE !== "production") {
         console.log("Sentry event:", event);
       }

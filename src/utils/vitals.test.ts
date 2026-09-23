@@ -239,3 +239,68 @@ describe("vitals utilities", () => {
     });
   });
 });
+
+describe("clinical classification", () => {
+  it("labels BMI with WHO categories", async () => {
+    const { classifyBMI } = await import("./vitals");
+    expect(classifyBMI(27.4)).toEqual({ label: "Overweight", tone: "warning" });
+    expect(classifyBMI(22)).toEqual({ label: "Normal", tone: "success" });
+    expect(classifyBMI(17)?.label).toBe("Underweight");
+    expect(classifyBMI(31)?.label).toBe("Obese");
+    expect(classifyBMI(0)).toBeNull();
+  });
+
+  it("escalates severely elevated blood pressure", async () => {
+    const { classifyBloodPressure } = await import("./vitals");
+    expect(classifyBloodPressure(178, 112)?.tone).toBe("danger");
+    expect(classifyBloodPressure(182, 100)).toEqual({
+      label: "Severely elevated",
+      tone: "critical",
+    });
+    expect(classifyBloodPressure(118, 76)?.label).toBe("Normal");
+    expect(classifyBloodPressure(85, 55)?.label).toBe("Low");
+    expect(classifyBloodPressure(undefined, undefined)).toBeNull();
+  });
+
+  it("keeps flag tones consistent with flagVitals codes", async () => {
+    const { getFlagTone } = await import("./vitals");
+    expect(getFlagTone("high_bp")).toBe("danger");
+    expect(getFlagTone("high_bmi")).toBe("warning");
+    expect(getFlagTone("something_else")).toBe("neutral");
+  });
+});
+
+describe("assessVitals", () => {
+  it("computes BMI from height and weight in the right order", async () => {
+    const { assessVitals } = await import("./vitals");
+    const { bmi } = assessVitals({ heightCm: 170, weightKg: 70 });
+    expect(bmi).toBeCloseTo(24.2, 1);
+  });
+
+  it("flags fever, tachycardia and low SpO2 from record field names", async () => {
+    const { assessVitals } = await import("./vitals");
+    const { flags } = assessVitals({ tempC: 38.6, pulseBpm: 112, spo2: 91 });
+    expect(flags).toContain("high_temp");
+    expect(flags).toContain("high_pulse");
+    expect(flags).toContain("low_spo2");
+  });
+
+  it("returns no BMI without both measurements", async () => {
+    const { assessVitals } = await import("./vitals");
+    expect(assessVitals({ heightCm: 170 }).bmi).toBeNull();
+  });
+});
+
+describe("resolveBmi", () => {
+  it("corrects a BMI stored with height and weight swapped", async () => {
+    const { resolveBmi } = await import("./vitals");
+    // 170 cm / 70 kg was previously stored as ~346.9
+    expect(resolveBmi({ heightCm: 170, weightKg: 70, bmi: 346.9 })).toBeCloseTo(24.2, 1);
+  });
+
+  it("drops an implausible stored BMI when it cannot be recomputed", async () => {
+    const { resolveBmi } = await import("./vitals");
+    expect(resolveBmi({ bmi: 346.9 })).toBeUndefined();
+    expect(resolveBmi({ bmi: 23.1 })).toBe(23.1);
+  });
+});

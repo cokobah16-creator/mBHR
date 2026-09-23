@@ -375,7 +375,7 @@ export function Telehealth() {
         </div>
       )}
 
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl shadow-sm p-6 border border-blue-100">
+      <div className="bg-info-soft rounded-lg p-6 border border-info-line">
         <div className="flex items-start gap-4">
           <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
             <VideoCameraIcon className="w-6 h-6 text-white" />

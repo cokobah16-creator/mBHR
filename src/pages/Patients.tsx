@@ -1,205 +1,247 @@
-import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { db, Patient } from "@/db";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PatientListSkeleton } from "@/components/ui/Skeleton";
+import { formatPatientId, patientAge } from "@/utils/patient";
+import { formatNigerianDate } from "@/utils/dateFormat";
 import {
   MagnifyingGlassIcon,
   UserPlusIcon,
   UserIcon,
-  PhoneIcon,
-  MapPinIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 
+const PAGE_SIZE = 50;
+
+const SEX_SHORT: Record<string, string> = { male: "M", female: "F", other: "O" };
+
+function matches(p: Patient, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  const digits = needle.replace(/\D/g, "");
+  const name = `${p.givenName} ${p.familyName}`.toLowerCase();
+  return (
+    name.includes(needle) ||
+    `${p.familyName} ${p.givenName}`.toLowerCase().includes(needle) ||
+    formatPatientId(p.id).toLowerCase().includes(needle) ||
+    (digits.length >= 3 && (p.phone ?? "").replace(/\D/g, "").includes(digits))
+  );
+}
+
 export function Patients() {
-  const navigate = useNavigate();
-  const [patients, setPatients] = useState<Patient[]>([]);
-  const [filteredPatients, setFilteredPatients] = useState<Patient[]>([]);
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const [patients, setPatients] = useState<Patient[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [limit, setLimit] = useState(PAGE_SIZE);
 
   useEffect(() => {
-    loadPatients();
+    db.patients
+      .orderBy("createdAt")
+      .reverse()
+      .toArray()
+      .then((rows) => setPatients(rows.filter((p) => !p.mergeInto)))
+      .catch((error) => {
+        console.error("Error loading patients:", error);
+        setLoadError(true);
+        setPatients([]);
+      });
   }, []);
 
-  useEffect(() => {
-    if (searchQuery.trim()) {
-      const filtered = patients.filter(
-        (patient) =>
-          patient.givenName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          patient.familyName
-            .toLowerCase()
-            .includes(searchQuery.toLowerCase()) ||
-          patient.phone.includes(searchQuery),
-      );
-      setFilteredPatients(filtered);
-    } else {
-      setFilteredPatients(patients);
-    }
-  }, [searchQuery, patients]);
+  // Reset paging when the search changes.
+  useEffect(() => setLimit(PAGE_SIZE), [searchQuery]);
 
-  const loadPatients = async () => {
-    try {
-      const patientsData = await db.patients
-        .orderBy("createdAt")
-        .reverse()
-        .toArray();
-      console.log(`Loaded ${patientsData.length} patients`);
-      setPatients(patientsData);
-      setFilteredPatients(patientsData);
-    } catch (error) {
-      console.error("Error loading patients:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const filtered = useMemo(
+    () => (patients ?? []).filter((p) => matches(p, searchQuery)),
+    [patients, searchQuery],
+  );
+  const visible = filtered.slice(0, limit);
+  const canRegister = !!role && can(role, "register");
 
-  const getPatientAge = (dob: string) => {
-    const birthDate = new Date(dob);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
+  const header = (
+    <PageHeader
+      title="Patients"
+      description={
+        patients
+          ? `${patients.length.toLocaleString()} patient record${patients.length === 1 ? "" : "s"} on this device`
+          : "Patient records on this device"
+      }
+      actions={
+        canRegister && (
+          <Link to="/register" className="btn-primary">
+            <UserPlusIcon className="h-5 w-5" aria-hidden />
+            Register patient
+          </Link>
+        )
+      }
+    />
+  );
 
-    if (
-      monthDiff < 0 ||
-      (monthDiff === 0 && today.getDate() < birthDate.getDate())
-    ) {
-      age--;
-    }
-
-    return age;
-  };
-
-  if (loading) {
+  if (patients === null) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading patients...</p>
-        </div>
+      <div>
+        {header}
+        <PatientListSkeleton />
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
-            Patients
-          </h1>
-          <p className="text-sm sm:text-base text-gray-600">
-            Manage patient records and information
-          </p>
-        </div>
+    <div>
+      {header}
 
-        <Link
-          to="/register"
-          className="btn-primary inline-flex items-center justify-center gap-2 w-full sm:w-auto"
-        >
-          <UserPlusIcon className="h-5 w-5" />
-          <span>Register Patient</span>
-        </Link>
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-          <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
-        </div>
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="input-field pl-10"
-          placeholder="Search patients by name or phone..."
-        />
-      </div>
-
-      {/* Patient List */}
-      <div className="space-y-4">
-        {filteredPatients.length === 0 ? (
-          <div className="text-center py-12">
-            <UserIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              {searchQuery ? "No patients found" : "No patients registered"}
-            </h3>
-            <p className="text-gray-600 mb-6">
-              {searchQuery
-                ? "Try adjusting your search terms"
-                : "Get started by registering your first patient"}
-            </p>
-            {!searchQuery && (
-              <Link to="/register" className="btn-primary">
-                Register Patient
-              </Link>
+      <div className="panel overflow-hidden">
+        <div className="border-b border-line p-3 sm:p-4">
+          <label htmlFor="patient-search" className="sr-only">
+            Search patients
+          </label>
+          <div className="relative max-w-md">
+            <MagnifyingGlassIcon
+              className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-muted"
+              aria-hidden
+            />
+            <input
+              id="patient-search"
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="input-field pl-10 pr-10"
+              placeholder="Name, phone number or MBHR ID"
+              autoComplete="off"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-1 top-1/2 -translate-y-1/2 btn-ghost px-2"
+                aria-label="Clear search"
+              >
+                <XMarkIcon className="h-4 w-4" aria-hidden />
+              </button>
             )}
           </div>
+          {searchQuery && (
+            <p className="mt-2 text-caption text-ink-muted" role="status">
+              {filtered.length} match{filtered.length === 1 ? "" : "es"}
+            </p>
+          )}
+        </div>
+
+        {loadError ? (
+          <div className="banner banner-danger m-4" role="alert">
+            Patient records could not be read on this device. Reload the page;
+            if it keeps failing, check the device has free storage.
+          </div>
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={UserIcon}
+            title={searchQuery ? "No matching patients" : "No patients registered yet"}
+            description={
+              searchQuery
+                ? "Check the spelling, try the phone number, or register them as a new patient."
+                : "Patients registered on this device, or synced to it, appear here."
+            }
+            action={
+              canRegister && (
+                <Link to="/register" className="btn-primary">
+                  <UserPlusIcon className="h-5 w-5" aria-hidden />
+                  Register patient
+                </Link>
+              )
+            }
+          />
         ) : (
-          filteredPatients.map((patient) => (
-            <div
-              key={patient.id}
-              className="card hover:shadow-md transition-shadow cursor-pointer active:bg-gray-50 p-4 sm:p-6"
-              onClick={() => navigate(`/patients/${patient.id}`)}
-            >
-              <div className="flex items-center gap-3 sm:gap-4">
-                {/* Patient Photo */}
-                <div className="flex-shrink-0">
-                  {patient.photoUrl ? (
-                    <img
-                      src={patient.photoUrl}
-                      alt={`${patient.givenName} ${patient.familyName}`}
-                      className="w-12 h-12 sm:w-16 sm:h-16 rounded-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-gray-200 flex items-center justify-center">
-                      <span className="text-lg sm:text-xl font-medium text-gray-600">
-                        {patient.givenName[0]}
-                        {patient.familyName[0]}
+          <>
+            <table className="data-table hidden md:table">
+              <thead>
+                <tr>
+                  <th scope="col">Patient</th>
+                  <th scope="col">Sex / age</th>
+                  <th scope="col">Phone</th>
+                  <th scope="col">Location</th>
+                  <th scope="col">Registered</th>
+                  <th scope="col">ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((p) => {
+                  const age = patientAge(p.dob);
+                  return (
+                    <tr key={p.id}>
+                      <td>
+                        <Link
+                          to={`/patients/${p.id}`}
+                          className="font-medium text-ink hover:underline"
+                        >
+                          {p.givenName} {p.familyName}
+                        </Link>
+                      </td>
+                      <td className="text-ink-secondary">
+                        {SEX_SHORT[p.sex] ?? "—"} · {age ?? "—"}
+                      </td>
+                      <td className="text-ink-secondary">{p.phone || "—"}</td>
+                      <td className="text-ink-secondary">
+                        {[p.lga, p.state].filter(Boolean).join(", ") || "—"}
+                      </td>
+                      <td className="text-ink-secondary">
+                        {formatNigerianDate(p.createdAt)}
+                      </td>
+                      <td className="font-mono text-caption text-ink-muted">
+                        {formatPatientId(p.id)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            <ul className="divide-y divide-line md:hidden">
+              {visible.map((p) => {
+                const age = patientAge(p.dob);
+                return (
+                  <li key={p.id}>
+                    <Link
+                      to={`/patients/${p.id}`}
+                      className="block px-4 py-3 active:bg-surface-sunken"
+                    >
+                      <span className="flex items-baseline justify-between gap-2">
+                        <span className="truncate font-medium text-ink">
+                          {p.givenName} {p.familyName}
+                        </span>
+                        <span className="shrink-0 font-mono text-caption text-ink-muted">
+                          {formatPatientId(p.id)}
+                        </span>
                       </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Patient Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center space-x-3 mb-2">
-                    <h3 className="text-lg font-medium text-gray-900 truncate">
-                      {patient.givenName} {patient.familyName}
-                    </h3>
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                      {patient.sex}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-6 space-y-1 sm:space-y-0 text-sm text-gray-600">
-                    <div className="flex items-center space-x-1">
-                      <span>Age: {getPatientAge(patient.dob)}</span>
-                    </div>
-
-                    <div className="flex items-center space-x-1">
-                      <PhoneIcon className="h-4 w-4" />
-                      <span>{patient.phone}</span>
-                    </div>
-
-                    <div className="flex items-center space-x-1">
-                      <MapPinIcon className="h-4 w-4" />
-                      <span>
-                        {patient.state}, {patient.lga}
+                      <span className="block text-caption text-ink-secondary">
+                        {SEX_SHORT[p.sex] ?? "—"} · {age ?? "—"} yrs
+                        {p.phone ? ` · ${p.phone}` : ""}
+                        {p.lga ? ` · ${p.lga}` : ""}
                       </span>
-                    </div>
-                  </div>
-                </div>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
 
-                {/* Patient ID */}
-                <div className="flex-shrink-0 text-right">
-                  <p className="text-xs text-gray-500">ID</p>
-                  <p className="text-sm font-mono text-gray-700">
-                    {patient.id.slice(-8).toUpperCase()}
-                  </p>
-                </div>
+            {filtered.length > visible.length && (
+              <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+                <span className="text-caption text-ink-muted">
+                  Showing {visible.length} of {filtered.length.toLocaleString()}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLimit((l) => l + PAGE_SIZE)}
+                  className="btn-secondary"
+                >
+                  Show {Math.min(PAGE_SIZE, filtered.length - visible.length)} more
+                </button>
               </div>
-            </div>
-          ))
+            )}
+          </>
         )}
       </div>
     </div>

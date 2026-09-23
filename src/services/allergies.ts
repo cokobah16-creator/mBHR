@@ -1,4 +1,5 @@
 import { db, generateId, type PatientAllergy } from "../db";
+import { matchMedicationToAllergen } from "@/utils/allergyMatch";
 
 export interface CreateAllergyInput {
   patientId: string;
@@ -136,10 +137,9 @@ export const checkMedicationAllergy = async (
 ): Promise<PatientAllergy | null> => {
   const allergies = await getMedicationAllergies(patientId);
 
+  // Direct name match or same drug class (e.g. penicillin → amoxicillin).
   const match = allergies.find(
-    (a) =>
-      a.allergen.toLowerCase().includes(medicationName.toLowerCase()) ||
-      medicationName.toLowerCase().includes(a.allergen.toLowerCase()),
+    (a) => matchMedicationToAllergen(medicationName, a.allergen) !== null,
   );
 
   return match || null;

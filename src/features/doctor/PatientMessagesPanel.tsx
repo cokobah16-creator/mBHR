@@ -360,34 +360,36 @@ export function PatientMessagesPanel({
   return (
     <div className="bg-white rounded-lg shadow-lg overflow-hidden h-full flex flex-col">
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4">
+      <div className="bg-surface text-ink border-b border-line p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             {viewMode !== "inbox" && (
               <button
                 onClick={goToInbox}
-                className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                className="p-1 hover:bg-surface-hover rounded-md transition-colors"
+                aria-label="Back"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
             )}
-            <InboxIcon className="h-8 w-8" />
+            <InboxIcon className="h-6 w-6 text-ink-muted" aria-hidden />
             <div>
-              <h2 className="text-xl font-bold">Patient Messages</h2>
-              <p className="text-sm text-blue-100">{headerSubtitle}</p>
+              <h2 className="text-h2 text-ink">Patient Messages</h2>
+              <p className="text-sm text-ink-muted">{headerSubtitle}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {totalUnread > 0 && viewMode === "inbox" && (
-              <span className="px-2 py-1 bg-red-500 text-white text-sm font-bold rounded-full">
+              <span className="badge badge-danger">
                 {totalUnread} new
               </span>
             )}
             {viewMode === "inbox" && (
               <button
                 onClick={() => setViewMode("compose")}
-                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                title="New Message"
+                className="p-2 hover:bg-surface-hover rounded-md transition-colors"
+                title="New message"
+                aria-label="New message"
               >
                 <PencilSquareIcon className="h-5 w-5" />
               </button>
@@ -395,7 +397,8 @@ export function PatientMessagesPanel({
             {onClose && (
               <button
                 onClick={onClose}
-                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                className="p-2 hover:bg-surface-hover rounded-md transition-colors"
+                aria-label="Close"
               >
                 <XMarkIcon className="h-5 w-5" />
               </button>

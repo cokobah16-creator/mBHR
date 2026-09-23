@@ -1,50 +1,33 @@
-import React, { startTransition } from "react";
+import { startTransition } from "react";
 import { useNavigate } from "react-router-dom";
 import { PatientForm } from "@/components/PatientForm";
-import { ArrowLeftIcon } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { RegistrationModeSwitch } from "@/components/RegistrationModeSwitch";
+import { announceRegistration } from "@/services/registrationFeedback";
 
 export function Register() {
   const navigate = useNavigate();
 
-  const handleSuccess = (patientId: string) => {
-    // Navigate to patient details or back to dashboard
-    startTransition(() => {
-      navigate("/dashboard", {
-        state: {
-          message: "Patient registered successfully!",
-          patientId,
-        },
-      });
-    });
+  const handleSuccess = async (
+    patientId: string,
+    opts?: { existing?: boolean },
+  ) => {
+    await announceRegistration(patientId, opts);
+    startTransition(() => navigate(`/patients/${patientId}`));
   };
 
   const handleCancel = () => {
-    startTransition(() => {
-      navigate("/dashboard");
-    });
+    startTransition(() => navigate("/dashboard"));
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center space-x-4">
-        <button
-          onClick={() => startTransition(() => navigate("/dashboard"))}
-          className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
-        >
-          <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-        </button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Patient Registration
-          </h1>
-          <p className="text-gray-600">
-            Register a new patient for today's clinic
-          </p>
-        </div>
-      </div>
-
-      {/* Form */}
+    <div>
+      <PageHeader
+        breadcrumbs={[{ label: "Patients", to: "/patients" }, { label: "Register" }]}
+        title="Patient Registration"
+        description="Check the patient is not already registered before adding them. Possible duplicates are shown before saving."
+      />
+      <RegistrationModeSwitch mode="full" />
       <PatientForm onSuccess={handleSuccess} onCancel={handleCancel} />
     </div>
   );

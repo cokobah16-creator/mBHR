@@ -42,6 +42,9 @@ on a device it sends you to `/setup` to create the administrator:
 3. Choose and confirm a 6-digit PIN — it is stored only on this device and
    cannot be recovered, so write it down somewhere safe
 4. You are signed in automatically; add the rest of the staff from **Users**
+5. Add the outreach site(s) in **Outreach reports → Manage outreach sites**, then pick
+   the active site from the selector at the top of the screen. Every new
+   visit on the device is recorded against that site.
 
 The setup screen refuses to run once any active staff account exists, so it
 cannot be used to mint an admin on a device that is already provisioned. The
@@ -58,6 +61,12 @@ data is untouched; only the demo logins stop working.
 Development builds (`npm run dev`) seed demo staff instead and skip setup; those
 demo PINs are listed in the login page's debug panel and never exist in a
 production build.
+
+## Documentation
+
+See [`docs/`](docs/README.md) for guides, deployment, the
+[design system](docs/development/DESIGN_SYSTEM.md) and the
+[legal review status](docs/legal/README.md) of the privacy notice and terms.
 
 ## Architecture
 

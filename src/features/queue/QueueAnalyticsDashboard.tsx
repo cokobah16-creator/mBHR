@@ -110,7 +110,7 @@ export function QueueAnalyticsDashboard() {
               Predictive Queue Analytics
             </h2>
             <p className="text-gray-600">
-              AI-powered insights for optimal queue management and patient flow
+              Wait-time estimates and bottlenecks from today’s queue
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -489,11 +489,10 @@ export function QueueAnalyticsDashboard() {
           <div className="text-sm text-blue-900">
             <p className="font-medium mb-1">About Predictive Queue Analytics</p>
             <p className="text-blue-800">
-              This AI-powered system analyzes historical patterns, current queue
-              status, and patient risk factors to predict wait times, optimize
-              patient order, and recommend staffing levels. All predictions work
-              completely offline using machine learning algorithms running in
-              your browser.
+              Estimates are calculated on this device from recent service times,
+              current queue length and patient priority. They work offline and
+              are approximate — use them as a guide for staffing, not a
+              promise to patients.
             </p>
           </div>
         </div>

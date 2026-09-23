@@ -173,6 +173,12 @@ export interface QueueItem {
    */
   ticketNumber?: string;
   queuedAt?: Date;
+  /**
+   * Staff member who called the patient for the current stage. Local to the
+   * device (not in the sync column map), so other devices show no assignee.
+   */
+  assignedTo?: string;
+  assignedName?: string;
   updatedAt: Date;
   _dirty?: number;
   _syncedAt?: string;
@@ -1217,7 +1223,7 @@ export class MBHRDatabase extends Dexie {
     });
 
     // v16 — PHI field-level encryption (encryption_v1 sprint).
-    // See: docs/PHI_ENCRYPTION_SPIKE.md, github issue #107.
+    // See: docs/security/PHI_ENCRYPTION_SPIKE.md, github issue #107.
     //
     // No new Dexie indexes — encrypted columns (_enc, _iv, _v) are stored
     // but never queried directly. Operational/index columns stay plaintext.

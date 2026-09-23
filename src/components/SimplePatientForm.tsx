@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useT } from "@/hooks/useT";
 import { StepperForm } from "@/components/StepperForm";
+import { PatientDedupeModal } from "@/components/PatientDedupeModal";
 import { VisualNumberInput } from "@/components/VisualNumberInput";
 import { usePatientsStore } from "@/stores/patients";
 import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG } from "@/utils/nigeria";
@@ -13,7 +14,7 @@ import {
 } from "@heroicons/react/24/outline";
 
 interface SimplePatientFormProps {
-  onSuccess?: (patientId: string) => void;
+  onSuccess?: (patientId: string, opts?: { existing?: boolean }) => void;
   onCancel?: () => void;
   className?: string;
 }
@@ -26,6 +27,12 @@ export function SimplePatientForm({
   const { t } = useT();
   const { addPatient } = usePatientsStore();
 
+  const [dedupeData, setDedupeData] = useState<{
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    patient: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    candidates: any[];
+  } | null>(null);
   const [formData, setFormData] = useState({
     givenName: "",
     familyName: "",
@@ -105,7 +112,12 @@ export function SimplePatientForm({
 
       onSuccess?.(patientId);
     } catch (error) {
-      console.error("Error registering patient:", error);
+      // A possible duplicate is not a failure: let staff decide.
+      if (error instanceof Error && error.message.startsWith("DUPLICATES_FOUND:")) {
+        setDedupeData(JSON.parse(error.message.replace("DUPLICATES_FOUND:", "")));
+        return;
+      }
+      console.error("Error registering patient:", error instanceof Error ? error.name : "unknown");
       alert(t("error.registrationFailed"));
     } finally {
       setLoading(false);
@@ -369,12 +381,45 @@ export function SimplePatientForm({
     },
   ];
 
+  const handleDedupeResolve = async (
+    action: "merge" | "create_new",
+    winnerId?: string,
+  ) => {
+    const pending = dedupeData;
+    setDedupeData(null);
+    if (action === "merge" && winnerId) {
+      onSuccess?.(winnerId, { existing: true });
+      return;
+    }
+    if (action === "create_new" && pending) {
+      try {
+        const patientId = await addPatient(
+          { ...pending.patient, photoUrl: formData.photo || undefined },
+          { skipDuplicateCheck: true },
+        );
+        onSuccess?.(patientId);
+      } catch {
+        alert(t("error.registrationFailed"));
+      }
+    }
+  };
+
   return (
-    <StepperForm
-      steps={steps}
-      onComplete={handleComplete}
-      onCancel={onCancel}
-      className={className}
-    />
+    <>
+      <StepperForm
+        steps={steps}
+        onComplete={handleComplete}
+        onCancel={onCancel}
+        className={className}
+      />
+      {dedupeData && (
+        <PatientDedupeModal
+          newPatient={dedupeData.patient}
+          candidates={dedupeData.candidates}
+          onResolve={handleDedupeResolve}
+          onCancel={() => setDedupeData(null)}
+        />
+      )}
+    </>
   );
 }

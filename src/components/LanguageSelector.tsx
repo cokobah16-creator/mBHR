@@ -49,6 +49,8 @@ export function LanguageSelector({
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center space-x-2 px-3 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
         disabled={loading}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
       >
         <LanguageIcon className="h-5 w-5 text-gray-600" />
         <span className="text-sm font-medium text-gray-700">
@@ -60,7 +62,7 @@ export function LanguageSelector({
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+        <div className="absolute top-full right-0 mt-1 w-64 max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-lg shadow-xl z-50">
           <div className="p-2">
             <div className="text-xs font-medium text-gray-500 uppercase tracking-wider px-3 py-2">
               {t("language.select")}
@@ -94,8 +96,9 @@ export function LanguageSelector({
                       e.stopPropagation();
                       playAudioPreview(localeOption.code);
                     }}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-100 transition-all"
+                    className="opacity-60 group-hover:opacity-100 focus:opacity-100 p-1 rounded hover:bg-gray-100 transition-opacity"
                     disabled={playingAudio === localeOption.code}
+                    aria-label={`Play a sample in ${localeOption.name}`}
                   >
                     <SpeakerWaveIcon
                       className={`h-4 w-4 text-gray-600 ${
@@ -112,7 +115,7 @@ export function LanguageSelector({
 
           <div className="border-t border-gray-100 p-3">
             <p className="text-xs text-gray-500">
-              🔊 {t("language.audioSupport")}
+              {t("language.audioSupport")}
             </p>
           </div>
         </div>

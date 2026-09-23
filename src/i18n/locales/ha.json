@@ -310,5 +310,25 @@
       "closed": "[EN] Closed",
       "open": "[EN] Open"
     }
-  }
+  },
+
+  "portal.home.greeting.morning": "[EN] Good morning, {{name}}",
+  "portal.home.greeting.afternoon": "[EN] Good afternoon, {{name}}",
+  "portal.home.greeting.evening": "[EN] Good evening, {{name}}",
+  "portal.home.nextAppointment": "[EN] Next appointment",
+  "portal.home.noAppointment": "[EN] No upcoming appointments.",
+  "portal.home.videoVisit": "[EN] Video visit",
+  "portal.home.joinVideo": "[EN] Join video visit",
+  "portal.home.yourHealth": "[EN] Your health",
+  "portal.home.visits": "[EN] Visits",
+  "portal.home.conditions": "[EN] Conditions",
+  "portal.home.medicines": "[EN] Medicines",
+  "portal.home.request": "[EN] Request",
+  "portal.home.appointment": "[EN] Appointment",
+  "portal.home.refill": "[EN] Prescription refill",
+  "portal.home.televisit": "[EN] Video visit",
+  "portal.home.messagesHint": "[EN] Send a message to the outreach team",
+  "portal.home.outreachHint": "[EN] Upcoming medical outreaches near you",
+  "portal.home.yourData": "[EN] Your records and privacy",
+  "portal.home.notEmergency": "[EN] Not for emergencies. If you need urgent help, go to the nearest hospital."
 }

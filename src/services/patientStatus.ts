@@ -30,43 +30,43 @@ const STATUS_META: Record<
 > = {
   registered: {
     label: "Registered",
-    classes: "bg-blue-100 text-blue-800 border-blue-200",
+    classes: "bg-stage-registration-soft text-stage-registration border-stage-registration-line",
   },
   vitals_pending: {
     label: "Vitals Pending",
-    classes: "bg-emerald-100 text-emerald-800 border-emerald-200",
+    classes: "bg-stage-vitals-soft text-stage-vitals border-stage-vitals-line",
   },
   vitals_in_progress: {
     label: "Vitals In Progress",
-    classes: "bg-emerald-200 text-emerald-900 border-emerald-300",
+    classes: "bg-stage-vitals-soft text-stage-vitals border-stage-vitals font-semibold",
   },
   awaiting_doctor: {
     label: "Awaiting Doctor",
-    classes: "bg-purple-100 text-purple-800 border-purple-200",
+    classes: "bg-stage-consult-soft text-stage-consult border-stage-consult-line",
   },
   with_doctor: {
     label: "With Doctor",
-    classes: "bg-purple-200 text-purple-900 border-purple-300",
+    classes: "bg-stage-consult-soft text-stage-consult border-stage-consult font-semibold",
   },
   prescription_ready: {
     label: "Prescription Ready",
-    classes: "bg-amber-100 text-amber-800 border-amber-200",
+    classes: "bg-stage-pharmacy-soft text-stage-pharmacy border-stage-pharmacy-line",
   },
   at_pharmacy: {
     label: "At Pharmacy",
-    classes: "bg-amber-200 text-amber-900 border-amber-300",
+    classes: "bg-stage-pharmacy-soft text-stage-pharmacy border-stage-pharmacy font-semibold",
   },
   medicine_collected: {
     label: "Medicine Collected",
-    classes: "bg-teal-100 text-teal-800 border-teal-200",
+    classes: "bg-success-soft text-success-fg border-success-line",
   },
   completed: {
     label: "Completed",
-    classes: "bg-gray-100 text-gray-700 border-gray-200",
+    classes: "bg-surface-sunken text-ink-secondary border-line",
   },
   referred: {
     label: "Referred",
-    classes: "bg-rose-100 text-rose-800 border-rose-200",
+    classes: "bg-warning-soft text-warning-fg border-warning-line",
   },
 };
 

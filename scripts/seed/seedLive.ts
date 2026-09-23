@@ -536,7 +536,7 @@ async function main(): Promise<void> {
       "     staff with these PINs (the cloud `users` table is the canonical roster).\n" +
       "  2. Physical stock is entered via the restock flow on packing day —\n" +
       "     on-hand quantities were deliberately seeded as 0.\n" +
-      "  3. SMS: set the Termii secrets and run `npm run test:sms` (see SMS_SETUP_TERMII.md).\n",
+      "  3. SMS: set the Termii secrets and run `npm run test:sms` (see docs/deployment/SMS_SETUP_TERMII.md).\n",
   );
 }
 

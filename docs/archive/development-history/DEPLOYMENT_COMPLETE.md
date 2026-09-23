@@ -400,9 +400,9 @@ Before user access, verify:
 ### Documentation
 
 - [Production Readiness Report](PRODUCTION_READINESS.md)
-- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md)
-- [User Guide](docs/USER_GUIDE.md)
-- [Quick Reference](docs/QUICK_REFERENCE.md)
+- [Deployment Guide](../../deployment/DEPLOYMENT_GUIDE.md)
+- [User Guide](../../guides/USER_GUIDE.md)
+- [Quick Reference](../../guides/QUICK_REFERENCE.md)
 
 ---
 
