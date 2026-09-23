@@ -62,6 +62,8 @@ The PIN hashing utility provides:
 2. **Reset the device** (administrator approval required):
    - Sign in as an admin, open **Settings** → **Device recovery**, then
      re-enter your admin PIN. It is not available from the login page.
+   - If no administrator can sign in, the only option left is clearing this
+     site's data in the browser settings, which loses anything not yet synced.
    - This deletes every patient, visit and staff account on the device,
      including anything not yet synced, and the device returns to first-run
      setup.
@@ -69,7 +71,8 @@ The PIN hashing utility provides:
 ### Common Issues:
 
 **"Invalid PIN" with correct PIN**
-- Database might be corrupted — ask an administrator to reset the device
+- Database might be corrupted — ask an administrator to reset the device from
+  **Settings** (see above if no administrator can sign in)
 
 **Lockout after 5 attempts**
 - Wait 15 minutes. Wrong admin PINs in the reset form count towards the same

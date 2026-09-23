@@ -10,7 +10,7 @@ export default function Settings() {
   return (
     <div>
       <PageHeader
-        breadcrumbs={[{ label: "Administration" }, { label: "Settings" }]}
+        breadcrumbs={[{ label: "Dashboard", to: "/dashboard" }, { label: "Settings" }]}
         title="Settings"
         description="Administrator settings for this device."
       />
@@ -23,8 +23,8 @@ export default function Settings() {
         </div>
         <div className="panel-body space-y-3">
           <p className="text-body text-ink-secondary">
-            Use this when this device's data is corrupted or the device is being
-            handed over. Sync first: anything not yet uploaded is lost.
+            Use this when this device's local data is corrupted and staff can no
+            longer work on it. Sync first: anything not yet uploaded is lost.
           </p>
           {/* Asks for an administrator PIN again even though you are signed in */}
           <DeviceResetPanel />
