@@ -1,167 +1,220 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { useT } from "@/hooks/useT";
-import { getMessageService } from "@/services/messaging";
-import { MessageQueue } from "@/db/outbox";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  ArrowPathIcon,
+  ChatBubbleLeftRightIcon,
+  ExclamationTriangleIcon,
+  PaperAirplaneIcon,
+} from "@heroicons/react/24/outline";
+import { generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
+import { useToast } from "@/stores/toast";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { isNotificationWorkerRunning, processNow } from "@/services/notificationWorker";
+import { SendingReadiness } from "@/features/notifications/OutboxBadges";
 import {
-  ChatBubbleLeftRightIcon,
-  PaperAirplaneIcon,
-  ExclamationTriangleIcon,
-} from "@heroicons/react/24/outline";
-import * as logger from "@/lib/logger";
+  useDeviceOutbox,
+  useNow,
+  useOnlineStatus,
+} from "@/features/notifications/useOutboxStatus";
+import {
+  DELIVERY_STATE_META,
+  FILTERABLE_STATES,
+  countByState,
+  describeRun,
+  formatWhen,
+  isDue,
+  isStuckSending,
+  type SendingBlocker,
+} from "@/features/notifications/smsOutbox";
 
-interface MessageStats {
-  queued: number;
-  sent: number;
-  failed: number;
-  delivered: number;
-}
-
+/**
+ * Dashboard summary of SMS stored on this device, by real delivery state.
+ * "Sent to provider" is not "delivered"; delivered needs a stored receipt.
+ */
 export function MessageOutbox() {
-  const { t } = useT();
-  const { currentUser } = useAuthStore();
-  const [stats, setStats] = useState<MessageStats>({
-    queued: 0,
-    sent: 0,
-    failed: 0,
-    delivered: 0,
-  });
+  const currentUser = useAuthStore((s) => s.currentUser);
+  // Messaging management follows the existing gate on this widget.
+  const canView = !!currentUser && can(currentUser.role, "export");
+  // Same roles as the /pharmacy/sms-reminders route.
+  const canOpenReminders =
+    !!currentUser && (currentUser.role === "pharmacist" || currentUser.role === "admin");
+  const { push } = useToast();
+  const online = useOnlineStatus();
+  const now = useNow();
+  const items = useDeviceOutbox({ enabled: canView });
   const [processing, setProcessing] = useState(false);
-  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [lastRun, setLastRun] = useState<{ at: Date; text: string } | null>(null);
+  const [autoSending, setAutoSending] = useState(() => isNotificationWorkerRunning());
 
-  const loadStats = useCallback(async () => {
-    try {
-      const messageStats = await MessageQueue.getStats();
-      setStats(messageStats);
-    } catch (error) {
-      logger.error("Error loading message stats:", error);
+  const blocker: SendingBlocker | null = !isSupabaseEnabled
+    ? "not_configured"
+    : !online
+      ? "offline"
+      : null;
+
+  const counts = useMemo(() => countByState(items ?? []), [items]);
+  const dueCount = useMemo(
+    () => (items ?? []).filter((i) => i.state === "queued" && isDue(i, now)).length,
+    [items, now],
+  );
+  const stuckCount = useMemo(
+    () => (items ?? []).filter((i) => isStuckSending(i, now)).length,
+    [items, now],
+  );
+  const unconfirmedCount = useMemo(
+    () => (items ?? []).filter((i) => i.sentConfirmation === "unconfirmed").length,
+    [items],
+  );
+
+  const handleSend = async () => {
+    if (!currentUser || !can(currentUser.role, "export")) {
+      push({
+        id: generateId(),
+        tone: "error",
+        title: "Not allowed",
+        body: "Your role cannot send messages from the outbox.",
+      });
+      return;
     }
-  }, []);
-
-  useEffect(() => {
-    loadStats();
-    const interval = setInterval(loadStats, 30000); // Refresh every 30 seconds
-    return () => clearInterval(interval);
-  }, [loadStats]);
-
-  const processMessages = useCallback(async () => {
     setProcessing(true);
     try {
-      const messageService = getMessageService();
-      const result = await messageService.processOutbox();
-
-      setLastSync(new Date());
-      await loadStats();
-
-      if (result.sent > 0 || result.failed > 0) {
-        const message = t("messaging.processComplete")
-          .replace("{{sent}}", result.sent.toString())
-          .replace("{{failed}}", result.failed.toString());
-        alert(message);
-      } else {
-        alert(t("messaging.noMessages"));
-      }
+      const result = await processNow();
+      const text = describeRun(result);
+      setLastRun({ at: new Date(), text });
+      setAutoSending(isNotificationWorkerRunning());
+      push({
+        id: generateId(),
+        tone: result.skipped || (result.failed ?? 0) > 0 ? "warning" : "success",
+        title: "Send run finished",
+        body: text,
+      });
     } catch (error) {
-      logger.error("Error processing outbox:", error);
-      alert(t("messaging.processError"));
+      console.error("Outbox send run failed:", error instanceof Error ? error.name : error);
+      push({
+        id: generateId(),
+        tone: "error",
+        title: "Messages were not sent",
+        body: "Queued messages are still on this device. Try again.",
+      });
     } finally {
       setProcessing(false);
     }
-  }, [t, loadStats]);
+  };
 
-  // Only admins and nurses can manage messaging
-  if (!currentUser || !can(currentUser.role, "export")) {
-    return null;
-  }
+  if (!canView) return null;
+
+  const sendHint =
+    blocker === "offline"
+      ? "Sending needs an internet connection."
+      : blocker === "not_configured"
+        ? "Sending needs the mBHR server, which is not set up on this device."
+        : dueCount === 0 && counts.queued > 0
+          ? "Queued messages are scheduled for later; none are due yet."
+          : dueCount === 0
+            ? "Nothing is waiting to be sent."
+            : `${dueCount} ${dueCount === 1 ? "message is" : "messages are"} due.`;
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center space-x-3">
-          <ChatBubbleLeftRightIcon className="h-6 w-6 text-primary" />
-          <h3 className="text-lg font-semibold text-gray-900">
-            {t("messaging.outbox")}
-          </h3>
+    <section className="panel" aria-labelledby="message-outbox-title">
+      <div className="panel-header">
+        <div className="flex min-w-0 items-center gap-2">
+          <ChatBubbleLeftRightIcon className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
+          <h2 id="message-outbox-title" className="panel-title">
+            SMS outbox on this device
+          </h2>
         </div>
+        {canOpenReminders && (
+          <Link to="/pharmacy/sms-reminders" className="btn-ghost">
+            Open SMS reminders
+          </Link>
+        )}
+      </div>
 
+      <div className="panel-body space-y-4">
+        {items === undefined ? (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" aria-hidden>
+            {FILTERABLE_STATES.map((s) => (
+              <Skeleton key={s} className="h-14" />
+            ))}
+          </div>
+        ) : (
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {FILTERABLE_STATES.map((s) => (
+              <div key={s} className="rounded-md border border-line px-3 py-2">
+                <dt className="text-caption text-ink-muted">
+                  {DELIVERY_STATE_META[s].filterLabel}
+                </dt>
+                <dd className="text-h3 tabular-nums text-ink">{counts[s]}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {counts.failed > 0 && (
+          <div className="banner banner-danger">
+            <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <p>
+              {counts.failed} {counts.failed === 1 ? "message has" : "messages have"} failed and
+              will not be sent unless retried.
+              {canOpenReminders ? " Open SMS reminders to see why and retry." : ""}
+            </p>
+          </div>
+        )}
+
+        {stuckCount > 0 && (
+          <div className="banner banner-warning">
+            <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <p>
+              {stuckCount} {stuckCount === 1 ? "message shows" : "messages show"} Sending with no
+              result recorded. {stuckCount === 1 ? "It" : "They"} may or may not have reached the
+              patient.
+            </p>
+          </div>
+        )}
+
+        {unconfirmedCount > 0 && (
+          <div className="banner banner-warning">
+            <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <p>
+              {unconfirmedCount} {unconfirmedCount === 1 ? "message is" : "messages are"} marked
+              sent, but no SMS provider acceptance is stored. Older versions of mBHR and test
+              gateways marked messages sent without sending them, so{" "}
+              {unconfirmedCount === 1 ? "it" : "they"} may not have reached the patient.
+            </p>
+          </div>
+        )}
+
+        <SendingReadiness blocker={blocker} autoSending={autoSending} />
+
+        {lastRun && (
+          <p className="text-label text-ink-secondary">
+            Last run {formatWhen(lastRun.at)}: {lastRun.text}
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-line px-4 py-3 sm:flex-row sm:items-center">
         <button
-          onClick={processMessages}
-          disabled={processing || stats.queued === 0}
-          className="btn-primary inline-flex items-center space-x-2 disabled:opacity-50"
+          type="button"
+          onClick={handleSend}
+          disabled={processing || blocker !== null || dueCount === 0}
+          aria-describedby="message-outbox-send-hint"
+          className="btn-secondary"
         >
-          <PaperAirplaneIcon className="h-4 w-4" />
-          <span>
-            {processing ? t("messaging.sending") : t("messaging.sendQueued")}
-          </span>
+          {processing ? (
+            <ArrowPathIcon className="h-5 w-5 animate-spin" aria-hidden />
+          ) : (
+            <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
+          )}
+          {processing ? "Sending…" : "Send due messages now"}
         </button>
+        <p id="message-outbox-send-hint" className="text-caption text-ink-muted">
+          {sendHint}
+        </p>
       </div>
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="text-center p-4 bg-yellow-50 rounded-lg">
-          <div className="text-2xl font-bold text-yellow-800">
-            {stats.queued}
-          </div>
-          <div className="text-sm text-yellow-800">{t("messaging.queued")}</div>
-        </div>
-        <div className="text-center p-4 bg-blue-50 rounded-lg">
-          <div className="text-2xl font-bold text-blue-800">{stats.sent}</div>
-          <div className="text-sm text-blue-800">{t("messaging.sent")}</div>
-        </div>
-        <div className="text-center p-4 bg-green-50 rounded-lg">
-          <div className="text-2xl font-bold text-green-800">
-            {stats.delivered}
-          </div>
-          <div className="text-sm text-green-800">
-            {t("messaging.delivered")}
-          </div>
-        </div>
-        <div className="text-center p-4 bg-red-50 rounded-lg">
-          <div className="text-2xl font-bold text-red-800">{stats.failed}</div>
-          <div className="text-sm text-red-800">{t("messaging.failed")}</div>
-        </div>
-      </div>
-
-      {/* Status Info */}
-      <div className="flex items-center justify-between text-sm text-gray-600">
-        <div>
-          {lastSync ? (
-            <span>
-              {t("messaging.lastSync")}: {lastSync.toLocaleTimeString()}
-            </span>
-          ) : (
-            <span>{t("messaging.neverSynced")}</span>
-          )}
-        </div>
-        <div className="flex items-center space-x-2">
-          {navigator.onLine ? (
-            <>
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              <span>{t("status.online")}</span>
-            </>
-          ) : (
-            <>
-              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-              <span>{t("status.offline")}</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {stats.queued > 0 && !navigator.onLine && (
-        <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-          <div className="flex items-center space-x-2">
-            <ExclamationTriangleIcon className="h-5 w-5 text-yellow-700" />
-            <span className="text-sm text-yellow-800">
-              {t("messaging.offlineQueue").replace(
-                "{{count}}",
-                stats.queued.toString(),
-              )}
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
+    </section>
   );
 }
