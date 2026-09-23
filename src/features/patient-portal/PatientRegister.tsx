@@ -1,17 +1,19 @@
 import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ArrowRightIcon,
   CheckCircleIcon,
-  UserPlusIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
 import { registerPatientPortalAccount } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
+import { AuthShell } from "./account/AuthShell";
 
 // Online: password-based auth via Supabase
 const onlineSchema = z
@@ -207,410 +209,366 @@ export function PatientRegister() {
     }
   };
 
+  const describe = (...ids: (string | false | undefined)[]) =>
+    ids.filter(Boolean).join(" ") || undefined;
+  const fieldErrors = form.formState.errors as Partial<
+    Record<string, { message?: unknown }>
+  >;
+  const errorText = (name: string) => {
+    const message = fieldErrors[name]?.message;
+    return typeof message === "string" ? message : undefined;
+  };
+  const fieldError = (name: string) => {
+    const message = errorText(name);
+    return message ? (
+      <p id={`${name}-error`} className="field-error">
+        {message}
+      </p>
+    ) : null;
+  };
+  const invalid = (name: string) => (errorText(name) ? true : undefined);
+
   return (
-    <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          {step === "form" && (
-            <>
-              <div className="text-center mb-8">
-                <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
-                  <UserPlusIcon className="w-8 h-8 text-green-600" />
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                  Create Your Account
-                </h1>
-                <p className="text-gray-600">
-                  Join mBHR for secure access to your health records.
+    <AuthShell>
+      {step === "form" && (
+        <>
+          <div className="mb-6">
+            <h1 className="text-h1 text-ink">Create your account</h1>
+            <p className="mt-1 text-body text-ink-muted">
+              See your health records from mBHR clinics in one secure place.
+            </p>
+          </div>
+
+          {!isSupabaseEnabled && (
+            <div className="banner banner-info mb-5">
+              <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <div className="space-y-1">
+                <p className="font-medium">This device is in offline mode</p>
+                <p className="text-label font-normal">
+                  Your account will be stored on this device only. You will
+                  create a <strong>6-digit PIN</strong> to log in. Remember it:
+                  only clinic staff can reset it.
                 </p>
-              </div>
-
-              {!isSupabaseEnabled && (
-                <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-xs text-yellow-800 font-medium mb-1">
-                    Offline mode
-                  </p>
-                  <p className="text-xs text-yellow-700">
-                    Your account will be stored on this device only. You will
-                    create a <strong>6-digit PIN</strong> to log in — remember
-                    it, as it cannot be reset without staff assistance.
-                  </p>
-                </div>
-              )}
-
-              {error && (
-                <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-800">{error}</p>
-                </div>
-              )}
-
-              <form
-                onSubmit={form.handleSubmit(handleSubmit)}
-                className="space-y-5"
-              >
-                <div>
-                  <label
-                    htmlFor="fullName"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
-                    Full Name *
-                  </label>
-                  <input
-                    {...form.register("fullName")}
-                    type="text"
-                    id="fullName"
-                    placeholder="Jane Doe"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    disabled={loading}
-                    autoComplete="name"
-                  />
-                  {form.formState.errors.fullName && (
-                    <p className="mt-1 text-sm text-red-600">
-                      {form.formState.errors.fullName.message}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="email"
-                    className="block text-sm font-medium text-gray-700 mb-2"
-                  >
-                    Email Address *
-                  </label>
-                  <input
-                    {...form.register("email")}
-                    type="email"
-                    id="email"
-                    placeholder="your.email@example.com"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    disabled={loading}
-                    autoComplete="email"
-                  />
-                  {form.formState.errors.email && (
-                    <p className="mt-1 text-sm text-red-600">
-                      {form.formState.errors.email.message}
-                    </p>
-                  )}
-                </div>
-
-                <div
-                  className={isSupabaseEnabled ? "grid grid-cols-2 gap-4" : ""}
-                >
-                  <div>
-                    <label
-                      htmlFor="phone"
-                      className="block text-sm font-medium text-gray-700 mb-2"
-                    >
-                      Phone
-                    </label>
-                    <input
-                      {...form.register("phone")}
-                      type="tel"
-                      id="phone"
-                      placeholder="+234 XXX XXX XXXX"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      disabled={loading}
-                      autoComplete="tel"
-                    />
-                    {form.formState.errors.phone && (
-                      <p className="mt-1 text-xs text-red-600">
-                        {form.formState.errors.phone.message}
-                      </p>
-                    )}
-                  </div>
-
-                  {isSupabaseEnabled && (
-                    <div>
-                      <label
-                        htmlFor="dateOfBirth"
-                        className="block text-sm font-medium text-gray-700 mb-2"
-                      >
-                        Date of Birth
-                      </label>
-                      <input
-                        {...form.register("dateOfBirth")}
-                        type="date"
-                        id="dateOfBirth"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                        disabled={loading}
-                      />
-                      {form.formState.errors.dateOfBirth && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {form.formState.errors.dateOfBirth.message}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Offline: collect DOB for record-matching; PIN is the login credential */}
-                {!isSupabaseEnabled && (
-                  <>
-                    <div>
-                      <label
-                        htmlFor="dateOfBirth"
-                        className="block text-sm font-medium text-gray-700 mb-2"
-                      >
-                        Date of Birth *
-                      </label>
-                      <input
-                        {...form.register("dateOfBirth")}
-                        type="date"
-                        id="dateOfBirth"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                        disabled={loading}
-                        autoComplete="bday"
-                      />
-                      {form.formState.errors.dateOfBirth && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {form.formState.errors.dateOfBirth.message}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="pin"
-                        className="block text-sm font-medium text-gray-700 mb-2"
-                      >
-                        6-Digit PIN *{" "}
-                        <span className="text-xs font-normal text-blue-600">
-                          (used to log in)
-                        </span>
-                      </label>
-                      <input
-                        {...form.register("pin" as keyof RegistrationForm)}
-                        type="password"
-                        id="pin"
-                        inputMode="numeric"
-                        placeholder="••••••"
-                        maxLength={6}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent tracking-widest"
-                        disabled={loading}
-                        autoComplete="new-password"
-                      />
-                      <p className="mt-1 text-xs text-gray-500">
-                        Choose 6 digits you can remember. You will enter this
-                        every time you log in.
-                      </p>
-                      {form.formState.errors[
-                        "pin" as keyof RegistrationForm
-                      ] && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {
-                            form.formState.errors[
-                              "pin" as keyof RegistrationForm
-                            ]?.message as string
-                          }
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="confirmPin"
-                        className="block text-sm font-medium text-gray-700 mb-2"
-                      >
-                        Confirm PIN *
-                      </label>
-                      <input
-                        {...form.register(
-                          "confirmPin" as keyof RegistrationForm,
-                        )}
-                        type="password"
-                        id="confirmPin"
-                        inputMode="numeric"
-                        placeholder="••••••"
-                        maxLength={6}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent tracking-widest"
-                        disabled={loading}
-                        autoComplete="new-password"
-                      />
-                      {form.formState.errors[
-                        "confirmPin" as keyof RegistrationForm
-                      ] && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {
-                            form.formState.errors[
-                              "confirmPin" as keyof RegistrationForm
-                            ]?.message as string
-                          }
-                        </p>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {/* Password fields only shown in online (Supabase) mode */}
-                {isSupabaseEnabled && (
-                  <>
-                    <div>
-                      <label
-                        htmlFor="password"
-                        className="block text-sm font-medium text-gray-700 mb-2"
-                      >
-                        Password *
-                      </label>
-                      <input
-                        {...form.register("password" as keyof RegistrationForm)}
-                        type="password"
-                        id="password"
-                        placeholder="At least 8 characters"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                        disabled={loading}
-                        autoComplete="new-password"
-                      />
-                      {form.formState.errors[
-                        "password" as keyof RegistrationForm
-                      ] && (
-                        <p className="mt-1 text-sm text-red-600">
-                          {
-                            form.formState.errors[
-                              "password" as keyof RegistrationForm
-                            ]?.message as string
-                          }
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="confirmPassword"
-                        className="block text-sm font-medium text-gray-700 mb-2"
-                      >
-                        Confirm Password *
-                      </label>
-                      <input
-                        {...form.register(
-                          "confirmPassword" as keyof RegistrationForm,
-                        )}
-                        type="password"
-                        id="confirmPassword"
-                        placeholder="Repeat your password"
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                        disabled={loading}
-                        autoComplete="new-password"
-                      />
-                      {form.formState.errors[
-                        "confirmPassword" as keyof RegistrationForm
-                      ] && (
-                        <p className="mt-1 text-sm text-red-600">
-                          {
-                            form.formState.errors[
-                              "confirmPassword" as keyof RegistrationForm
-                            ]?.message as string
-                          }
-                        </p>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                <div className="flex items-start gap-3">
-                  <input
-                    {...form.register("consentGiven")}
-                    type="checkbox"
-                    id="consent"
-                    className="mt-1 w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                    disabled={loading}
-                  />
-                  <label htmlFor="consent" className="text-sm text-gray-700">
-                    I agree to the{" "}
-                    <a
-                      href="/terms"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary font-medium underline"
-                    >
-                      Terms of Use
-                    </a>{" "}
-                    and{" "}
-                    <a
-                      href="/privacy"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary font-medium underline"
-                    >
-                      Privacy Notice
-                    </a>
-                    . I consent to access my medical records through this
-                    portal.
-                  </label>
-                </div>
-                {form.formState.errors.consentGiven && (
-                  <p className="text-sm text-red-600">
-                    {form.formState.errors.consentGiven.message}
-                  </p>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-                >
-                  {loading ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Creating Account...
-                    </>
-                  ) : (
-                    <>
-                      Create Account
-                      <ArrowRightIcon className="w-5 h-5" />
-                    </>
-                  )}
-                </button>
-
-                <div className="text-center">
-                  <p className="text-sm text-gray-600">
-                    Already have an account?{" "}
-                    <button
-                      type="button"
-                      onClick={() => navigate("/patient/login")}
-                      className="text-green-600 hover:text-green-700 font-medium"
-                    >
-                      Login here
-                    </button>
-                  </p>
-                </div>
-              </form>
-            </>
-          )}
-
-          {step === "success" && (
-            <div className="text-center py-8">
-              <div className="inline-flex items-center justify-center w-20 h-20 bg-green-100 rounded-full mb-6">
-                <CheckCircleIcon className="w-12 h-12 text-green-600" />
-              </div>
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                Account Created!
-              </h1>
-              <p className="text-gray-600 mb-6">
-                {isSupabaseEnabled
-                  ? "Welcome to mBHR. If email confirmation is required, check your inbox — then log in."
-                  : "Welcome to mBHR. Redirecting to your dashboard…"}
-              </p>
-              <div className="flex justify-center">
-                <div className="w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full animate-spin" />
               </div>
             </div>
           )}
-        </div>
 
-        <div className="mt-6 text-center space-y-2">
-          <button
-            type="button"
-            onClick={() => navigate("/patient")}
-            className="text-sm text-green-600 hover:text-green-700 font-medium"
+          {error && (
+            <div className="banner banner-danger mb-5" role="alert">
+              <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <p>{error}</p>
+            </div>
+          )}
+
+          <form
+            onSubmit={form.handleSubmit(handleSubmit)}
+            className="space-y-5"
+            noValidate
           >
-            Back to Home
-          </button>
-          <p className="text-sm text-gray-500">
-            Med Bridge Health Reach · Secure patient portal
+            <p className="text-caption text-ink-muted">
+              Fields marked * are required.
+            </p>
+
+            <div>
+              <label htmlFor="fullName" className="field-label">
+                Full Name *
+              </label>
+              <input
+                {...form.register("fullName")}
+                type="text"
+                id="fullName"
+                placeholder="Jane Doe"
+                className="input-field"
+                disabled={loading}
+                autoComplete="name"
+                aria-required="true"
+                aria-invalid={invalid("fullName")}
+                aria-describedby={describe(!!errorText("fullName") && "fullName-error")}
+              />
+              {fieldError("fullName")}
+            </div>
+
+            <div>
+              <label htmlFor="email" className="field-label">
+                Email Address *
+              </label>
+              <input
+                {...form.register("email")}
+                type="email"
+                id="email"
+                placeholder="your.email@example.com"
+                className="input-field"
+                disabled={loading}
+                autoComplete="email"
+                aria-required="true"
+                aria-invalid={invalid("email")}
+                aria-describedby={describe(
+                  "email-hint",
+                  !!errorText("email") && "email-error",
+                )}
+              />
+              <p id="email-hint" className="field-hint">
+                Use the address the clinic has for you, so your account can be
+                linked to your clinic record.
+              </p>
+              {fieldError("email")}
+            </div>
+
+            <div className={isSupabaseEnabled ? "grid gap-4 sm:grid-cols-2" : ""}>
+              <div>
+                <label htmlFor="phone" className="field-label">
+                  Phone (optional)
+                </label>
+                <input
+                  {...form.register("phone")}
+                  type="tel"
+                  id="phone"
+                  placeholder="+234 XXX XXX XXXX"
+                  className="input-field"
+                  disabled={loading}
+                  autoComplete="tel"
+                  aria-invalid={invalid("phone")}
+                  aria-describedby={describe(!!errorText("phone") && "phone-error")}
+                />
+                {fieldError("phone")}
+              </div>
+
+              {isSupabaseEnabled && (
+                <div>
+                  <label htmlFor="dateOfBirth" className="field-label">
+                    Date of Birth (optional)
+                  </label>
+                  <input
+                    {...form.register("dateOfBirth")}
+                    type="date"
+                    id="dateOfBirth"
+                    className="input-field"
+                    disabled={loading}
+                    aria-invalid={invalid("dateOfBirth")}
+                    aria-describedby={describe(
+                      !!errorText("dateOfBirth") && "dateOfBirth-error",
+                    )}
+                  />
+                  {fieldError("dateOfBirth")}
+                </div>
+              )}
+            </div>
+
+            {/* Offline: collect DOB for record-matching; PIN is the login credential */}
+            {!isSupabaseEnabled && (
+              <>
+                <div>
+                  <label htmlFor="dateOfBirth" className="field-label">
+                    Date of Birth *
+                  </label>
+                  <input
+                    {...form.register("dateOfBirth")}
+                    type="date"
+                    id="dateOfBirth"
+                    className="input-field"
+                    disabled={loading}
+                    autoComplete="bday"
+                    aria-required="true"
+                    aria-invalid={invalid("dateOfBirth")}
+                    aria-describedby={describe(
+                      "dateOfBirth-hint",
+                      !!errorText("dateOfBirth") && "dateOfBirth-error",
+                    )}
+                  />
+                  <p id="dateOfBirth-hint" className="field-hint">
+                    Used to match you to your clinic record.
+                  </p>
+                  {fieldError("dateOfBirth")}
+                </div>
+
+                <div>
+                  <label htmlFor="pin" className="field-label">
+                    6-Digit PIN *
+                  </label>
+                  <input
+                    {...form.register("pin" as keyof RegistrationForm)}
+                    type="password"
+                    id="pin"
+                    inputMode="numeric"
+                    placeholder="••••••"
+                    maxLength={6}
+                    className="input-field tracking-widest"
+                    disabled={loading}
+                    autoComplete="new-password"
+                    aria-required="true"
+                    aria-invalid={invalid("pin")}
+                    aria-describedby={describe(
+                      "pin-hint",
+                      !!errorText("pin") && "pin-error",
+                    )}
+                  />
+                  <p id="pin-hint" className="field-hint">
+                    You will use this number to log in. Choose one you can
+                    remember and keep it to yourself.
+                  </p>
+                  {fieldError("pin")}
+                </div>
+
+                <div>
+                  <label htmlFor="confirmPin" className="field-label">
+                    Confirm PIN *
+                  </label>
+                  <input
+                    {...form.register("confirmPin" as keyof RegistrationForm)}
+                    type="password"
+                    id="confirmPin"
+                    inputMode="numeric"
+                    placeholder="••••••"
+                    maxLength={6}
+                    className="input-field tracking-widest"
+                    disabled={loading}
+                    autoComplete="new-password"
+                    aria-required="true"
+                    aria-invalid={invalid("confirmPin")}
+                    aria-describedby={describe(
+                      !!errorText("confirmPin") && "confirmPin-error",
+                    )}
+                  />
+                  {fieldError("confirmPin")}
+                </div>
+              </>
+            )}
+
+            {/* Password fields only shown in online (Supabase) mode */}
+            {isSupabaseEnabled && (
+              <>
+                <div>
+                  <label htmlFor="password" className="field-label">
+                    Password *
+                  </label>
+                  <input
+                    {...form.register("password" as keyof RegistrationForm)}
+                    type="password"
+                    id="password"
+                    placeholder="At least 8 characters"
+                    className="input-field"
+                    disabled={loading}
+                    autoComplete="new-password"
+                    aria-required="true"
+                    aria-invalid={invalid("password")}
+                    aria-describedby={describe(
+                      !!errorText("password") && "password-error",
+                    )}
+                  />
+                  {fieldError("password")}
+                </div>
+
+                <div>
+                  <label htmlFor="confirmPassword" className="field-label">
+                    Confirm Password *
+                  </label>
+                  <input
+                    {...form.register("confirmPassword" as keyof RegistrationForm)}
+                    type="password"
+                    id="confirmPassword"
+                    placeholder="Repeat your password"
+                    className="input-field"
+                    disabled={loading}
+                    autoComplete="new-password"
+                    aria-required="true"
+                    aria-invalid={invalid("confirmPassword")}
+                    aria-describedby={describe(
+                      !!errorText("confirmPassword") && "confirmPassword-error",
+                    )}
+                  />
+                  {fieldError("confirmPassword")}
+                </div>
+              </>
+            )}
+
+            <div className="rounded-md border border-line bg-surface-sunken p-3">
+              <div className="flex items-start gap-3">
+                <input
+                  {...form.register("consentGiven")}
+                  type="checkbox"
+                  id="consent"
+                  className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
+                  disabled={loading}
+                  aria-invalid={invalid("consentGiven")}
+                  aria-describedby={describe(
+                    !!errorText("consentGiven") && "consentGiven-error",
+                  )}
+                />
+                <label htmlFor="consent" className="text-body text-ink-secondary">
+                  I agree to the{" "}
+                  <a
+                    href="/terms"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-primary-fg underline underline-offset-2"
+                  >
+                    Terms of Use
+                  </a>{" "}
+                  and{" "}
+                  <a
+                    href="/privacy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-primary-fg underline underline-offset-2"
+                  >
+                    Privacy Notice
+                  </a>
+                  . I consent to access my medical records through this
+                  portal.
+                </label>
+              </div>
+              {fieldError("consentGiven")}
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary w-full"
+            >
+              {loading ? (
+                <>
+                  <span
+                    className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"
+                    aria-hidden
+                  />
+                  Creating Account...
+                </>
+              ) : (
+                <>
+                  Create Account
+                  <ArrowRightIcon className="h-5 w-5" aria-hidden />
+                </>
+              )}
+            </button>
+
+            <p className="text-center text-body text-ink-secondary">
+              Already have an account?{" "}
+              <Link
+                to="/patient/login"
+                className="font-medium text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                Log in here
+              </Link>
+            </p>
+          </form>
+        </>
+      )}
+
+      {step === "success" && (
+        <div className="py-6 text-center" role="status">
+          <CheckCircleIcon className="mx-auto mb-4 h-12 w-12 text-success" aria-hidden />
+          <h1 className="text-h1 text-ink">Your account is ready</h1>
+          <p className="mt-2 text-body text-ink-secondary">
+            {isSupabaseEnabled
+              ? "Welcome to mBHR. If we asked you to confirm your email address, check your inbox first, then log in."
+              : "Welcome to mBHR. Opening your dashboard…"}
           </p>
+          <span
+            className="mx-auto mt-6 block h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"
+            aria-hidden
+          />
         </div>
-      </div>
-    </div>
+      )}
+    </AuthShell>
   );
 }

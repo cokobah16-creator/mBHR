@@ -1,123 +1,119 @@
 import React, { useState, useEffect } from "react";
-import { useSyncStore } from "@/stores/syncStore";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
-  WifiIcon,
-  CloudArrowUpIcon,
+  SignalSlashIcon,
   ExclamationTriangleIcon,
   XMarkIcon,
-} from "@heroicons/react/24/outline";
+} from "@heroicons/react/20/solid";
+import { useSyncStore } from "@/stores/syncStore";
+import { useOperationsQueue } from "@/stores/operationsQueue";
+import { countUnsyncedRecords, isOnlineSyncEnabled } from "@/sync/adapter";
 
+function changes(n: number): string {
+  return `${n} change${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * A thin strip above the page for the two states staff need to act on:
+ * the device is offline, or the last sync failed. Routine syncing and the
+ * pending count live in the header's sync status control, so this banner
+ * does not flash on every background sync.
+ *
+ * The pending count is the same one the header shows (unsynced local rows
+ * plus queued operations), read only while offline. useSyncStore's
+ * pendingCount is not used: nothing updates it.
+ */
 export function OfflineBanner() {
-  const { status, pendingCount, isOnline, errorMessage } = useSyncStore();
-  const [dismissed, setDismissed] = useState(false);
-  const [prevOnline, setPrevOnline] = useState(isOnline);
+  const isOnline = useSyncStore((s) => s.isOnline);
+  const status = useSyncStore((s) => s.status);
+  const syncEnabled = isOnlineSyncEnabled();
+  const [dismissedOffline, setDismissedOffline] = useState(false);
+  const [dismissedError, setDismissedError] = useState(false);
 
-  useEffect(() => {
-    if (prevOnline !== isOnline) {
-      setDismissed(false);
-      setPrevOnline(isOnline);
-    }
-  }, [isOnline, prevOnline]);
+  const unsynced =
+    useLiveQuery(
+      () => (!isOnline && syncEnabled ? countUnsyncedRecords() : 0),
+      [isOnline, syncEnabled],
+      0,
+    ) ?? 0;
+  const queued = useOperationsQueue(
+    (s) =>
+      s.operations.filter(
+        (op) => op.status === "pending" || op.status === "processing",
+      ).length,
+  );
+  const pending = unsynced + queued;
 
+  // Each change of connection is news: show the banner again.
   useEffect(() => {
-    if (status === "syncing" || status === "error") {
-      setDismissed(false);
-    }
+    setDismissedOffline(false);
+  }, [isOnline]);
+
+  // A dismissed sync failure stays hidden until a sync succeeds, so a
+  // failing retry does not keep pushing it back onto the screen.
+  useEffect(() => {
+    if (status === "ok") setDismissedError(false);
   }, [status]);
 
-  const shouldShow =
-    !dismissed &&
-    (!isOnline ||
-      pendingCount > 0 ||
-      status === "syncing" ||
-      status === "error");
+  let banner: {
+    tone: string;
+    icon: typeof SignalSlashIcon;
+    title: string;
+    detail: string;
+    onDismiss: () => void;
+  } | null = null;
 
-  if (!shouldShow) {
-    return null;
+  if (!isOnline && !dismissedOffline) {
+    banner = {
+      tone: "border-line bg-surface-sunken text-ink-secondary",
+      icon: SignalSlashIcon,
+      title: "You're offline.",
+      detail: !syncEnabled
+        ? "Records are saved on this device."
+        : pending > 0
+          ? `${changes(pending)} saved on this device, waiting to sync. Sync starts again when the connection returns.`
+          : "New records are saved on this device. Sync starts again when the connection returns.",
+      onDismiss: () => setDismissedOffline(true),
+    };
+  } else if (
+    isOnline &&
+    syncEnabled &&
+    status === "error" &&
+    !dismissedError
+  ) {
+    banner = {
+      tone: "border-danger-line bg-danger-soft text-danger-fg",
+      icon: ExclamationTriangleIcon,
+      title: "Sync failed.",
+      detail:
+        "Records are still saved on this device. To try again, open the sync status at the top of the screen and choose Sync now.",
+      onDismiss: () => setDismissedError(true),
+    };
   }
 
-  const getBannerConfig = () => {
-    if (!isOnline) {
-      return {
-        bg: "bg-gray-700",
-        icon: WifiIcon,
-        message: `You're offline`,
-        detail:
-          pendingCount > 0
-            ? `${pendingCount} change${pendingCount === 1 ? "" : "s"} will sync when back online`
-            : "Changes will be saved locally",
-        canDismiss: pendingCount === 0,
-      };
-    }
-
-    if (status === "syncing") {
-      return {
-        bg: "bg-blue-600",
-        icon: CloudArrowUpIcon,
-        message: "Syncing...",
-        detail: `Uploading ${pendingCount} change${pendingCount === 1 ? "" : "s"}`,
-        canDismiss: false,
-      };
-    }
-
-    if (status === "error") {
-      return {
-        bg: "bg-amber-600",
-        icon: ExclamationTriangleIcon,
-        message: "Sync error",
-        detail: errorMessage || "Will retry automatically",
-        canDismiss: true,
-      };
-    }
-
-    if (pendingCount > 0) {
-      return {
-        bg: "bg-amber-500",
-        icon: CloudArrowUpIcon,
-        message: "Changes pending",
-        detail: `${pendingCount} change${pendingCount === 1 ? "" : "s"} waiting to sync`,
-        canDismiss: false,
-      };
-    }
-
-    return null;
-  };
-
-  const config = getBannerConfig();
-
-  if (!config) {
-    return null;
-  }
-
-  const { bg, icon: Icon, message, detail, canDismiss } = config;
+  const Icon = banner?.icon;
 
   return (
-    <div
-      className={`${bg} text-white px-4 py-2 text-sm`}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Icon
-            className={`h-5 w-5 flex-shrink-0 ${status === "syncing" ? "animate-pulse" : ""}`}
-            aria-hidden="true"
-          />
-          <div className="flex flex-wrap items-center gap-x-2">
-            <span className="font-medium">{message}</span>
-            <span className="opacity-90">{detail}</span>
+    <div role="status" aria-live="polite">
+      {banner && Icon && (
+        <div className={`border-b px-4 py-2 text-body ${banner.tone}`}>
+          <div className="mx-auto flex max-w-7xl items-center gap-3">
+            <Icon className="h-5 w-5 shrink-0" aria-hidden />
+            <p className="min-w-0 flex-1">
+              <span className="font-medium">{banner.title}</span>{" "}
+              {banner.detail}
+            </p>
+            <button
+              type="button"
+              onClick={banner.onDismiss}
+              className="-my-1 -mr-2 inline-flex min-h-touch-target min-w-touch-target shrink-0 items-center justify-center rounded-md transition-colors hover:bg-ink/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              aria-label="Dismiss notification"
+            >
+              <XMarkIcon className="h-5 w-5" aria-hidden />
+            </button>
           </div>
         </div>
-        {canDismiss && (
-          <button
-            onClick={() => setDismissed(true)}
-            className="p-1 rounded hover:bg-white/20 transition-colors"
-            aria-label="Dismiss notification"
-          >
-            <XMarkIcon className="h-4 w-4" aria-hidden="true" />
-          </button>
-        )}
-      </div>
+      )}
     </div>
   );
 }

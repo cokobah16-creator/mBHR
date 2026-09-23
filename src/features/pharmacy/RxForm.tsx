@@ -327,7 +327,7 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
   return (
     <div>
       <PageHeader
-        breadcrumbs={[{ label: "Pharmacy", to: "/pharmacy" }, { label: "New prescription" }]}
+        breadcrumbs={[{ label: "Pharmacy", to: "/pharmacy/menu" }, { label: "New prescription" }]}
         title="New prescription"
         description="Prescriptions appear in the pharmacy's dispensing list, where stock is taken from the lot that expires first."
       />

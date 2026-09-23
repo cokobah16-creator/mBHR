@@ -1,7 +1,29 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useLiveQuery } from "dexie-react-hooks";
 import { useGam } from "@/stores/gamification";
-import { GiftIcon, StarIcon } from "@heroicons/react/24/outline";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
+import { useToast } from "@/stores/toast";
+import { db as mbhrDb } from "@/db/mbhr";
+import { generateId } from "@/db";
+import {
+  ExclamationCircleIcon,
+  GiftIcon,
+  StarIcon,
+} from "@heroicons/react/24/outline";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { TrainingModeFrame } from "@/components/training/TrainingModeFrame";
+import { TrainingStat } from "@/components/training/TrainingWidgets";
+import {
+  RESTOCK_TAP_AMOUNTS,
+  SWIFT_STOCKER_MIN_TOKENS,
+  badgeLabel,
+  restockTapTokens,
+} from "@/components/training/trainingRules";
 
+// Example prizes. The app does not stock or send these; the outreach
+// coordinator decides what is really on offer.
 const PRIZES = [
   {
     id: "sticker",
@@ -30,118 +52,177 @@ const PRIZES = [
 ];
 
 export default function PrizeShop() {
-  const { wallet, spendTokens, ensureWallet } = useGam();
-  const [badges] = useState<string[]>([]);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const userId = currentUser?.id;
+  const canRestock = !!currentUser && can(currentUser.role, "inventory");
+  const wallet = useGam((s) => s.wallet);
+  const spendTokens = useGam((s) => s.spendTokens);
+  const ensureWallet = useGam((s) => s.ensureWallet);
+  const walletLoading = useGam((s) => s.loading);
+  const { push } = useToast();
+  const [redeeming, setRedeeming] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    ensureWallet("demo-volunteer");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!userId) return;
+    ensureWallet(userId).catch((err) => {
+      console.error(
+        "Could not open prize-shop wallet:",
+        err instanceof Error ? err.name : err,
+      );
+      setError("Your token balance could not be read from this device.");
+    });
+  }, [userId, ensureWallet]);
 
-  async function redeem(prize: (typeof PRIZES)[0]) {
-    const success = await spendTokens("demo-volunteer", prize.cost);
-    if (!success) {
-      alert("Not enough tokens! Keep restocking to earn more.");
+  const walletRow = useLiveQuery(
+    async () => (userId ? mbhrDb.gamification.get(userId) : undefined),
+    [userId],
+  );
+  const badges: string[] = walletRow?.badges ?? [];
+
+  async function redeem(prize: (typeof PRIZES)[number]) {
+    if (!userId || redeeming) return;
+    if (
+      !window.confirm(
+        `Spend ${prize.cost} tokens on ${prize.name}? Tokens cannot be given back from this screen.`,
+      )
+    ) {
       return;
     }
-
-    alert(`🎉 Redeemed ${prize.name}! Check with admin to collect your prize.`);
+    setRedeeming(prize.id);
+    setError("");
+    try {
+      const success = await spendTokens(userId, prize.cost);
+      if (!success) {
+        setError(
+          `Not enough tokens for ${prize.name}. Nothing was spent.`,
+        );
+        return;
+      }
+      push({
+        id: generateId(),
+        tone: "success",
+        title: `Redeemed: ${prize.name}`,
+        body: `${prize.cost} tokens spent on this device. Tell your outreach coordinator to collect it; the app does not notify them.`,
+      });
+    } catch (err) {
+      console.error(
+        "Could not redeem prize:",
+        err instanceof Error ? err.name : err,
+      );
+      setError(`${prize.name} was not redeemed and no tokens were spent. Try again.`);
+    } finally {
+      setRedeeming(null);
+    }
   }
 
   return (
-    <div className="p-4 space-y-6">
-      <div className="flex items-center space-x-3">
-        <GiftIcon className="h-8 w-8 text-primary" />
-        <h2 className="text-2xl font-bold text-gray-900">Prize Shop</h2>
-      </div>
-
-      {/* Wallet & Badges */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="card bg-green-50 border-green-200">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center">
-              <span className="text-white font-bold text-sm">T</span>
-            </div>
-            <div>
-              <div className="text-lg font-bold text-green-800">
-                {wallet} Tokens
-              </div>
-              <div className="text-sm text-green-600">Available to spend</div>
-            </div>
+    <TrainingModeFrame
+      title="Prize shop"
+      description="Spend the tokens you earn in the Restock game."
+      note="These prizes are examples. Your outreach coordinator decides which prizes are really on offer."
+    >
+      <div className="space-y-5">
+        {error && (
+          <div className="banner banner-danger" role="alert">
+            <ExclamationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <p>{error}</p>
           </div>
-        </div>
+        )}
 
-        <div className="card bg-purple-50 border-purple-200">
-          <div className="flex items-center space-x-2 mb-2">
-            <StarIcon className="h-5 w-5 text-purple-600" />
-            <div className="font-medium text-purple-800">Badges Earned</div>
-          </div>
-          <div className="flex flex-wrap gap-1">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <TrainingStat
+            label="Your prize-shop tokens"
+            value={walletLoading ? "…" : wallet}
+            hint="Stored on this device"
+          />
+          <div className="rounded-lg border border-line bg-surface px-4 py-3">
+            <p className="flex items-center gap-1.5 text-caption text-ink-muted">
+              <StarIcon className="h-4 w-4" aria-hidden />
+              Badges earned
+            </p>
             {badges.length === 0 ? (
-              <span className="text-sm text-purple-600">No badges yet</span>
+              <p className="mt-1 text-body text-ink-secondary">No badges yet</p>
             ) : (
-              badges.map((badge) => (
-                <span
-                  key={badge}
-                  className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium"
-                >
-                  {badge.replace("_", " ")}
-                </span>
-              ))
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {badges.map((badge) => (
+                  <li key={badge}>
+                    <StatusBadge tone="neutral">{badgeLabel(badge)}</StatusBadge>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </div>
-      </div>
 
-      {/* Prizes */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {PRIZES.map((prize) => {
-          const canAfford = wallet >= prize.cost;
-          return (
-            <div
-              key={prize.id}
-              className={`card transition-all hover:shadow-md ${
-                canAfford
-                  ? "border-green-200 hover:border-green-300"
-                  : "border-gray-200 opacity-75"
-              }`}
-            >
-              <div className="text-center">
-                <div className="w-12 h-12 bg-gray-100 rounded-full mx-auto mb-3 flex items-center justify-center">
-                  <GiftIcon className="h-6 w-6 text-gray-600" />
-                </div>
-                <div className="font-medium text-gray-900 mb-1">
-                  {prize.name}
-                </div>
-                <div className="text-sm text-gray-600 mb-3">
-                  {prize.description}
-                </div>
-                <div className="text-lg font-bold text-primary mb-3">
+        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {PRIZES.map((prize) => {
+            const canAfford = wallet >= prize.cost;
+            const busy = redeeming === prize.id;
+            return (
+              <li key={prize.id} className="card flex flex-col">
+                <GiftIcon className="h-6 w-6 text-ink-muted" aria-hidden />
+                <h2 className="mt-2 text-h3 text-ink">{prize.name}</h2>
+                <p className="text-body text-ink-secondary">{prize.description}</p>
+                <p className="mt-3 text-h2 tabular-nums text-ink">
                   {prize.cost} tokens
+                </p>
+                <div className="mt-auto pt-3">
+                  <button
+                    type="button"
+                    className={canAfford ? "btn-primary w-full" : "btn-secondary w-full"}
+                    onClick={() => void redeem(prize)}
+                    disabled={!canAfford || !userId || !!redeeming}
+                  >
+                    {busy
+                      ? "Redeeming…"
+                      : canAfford
+                        ? `Redeem for ${prize.cost} tokens`
+                        : `Need ${prize.cost - wallet} more tokens`}
+                  </button>
                 </div>
-                <button
-                  className={`w-full ${canAfford ? "btn-primary" : "btn-secondary opacity-50 cursor-not-allowed"}`}
-                  onClick={() => canAfford && redeem(prize)}
-                  disabled={!canAfford}
-                >
-                  {canAfford ? "Redeem" : "Need more tokens"}
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              </li>
+            );
+          })}
+        </ul>
 
-      <div className="card bg-blue-50 border-blue-200">
-        <div className="text-sm text-blue-800">
-          <div className="font-medium mb-1">💡 How to earn more tokens:</div>
-          <ul className="text-xs space-y-1 text-blue-700">
-            <li>• Restock low inventory items (+1-5 tokens per item)</li>
-            <li>• Complete restock sessions (+bonus tokens)</li>
-            <li>• Help during busy clinic days (+activity bonus)</li>
-          </ul>
-        </div>
+        <section className="panel" aria-labelledby="earn-tokens">
+          <div className="panel-header">
+            <h2 id="earn-tokens" className="panel-title">
+              How to earn prize-shop tokens
+            </h2>
+          </div>
+          <div className="panel-body space-y-2 text-body text-ink-secondary">
+            <p>
+              These tokens come only from the{" "}
+              {canRestock ? (
+                <Link to="/inv/game" className="text-primary-fg underline">
+                  Restock game
+                </Link>
+              ) : (
+                "Restock game (pharmacists and administrators)"
+              )}
+              , when you record supplies you have put on the shelf:
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              {RESTOCK_TAP_AMOUNTS.map((amount) => (
+                <li key={amount}>
+                  Each +{amount} tap earns {restockTapTokens(amount)}{" "}
+                  {restockTapTokens(amount) === 1 ? "token" : "tokens"}.
+                </li>
+              ))}
+              <li>
+                A restock worth {SWIFT_STOCKER_MIN_TOKENS} or more tokens earns
+                the Swift stocker badge.
+              </li>
+            </ul>
+            <p className="text-caption text-ink-muted">
+              Tokens from the other training games go to a separate game wallet
+              shown on the Training page; they cannot be spent here.
+            </p>
+          </div>
+        </section>
       </div>
-    </div>
+    </TrainingModeFrame>
   );
 }

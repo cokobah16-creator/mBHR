@@ -1,224 +1,363 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useLiveQuery } from "dexie-react-hooks";
+import { ArrowPathIcon, SignalSlashIcon } from "@heroicons/react/24/outline";
 import { enhancedSync } from "@/services/enhancedSync";
-import {
-  ArrowPathIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  ClockIcon,
-} from "@heroicons/react/24/outline";
+import { countUnsyncedRecords } from "@/sync/adapter";
+import { useSyncStore } from "@/stores/syncStore";
+import { useOperationsQueue } from "@/stores/operationsQueue";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
+import { conflictQueueService } from "@/services/conflictQueue";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { formatConflictAge, formatTimestamp, humanise } from "@/features/conflicts/conflictLabels";
+import { deriveSyncHeadline } from "@/features/conflicts/syncStatus";
+import { countDirtyIn, ENHANCED_ONLY_TABLES } from "@/features/conflicts/syncCounts";
 
-interface SyncStats {
-  pending: number;
-  lastSync: Record<string, Date | null>;
-  syncing: boolean;
+/** Tables the dashboard's Sync now (enhanced sync) downloads. */
+const SESSION_TABLES = [
+  "patients",
+  "visits",
+  "vitals",
+  "consultations",
+  "dispenses",
+  "inventory",
+  "queue",
+  "gameSessions",
+  "gamificationWallets",
+  "stockBatches",
+  "careTasks",
+  "triageRecords",
+  "patientAllergies",
+  "patientPreferences",
+  "vitalsRanges",
+];
+
+type ConflictCount =
+  | { state: "loading" }
+  | { state: "ok"; count: number }
+  | { state: "unavailable" }
+  | { state: "no_session" }
+  | { state: "offline"; count?: number }
+  | { state: "error"; count?: number };
+
+interface RunResult {
+  at: Date;
+  success: boolean;
+  pushed: number;
+  pulled: number;
+  failedUploads: number;
+  /** Downloaded updates not applied because this device has unsent changes. */
+  keptLocalEdits: number;
+  /** Tables that did not finish, by this device's table name. */
+  failedTables: string[];
+  error?: string;
+}
+
+function readSessionTimes(): Record<string, Date | null> {
+  const times: Record<string, Date | null> = {};
+  SESSION_TABLES.forEach((table) => {
+    times[table] = enhancedSync.getLastSyncTime(table);
+  });
+  return times;
+}
+
+function lastCount(prev: ConflictCount): number | undefined {
+  return "count" in prev ? prev.count : undefined;
+}
+
+function since(date: Date): string {
+  const age = formatConflictAge(date);
+  return age === "Just now" ? age : `${age} ago`;
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
 export function SyncDashboard() {
-  const [stats, setStats] = useState<SyncStats>({
-    pending: 0,
-    lastSync: {},
-    syncing: false,
-  });
-  const [syncResult, setSyncResult] = useState<{
-    pushed: number;
-    pulled: number;
-    conflicts: number;
-  } | null>(null);
+  const online = useOnlineStatus();
+  const configured = enhancedSync.isInitialized();
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const lastSuccessAt = useSyncStore((s) => s.lastSuccessAt);
+  const lastErrorAt = useSyncStore((s) => s.lastErrorAt);
+  const errorMessage = useSyncStore((s) => s.errorMessage);
+  const adapterSyncing = useSyncStore((s) => s.status === "syncing");
+  const operations = useOperationsQueue((s) => s.operations);
+
+  const coreWaiting = useLiveQuery(() => countUnsyncedRecords(), []);
+  const extraWaiting = useLiveQuery(() => countDirtyIn(ENHANCED_ONLY_TABLES), []);
+  const queuedOps = operations.filter(
+    (op) => op.status === "pending" || op.status === "processing",
+  ).length;
+  const failed = operations.filter((op) => op.status === "failed").length;
+  const waiting =
+    coreWaiting === undefined || extraWaiting === undefined
+      ? null
+      : coreWaiting + extraWaiting + queuedOps;
+
+  const [running, setRunning] = useState(false);
+  const [run, setRun] = useState<RunResult | null>(null);
+  const [sessionTimes, setSessionTimes] = useState<Record<string, Date | null>>(readSessionTimes);
+  const [conflicts, setConflicts] = useState<ConflictCount>({ state: "loading" });
+
+  const loadConflicts = useCallback(async () => {
+    if (!conflictQueueService.isAvailable()) {
+      setConflicts({ state: "unavailable" });
+      return;
+    }
+    if (!online) {
+      setConflicts((prev) => ({ state: "offline", count: lastCount(prev) }));
+      return;
+    }
+    try {
+      // Without an online sign-in the server returns no rows, not an error,
+      // so a zero would be a guess.
+      if (!(await conflictQueueService.hasCloudSession())) {
+        setConflicts({ state: "no_session" });
+        return;
+      }
+      const stats = await conflictQueueService.getConflictStats();
+      setConflicts({ state: "ok", count: stats.pending + stats.needsApproval });
+    } catch {
+      setConflicts((prev) => ({ state: "error", count: lastCount(prev) }));
+    }
+  }, [online]);
 
   useEffect(() => {
-    loadStats();
-    const interval = setInterval(loadStats, 30000); // Refresh every 30s
+    loadConflicts();
+    const interval = setInterval(() => {
+      loadConflicts();
+      setSessionTimes(readSessionTimes());
+    }, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [loadConflicts]);
 
-  const loadStats = async () => {
-    if (!enhancedSync.isInitialized()) return;
-
-    const pending = await enhancedSync.getPendingChangesCount();
-    const syncing = enhancedSync.isSyncing();
-
-    const tables = [
-      "patients",
-      "visits",
-      "vitals",
-      "consultations",
-      "dispenses",
-      "inventory",
-      "queue",
-      "gameSessions",
-      "gamificationWallets",
-      "stockBatches",
-      "careTasks",
-      "triageRecords",
-      "patientAllergies",
-      "patientPreferences",
-      "vitalsRanges",
-    ];
-
-    const lastSync: Record<string, Date | null> = {};
-    tables.forEach((table) => {
-      lastSync[table] = enhancedSync.getLastSyncTime(table);
-    });
-
-    setStats({ pending, lastSync, syncing });
-  };
+  const syncing = running || adapterSyncing || enhancedSync.isSyncing();
 
   const handleSync = async () => {
-    if (stats.syncing) return;
-
-    setStats((prev) => ({ ...prev, syncing: true }));
-    const result = await enhancedSync.syncAll();
-
-    if (result.success) {
-      setSyncResult({
+    if (syncing || !online) return;
+    setRunning(true);
+    try {
+      const result = await enhancedSync.syncAll();
+      setRun({
+        at: new Date(),
+        success: result.success,
         pushed: result.pushed,
         pulled: result.pulled,
-        conflicts: result.conflicts,
+        failedUploads: result.failedUploads,
+        keptLocalEdits: result.keptLocalEdits,
+        failedTables: (result.failedTables ?? []).map((f) => f.table),
+        error: result.error,
       });
-      setTimeout(() => setSyncResult(null), 5000);
+    } catch (error) {
+      console.error("Sync run failed:", error instanceof Error ? error.name : "unknown");
+      setRun({
+        at: new Date(),
+        success: false,
+        pushed: 0,
+        pulled: 0,
+        failedUploads: 0,
+        keptLocalEdits: 0,
+        failedTables: [],
+      });
+    } finally {
+      setRunning(false);
+      setSessionTimes(readSessionTimes());
+      loadConflicts();
     }
-
-    await loadStats();
   };
 
-  const formatLastSync = (date: Date | null) => {
-    if (!date) return "Never";
-
-    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-
-    if (seconds < 60) return "Just now";
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
-    return `${Math.floor(seconds / 86400)} days ago`;
-  };
-
-  if (!enhancedSync.isInitialized()) {
+  if (!configured) {
     return (
-      <div className="bg-gray-50 p-4 rounded-lg">
-        <p className="text-sm text-gray-600">Sync not configured</p>
-      </div>
+      <section className="panel" aria-labelledby="sync-dashboard-title">
+        <div className="panel-header">
+          <h2 id="sync-dashboard-title" className="panel-title">
+            Data sync
+          </h2>
+          <StatusBadge tone="neutral">This device only</StatusBadge>
+        </div>
+        <p className="panel-body text-body text-ink-secondary">
+          Cloud sync is not set up on this device. Records are saved on this
+          device only and are not uploaded anywhere.
+        </p>
+      </section>
     );
   }
 
+  const conflictCount = conflicts.state === "ok" ? conflicts.count : null;
+  const headline = deriveSyncHeadline({
+    configured,
+    online,
+    syncing,
+    waiting,
+    failed,
+    errorMessage,
+    conflicts: conflictCount,
+    lastSuccessText: lastSuccessAt > 0 ? formatTimestamp(new Date(lastSuccessAt)) : null,
+  });
+
+  const conflictValue = (() => {
+    switch (conflicts.state) {
+      case "ok":
+        return String(conflicts.count);
+      case "loading":
+        return "Checking…";
+      case "unavailable":
+        return "Not available";
+      case "no_session":
+        return "Unknown (not signed in online)";
+      case "offline":
+        return conflicts.count !== undefined ? `${conflicts.count} (before going offline)` : "Unknown offline";
+      case "error":
+      default:
+        return conflicts.count !== undefined ? `${conflicts.count} (may be out of date)` : "Could not check";
+    }
+  })();
+
+  const canReviewConflicts = !!role && can(role, "resolve_conflicts");
+
+  const metrics: { label: string; value: string; note?: string }[] = [
+    {
+      label: "Waiting to upload",
+      value: waiting === null ? "Counting…" : String(waiting),
+      note:
+        extraWaiting && extraWaiting > 0
+          ? `${extraWaiting} of these (care tasks, stock batches, triage or training records) upload only with Sync now here.`
+          : undefined,
+    },
+    {
+      label: "Failed",
+      value: String(failed),
+      note: failed > 0 ? "Stopped retrying. They stay on this device." : undefined,
+    },
+    { label: "Conflicts to review", value: conflictValue },
+    {
+      label: "Last successful sync",
+      value: lastSuccessAt > 0 ? formatTimestamp(new Date(lastSuccessAt)) : "None recorded",
+      note:
+        lastErrorAt > lastSuccessAt && lastErrorAt > 0
+          ? `Last failed attempt ${formatTimestamp(new Date(lastErrorAt))}.`
+          : "Recorded by the automatic sync and the sync menu at the top.",
+    },
+  ];
+
   return (
-    <div className="bg-white shadow rounded-lg p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-medium text-gray-900">Data Sync</h2>
+    <section className="panel" aria-labelledby="sync-dashboard-title">
+      <div className="panel-header flex-wrap">
+        <h2 id="sync-dashboard-title" className="panel-title">
+          Data sync
+        </h2>
         <button
+          type="button"
           onClick={handleSync}
-          disabled={stats.syncing}
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={syncing || !online}
+          className="btn-primary"
         >
           <ArrowPathIcon
-            className={`-ml-1 mr-2 h-5 w-5 ${stats.syncing ? "animate-spin" : ""}`}
+            className={`h-5 w-5 ${syncing ? "animate-spin" : ""}`}
+            aria-hidden
           />
-          {stats.syncing ? "Syncing..." : "Sync Now"}
+          {syncing ? "Syncing…" : "Sync now"}
         </button>
       </div>
 
-      {syncResult && (
-        <div className="mb-6 bg-green-50 border border-green-200 rounded-md p-4">
-          <div className="flex">
-            <CheckCircleIcon className="h-5 w-5 text-green-400" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-green-800">
-                Sync Completed
+      <div className="panel-body space-y-4">
+        <div className="flex flex-wrap items-start gap-3" role="status" aria-live="polite">
+          <StatusBadge tone={headline.tone} icon>
+            {headline.title}
+          </StatusBadge>
+          <p className="min-w-0 flex-1 text-body text-ink-secondary">{headline.detail}</p>
+        </div>
+
+        {!online && (
+          <div className="banner banner-warning">
+            <SignalSlashIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>You are offline. Sync now is available when the connection returns.</p>
+          </div>
+        )}
+
+        {run && (
+          <div
+            className={`banner ${
+              !run.success ? "banner-danger" : run.failedUploads > 0 ? "banner-warning" : "banner-info"
+            }`}
+            role={run.success ? "status" : "alert"}
+          >
+            <div>
+              <p className="font-medium">
+                {!run.success
+                  ? `Sync did not finish (${formatTimestamp(run.at)})`
+                  : `Sync run finished (${formatTimestamp(run.at)})`}
               </p>
-              <p className="text-sm text-green-700 mt-1">
-                Pushed: {syncResult.pushed} | Pulled: {syncResult.pulled}
-                {syncResult.conflicts > 0 &&
-                  ` | Conflicts: ${syncResult.conflicts}`}
+              <p>
+                {plural(run.pushed, "record")} uploaded, {plural(run.pulled, "record")} downloaded
+                {run.failedUploads > 0
+                  ? `, ${plural(run.failedUploads, "record")} refused by the server and still waiting to upload`
+                  : ""}
+                .
+                {!run.success &&
+                  (run.error === "Already syncing or not initialized"
+                    ? " A sync was already running. Try again in a moment."
+                    : run.failedTables.length > 0
+                      ? ` Did not finish for: ${run.failedTables.join(", ")}. Check the connection and try again.`
+                      : " Check the connection and try again.")}
               </p>
+              {run.keptLocalEdits > 0 && (
+                <p className="mt-1">
+                  {plural(run.keptLocalEdits, "downloaded update")} {run.keptLocalEdits === 1 ? "was" : "were"} not
+                  applied because this device has unsent changes to {run.keptLocalEdits === 1 ? "that record" : "those records"}.
+                  They upload first; any disagreement appears under sync conflicts.
+                </p>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
-        <div className="bg-blue-50 overflow-hidden rounded-lg px-4 py-5">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <ClockIcon className="h-6 w-6 text-blue-600" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dl>
-                <dt className="text-sm font-medium text-blue-900 truncate">
-                  Pending Changes
-                </dt>
-                <dd className="text-3xl font-semibold text-blue-900">
-                  {stats.pending}
-                </dd>
-              </dl>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-green-50 overflow-hidden rounded-lg px-4 py-5">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <CheckCircleIcon className="h-6 w-6 text-green-600" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dl>
-                <dt className="text-sm font-medium text-green-900 truncate">
-                  Status
-                </dt>
-                <dd className="text-sm font-semibold text-green-900">
-                  {stats.syncing ? "Active" : "Idle"}
-                </dd>
-              </dl>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-gray-50 overflow-hidden rounded-lg px-4 py-5">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <ArrowPathIcon className="h-6 w-6 text-gray-600" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dl>
-                <dt className="text-sm font-medium text-gray-900 truncate">
-                  Last Full Sync
-                </dt>
-                <dd className="text-sm font-semibold text-gray-900">
-                  {formatLastSync(stats.lastSync.patients)}
-                </dd>
-              </dl>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="border-t border-gray-200 pt-4">
-        <h3 className="text-sm font-medium text-gray-900 mb-3">Table Status</h3>
-        <div className="space-y-2">
-          {Object.entries(stats.lastSync).map(([table, date]) => (
-            <div
-              key={table}
-              className="flex items-center justify-between text-sm"
-            >
-              <span className="text-gray-600 capitalize">{table}</span>
-              <span className={`${date ? "text-gray-900" : "text-gray-400"}`}>
-                {formatLastSync(date)}
-              </span>
+        <dl className="grid gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+          {metrics.map((m) => (
+            <div key={m.label} className="bg-surface px-4 py-3">
+              <dt className="text-caption text-ink-muted">{m.label}</dt>
+              <dd className="mt-1 text-h3 tabular-nums text-ink">{m.value}</dd>
+              {m.note && <dd className="mt-1 text-caption text-ink-muted">{m.note}</dd>}
             </div>
           ))}
-        </div>
-      </div>
+        </dl>
 
-      {stats.pending > 0 && (
-        <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-md p-4">
-          <div className="flex">
-            <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-yellow-800">
-                {stats.pending} changes waiting to sync
-              </p>
-            </div>
+        {canReviewConflicts && conflicts.state !== "unavailable" && (
+          <p className="text-body">
+            <Link
+              to="/admin/conflicts"
+              className="inline-flex min-h-touch-target items-center text-primary-fg underline hover:no-underline"
+            >
+              Review sync conflicts
+            </Link>
+          </p>
+        )}
+
+        <details className="rounded-md border border-line">
+          <summary className="flex min-h-touch-target cursor-pointer items-center px-3 text-label text-ink">
+            Downloads by Sync now during this session
+          </summary>
+          <div className="border-t border-line px-3 py-2">
+            <p className="mb-2 text-caption text-ink-muted">
+              When Sync now on this screen last downloaded records for each table.
+              These times reset when the app reloads.
+            </p>
+            <dl className="divide-y divide-line">
+              {Object.entries(sessionTimes).map(([table, date]) => (
+                <div key={table} className="flex items-center justify-between gap-3 py-1.5 text-body">
+                  <dt className="text-ink-secondary">{humanise(table)}</dt>
+                  <dd className={date ? "text-ink" : "text-ink-muted"}>
+                    {date ? since(date) : "None this session"}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </div>
-        </div>
-      )}
-    </div>
+        </details>
+      </div>
+    </section>
   );
 }

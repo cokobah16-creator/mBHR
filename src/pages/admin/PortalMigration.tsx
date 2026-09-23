@@ -1,25 +1,18 @@
 /**
- * Portal Migration Admin Page
+ * Bulk enable portal access for patients stored on this device.
  *
- * Bulk enable portal access for existing patients with contact information
- * Features:
- * - Filter patients by date, state, contact method
- * - Preview count before starting
- * - Batch processing with progress tracking
- * - Export CSV report of results
+ * - Filter patients who have a phone number or email by registration date,
+ *   state and contact method
+ * - Select patients, confirm, and enable access (optionally sending invitations)
+ * - Honest progress and a result summary with each failure's reason
+ * - Download a CSV report of the run
  */
 
-import React, { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowLeftIcon,
   UserGroupIcon,
-  FunnelIcon,
-  PlayIcon,
-  CheckCircleIcon,
-  XCircleIcon,
   DocumentArrowDownIcon,
-  ClockIcon,
 } from "@heroicons/react/24/outline";
 import { type Patient } from "@/db";
 import {
@@ -28,24 +21,74 @@ import {
 } from "@/services/portalEnrollment";
 import { NIGERIAN_STATES } from "@/utils/nigeria";
 import { formatNigerianDate } from "@/utils/dateFormat";
+import { useAuthStore } from "@/stores/auth";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
+import { canManagePortalEnrollment } from "@/features/admin/adminSections";
+import { useServerStatus } from "@/features/admin/useServerStatus";
+import type { ServerState } from "@/features/admin/serverStatus";
+import {
+  buildRunCsv,
+  groupFailureReasons,
+  type BulkRunError,
+  type BulkRunTarget,
+} from "@/features/admin/portalStats";
+
+type ContactMethod = "any" | "email" | "phone";
 
 interface MigrationFilters {
   startDate?: string;
   endDate?: string;
   state?: string;
-  contactMethod: "any" | "email" | "phone";
+  contactMethod: ContactMethod;
 }
 
-interface MigrationProgress {
-  total: number;
+interface MigrationRun {
+  targets: BulkRunTarget[];
+  sendInvitations: boolean;
+  /** Whether the server could be reached when the run started. */
+  serverAvailable: boolean;
   completed: number;
   successful: number;
   failed: number;
-  isRunning: boolean;
-  isPaused: boolean;
+  errors: BulkRunError[];
+  status: "running" | "done" | "error";
+}
+
+const CONTACT_METHODS: { id: ContactMethod; label: string }[] = [
+  { id: "any", label: "Phone or email" },
+  { id: "email", label: "Has email" },
+  { id: "phone", label: "Has phone" },
+];
+
+function isContactMethod(value: string): value is ContactMethod {
+  return CONTACT_METHODS.some((m) => m.id === value);
+}
+
+const SERVER_TONE: Record<ServerState, Tone> = {
+  available: "success",
+  offline: "warning",
+  "not-configured": "neutral",
+};
+
+const BREADCRUMBS = [
+  { label: "Administration", to: "/admin" },
+  { label: "Patient portal", to: "/admin/portal-dashboard" },
+  { label: "Enable portal access" },
+];
+
+function patientName(p: Pick<Patient, "givenName" | "familyName">) {
+  return `${p.givenName} ${p.familyName}`;
 }
 
 export function PortalMigration() {
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const canRun = canManagePortalEnrollment(role);
+  const server = useServerStatus();
+
   const [filters, setFilters] = useState<MigrationFilters>({
     contactMethod: "any",
   });
@@ -54,44 +97,51 @@ export function PortalMigration() {
     new Set(),
   );
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState<MigrationProgress>({
-    total: 0,
-    completed: 0,
-    successful: 0,
-    failed: 0,
-    isRunning: false,
-    isPaused: false,
-  });
-  const [errors, setErrors] = useState<
-    Array<{ patientId: string; error: string }>
-  >([]);
-  const [showResults, setShowResults] = useState(false);
+  const [confirming, setConfirming] = useState<null | { sendInvitations: boolean }>(
+    null,
+  );
+  const [run, setRun] = useState<MigrationRun | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadEligiblePatients();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
-
-  const loadEligiblePatients = async () => {
+  const loadEligiblePatients = useCallback(async () => {
     setLoading(true);
     try {
       const patients = await findEligiblePatients({
-        startDate: filters.startDate ? new Date(filters.startDate) : undefined,
-        endDate: filters.endDate ? new Date(filters.endDate) : undefined,
-        state: filters.state,
+        // Local midnight: new Date("YYYY-MM-DD") would be UTC midnight
+        // (01:00 in Nigeria) and drop patients registered just after midnight.
+        startDate: filters.startDate
+          ? new Date(`${filters.startDate}T00:00:00`)
+          : undefined,
+        // Include patients registered on the end date itself.
+        endDate: filters.endDate
+          ? new Date(`${filters.endDate}T23:59:59.999`)
+          : undefined,
+        state: filters.state || undefined,
         contactMethod: filters.contactMethod,
       });
       setEligiblePatients(patients);
       setSelectedPatients(new Set());
     } catch (error) {
-      console.error("Error loading eligible patients:", error);
+      console.error(
+        "Error loading eligible patients:",
+        error instanceof Error ? error.name : error,
+      );
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters]);
+
+  useEffect(() => {
+    loadEligiblePatients();
+  }, [loadEligiblePatients]);
+
+  const running = run?.status === "running";
+  const allSelected =
+    eligiblePatients.length > 0 &&
+    selectedPatients.size === eligiblePatients.length;
 
   const handleSelectAll = () => {
-    if (selectedPatients.size === eligiblePatients.length) {
+    if (allSelected) {
       setSelectedPatients(new Set());
     } else {
       setSelectedPatients(new Set(eligiblePatients.map((p) => p.id)));
@@ -109,60 +159,63 @@ export function PortalMigration() {
   };
 
   const handleStartMigration = async (sendInvitations: boolean) => {
-    const patientIds = Array.from(selectedPatients);
-    if (patientIds.length === 0) return;
+    setConfirming(null);
+    if (!canRun) return;
+    const targets: BulkRunTarget[] = eligiblePatients
+      .filter((p) => selectedPatients.has(p.id))
+      .map((p) => ({ id: p.id, name: patientName(p) }));
+    if (targets.length === 0) return;
 
-    setProgress({
-      total: patientIds.length,
+    setRun({
+      targets,
+      sendInvitations,
+      serverAvailable: server.available,
       completed: 0,
       successful: 0,
       failed: 0,
-      isRunning: true,
-      isPaused: false,
-    });
-    setErrors([]);
-    setShowResults(false);
-
-    const result = await bulkEnablePortalAccess(patientIds, {
-      sendInvitations,
-      batchSize: 50,
-      onProgress: (completed, total) => {
-        setProgress((prev) => ({
-          ...prev,
-          completed,
-          total,
-        }));
-      },
+      errors: [],
+      status: "running",
     });
 
-    setProgress((prev) => ({
-      ...prev,
-      successful: result.success,
-      failed: result.failed,
-      isRunning: false,
-    }));
-    setErrors(result.errors);
-    setShowResults(true);
+    try {
+      const result = await bulkEnablePortalAccess(
+        targets.map((t) => t.id),
+        {
+          sendInvitations,
+          batchSize: 50,
+          onProgress: (completed) => {
+            setRun((prev) => (prev ? { ...prev, completed } : prev));
+          },
+        },
+      );
+      setRun((prev) =>
+        prev
+          ? {
+              ...prev,
+              completed: result.success + result.failed,
+              successful: result.success,
+              failed: result.failed,
+              errors: result.errors,
+              status: "done",
+            }
+          : prev,
+      );
+    } catch (error) {
+      console.error(
+        "Bulk portal enable failed:",
+        error instanceof Error ? error.name : error,
+      );
+      setRun((prev) => (prev ? { ...prev, status: "error" } : prev));
+    }
 
     // Refresh eligible patients list
     await loadEligiblePatients();
+    resultRef.current?.focus();
   };
 
   const handleExportCSV = () => {
-    const headers = ["Patient ID", "Name", "Status", "Error"];
-    const rows = eligiblePatients
-      .filter((p) => selectedPatients.has(p.id))
-      .map((p) => {
-        const error = errors.find((e) => e.patientId === p.id);
-        return [
-          p.id,
-          `${p.givenName} ${p.familyName}`,
-          error ? "Failed" : "Success",
-          error?.error || "",
-        ];
-      });
-
-    const csv = [headers, ...rows].map((row) => row.join(",")).join("\n");
+    if (!run) return;
+    const csv = buildRunCsv(run.targets, run.errors);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -172,44 +225,44 @@ export function PortalMigration() {
     URL.revokeObjectURL(url);
   };
 
+  const total = run?.targets.length ?? 0;
   const progressPercentage =
-    progress.total > 0
-      ? Math.round((progress.completed / progress.total) * 100)
-      : 0;
+    run && total > 0 ? Math.round((run.completed / total) * 100) : 0;
+  const nameById = new Map(run?.targets.map((t) => [t.id, t.name]) ?? []);
+  const selectedCount = selectedPatients.size;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center space-x-4">
-        <Link
-          to="/admin/portal-dashboard"
-          className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
-        >
-          <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-900">
-            Portal Migration Tool
-          </h1>
-          <p className="text-gray-600">
-            Bulk enable portal access for existing patients
-          </p>
-        </div>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        breadcrumbs={BREADCRUMBS}
+        title="Enable portal access"
+        description="Turn on patient portal access for patients on this device who have a phone number or email."
+      />
 
-      {/* Filters */}
-      <div className="card">
-        <div className="flex items-center space-x-3 mb-4">
-          <FunnelIcon className="h-6 w-6 text-gray-600" />
-          <h2 className="text-lg font-semibold text-gray-900">Filters</h2>
+      {!canRun && (
+        <div className="banner banner-warning" role="status">
+          Only an administrator can enable portal access. You can view this
+          list but not change it.
         </div>
+      )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <section className="panel" aria-labelledby="migration-filters-title">
+        <div className="panel-header">
+          <h2 id="migration-filters-title" className="panel-title">
+            Which patients
+          </h2>
+          <span className="text-caption text-ink-muted">
+            Patients without portal access who have a phone number or email
+          </span>
+        </div>
+        <div className="panel-body grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Start Date
+            <label htmlFor="migration-start" className="field-label">
+              Registered from
             </label>
             <input
+              id="migration-start"
               type="date"
               value={filters.startDate || ""}
               onChange={(e) =>
@@ -220,10 +273,11 @@ export function PortalMigration() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              End Date
+            <label htmlFor="migration-end" className="field-label">
+              Registered to
             </label>
             <input
+              id="migration-end"
               type="date"
               value={filters.endDate || ""}
               onChange={(e) =>
@@ -234,17 +288,18 @@ export function PortalMigration() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="migration-state" className="field-label">
               State
             </label>
             <select
+              id="migration-state"
               value={filters.state || ""}
               onChange={(e) =>
                 setFilters({ ...filters, state: e.target.value })
               }
               className="input-field"
             >
-              <option value="">All States</option>
+              <option value="">All states</option>
               {NIGERIAN_STATES.map((state) => (
                 <option key={state} value={state}>
                   {state}
@@ -254,235 +309,279 @@ export function PortalMigration() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Contact Method
+            <label htmlFor="migration-contact" className="field-label">
+              Contact details
             </label>
             <select
+              id="migration-contact"
               value={filters.contactMethod}
-              onChange={(e) =>
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                setFilters({ ...filters, contactMethod: e.target.value as any })
-              }
+              onChange={(e) => {
+                const next: string = e.target.value;
+                if (isContactMethod(next)) {
+                  setFilters({ ...filters, contactMethod: next });
+                }
+              }}
               className="input-field"
             >
-              <option value="any">Any</option>
-              <option value="email">Email Only</option>
-              <option value="phone">Phone Only</option>
+              {CONTACT_METHODS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
+      </section>
+
+      <div className="card flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:gap-3">
+        <span className="section-label">Invitations</span>
+        <StatusBadge tone={SERVER_TONE[server.state]} icon>
+          {server.label}
+        </StatusBadge>
+        <span className="text-caption text-ink-muted">
+          {server.available
+            ? "Invitations are sent by email, or by SMS when a patient has no email."
+            : "Invitations need the server and an internet connection. You can still enable access now and send invitations later from each patient's record."}
+        </span>
       </div>
 
-      {/* Stats Card */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="card bg-blue-50 border-blue-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-blue-600 font-medium">
-                Eligible Patients
-              </p>
-              <p className="text-2xl font-bold text-blue-900">
-                {eligiblePatients.length}
-              </p>
+      {/* Progress and results */}
+      <div ref={resultRef} tabIndex={-1} aria-live="polite" className="focus:outline-none">
+        {run && running && (
+          <section className="panel panel-body space-y-2" aria-label="Progress">
+            <div className="flex items-center justify-between text-label text-ink">
+              <span>
+                Enabling portal access: {run.completed} of {total} patients
+              </span>
+              <span className="tabular-nums">{progressPercentage}%</span>
             </div>
-            <UserGroupIcon className="h-8 w-8 text-blue-600" />
-          </div>
-        </div>
-
-        <div className="card bg-green-50 border-green-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-green-600 font-medium">Selected</p>
-              <p className="text-2xl font-bold text-green-900">
-                {selectedPatients.size}
-              </p>
-            </div>
-            <CheckCircleIcon className="h-8 w-8 text-green-600" />
-          </div>
-        </div>
-
-        <div className="card bg-yellow-50 border-yellow-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-yellow-600 font-medium">In Progress</p>
-              <p className="text-2xl font-bold text-yellow-900">
-                {progress.completed}/{progress.total}
-              </p>
-            </div>
-            <ClockIcon className="h-8 w-8 text-yellow-600" />
-          </div>
-        </div>
-
-        <div className="card bg-red-50 border-red-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-red-600 font-medium">Failed</p>
-              <p className="text-2xl font-bold text-red-900">
-                {progress.failed}
-              </p>
-            </div>
-            <XCircleIcon className="h-8 w-8 text-red-600" />
-          </div>
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      {progress.isRunning && (
-        <div className="card bg-blue-50">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-blue-900">
-              Migration Progress
-            </span>
-            <span className="text-sm font-medium text-blue-900">
-              {progressPercentage}%
-            </span>
-          </div>
-          <div className="w-full bg-blue-200 rounded-full h-4 overflow-hidden">
             <div
-              className="bg-blue-600 h-full transition-all duration-300"
-              style={{ width: `${progressPercentage}%` }}
-            />
-          </div>
-          <p className="text-sm text-blue-800 mt-2">
-            Processing {progress.completed} of {progress.total} patients...
-          </p>
-        </div>
-      )}
-
-      {/* Results Summary */}
-      {showResults && !progress.isRunning && (
-        <div className="card bg-green-50 border-green-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-green-900 mb-2">
-                Migration Complete
-              </h3>
-              <p className="text-sm text-green-800">
-                Successfully enabled portal access for {progress.successful}{" "}
-                patients.
-                {progress.failed > 0 && ` ${progress.failed} failed.`}
-              </p>
-            </div>
-            <button
-              onClick={handleExportCSV}
-              className="btn-secondary inline-flex items-center space-x-2"
+              className="h-2 w-full overflow-hidden rounded-full bg-surface-sunken"
+              role="progressbar"
+              aria-label="Portal access progress"
+              aria-valuemin={0}
+              aria-valuemax={total}
+              aria-valuenow={run.completed}
             >
-              <DocumentArrowDownIcon className="h-5 w-5" />
-              <span>Export CSV</span>
-            </button>
+              <div
+                className="h-full bg-primary transition-[width]"
+                style={{ width: `${progressPercentage}%` }}
+              />
+            </div>
+            <p className="text-caption text-ink-muted">
+              Keep this page open until it finishes.
+            </p>
+          </section>
+        )}
+
+        {run && run.status === "error" && (
+          <div className="banner banner-danger" role="alert">
+            The run stopped before it finished. Some patients may already have
+            portal access; check the list below and try the rest again.
           </div>
-        </div>
-      )}
+        )}
+
+        {run && run.status === "done" && (
+          <section className="panel" aria-labelledby="migration-result-title">
+            <div className="panel-header">
+              <h2 id="migration-result-title" className="panel-title">
+                Result
+              </h2>
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="btn-secondary"
+              >
+                <DocumentArrowDownIcon className="h-5 w-5" aria-hidden />
+                Download CSV report
+              </button>
+            </div>
+            <div className="panel-body space-y-3">
+              <div
+                className={`banner ${run.failed === 0 ? "banner-success" : "banner-warning"}`}
+              >
+                <p>
+                  {/* A success can include an invitation that fell back to
+                      "share a link" when the email/SMS service failed, so the
+                      summary does not claim patients were invited. */}
+                  {`Portal access enabled for ${run.successful} of ${plural(total, "patient")}.`}
+                  {run.failed > 0 && ` ${run.failed} failed.`}{" "}
+                  {server.state === "not-configured"
+                    ? "Saved on this device only: no server is connected."
+                    : "Saved on this device. Portal access settings are not synced to other devices."}
+                  {run.sendInvitations &&
+                    run.failed > 0 &&
+                    " A patient whose invitation failed may still have portal access turned on."}
+                </p>
+              </div>
+              {run.sendInvitations && (
+                <p className="text-body text-ink-secondary">
+                  {run.serverAvailable
+                    ? "An invitation was requested for each enabled patient. Where the email or SMS service did not respond, no message went out; open that patient's record to send it again or share a registration link."
+                    : "The server could not be reached when this ran, so no email or SMS was sent. Send invitations from each patient's record when the device is online."}
+                </p>
+              )}
+              {run.errors.length > 0 && (
+                <div>
+                  <h3 className="text-label text-ink">Why patients failed</h3>
+                  <ul className="mt-1 space-y-1 text-body text-ink-secondary">
+                    {groupFailureReasons(run.errors).map((g) => (
+                      <li key={g.reason}>
+                        {g.count} × {g.reason}
+                      </li>
+                    ))}
+                  </ul>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-label text-primary">
+                      Show each failed patient
+                    </summary>
+                    <ul className="mt-2 max-h-64 divide-y divide-line overflow-y-auto rounded-md border border-line">
+                      {run.errors.map((e) => (
+                        <li key={e.patientId} className="px-3 py-2 text-caption">
+                          <span className="font-medium text-ink">
+                            {nameById.get(e.patientId) ?? e.patientId}
+                          </span>
+                          <span className="text-ink-muted"> · {e.error}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+      </div>
 
       {/* Patient List */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Eligible Patients ({eligiblePatients.length})
+      <section className="panel" aria-labelledby="migration-list-title">
+        <div className="panel-header flex-col items-stretch gap-3 lg:flex-row lg:items-center">
+          <h2 id="migration-list-title" className="panel-title">
+            Eligible patients ({eligiblePatients.length})
+            <span className="ml-2 text-caption font-normal text-ink-muted">
+              {selectedCount} selected
+            </span>
           </h2>
-          <div className="flex items-center space-x-3">
-            <button onClick={handleSelectAll} className="btn-secondary text-sm">
-              {selectedPatients.size === eligiblePatients.length
-                ? "Deselect All"
-                : "Select All"}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSelectAll}
+              disabled={eligiblePatients.length === 0 || running}
+              className="btn-secondary"
+            >
+              {allSelected ? "Clear selection" : "Select all"}
             </button>
             <button
-              onClick={() => handleStartMigration(false)}
-              disabled={selectedPatients.size === 0 || progress.isRunning}
-              className="btn-secondary inline-flex items-center space-x-2"
+              type="button"
+              onClick={() => setConfirming({ sendInvitations: false })}
+              disabled={!canRun || selectedCount === 0 || running}
+              className="btn-secondary"
             >
-              <PlayIcon className="h-4 w-4" />
-              <span>Enable Portal (No Invites)</span>
+              Enable access only
             </button>
             <button
-              onClick={() => handleStartMigration(true)}
-              disabled={selectedPatients.size === 0 || progress.isRunning}
-              className="btn-primary inline-flex items-center space-x-2"
+              type="button"
+              onClick={() => setConfirming({ sendInvitations: true })}
+              disabled={
+                !canRun || selectedCount === 0 || running || !server.available
+              }
+              className="btn-primary"
             >
-              <PlayIcon className="h-4 w-4" />
-              <span>Enable & Send Invitations</span>
+              Enable and send invitations
             </button>
           </div>
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <div>
+            <span role="status" className="sr-only">
+              Loading eligible patients
+            </span>
+            <div className="divide-y divide-line" aria-hidden>
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center gap-4 px-4 py-3">
+                  <Skeleton className="h-4 w-4" />
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="ml-auto h-4 w-24" />
+                </div>
+              ))}
+            </div>
           </div>
         ) : eligiblePatients.length === 0 ? (
-          <div className="text-center py-12">
-            <UserGroupIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <p className="text-gray-600">
-              No eligible patients found with current filters
-            </p>
-          </div>
+          <EmptyState
+            icon={UserGroupIcon}
+            title="No eligible patients"
+            description="Every patient matching these filters already has portal access or has no phone number or email. Change the filters or add contact details on a patient's record."
+          />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
+            <table className="data-table">
+              <thead>
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    <input
-                      type="checkbox"
-                      checked={
-                        selectedPatients.size === eligiblePatients.length
-                      }
-                      onChange={handleSelectAll}
-                      className="h-4 w-4 text-primary border-gray-300 rounded"
-                    />
+                  <th scope="col" className="w-12">
+                    <label className="-m-2 flex min-h-touch-target min-w-touch-target cursor-pointer items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={handleSelectAll}
+                        disabled={running}
+                        aria-label="Select all eligible patients"
+                        className="h-5 w-5 rounded border-line-strong text-primary focus:ring-primary"
+                      />
+                    </label>
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Name
+                  <th scope="col">Name</th>
+                  <th scope="col" className="hidden md:table-cell">
+                    Date of birth
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    DOB
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Phone
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th scope="col">Phone</th>
+                  <th scope="col" className="hidden md:table-cell">
                     Email
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th scope="col" className="hidden lg:table-cell">
                     State
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th scope="col" className="hidden lg:table-cell">
                     Registered
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody>
                 {eligiblePatients.map((patient) => (
-                  <tr key={patient.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedPatients.has(patient.id)}
-                        onChange={() => handleTogglePatient(patient.id)}
-                        className="h-4 w-4 text-primary border-gray-300 rounded"
-                      />
+                  <tr key={patient.id}>
+                    <td>
+                      <label className="-m-2 flex min-h-touch-target min-w-touch-target cursor-pointer items-center justify-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedPatients.has(patient.id)}
+                          onChange={() => handleTogglePatient(patient.id)}
+                          disabled={running}
+                          aria-label={`Select ${patientName(patient)}`}
+                          className="h-5 w-5 rounded border-line-strong text-primary focus:ring-primary"
+                        />
+                      </label>
                     </td>
-                    <td className="px-4 py-3">
+                    <td>
                       <Link
                         to={`/patients/${patient.id}`}
-                        className="text-primary hover:underline font-medium"
+                        className="font-medium text-primary hover:underline"
                       >
-                        {patient.givenName} {patient.familyName}
+                        {patientName(patient)}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {patient.dob}
+                    <td className="hidden text-ink-secondary tabular-nums md:table-cell">
+                      {formatNigerianDate(patient.dob) || patient.dob}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {patient.phone || "-"}
+                    <td className="text-ink-secondary tabular-nums">
+                      {patient.phone || "None"}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {patient.email || "-"}
+                    <td className="hidden text-ink-secondary md:table-cell">
+                      {patient.email || "None"}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
+                    <td className="hidden text-ink-secondary lg:table-cell">
                       {patient.state}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
+                    <td className="hidden text-ink-secondary tabular-nums lg:table-cell">
                       {formatNigerianDate(patient.createdAt)}
                     </td>
                   </tr>
@@ -491,29 +590,42 @@ export function PortalMigration() {
             </table>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Error List */}
-      {errors.length > 0 && (
-        <div className="card bg-red-50 border-red-200">
-          <h3 className="text-lg font-semibold text-red-900 mb-4">
-            Failed Migrations ({errors.length})
-          </h3>
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {errors.map((error, index) => (
-              <div key={index} className="flex items-start space-x-2 text-sm">
-                <XCircleIcon className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-medium text-red-900">
-                    Patient ID: {error.patientId}
-                  </p>
-                  <p className="text-red-800">{error.error}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={!!confirming}
+        title={
+          confirming?.sendInvitations
+            ? `Enable portal access and invite ${plural(selectedCount, "patient")}?`
+            : `Enable portal access for ${plural(selectedCount, "patient")}?`
+        }
+        confirmLabel={
+          confirming?.sendInvitations
+            ? `Enable and invite ${selectedCount}`
+            : `Enable access for ${selectedCount}`
+        }
+        onConfirm={() => handleStartMigration(!!confirming?.sendInvitations)}
+        onCancel={() => setConfirming(null)}
+      >
+        <p>
+          Portal access is turned on for {plural(selectedCount, "patient")} on
+          this device
+          {server.state === "not-configured"
+            ? ". No server is connected, so nothing is uploaded and patients cannot use the portal until one is."
+            : ". This setting is not synced to other devices. Patients can see their records in the patient portal once they register."}
+        </p>
+        {confirming?.sendInvitations && (
+          <p>
+            Each patient is sent an invitation with a registration link: by
+            email, or by SMS if they have no email. Patients invited very
+            recently are not sent another and are listed as failed.
+          </p>
+        )}
+        <p className="font-medium text-ink">
+          Only continue if these patients agreed to use the portal. This tool
+          does not ask them.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

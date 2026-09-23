@@ -14,6 +14,29 @@ interface SMSRequest {
   reminderId?: string;
 }
 
+// Logs must not carry the full phone number or the message text (it names
+// the patient and their medicine). Same format as maskPhoneForLog in
+// src/services/logSafe.ts: "2348031234567" -> "234803***4567".
+function maskMsisdn(msisdn: string): string {
+  const digits = (msisdn || "").replace(/\D/g, "");
+  if (!digits) return "(none)";
+  if (digits.length < 8) return "***";
+  const keepStart = Math.min(6, digits.length - 7);
+  return `${digits.slice(0, keepStart)}***${digits.slice(-4)}`;
+}
+
+// Provider error text can quote the number (Twilio: "The 'To' number +234...
+// is not a valid phone number"); mask any long digit run before logging.
+function redactNumbers(text: string): string {
+  return String(text ?? "").replace(/\+?\d[\d\s-]{6,}\d/g, (run) =>
+    maskMsisdn(run),
+  );
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 Deno.serve(async (req: Request) => {
   const corsHeaders = corsHeadersFor(req);
   if (req.method === "OPTIONS") {
@@ -67,14 +90,15 @@ Deno.serve(async (req: Request) => {
     if (!config) {
       if (demoModeEnabled()) {
         console.log(
-          `SMS Demo - To: ${msisdn}, Message: ${message}, ReminderId: ${reminderId || "N/A"}`,
+          `SMS demo mode: not sent - To: ${maskMsisdn(msisdn)}, Length: ${message.length} chars, ReminderId: ${reminderId || "N/A"}`,
         );
         return new Response(
           JSON.stringify({
             success: true,
             demo: true,
             provider: "demo",
-            message: "SMS_DEMO_MODE is on: message logged, not sent",
+            message:
+              "SMS_DEMO_MODE is on: message not sent (logged without the number or text)",
           }),
           { status: 200, headers: jsonHeaders },
         );
@@ -100,7 +124,10 @@ Deno.serve(async (req: Request) => {
     const result = await sendSms(config, msisdn, message);
 
     if (!result.ok) {
-      console.error(`${result.provider} send failed:`, result.error);
+      console.error(
+        `${result.provider} send failed:`,
+        redactNumbers(result.error || "no error text"),
+      );
       return new Response(
         JSON.stringify({
           success: false,
@@ -112,7 +139,7 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log(
-      `SMS sent via ${result.provider} - To: ${msisdn}, ID: ${result.messageId ?? "n/a"}, ReminderId: ${reminderId || "N/A"}`,
+      `SMS accepted by ${result.provider} - To: ${maskMsisdn(msisdn)}, ID: ${result.messageId ?? "n/a"}, ReminderId: ${reminderId || "N/A"}`,
     );
 
     return new Response(
@@ -124,7 +151,7 @@ Deno.serve(async (req: Request) => {
       { status: 200, headers: jsonHeaders },
     );
   } catch (error) {
-    console.error("Error in send-sms-reminder:", error);
+    console.error("Error in send-sms-reminder:", errorName(error));
     return new Response(
       JSON.stringify({
         success: false,

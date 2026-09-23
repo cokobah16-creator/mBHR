@@ -1,9 +1,35 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
-import { db } from "@/db";
+import { db, type GameSession } from "@/db";
 import { GamificationService } from "@/services/gamification";
-import { AcademicCapIcon, ClockIcon } from "@heroicons/react/24/outline";
+import {
+  AcademicCapIcon,
+  ArrowPathIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+  PlayIcon,
+  XCircleIcon,
+} from "@heroicons/react/24/outline";
+import { TrainingModeFrame } from "@/components/training/TrainingModeFrame";
+import {
+  RoundTimer,
+  ScoringRules,
+  SessionSaveStatus,
+  TrainingStat,
+} from "@/components/training/TrainingWidgets";
+import {
+  EMPTY_ROUND_STATS,
+  KNOWLEDGE_BLITZ,
+  knowledgeBlitzMultipliers,
+  multiplierText,
+  percent,
+  recordAnswer,
+  shuffled,
+  type RoundStats,
+  type SaveState,
+} from "@/components/training/trainingRules";
+import { useCountdown } from "@/components/training/useCountdown";
 
 interface QuizQuestion {
   id: string;
@@ -15,463 +41,531 @@ interface QuizQuestion {
   explanation: string;
 }
 
+// Practice questions (in production, these would come from the database).
+const QUESTION_BANK: QuizQuestion[] = [
+  {
+    id: "1",
+    topic: "vital_signs",
+    difficulty: "easy",
+    stem: "What is the normal resting heart rate range for adults?",
+    choices: ["40-60 bpm", "60-100 bpm", "100-120 bpm", "120-140 bpm"],
+    answerIndex: 1,
+    explanation: "Normal adult resting heart rate is 60-100 beats per minute.",
+  },
+  {
+    id: "2",
+    topic: "medication",
+    difficulty: "medium",
+    stem: "Which medication should be stored in a cool, dry place?",
+    choices: [
+      "Paracetamol tablets",
+      "Insulin vials",
+      "Cough syrup",
+      "All of the above",
+    ],
+    answerIndex: 3,
+    explanation:
+      "All medications should be stored properly to maintain efficacy.",
+  },
+  {
+    id: "3",
+    topic: "infection_control",
+    difficulty: "easy",
+    stem: "How long should you wash your hands with soap?",
+    choices: ["5 seconds", "10 seconds", "20 seconds", "30 seconds"],
+    answerIndex: 2,
+    explanation:
+      "Proper handwashing requires at least 20 seconds with soap and water.",
+  },
+  {
+    id: "4",
+    topic: "triage",
+    difficulty: "medium",
+    stem: "A patient with chest pain and difficulty breathing should be triaged as:",
+    choices: ["Low priority", "Normal priority", "Urgent priority", "Can wait"],
+    answerIndex: 2,
+    explanation:
+      "Chest pain with breathing difficulty indicates potential cardiac emergency.",
+  },
+  {
+    id: "5",
+    topic: "pharmacy",
+    difficulty: "hard",
+    stem: "FEFO stands for:",
+    choices: [
+      "First Expired, First Out",
+      "First Entry, First Out",
+      "Fast Expiry, Fast Out",
+      "Final Entry, Final Out",
+    ],
+    answerIndex: 0,
+    explanation:
+      "FEFO ensures medications closest to expiry are dispensed first.",
+  },
+  {
+    id: "6",
+    topic: "vital_signs",
+    difficulty: "medium",
+    stem: "Normal body temperature range is:",
+    choices: ["35.0-36.0°C", "36.1-37.2°C", "37.3-38.0°C", "38.1-39.0°C"],
+    answerIndex: 1,
+    explanation: "Normal body temperature ranges from 36.1°C to 37.2°C.",
+  },
+  {
+    id: "7",
+    topic: "workflow",
+    difficulty: "easy",
+    stem: "What is the correct patient flow sequence?",
+    choices: [
+      "Registration → Pharmacy → Vitals → Consult",
+      "Registration → Vitals → Consult → Pharmacy",
+      "Vitals → Registration → Consult → Pharmacy",
+      "Consult → Vitals → Registration → Pharmacy",
+    ],
+    answerIndex: 1,
+    explanation:
+      "Patients flow from Registration → Vitals → Consultation → Pharmacy.",
+  },
+  {
+    id: "8",
+    topic: "safety",
+    difficulty: "medium",
+    stem: "If a patient reports an allergy to penicillin, you should:",
+    choices: [
+      "Give them penicillin anyway",
+      "Note it clearly in their record",
+      "Ignore the information",
+      "Ask them to prove it",
+    ],
+    answerIndex: 1,
+    explanation:
+      "Drug allergies must be clearly documented to prevent adverse reactions.",
+  },
+];
+
+/** Pause after each answer so the player can see whether it was right. */
+const FEEDBACK_MS = 1000;
+const LETTERS = ["A", "B", "C", "D", "E", "F"];
+
+type Phase = "intro" | "playing" | "result";
+
+function topicLabel(topic: string): string {
+  const words = topic.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export default function KnowledgeBlitz() {
-  const { currentUser } = useAuthStore();
-  const navigate = useNavigate();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [currentSession, setCurrentSession] = useState<any>(null);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const [phase, setPhase] = useState<Phase>("intro");
+  const [session, setSession] = useState<GameSession | null>(null);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [index, setIndex] = useState(0);
+  const [selected, setSelected] = useState<number | null>(null);
   const [answers, setAnswers] = useState<number[]>([]);
-  const [timeLeft, setTimeLeft] = useState(60); // 60 seconds
-  const [gameStarted, setGameStarted] = useState(false);
-  const [showResult, setShowResult] = useState(false);
-  const [streak, setStreak] = useState(0);
-  const [maxStreak, setMaxStreak] = useState(0);
+  const [stats, setStats] = useState<RoundStats>(EMPTY_ROUND_STATS);
+  const [feedback, setFeedback] = useState<boolean | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [tokens, setTokens] = useState<number | null>(null);
 
-  // Sample questions (in production, these would come from database)
-  const questionBank: QuizQuestion[] = [
-    {
-      id: "1",
-      topic: "vital_signs",
-      difficulty: "easy",
-      stem: "What is the normal resting heart rate range for adults?",
-      choices: ["40-60 bpm", "60-100 bpm", "100-120 bpm", "120-140 bpm"],
-      answerIndex: 1,
-      explanation:
-        "Normal adult resting heart rate is 60-100 beats per minute.",
-    },
-    {
-      id: "2",
-      topic: "medication",
-      difficulty: "medium",
-      stem: "Which medication should be stored in a cool, dry place?",
-      choices: [
-        "Paracetamol tablets",
-        "Insulin vials",
-        "Cough syrup",
-        "All of the above",
-      ],
-      answerIndex: 3,
-      explanation:
-        "All medications should be stored properly to maintain efficacy.",
-    },
-    {
-      id: "3",
-      topic: "infection_control",
-      difficulty: "easy",
-      stem: "How long should you wash your hands with soap?",
-      choices: ["5 seconds", "10 seconds", "20 seconds", "30 seconds"],
-      answerIndex: 2,
-      explanation:
-        "Proper handwashing requires at least 20 seconds with soap and water.",
-    },
-    {
-      id: "4",
-      topic: "triage",
-      difficulty: "medium",
-      stem: "A patient with chest pain and difficulty breathing should be triaged as:",
-      choices: [
-        "Low priority",
-        "Normal priority",
-        "Urgent priority",
-        "Can wait",
-      ],
-      answerIndex: 2,
-      explanation:
-        "Chest pain with breathing difficulty indicates potential cardiac emergency.",
-    },
-    {
-      id: "5",
-      topic: "pharmacy",
-      difficulty: "hard",
-      stem: "FEFO stands for:",
-      choices: [
-        "First Expired, First Out",
-        "First Entry, First Out",
-        "Fast Expiry, Fast Out",
-        "Final Entry, Final Out",
-      ],
-      answerIndex: 0,
-      explanation:
-        "FEFO ensures medications closest to expiry are dispensed first.",
-    },
-    {
-      id: "6",
-      topic: "vital_signs",
-      difficulty: "medium",
-      stem: "Normal body temperature range is:",
-      choices: ["35.0-36.0°C", "36.1-37.2°C", "37.3-38.0°C", "38.1-39.0°C"],
-      answerIndex: 1,
-      explanation: "Normal body temperature ranges from 36.1°C to 37.2°C.",
-    },
-    {
-      id: "7",
-      topic: "workflow",
-      difficulty: "easy",
-      stem: "What is the correct patient flow sequence?",
-      choices: [
-        "Registration → Pharmacy → Vitals → Consult",
-        "Registration → Vitals → Consult → Pharmacy",
-        "Vitals → Registration → Consult → Pharmacy",
-        "Consult → Vitals → Registration → Pharmacy",
-      ],
-      answerIndex: 1,
-      explanation:
-        "Patients flow from Registration → Vitals → Consultation → Pharmacy.",
-    },
-    {
-      id: "8",
-      topic: "safety",
-      difficulty: "medium",
-      stem: "If a patient reports an allergy to penicillin, you should:",
-      choices: [
-        "Give them penicillin anyway",
-        "Note it clearly in their record",
-        "Ignore the information",
-        "Ask them to prove it",
-      ],
-      answerIndex: 1,
-      explanation:
-        "Drug allergies must be clearly documented to prevent adverse reactions.",
-    },
-  ];
+  const { secondsLeft, reset } = useCountdown(
+    KNOWLEDGE_BLITZ.timeLimitSeconds,
+    phase === "playing",
+  );
 
-  useEffect(() => {
-    if (gameStarted && timeLeft > 0 && !showResult) {
-      const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (timeLeft === 0 && !showResult) {
-      endGame();
+  const finishedRef = useRef(false);
+  const lastRoundRef = useRef<{ stats: RoundStats; secondsLeft: number } | null>(null);
+  const advanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (advanceRef.current) clearTimeout(advanceRef.current);
+    },
+    [],
+  );
+
+  const saveResult = useCallback(async () => {
+    const round = lastRoundRef.current;
+    if (!round || !session || !currentUser) {
+      setSaveState("failed");
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameStarted, timeLeft, showResult]);
+    setSaveState("saving");
+    try {
+      const m = knowledgeBlitzMultipliers({
+        correct: round.stats.correct,
+        questionCount: questions.length,
+        secondsLeft: round.secondsLeft,
+        maxStreak: round.stats.maxStreak,
+      });
+      const wallet = await db.gamificationWallets.get(currentUser.id);
+      const tokensEarned = GamificationService.calculateTokens(
+        KNOWLEDGE_BLITZ.baseTokens,
+        {
+          accuracy: m.accuracy,
+          streak: wallet?.streakDays || 0,
+          speedBonus: m.speedBonus,
+          qualityBonus: m.qualityBonus,
+        },
+      );
+      setTokens(tokensEarned);
+      await GamificationService.completeSession(session.id, {
+        score: round.stats.correct,
+        tokensEarned,
+        badges: [],
+        multipliers: {
+          accuracy: m.accuracy,
+          speed: m.speedBonus,
+          quality: m.qualityBonus,
+        },
+      });
+      setSaveState("saved");
+    } catch (error) {
+      console.error(
+        "Could not save Knowledge Blitz result:",
+        error instanceof Error ? error.name : error,
+      );
+      setSaveState("failed");
+    }
+  }, [session, currentUser, questions.length]);
+
+  const finishRound = useCallback(
+    (finalStats: RoundStats, finalSecondsLeft: number) => {
+      if (finishedRef.current) return;
+      finishedRef.current = true;
+      if (advanceRef.current) clearTimeout(advanceRef.current);
+      setFeedback(null);
+      lastRoundRef.current = { stats: finalStats, secondsLeft: finalSecondsLeft };
+      setPhase("result");
+      void saveResult();
+    },
+    [saveResult],
+  );
+
+  // Time up: score what has been answered so far.
+  useEffect(() => {
+    if (phase === "playing" && secondsLeft === 0) finishRound(stats, 0);
+  }, [phase, secondsLeft, stats, finishRound]);
 
   const startGame = async () => {
-    if (!currentUser) return;
-
+    if (!currentUser || starting) return;
+    setStarting(true);
+    setStartError("");
     try {
-      // Shuffle questions and take 5
-      const shuffled = [...questionBank]
-        .sort(() => Math.random() - 0.5)
-        .slice(0, 5);
-
-      const session = await GamificationService.startSession(
+      const round = shuffled(QUESTION_BANK).slice(
+        0,
+        KNOWLEDGE_BLITZ.questionsPerRound,
+      );
+      const newSession = await GamificationService.startSession(
         "quiz",
         currentUser.id,
         {
-          totalQuestions: shuffled.length,
+          totalQuestions: round.length,
           startTime: new Date().toISOString(),
         },
       );
-
-      setCurrentSession(session);
-      setQuestions(shuffled);
-      setCurrentQuestionIndex(0);
-      setGameStarted(true);
-      setTimeLeft(60);
+      finishedRef.current = false;
+      lastRoundRef.current = null;
+      setSession(newSession);
+      setQuestions(round);
+      setIndex(0);
+      setSelected(null);
       setAnswers([]);
-      setSelectedAnswer(null);
-      setStreak(0);
-      setMaxStreak(0);
-      setShowResult(false);
+      setStats(EMPTY_ROUND_STATS);
+      setFeedback(null);
+      setSaveState("idle");
+      setTokens(null);
+      reset(KNOWLEDGE_BLITZ.timeLimitSeconds);
+      setPhase("playing");
     } catch (error) {
-      console.error("Error starting knowledge blitz:", error);
+      console.error(
+        "Could not start Knowledge Blitz:",
+        error instanceof Error ? error.name : error,
+      );
+      setStartError(
+        "The quiz could not start because this device could not save a new game session. Try again.",
+      );
+    } finally {
+      setStarting(false);
     }
   };
 
   const submitAnswer = () => {
-    if (selectedAnswer === null) return;
-
-    const isCorrect =
-      selectedAnswer === questions[currentQuestionIndex].answerIndex;
-    const newAnswers = [...answers, selectedAnswer];
-    setAnswers(newAnswers);
-
-    // Update streak
-    const newStreak = isCorrect ? streak + 1 : 0;
-    setStreak(newStreak);
-    setMaxStreak(Math.max(maxStreak, newStreak));
-
-    // Move to next question or end game
-    if (currentQuestionIndex < questions.length - 1) {
-      setTimeout(() => {
-        setCurrentQuestionIndex(currentQuestionIndex + 1);
-        setSelectedAnswer(null);
-      }, 1000);
-    } else {
-      setTimeout(() => {
-        endGame();
-      }, 1000);
-    }
+    if (phase !== "playing" || selected === null || feedback !== null) return;
+    const question = questions[index];
+    if (!question) return;
+    const isCorrect = selected === question.answerIndex;
+    const nextStats = recordAnswer(stats, isCorrect);
+    const isLast = index >= questions.length - 1;
+    const secondsAtSubmit = secondsLeft;
+    setStats(nextStats);
+    setAnswers((prev) => [...prev, selected]);
+    setFeedback(isCorrect);
+    advanceRef.current = setTimeout(() => {
+      advanceRef.current = null;
+      if (isLast) {
+        finishRound(nextStats, secondsAtSubmit);
+      } else {
+        setFeedback(null);
+        setIndex((i) => i + 1);
+        setSelected(null);
+      }
+    }, FEEDBACK_MS);
   };
 
-  const endGame = async () => {
-    if (!currentSession || !currentUser) return;
+  const rules = (
+    <ScoringRules>
+      <li>
+        {KNOWLEDGE_BLITZ.questionsPerRound} questions picked at random from{" "}
+        {QUESTION_BANK.length}, with {KNOWLEDGE_BLITZ.timeLimitSeconds} seconds
+        for the whole round.
+      </li>
+      <li>
+        Base {KNOWLEDGE_BLITZ.baseTokens} tokens, scaled by the share you get
+        right: all correct keeps the full amount, 80% or fewer correct gives
+        0.8×.
+      </li>
+      <li>
+        {multiplierText(KNOWLEDGE_BLITZ.speedBonus)} if{" "}
+        {KNOWLEDGE_BLITZ.speedBonusMinSecondsLeft} or more seconds are left.
+      </li>
+      <li>
+        {multiplierText(KNOWLEDGE_BLITZ.streakBonus)} for{" "}
+        {KNOWLEDGE_BLITZ.streakBonusAt} correct answers in a row.
+      </li>
+      <li>+10% for each day of your activity streak, up to +50%.</li>
+      <li>
+        Tokens are added to your game wallet after an admin approves the
+        session.
+      </li>
+    </ScoringRules>
+  );
 
-    try {
-      setShowResult(true);
+  const frameNote =
+    "Questions are practice material. Follow your clinic's protocols for real patients.";
 
-      const correctAnswers = answers.filter(
-        (answer, index) => answer === questions[index]?.answerIndex,
-      ).length;
-
-      const accuracy = correctAnswers / questions.length;
-      const timeBonus = timeLeft >= 10 ? 1.1 : 1.0;
-      const streakBonus = maxStreak >= 5 ? 1.2 : 1.0;
-
-      const wallet = await db.gamificationWallets.get(currentUser.id);
-      const tokensEarned = GamificationService.calculateTokens(10, {
-        accuracy,
-        streak: wallet?.streakDays || 0,
-        speedBonus: timeBonus,
-        qualityBonus: streakBonus,
-      });
-
-      await GamificationService.completeSession(currentSession.id, {
-        score: correctAnswers,
-        tokensEarned,
-        badges: [],
-        multipliers: { accuracy, speed: timeBonus, quality: streakBonus },
-      });
-
-      // Auto-navigate after showing results
-      setTimeout(() => {
-        navigate("/games");
-      }, 5000);
-    } catch (error) {
-      console.error("Error ending game:", error);
-    }
-  };
-
-  if (!gameStarted) {
+  if (phase === "intro") {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center space-x-3">
-          <AcademicCapIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Knowledge Blitz
-            </h1>
-            <p className="text-gray-600">
-              60-second rapid-fire quiz on protocols and procedures
-            </p>
-          </div>
-        </div>
-
-        <div className="card max-w-2xl mx-auto">
-          <div className="text-center py-8">
-            <AcademicCapIcon className="h-16 w-16 mx-auto text-purple-500 mb-4" />
-            <h2 className="text-xl font-bold text-gray-900 mb-4">
-              Ready for the Blitz?
-            </h2>
-
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
-              <div className="text-sm text-purple-800">
-                <div className="font-medium mb-2">⚡ Challenge Rules:</div>
-                <ul className="text-xs space-y-1 text-purple-700 text-left">
-                  <li>• 5 random questions in 60 seconds</li>
-                  <li>• +2 tokens per correct answer</li>
-                  <li>• +5 bonus for 5-question streak</li>
-                  <li>• +10% speed bonus if 10+ seconds remain</li>
-                  <li>• Topics: vitals, meds, protocols, safety</li>
-                </ul>
-              </div>
-            </div>
-
-            <button onClick={startGame} className="btn-primary">
-              Start Knowledge Blitz
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (showResult) {
-    const correctAnswers = answers.filter(
-      (answer, index) => answer === questions[index]?.answerIndex,
-    ).length;
-    const accuracy = Math.round((correctAnswers / questions.length) * 100);
-
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center space-x-3">
-          <AcademicCapIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Knowledge Blitz Complete!
-            </h1>
-            <p className="text-gray-600">Great job! Here are your results:</p>
-          </div>
-        </div>
-
-        <div className="card max-w-2xl mx-auto">
-          <div className="text-center py-8">
-            <div className="text-6xl mb-4">
-              {accuracy >= 80 ? "🏆" : accuracy >= 60 ? "🥈" : "🥉"}
-            </div>
-
-            <div className="grid grid-cols-3 gap-6 mb-6">
-              <div>
-                <div className="text-3xl font-bold text-primary">
-                  {correctAnswers}/{questions.length}
-                </div>
-                <div className="text-sm text-gray-600">Correct</div>
-              </div>
-              <div>
-                <div className="text-3xl font-bold text-orange-600">
-                  {accuracy}%
-                </div>
-                <div className="text-sm text-gray-600">Accuracy</div>
-              </div>
-              <div>
-                <div className="text-3xl font-bold text-red-600">
-                  {maxStreak}
-                </div>
-                <div className="text-sm text-gray-600">Max Streak</div>
-              </div>
-            </div>
-
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-              <p className="text-green-800 font-medium">
-                🎉 Session completed! Waiting for supervisor approval to mint
-                tokens.
+      <TrainingModeFrame
+        title="Knowledge Blitz"
+        description="A quick quiz on vitals, medicines, infection control and clinic workflow."
+        note={frameNote}
+      >
+        <div className="card mx-auto max-w-2xl space-y-5">
+          <div className="flex items-start gap-3">
+            <AcademicCapIcon className="h-8 w-8 shrink-0 text-ink-muted" aria-hidden />
+            <div>
+              <h2 className="text-h2 text-ink">Ready for the quiz?</h2>
+              <p className="text-body text-ink-secondary">
+                Choose one answer per question, then select Submit answer. The
+                clock runs for the whole round.
               </p>
             </div>
-
-            <button onClick={() => navigate("/games")} className="btn-primary">
-              Back to Game Hub
-            </button>
           </div>
+          {rules}
+          {startError && (
+            <div className="banner banner-danger" role="alert">
+              <ExclamationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <p>{startError}</p>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={startGame}
+            disabled={!currentUser || starting}
+            className="btn-primary w-full sm:w-auto"
+          >
+            <PlayIcon className="h-5 w-5" aria-hidden />
+            {starting ? "Starting…" : "Start Knowledge Blitz"}
+          </button>
         </div>
-      </div>
+      </TrainingModeFrame>
     );
   }
 
-  const currentQuestion = questions[currentQuestionIndex];
-  if (!currentQuestion) return null;
+  if (phase === "result") {
+    const answered = answers.length;
+    return (
+      <TrainingModeFrame
+        title="Knowledge Blitz results"
+        description={
+          answered < questions.length
+            ? `Time ran out after ${answered} of ${questions.length} questions.`
+            : "You answered every question."
+        }
+        note={frameNote}
+      >
+        <div className="mx-auto max-w-3xl space-y-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <TrainingStat
+              label="Correct"
+              value={`${stats.correct}/${questions.length}`}
+            />
+            <TrainingStat
+              label="Accuracy"
+              value={`${percent(stats.correct, questions.length)}%`}
+            />
+            <TrainingStat label="Longest streak" value={stats.maxStreak} />
+          </div>
+
+          <SessionSaveStatus
+            state={saveState}
+            tokens={tokens}
+            onRetry={() => void saveResult()}
+          />
+
+          <section className="panel" aria-labelledby="blitz-review">
+            <div className="panel-header">
+              <h2 id="blitz-review" className="panel-title">
+                Review your answers
+              </h2>
+            </div>
+            <ol className="divide-y divide-line">
+              {questions.map((q, i) => {
+                const given = answers[i];
+                const wasAnswered = given !== undefined;
+                const right = wasAnswered && given === q.answerIndex;
+                return (
+                  <li key={q.id} className="panel-body space-y-1">
+                    <p className="text-body font-medium text-ink">
+                      {i + 1}. {q.stem}
+                    </p>
+                    <p className="flex items-center gap-1.5 text-body">
+                      {right ? (
+                        <CheckCircleIcon className="h-5 w-5 shrink-0 text-success" aria-hidden />
+                      ) : (
+                        <XCircleIcon className="h-5 w-5 shrink-0 text-danger" aria-hidden />
+                      )}
+                      <span className={right ? "text-success-fg" : "text-danger-fg"}>
+                        {!wasAnswered
+                          ? "Not answered"
+                          : right
+                            ? `Correct: ${q.choices[given]}`
+                            : `Your answer: ${q.choices[given]}`}
+                      </span>
+                    </p>
+                    {!right && (
+                      <p className="text-body text-ink-secondary">
+                        Answer: {q.choices[q.answerIndex]}
+                      </p>
+                    )}
+                    <p className="text-caption text-ink-muted">{q.explanation}</p>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={startGame}
+              disabled={starting}
+              className="btn-primary"
+            >
+              <ArrowPathIcon className="h-5 w-5" aria-hidden />
+              Play again
+            </button>
+            <Link to="/games" className="btn-secondary">
+              Back to training
+            </Link>
+          </div>
+          {startError && (
+            <div className="banner banner-danger" role="alert">
+              <ExclamationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <p>{startError}</p>
+            </div>
+          )}
+        </div>
+      </TrainingModeFrame>
+    );
+  }
+
+  const question = questions[index];
+  if (!question) return null;
+  const locked = feedback !== null;
 
   return (
-    <div className="space-y-6">
-      {/* Header with Timer */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <AcademicCapIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Knowledge Blitz
-            </h1>
-            <p className="text-gray-600">
-              Question {currentQuestionIndex + 1} of {questions.length}
-            </p>
-          </div>
+    <TrainingModeFrame
+      title="Knowledge Blitz"
+      description={`Question ${index + 1} of ${questions.length}`}
+      note={frameNote}
+    >
+      <div className="mx-auto max-w-3xl space-y-5">
+        <div className="grid grid-cols-3 gap-3">
+          <TrainingStat label="Correct" value={stats.correct} />
+          <TrainingStat label="Streak" value={stats.streak} />
+          <RoundTimer secondsLeft={secondsLeft} lowAt={10} />
         </div>
 
-        <div className="flex items-center space-x-6">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-primary">
-              {
-                answers.filter(
-                  (answer, index) => answer === questions[index]?.answerIndex,
-                ).length
-              }
+        <form
+          className="card space-y-5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitAnswer();
+          }}
+        >
+          <p className="text-caption text-ink-muted">
+            {topicLabel(question.topic)} · {question.difficulty}
+          </p>
+          <fieldset disabled={locked}>
+            <legend className="mb-4 text-h2 text-ink">{question.stem}</legend>
+            <div className="space-y-3">
+              {question.choices.map((choice, i) => {
+                const isSelected = selected === i;
+                return (
+                  <label
+                    key={choice}
+                    className={`flex min-h-touch-target cursor-pointer items-center gap-3 rounded-lg border p-4 transition-colors ${
+                      isSelected
+                        ? "border-primary bg-primary-soft"
+                        : "border-line bg-surface hover:bg-surface-hover"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name={`blitz-${question.id}`}
+                      value={i}
+                      checked={isSelected}
+                      onChange={() => setSelected(i)}
+                      className="h-5 w-5 shrink-0 accent-primary"
+                    />
+                    <span className="w-5 shrink-0 text-label text-ink-muted">
+                      {LETTERS[i]}
+                    </span>
+                    <span className="text-body text-ink">{choice}</span>
+                  </label>
+                );
+              })}
             </div>
-            <div className="text-sm text-gray-600">Correct</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-orange-600">{streak}</div>
-            <div className="text-sm text-gray-600">Streak</div>
-          </div>
-          <div className="text-center flex items-center space-x-1">
-            <ClockIcon className="h-5 w-5 text-red-500" />
-            <div
-              className={`text-2xl font-bold ${timeLeft <= 10 ? "text-red-600 animate-pulse" : "text-red-600"}`}
-            >
-              {timeLeft}s
-            </div>
-          </div>
-        </div>
-      </div>
+          </fieldset>
 
-      {/* Question Card */}
-      <div className="card max-w-3xl mx-auto">
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800 capitalize">
-              {currentQuestion.topic.replace("_", " ")} •{" "}
-              {currentQuestion.difficulty}
-            </span>
-            <div className="text-sm text-gray-500">
-              {currentQuestionIndex + 1}/{questions.length}
-            </div>
+          <div aria-live="polite">
+            {feedback === true && (
+              <p className="banner banner-success">
+                <CheckCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                Correct.
+              </p>
+            )}
+            {feedback === false && (
+              <p className="banner banner-danger">
+                <XCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                Not quite. The answer is {LETTERS[question.answerIndex]}:{" "}
+                {question.choices[question.answerIndex]}.
+              </p>
+            )}
           </div>
 
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
-            {currentQuestion.stem}
-          </h2>
-        </div>
-
-        {/* Answer Choices */}
-        <div className="space-y-3 mb-6">
-          {currentQuestion.choices.map((choice, index) => (
-            <button
-              key={index}
-              onClick={() => setSelectedAnswer(index)}
-              className={`w-full text-left p-4 rounded-lg border transition-all ${
-                selectedAnswer === index
-                  ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                  : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <div
-                  className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
-                    selectedAnswer === index
-                      ? "border-primary bg-primary text-white"
-                      : "border-gray-300"
-                  }`}
-                >
-                  <span className="text-sm font-medium">
-                    {String.fromCharCode(65 + index)}
-                  </span>
-                </div>
-                <span className="text-gray-900">{choice}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* Submit Button */}
-        <div className="text-center">
           <button
-            onClick={submitAnswer}
-            disabled={selectedAnswer === null}
-            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            type="submit"
+            disabled={selected === null || locked}
+            className="btn-primary w-full sm:w-auto"
           >
-            Submit Answer
+            Submit answer
           </button>
-        </div>
+        </form>
       </div>
-
-      {/* Progress Indicator */}
-      <div className="max-w-3xl mx-auto">
-        <div className="flex justify-center space-x-2">
-          {questions.map((_, index) => (
-            <div
-              key={index}
-              className={`w-3 h-3 rounded-full ${
-                index < currentQuestionIndex
-                  ? "bg-green-500"
-                  : index === currentQuestionIndex
-                    ? "bg-primary"
-                    : "bg-gray-300"
-              }`}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
+    </TrainingModeFrame>
   );
 }

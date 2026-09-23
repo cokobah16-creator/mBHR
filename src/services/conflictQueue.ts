@@ -2,7 +2,23 @@ import { supabase } from "@/lib/supabase";
 import { db, Patient } from "@/db";
 import { patientDeduplication } from "./patientDeduplication";
 import logger from "@/lib/logger";
-import { getRequiredApproverRole, type Role } from "@/auth/roles";
+import {
+  getRequiredApproverRole,
+  getRoleDisplayName,
+  type Role,
+} from "@/auth/roles";
+import {
+  conflictPriority,
+  getFieldPHISensitivity,
+  overallPHISensitivity,
+} from "@/features/conflicts/sensitivity";
+import {
+  approveDeniedMessage,
+  canApproveDecision,
+  canResolveConflict,
+  decisionNeedsApproval,
+  resolveDeniedMessage,
+} from "@/features/conflicts/conflictPermissions";
 
 export type ConflictType = "sync_conflict" | "duplicate" | "data_quality";
 export type ConflictStatus =
@@ -24,6 +40,9 @@ export type RequiredApproverRole =
   | "auditor"
   | "lead_clinician"
   | null;
+
+/** Which list a screen asks for: open, waiting for approval, or history. */
+export type ConflictView = "open" | "needs_approval" | "resolved";
 
 export interface ConflictField {
   field: string;
@@ -47,6 +66,9 @@ export interface ConflictResolution {
     fields: ConflictField[];
     localTimestamp?: string;
     remoteTimestamp?: string;
+    /** User ID of whoever last changed each side, when the reporter knows. */
+    localChangedBy?: string;
+    remoteChangedBy?: string;
     matchScore?: number;
     matchReasons?: string[];
   };
@@ -109,59 +131,120 @@ export interface AutoResolutionRule {
   priorityOrder: number;
 }
 
-const PHI_FIELDS: Record<string, PHISensitivity> = {
-  givenName: "high",
-  familyName: "high",
-  dob: "high",
-  phone: "high",
-  email: "high",
-  address: "high",
-  state: "medium",
-  lga: "medium",
-  photoUrl: "high",
-  sex: "medium",
-  soapSubjective: "high",
-  soapObjective: "high",
-  soapAssessment: "high",
-  soapPlan: "high",
-  provisionalDx: "high",
-  heightCm: "low",
-  weightKg: "low",
-  tempC: "low",
-  pulseBpm: "low",
-  systolic: "low",
-  diastolic: "low",
-  spo2: "low",
-  bmi: "low",
+export interface ConflictAuditEntry {
+  id: string;
+  action: string;
+  actorId?: string;
+  actorRole?: string;
+  fieldChanges: Record<string, unknown>;
+  justification?: string;
+  createdAt: string;
+}
+
+export interface ConflictStatsSummary {
+  pending: number;
+  needsApproval: number;
+  resolvedToday: number;
+  autoResolvedToday: number;
+  byPriority: Record<ConflictPriority, number>;
+  byType: Record<ConflictType, number>;
+}
+
+export type ResolveFailure =
+  | "not_configured"
+  | "not_found"
+  | "forbidden"
+  | "closed"
+  | "awaiting_approval"
+  | "failed";
+
+/**
+ * Result of recording a decision. When ok, `status` is where the conflict
+ * now stands; otherwise `reason` and a plain-English `message` say why not.
+ */
+export interface ResolveOutcome {
+  ok: boolean;
+  status?: "resolved" | "needs_approval";
+  reason?: ResolveFailure;
+  message?: string;
+}
+
+export type ConflictQueueErrorKind = "not_configured" | "request_failed";
+
+/** Thrown by read methods so screens can say "could not load", not "none". */
+export class ConflictQueueError extends Error {
+  kind: ConflictQueueErrorKind;
+  constructor(kind: ConflictQueueErrorKind, message: string) {
+    super(message);
+    this.name = "ConflictQueueError";
+    this.kind = kind;
+  }
+}
+
+export const CONFLICT_QUEUE_NOT_CONFIGURED =
+  "Cloud sync is not set up on this device, so there is no shared conflict list.";
+const REQUEST_FAILED =
+  "The server could not be reached or refused the request. Check the connection and try again.";
+
+const OPEN_STATUSES: ConflictStatus[] = ["pending", "needs_approval"];
+const CLOSED_STATUSES: ConflictStatus[] = ["resolved", "ignored", "auto_resolved"];
+const VIEW_STATUSES: Record<ConflictView, ConflictStatus[]> = {
+  open: ["pending"],
+  needs_approval: ["needs_approval"],
+  resolved: CLOSED_STATUSES,
 };
 
-function getFieldPHISensitivity(field: string): PHISensitivity {
-  return PHI_FIELDS[field] || "none";
-}
-
-function calculateOverallPHISensitivity(
-  fields: ConflictField[],
-): PHISensitivity {
-  const sensitivities = fields.map((f) => f.phiSensitivity);
-  if (sensitivities.includes("high")) return "high";
-  if (sensitivities.includes("medium")) return "medium";
-  if (sensitivities.includes("low")) return "low";
-  return "none";
-}
-
-function calculatePriority(
-  conflictType: ConflictType,
-  phiSensitivity: PHISensitivity,
-  entityType: string,
-): ConflictPriority {
-  if (phiSensitivity === "high" && entityType === "patients") return "critical";
-  if (phiSensitivity === "high") return "high";
-  if (conflictType === "duplicate" && entityType === "patients") return "high";
-  if (phiSensitivity === "medium") return "medium";
-  return "low";
+/** Error code or name only: request errors can echo row values (PHI). */
+function errorCode(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && code) return code;
+  }
+  return error instanceof Error ? error.name : "unknown";
 }
 
 export class ConflictQueueService {
+  /** False when Supabase is not configured on this device. */
+  isAvailable(): boolean {
+    return supabase !== null;
+  }
+
+  /**
+   * Whether this device is signed in to the cloud account. Conflict tables
+   * are only readable by signed-in staff; without a session the server
+   * returns no rows rather than an error.
+   */
+  async hasCloudSession(): Promise<boolean> {
+    if (!supabase) return false;
+    try {
+      const { data } = await supabase.auth.getSession();
+      return !!data.session;
+    } catch (error) {
+      logger.warn("Could not read the cloud session", errorCode(error));
+      return false;
+    }
+  }
+
+  /** An open conflict of this type already exists for the record. */
+  async hasOpenConflict(entityId: string, conflictType: ConflictType): Promise<boolean> {
+    return this.checkExistingConflict(entityId, conflictType);
+  }
+
+  /** Id of the open conflict of this type for the record, or null. */
+  async findOpenConflictId(entityId: string, conflictType: ConflictType): Promise<string | null> {
+    if (!supabase) return null;
+    const { data, error } = await supabase
+      .from("conflict_resolutions")
+      .select("id")
+      .eq("entity_id", entityId)
+      .eq("conflict_type", conflictType)
+      .in("status", OPEN_STATUSES)
+      .limit(1);
+    if (error) throw error;
+    const row = data?.[0] as { id?: unknown } | undefined;
+    return typeof row?.id === "string" ? row.id : null;
+  }
+
   async createConflict(params: {
     conflictType: ConflictType;
     entityType: string;
@@ -169,14 +252,21 @@ export class ConflictQueueService {
     candidateIds?: string[];
     conflictDetails: ConflictResolution["conflictDetails"];
     siteId?: string;
+    /** Who reported it, for the audit log (optional). */
+    reportedBy?: string;
+    reporterRole?: Role;
   }): Promise<string | null> {
+    if (!supabase) {
+      logger.warn("Conflict not queued: cloud sync is not configured");
+      return null;
+    }
     const fieldsWithPHI = params.conflictDetails.fields.map((f) => ({
       ...f,
       phiSensitivity: getFieldPHISensitivity(f.field),
     }));
 
-    const phiSensitivity = calculateOverallPHISensitivity(fieldsWithPHI);
-    const priority = calculatePriority(
+    const phiSensitivity = overallPHISensitivity(fieldsWithPHI);
+    const priority = conflictPriority(
       params.conflictType,
       phiSensitivity,
       params.entityType,
@@ -220,21 +310,28 @@ export class ConflictQueueService {
       .select("id")
       .single();
 
-    if (error) {
-      logger.error("Failed to create conflict", error);
+    if (error || !data) {
+      logger.error("Failed to create conflict", errorCode(error));
       return null;
     }
 
-    await this.logAuditEvent(data.id, "created", {
-      conflict_type: params.conflictType,
-      entity_type: params.entityType,
-      required_approver_role: requiredApproverRole,
-    });
+    await this.logAuditEvent(
+      data.id,
+      "created",
+      {
+        conflict_type: params.conflictType,
+        entity_type: params.entityType,
+        required_approver_role: requiredApproverRole,
+      },
+      params.reportedBy,
+      params.reporterRole,
+    );
 
     return data.id;
   }
 
   async getSiteSettings(siteId: string): Promise<SiteConflictSettings | null> {
+    if (!supabase) return null;
     const { data, error } = await supabase
       .from("site_conflict_settings")
       .select("*")
@@ -260,6 +357,7 @@ export class ConflictQueueService {
     settings: Partial<SiteConflictSettings>,
     updatedBy: string,
   ): Promise<boolean> {
+    if (!supabase) return false;
     const { error } = await supabase.from("site_conflict_settings").upsert({
       site_id: siteId,
       site_name: settings.siteName,
@@ -277,20 +375,21 @@ export class ConflictQueueService {
     });
 
     if (error) {
-      logger.error("Failed to update site settings", error);
+      logger.error("Failed to update site settings", errorCode(error));
       return false;
     }
     return true;
   }
 
   async getAllSiteSettings(): Promise<SiteConflictSettings[]> {
+    if (!supabase) return [];
     const { data, error } = await supabase
       .from("site_conflict_settings")
       .select("*")
       .order("site_name");
 
     if (error) {
-      logger.error("Failed to fetch site settings", error);
+      logger.error("Failed to fetch site settings", errorCode(error));
       return [];
     }
 
@@ -319,6 +418,59 @@ export class ConflictQueueService {
     };
   }
 
+  /**
+   * Conflicts for one view. Throws ConflictQueueError when the list cannot
+   * be loaded, so callers never mistake a failure for "no conflicts".
+   * Open views are returned oldest first; history newest resolution first.
+   */
+  async listConflicts(params: {
+    view: ConflictView;
+    entityType?: string;
+    conflictType?: ConflictType;
+    priority?: ConflictPriority;
+    phiSensitivity?: PHISensitivity;
+    limit: number;
+    offset?: number;
+  }): Promise<{ conflicts: ConflictResolution[]; total: number }> {
+    if (!supabase) {
+      throw new ConflictQueueError("not_configured", CONFLICT_QUEUE_NOT_CONFIGURED);
+    }
+    const offset = params.offset ?? 0;
+    let query = supabase
+      .from("conflict_resolutions")
+      .select("*", { count: "exact" })
+      .in("status", VIEW_STATUSES[params.view]);
+
+    query =
+      params.view === "resolved"
+        ? query
+            .order("resolved_at", { ascending: false, nullsFirst: false })
+            .order("updated_at", { ascending: false })
+        : query.order("created_at", { ascending: true });
+
+    if (params.entityType) query = query.eq("entity_type", params.entityType);
+    if (params.conflictType) query = query.eq("conflict_type", params.conflictType);
+    if (params.priority) query = query.eq("priority", params.priority);
+    if (params.phiSensitivity) {
+      query = query.eq("phi_sensitivity", params.phiSensitivity);
+    }
+    query = query.range(offset, offset + params.limit - 1);
+
+    const { data, error, count } = await query;
+    if (error) {
+      logger.error("Failed to list conflicts", errorCode(error));
+      throw new ConflictQueueError("request_failed", REQUEST_FAILED);
+    }
+    return {
+      conflicts: (data || []).map(this.mapFromDB),
+      total: count ?? (data || []).length,
+    };
+  }
+
+  /**
+   * @deprecated Returns an empty list on failure, which reads as "no
+   * conflicts". Use listConflicts, which throws instead.
+   */
   async getPendingConflicts(filters?: {
     entityType?: string;
     conflictType?: ConflictType;
@@ -328,10 +480,11 @@ export class ConflictQueueService {
     limit?: number;
     offset?: number;
   }): Promise<{ conflicts: ConflictResolution[]; total: number }> {
+    if (!supabase) return { conflicts: [], total: 0 };
     let query = supabase
       .from("conflict_resolutions")
       .select("*", { count: "exact" })
-      .in("status", ["pending", "needs_approval"])
+      .in("status", OPEN_STATUSES)
       .order("priority", { ascending: false })
       .order("created_at", { ascending: false });
 
@@ -363,7 +516,7 @@ export class ConflictQueueService {
     const { data, error, count } = await query;
 
     if (error) {
-      logger.error("Failed to fetch pending conflicts", error);
+      logger.error("Failed to fetch pending conflicts", errorCode(error));
       return { conflicts: [], total: 0 };
     }
 
@@ -373,36 +526,79 @@ export class ConflictQueueService {
     };
   }
 
-  async getConflictById(id: string): Promise<ConflictResolution | null> {
+  /** Fetch without writing an audit entry (for internal checks). */
+  private async fetchConflict(
+    id: string,
+  ): Promise<{ conflict: ConflictResolution | null; failed: boolean }> {
+    if (!supabase) return { conflict: null, failed: true };
     const { data, error } = await supabase
       .from("conflict_resolutions")
       .select("*")
       .eq("id", id)
-      .single();
-
-    if (error || !data) return null;
-
-    await this.logAuditEvent(id, "viewed", {});
-
-    return this.mapFromDB(data);
+      .maybeSingle();
+    if (error) {
+      logger.error("Failed to fetch conflict", errorCode(error));
+      return { conflict: null, failed: true };
+    }
+    return { conflict: data ? this.mapFromDB(data) : null, failed: false };
   }
 
-  async resolveConflict(params: {
+  /** Fetch one conflict and record that it was viewed. */
+  async getConflictById(id: string): Promise<ConflictResolution | null> {
+    const { conflict } = await this.fetchConflict(id);
+    if (!conflict) return null;
+    await this.logAuditEvent(id, "viewed", {});
+    return conflict;
+  }
+
+  /** Audit that a staff member opened a conflict's details (PHI access). */
+  async recordView(conflictId: string, actorId: string, actorRole: Role): Promise<void> {
+    await this.logAuditEvent(conflictId, "viewed", {}, actorId, actorRole);
+  }
+
+  /**
+   * Record a decision. Enforces permissions (high-sensitivity PHI needs
+   * approve_phi_conflicts, others resolve_conflicts) and only updates a
+   * conflict that is still open. Writes one "resolved" audit entry.
+   */
+  async resolve(params: {
     conflictId: string;
     strategy: ResolutionStrategy;
     resolutionDetails: Record<string, unknown>;
     resolvedBy: string;
-    resolverRole?: Role;
+    resolverRole: Role;
     justification?: string;
     policyReference?: string;
-  }): Promise<boolean> {
-    const conflict = await this.getConflictById(params.conflictId);
-    if (!conflict) return false;
+  }): Promise<ResolveOutcome> {
+    if (!supabase) {
+      return { ok: false, reason: "not_configured", message: CONFLICT_QUEUE_NOT_CONFIGURED };
+    }
+    const { conflict, failed } = await this.fetchConflict(params.conflictId);
+    if (failed) return { ok: false, reason: "failed", message: REQUEST_FAILED };
+    if (!conflict) {
+      return {
+        ok: false,
+        reason: "not_found",
+        message: "This conflict could not be found. It may have been removed.",
+      };
+    }
+    if (CLOSED_STATUSES.includes(conflict.status)) {
+      return { ok: false, reason: "closed", message: "This conflict has already been resolved." };
+    }
+    if (conflict.status === "needs_approval" && conflict.resolutionStrategy) {
+      return {
+        ok: false,
+        reason: "awaiting_approval",
+        message: "A decision for this conflict is already waiting for approval.",
+      };
+    }
+    if (!canResolveConflict(params.resolverRole, conflict)) {
+      return { ok: false, reason: "forbidden", message: resolveDeniedMessage(conflict) };
+    }
 
-    const needsApproval =
-      conflict.requiredApproverRole !== null && params.strategy !== "ignore";
+    const needsApproval = decisionNeedsApproval(conflict, params.strategy);
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("conflict_resolutions")
       .update({
         status: needsApproval ? "needs_approval" : "resolved",
@@ -412,11 +608,21 @@ export class ConflictQueueService {
         resolved_at: new Date().toISOString(),
         resolution_policy_reference: params.policyReference || null,
       })
-      .eq("id", params.conflictId);
+      .eq("id", params.conflictId)
+      .in("status", OPEN_STATUSES)
+      .select("id");
 
     if (error) {
-      logger.error("Failed to resolve conflict", error);
-      return false;
+      logger.error("Failed to resolve conflict", errorCode(error));
+      return { ok: false, reason: "failed", message: REQUEST_FAILED };
+    }
+    if (!data || data.length === 0) {
+      return {
+        ok: false,
+        reason: "closed",
+        message:
+          "The conflict was not updated. Someone else may have resolved it, or your account may not have access.",
+      };
     }
 
     await this.recordFieldDeltas({
@@ -441,7 +647,25 @@ export class ConflictQueueService {
       params.resolverRole,
     );
 
-    return true;
+    return { ok: true, status: needsApproval ? "needs_approval" : "resolved" };
+  }
+
+  /** Boolean form of resolve(). A role is required; without one it refuses. */
+  async resolveConflict(params: {
+    conflictId: string;
+    strategy: ResolutionStrategy;
+    resolutionDetails: Record<string, unknown>;
+    resolvedBy: string;
+    resolverRole?: Role;
+    justification?: string;
+    policyReference?: string;
+  }): Promise<boolean> {
+    if (!params.resolverRole) {
+      logger.warn("Conflict not resolved: no resolver role given");
+      return false;
+    }
+    const outcome = await this.resolve({ ...params, resolverRole: params.resolverRole });
+    return outcome.ok;
   }
 
   private async recordFieldDeltas(params: {
@@ -452,6 +676,7 @@ export class ConflictQueueService {
     changedBy?: string;
     changedByRole?: Role;
   }): Promise<void> {
+    if (!supabase) return;
     const deltas: Array<{
       conflict_id: string;
       field_name: string;
@@ -507,12 +732,16 @@ export class ConflictQueueService {
         .insert(deltas);
 
       if (error) {
-        logger.error("Failed to record field deltas", error);
+        logger.error("Failed to record field deltas", errorCode(error));
       }
     }
   }
 
+  /** Field changes recorded for a conflict. Throws when they can't be read. */
   async getFieldDeltas(conflictId: string): Promise<FieldChangeDelta[]> {
+    if (!supabase) {
+      throw new ConflictQueueError("not_configured", CONFLICT_QUEUE_NOT_CONFIGURED);
+    }
     const { data, error } = await supabase
       .from("conflict_change_deltas")
       .select("*")
@@ -520,8 +749,8 @@ export class ConflictQueueService {
       .order("created_at", { ascending: true });
 
     if (error) {
-      logger.error("Failed to fetch field deltas", error);
-      return [];
+      logger.error("Failed to fetch field deltas", errorCode(error));
+      throw new ConflictQueueError("request_failed", REQUEST_FAILED);
     }
 
     return (data || []).map((row) => ({
@@ -549,18 +778,28 @@ export class ConflictQueueService {
     needsSecondApproval?: boolean;
     error?: string;
   }> {
-    const conflict = await this.getConflictById(params.conflictId);
+    if (!supabase) {
+      return { success: false, error: CONFLICT_QUEUE_NOT_CONFIGURED };
+    }
+    const { conflict, failed } = await this.fetchConflict(params.conflictId);
+    if (failed) return { success: false, error: REQUEST_FAILED };
     if (!conflict) {
       return { success: false, error: "Conflict not found" };
     }
-
-    const requiredRole = conflict.requiredApproverRole;
-    const canApprove = this.roleCanApprove(params.approverRole, requiredRole);
-
-    if (!canApprove) {
+    if (conflict.status !== "needs_approval") {
+      return { success: false, error: "This conflict is not waiting for approval." };
+    }
+    if (!conflict.resolutionStrategy) {
       return {
         success: false,
-        error: `This conflict requires approval by a ${requiredRole}. Your role (${params.approverRole}) cannot approve this.`,
+        error: "No decision has been proposed yet. Choose how to resolve the conflict first.",
+      };
+    }
+
+    if (!canApproveDecision(params.approverRole, conflict)) {
+      return {
+        success: false,
+        error: `${approveDeniedMessage(conflict)} Your role (${getRoleDisplayName(params.approverRole)}) cannot approve it.`,
       };
     }
 
@@ -575,17 +814,18 @@ export class ConflictQueueService {
       conflict.conflictType === "duplicate";
 
     if (needsDualApproval && !conflict.approvedBy && !params.isSecondApproval) {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("conflict_resolutions")
         .update({
           approved_by: params.approvedBy,
           approved_at: new Date().toISOString(),
         })
         .eq("id", params.conflictId)
-        .eq("status", "needs_approval");
+        .eq("status", "needs_approval")
+        .select("id");
 
-      if (error) {
-        logger.error("Failed to record first approval", error);
+      if (error || !data || data.length === 0) {
+        logger.error("Failed to record first approval", errorCode(error));
         return { success: false, error: "Failed to record approval" };
       }
 
@@ -604,6 +844,17 @@ export class ConflictQueueService {
       return { success: true, needsSecondApproval: true };
     }
 
+    if (
+      needsDualApproval &&
+      params.isSecondApproval &&
+      conflict.approvedBy === params.approvedBy
+    ) {
+      return {
+        success: false,
+        error: "The second approval must come from a different person.",
+      };
+    }
+
     const updateData: Record<string, unknown> = {
       status: "resolved",
       approved_at: new Date().toISOString(),
@@ -616,14 +867,15 @@ export class ConflictQueueService {
       updateData.approved_by = params.approvedBy;
     }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("conflict_resolutions")
       .update(updateData)
       .eq("id", params.conflictId)
-      .eq("status", "needs_approval");
+      .eq("status", "needs_approval")
+      .select("id");
 
-    if (error) {
-      logger.error("Failed to approve resolution", error);
+    if (error || !data || data.length === 0) {
+      logger.error("Failed to approve resolution", errorCode(error));
       return { success: false, error: "Failed to approve resolution" };
     }
 
@@ -643,22 +895,6 @@ export class ConflictQueueService {
     return { success: true };
   }
 
-  private roleCanApprove(
-    approverRole: Role,
-    requiredRole: RequiredApproverRole,
-  ): boolean {
-    if (!requiredRole) return true;
-    if (approverRole === "admin") return true;
-    if (
-      requiredRole === "lead_clinician" &&
-      (approverRole === "lead_clinician" || approverRole === "auditor")
-    )
-      return true;
-    if (requiredRole === "auditor" && approverRole === "auditor") return true;
-    if (requiredRole === "admin") return false;
-    return false;
-  }
-
   async checkApprovalEligibility(
     conflictId: string,
     userRole: Role,
@@ -669,7 +905,7 @@ export class ConflictQueueService {
     hasFirstApproval: boolean;
     reason?: string;
   }> {
-    const conflict = await this.getConflictById(conflictId);
+    const { conflict } = await this.fetchConflict(conflictId);
     if (!conflict) {
       return {
         canApprove: false,
@@ -680,8 +916,8 @@ export class ConflictQueueService {
       };
     }
 
-    const requiredRole = conflict.requiredApproverRole;
-    const canApprove = this.roleCanApprove(userRole, requiredRole);
+    const requiredRole = conflict.requiredApproverRole ?? null;
+    const canApprove = canApproveDecision(userRole, conflict);
 
     const siteSettings = conflict.siteId
       ? await this.getSiteSettings(conflict.siteId)
@@ -698,7 +934,7 @@ export class ConflictQueueService {
 
     let reason: string | undefined;
     if (!canApprove) {
-      reason = `Requires ${requiredRole} approval`;
+      reason = approveDeniedMessage(conflict);
     }
 
     return {
@@ -710,12 +946,22 @@ export class ConflictQueueService {
     };
   }
 
+  /**
+   * Send a proposed decision back to open. Only someone who could approve
+   * it may reject it; the reason and rejector are audited.
+   */
   async rejectResolution(params: {
     conflictId: string;
     rejectedBy: string;
+    rejectorRole: Role;
     reason: string;
   }): Promise<boolean> {
-    const { error } = await supabase
+    if (!supabase) return false;
+    const { conflict } = await this.fetchConflict(params.conflictId);
+    if (!conflict || conflict.status !== "needs_approval") return false;
+    if (!canApproveDecision(params.rejectorRole, conflict)) return false;
+
+    const { data, error } = await supabase
       .from("conflict_resolutions")
       .update({
         status: "pending",
@@ -723,17 +969,25 @@ export class ConflictQueueService {
         resolution_details: null,
         resolved_by: null,
         resolved_at: null,
+        approved_by: null,
+        approved_at: null,
       })
-      .eq("id", params.conflictId);
+      .eq("id", params.conflictId)
+      .eq("status", "needs_approval")
+      .select("id");
 
-    if (error) {
-      logger.error("Failed to reject resolution", error);
+    if (error || !data || data.length === 0) {
+      logger.error("Failed to reject resolution", errorCode(error));
       return false;
     }
 
-    await this.logAuditEvent(params.conflictId, "rejected", {
-      reason: params.reason,
-    });
+    await this.logAuditEvent(
+      params.conflictId,
+      "rejected",
+      { reason: params.reason, justification: params.reason },
+      params.rejectedBy,
+      params.rejectorRole,
+    );
 
     return true;
   }
@@ -742,33 +996,57 @@ export class ConflictQueueService {
     conflictIds: string[];
     strategy: ResolutionStrategy;
     resolvedBy: string;
+    resolverRole?: Role;
     justification?: string;
-  }): Promise<{ success: number; failed: number }> {
+  }): Promise<{
+    success: number;
+    failed: number;
+    sentForApproval: number;
+    forbidden: number;
+  }> {
     let success = 0;
     let failed = 0;
+    let sentForApproval = 0;
+    let forbidden = 0;
 
     for (const conflictId of params.conflictIds) {
-      const resolved = await this.resolveConflict({
+      if (!params.resolverRole) {
+        forbidden++;
+        continue;
+      }
+      const outcome = await this.resolve({
         conflictId,
         strategy: params.strategy,
         resolutionDetails: { bulk: true },
         resolvedBy: params.resolvedBy,
+        resolverRole: params.resolverRole,
         justification: params.justification,
       });
 
-      if (resolved) {
+      if (outcome.ok) {
         success++;
+        if (outcome.status === "needs_approval") sentForApproval++;
+      } else if (outcome.reason === "forbidden") {
+        forbidden++;
       } else {
         failed++;
       }
     }
 
-    return { success, failed };
+    return { success, failed, sentForApproval, forbidden };
   }
 
+  /**
+   * Look for likely duplicate patients among records on this device and
+   * queue them for review. `found` counts only conflicts actually saved.
+   */
   async scanForDuplicates(
     limit = 100,
-  ): Promise<{ found: number; skipped: number }> {
+    actor?: { id: string; role: Role },
+  ): Promise<{ found: number; skipped: number; failed: number }> {
+    if (!supabase) {
+      throw new ConflictQueueError("not_configured", CONFLICT_QUEUE_NOT_CONFIGURED);
+    }
     const patients = await db.patients
       .filter((patient) => !patient.mergeInto)
       .limit(limit)
@@ -776,6 +1054,7 @@ export class ConflictQueueService {
 
     let duplicatesFound = 0;
     let skippedRecords = 0;
+    let failedToQueue = 0;
 
     for (const [index, patient] of patients.entries()) {
       try {
@@ -804,7 +1083,7 @@ export class ConflictQueueService {
             "duplicate",
           );
           if (!existing) {
-            await this.createConflict({
+            const id = await this.createConflict({
               conflictType: "duplicate",
               entityType: "patients",
               entityId: patient.id,
@@ -817,16 +1096,16 @@ export class ConflictQueueService {
                 matchScore: otherCandidates[0].score,
                 matchReasons: otherCandidates[0].matchReasons,
               },
+              reportedBy: actor?.id,
+              reporterRole: actor?.role,
             });
-            duplicatesFound++;
+            if (id) duplicatesFound++;
+            else failedToQueue++;
           }
         }
       } catch (error) {
         skippedRecords++;
-        logger.warn("Skipping patient during duplicate scan", {
-          patientId: patient.id,
-          error,
-        });
+        logger.warn("Skipping patient during duplicate scan", errorCode(error));
       }
 
       // Yield periodically so large scans don't block the UI thread and hurt INP.
@@ -837,19 +1116,20 @@ export class ConflictQueueService {
       }
     }
 
-    return { found: duplicatesFound, skipped: skippedRecords };
+    return { found: duplicatesFound, skipped: skippedRecords, failed: failedToQueue };
   }
 
   private async checkExistingConflict(
     entityId: string,
     conflictType: ConflictType,
   ): Promise<boolean> {
+    if (!supabase) return false;
     const { data } = await supabase
       .from("conflict_resolutions")
       .select("id")
       .eq("entity_id", entityId)
       .eq("conflict_type", conflictType)
-      .in("status", ["pending", "needs_approval"])
+      .in("status", OPEN_STATUSES)
       .limit(1);
 
     return (data?.length || 0) > 0;
@@ -889,6 +1169,7 @@ export class ConflictQueueService {
   }
 
   async getAutoResolutionRules(): Promise<AutoResolutionRule[]> {
+    if (!supabase) return [];
     const { data, error } = await supabase
       .from("auto_resolution_rules")
       .select("*")
@@ -896,7 +1177,7 @@ export class ConflictQueueService {
       .order("priority_order");
 
     if (error) {
-      logger.error("Failed to fetch auto-resolution rules", error);
+      logger.error("Failed to fetch auto-resolution rules", errorCode(error));
       return [];
     }
 
@@ -915,7 +1196,8 @@ export class ConflictQueueService {
   }
 
   async applyAutoResolution(conflictId: string): Promise<boolean> {
-    const conflict = await this.getConflictById(conflictId);
+    if (!supabase) return false;
+    const { conflict } = await this.fetchConflict(conflictId);
     if (!conflict) return false;
 
     const rules = await this.getAutoResolutionRules();
@@ -941,7 +1223,7 @@ export class ConflictQueueService {
       .eq("id", conflictId);
 
     if (error) {
-      logger.error("Failed to auto-resolve conflict", error);
+      logger.error("Failed to auto-resolve conflict", errorCode(error));
       return false;
     }
 
@@ -953,33 +1235,36 @@ export class ConflictQueueService {
     return true;
   }
 
-  async getConflictStats(): Promise<{
-    pending: number;
-    needsApproval: number;
-    resolvedToday: number;
-    autoResolvedToday: number;
-    byPriority: Record<ConflictPriority, number>;
-    byType: Record<ConflictType, number>;
-  }> {
+  /** Counts for dashboards. Throws when they cannot be loaded. */
+  async getConflictStats(): Promise<ConflictStatsSummary> {
+    if (!supabase) {
+      throw new ConflictQueueError("not_configured", CONFLICT_QUEUE_NOT_CONFIGURED);
+    }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const { data: pending } = await supabase
-      .from("conflict_resolutions")
-      .select("priority, conflict_type, status", { count: "exact" })
-      .in("status", ["pending", "needs_approval"]);
+    const [openRes, resolvedRes, autoRes] = await Promise.all([
+      supabase
+        .from("conflict_resolutions")
+        .select("priority, conflict_type, status")
+        .in("status", OPEN_STATUSES),
+      supabase
+        .from("conflict_resolutions")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "resolved")
+        .gte("resolved_at", today.toISOString()),
+      supabase
+        .from("conflict_resolutions")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "auto_resolved")
+        .gte("resolved_at", today.toISOString()),
+    ]);
 
-    const { count: resolvedToday } = await supabase
-      .from("conflict_resolutions")
-      .select("*", { count: "exact", head: true })
-      .eq("status", "resolved")
-      .gte("resolved_at", today.toISOString());
-
-    const { count: autoResolvedToday } = await supabase
-      .from("conflict_resolutions")
-      .select("*", { count: "exact", head: true })
-      .eq("status", "auto_resolved")
-      .gte("resolved_at", today.toISOString());
+    const failure = openRes.error || resolvedRes.error || autoRes.error;
+    if (failure) {
+      logger.error("Failed to load conflict stats", errorCode(failure));
+      throw new ConflictQueueError("request_failed", REQUEST_FAILED);
+    }
 
     const byPriority: Record<ConflictPriority, number> = {
       low: 0,
@@ -994,34 +1279,31 @@ export class ConflictQueueService {
     };
 
     let needsApprovalCount = 0;
+    const open = openRes.data || [];
 
-    for (const row of pending || []) {
-      byPriority[row.priority as ConflictPriority]++;
-      byType[row.conflict_type as ConflictType]++;
+    for (const row of open) {
+      const priority = row.priority as ConflictPriority;
+      const type = row.conflict_type as ConflictType;
+      if (priority in byPriority) byPriority[priority]++;
+      if (type in byType) byType[type]++;
       if (row.status === "needs_approval") needsApprovalCount++;
     }
 
     return {
-      pending: (pending?.length || 0) - needsApprovalCount,
+      pending: open.length - needsApprovalCount,
       needsApproval: needsApprovalCount,
-      resolvedToday: resolvedToday || 0,
-      autoResolvedToday: autoResolvedToday || 0,
+      resolvedToday: resolvedRes.count || 0,
+      autoResolvedToday: autoRes.count || 0,
       byPriority,
       byType,
     };
   }
 
-  async getAuditHistory(conflictId: string): Promise<
-    Array<{
-      id: string;
-      action: string;
-      actorId?: string;
-      actorRole?: string;
-      fieldChanges: Record<string, unknown>;
-      justification?: string;
-      createdAt: string;
-    }>
-  > {
+  /** Audit trail for a conflict, newest first. Throws when it can't be read. */
+  async getAuditHistory(conflictId: string): Promise<ConflictAuditEntry[]> {
+    if (!supabase) {
+      throw new ConflictQueueError("not_configured", CONFLICT_QUEUE_NOT_CONFIGURED);
+    }
     const { data, error } = await supabase
       .from("conflict_audit_logs")
       .select("*")
@@ -1029,8 +1311,8 @@ export class ConflictQueueService {
       .order("created_at", { ascending: false });
 
     if (error) {
-      logger.error("Failed to fetch audit history", error);
-      return [];
+      logger.error("Failed to fetch audit history", errorCode(error));
+      throw new ConflictQueueError("request_failed", REQUEST_FAILED);
     }
 
     return (data || []).map((log) => ({
@@ -1051,6 +1333,7 @@ export class ConflictQueueService {
     actorId?: string,
     actorRole?: Role,
   ): Promise<void> {
+    if (!supabase) return;
     const { error } = await supabase.from("conflict_audit_logs").insert({
       conflict_id: conflictId,
       action,
@@ -1061,11 +1344,15 @@ export class ConflictQueueService {
     });
 
     if (error) {
-      logger.error("Failed to log audit event", error);
+      logger.error("Failed to log audit event", errorCode(error));
     }
   }
 
   private mapFromDB(row: Record<string, unknown>): ConflictResolution {
+    const details = row.conflict_details as
+      | ConflictResolution["conflictDetails"]
+      | null
+      | undefined;
     return {
       id: row.id as string,
       conflictType: row.conflict_type as ConflictType,
@@ -1075,8 +1362,10 @@ export class ConflictQueueService {
       status: row.status as ConflictStatus,
       priority: row.priority as ConflictPriority,
       phiSensitivity: row.phi_sensitivity as PHISensitivity,
-      conflictDetails:
-        row.conflict_details as ConflictResolution["conflictDetails"],
+      conflictDetails: {
+        ...(details ?? {}),
+        fields: Array.isArray(details?.fields) ? details.fields : [],
+      },
       resolutionStrategy: row.resolution_strategy as
         | ResolutionStrategy
         | undefined,

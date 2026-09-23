@@ -156,11 +156,17 @@ export function PatientDetail() {
         const next = await getPatientStatus(patientId);
         setStatus(next);
       } catch (statusErr) {
-        console.warn("Could not derive patient status:", statusErr);
+        console.warn(
+          "Could not derive patient status:",
+          statusErr instanceof Error ? statusErr.name : statusErr,
+        );
         setStatus(null);
       }
     } catch (error) {
-      console.error("Error loading patient data:", error);
+      console.error(
+        "Error loading patient data:",
+        error instanceof Error ? error.name : error,
+      );
     } finally {
       setLoading(false);
     }
@@ -211,12 +217,18 @@ export function PatientDetail() {
           await queueManagement.moveToNextStage(patient.id);
         }
       } catch (error) {
-        console.warn("Failed to complete registration queue stage:", error);
+        console.warn(
+          "Failed to complete registration queue stage:",
+          error instanceof Error ? error.name : error,
+        );
       }
 
       navigate(`/vitals/${visit.id}`);
     } catch (error) {
-      console.error("Error starting visit:", error);
+      console.error(
+        "Error starting visit:",
+        error instanceof Error ? error.name : error,
+      );
     }
   };
 
@@ -292,7 +304,10 @@ export function PatientDetail() {
       });
       navigate("/patients");
     } catch (error) {
-      console.error("Error deleting patient:", error);
+      console.error(
+        "Error deleting patient:",
+        error instanceof Error ? error.name : error,
+      );
       pushToast({
         id: crypto.randomUUID(),
         title: "Error",
@@ -336,7 +351,10 @@ export function PatientDetail() {
         body: "Patient details updated successfully",
       });
     } catch (error) {
-      console.error("Error updating patient:", error);
+      console.error(
+        "Error updating patient:",
+        error instanceof Error ? error.name : error,
+      );
       pushToast({
         id: crypto.randomUUID(),
         title: "Error",
@@ -624,7 +642,7 @@ export function PatientDetail() {
                 </label>
                 <select id="pd-lga"
                   {...register("lga")}
-                  className={`input-field ${!watchedState ? "bg-gray-100 cursor-not-allowed" : ""}`}
+                  className={`input-field ${!watchedState ? "bg-surface-sunken cursor-not-allowed" : ""}`}
                   disabled={!watchedState || availableLGAs.length === 0}
                 >
                   <option value="">
@@ -796,13 +814,13 @@ export function PatientDetail() {
           <div className="card">
             <div className="flex items-center space-x-2 mb-4">
               <HeartIcon className="h-5 w-5 text-ink-muted" aria-hidden />
-              <h3 className="text-lg font-semibold text-gray-900">
+              <h3 className="text-h3 text-ink">
                 Recent Vitals
               </h3>
             </div>
 
             {vitals.length === 0 ? (
-              <p className="text-gray-500 text-sm">No vitals recorded</p>
+              <p className="text-body text-ink-muted">No vitals recorded</p>
             ) : (
               <div className="space-y-3">
                 {vitals.slice(0, 3).map((vital) => (
@@ -810,7 +828,7 @@ export function PatientDetail() {
                     key={vital.id}
                     className="border-l-2 border-line-strong pl-3"
                   >
-                    <div className="text-sm text-gray-600">
+                    <div className="text-caption text-ink-muted">
                       {formatNigerianDate(vital.takenAt)}
                     </div>
                     <div className="text-sm">
@@ -841,13 +859,13 @@ export function PatientDetail() {
           <div className="card">
             <div className="flex items-center space-x-2 mb-4">
               <DocumentTextIcon className="h-5 w-5 text-ink-muted" aria-hidden />
-              <h3 className="text-lg font-semibold text-gray-900">
+              <h3 className="text-h3 text-ink">
                 Consultations
               </h3>
             </div>
 
             {consultations.length === 0 ? (
-              <p className="text-gray-500 text-sm">No consultations recorded</p>
+              <p className="text-body text-ink-muted">No consultations recorded</p>
             ) : (
               <div className="space-y-3">
                 {consultations.slice(0, 3).map((consultation) => (
@@ -855,14 +873,14 @@ export function PatientDetail() {
                     key={consultation.id}
                     className="border-l-2 border-line-strong pl-3"
                   >
-                    <div className="text-sm text-gray-600">
+                    <div className="text-caption text-ink-muted">
                       {formatNigerianDate(consultation.createdAt)}
                     </div>
                     <div className="text-sm font-medium">
                       {consultation.providerName}
                     </div>
                     {consultation.provisionalDx.length > 0 && (
-                      <div className="text-sm text-gray-700">
+                      <div className="text-body text-ink-secondary">
                         {consultation.provisionalDx.slice(0, 2).join(", ")}
                       </div>
                     )}
@@ -876,13 +894,13 @@ export function PatientDetail() {
           <div className="card">
             <div className="flex items-center space-x-2 mb-4">
               <BeakerIcon className="h-5 w-5 text-ink-muted" aria-hidden />
-              <h3 className="text-lg font-semibold text-gray-900">
+              <h3 className="text-h3 text-ink">
                 Medications
               </h3>
             </div>
 
             {dispenses.length === 0 ? (
-              <p className="text-gray-500 text-sm">No medications dispensed</p>
+              <p className="text-body text-ink-muted">No medications dispensed</p>
             ) : (
               <div className="space-y-3">
                 {dispenses.slice(0, 3).map((dispense) => (
@@ -890,13 +908,13 @@ export function PatientDetail() {
                     key={dispense.id}
                     className="border-l-2 border-line-strong pl-3"
                   >
-                    <div className="text-sm text-gray-600">
+                    <div className="text-caption text-ink-muted">
                       {formatNigerianDate(dispense.dispensedAt)}
                     </div>
                     <div className="text-sm font-medium">
                       {dispense.itemName}
                     </div>
-                    <div className="text-sm text-gray-700">
+                    <div className="text-body text-ink-secondary">
                       {dispense.dosage} × {dispense.qty}
                     </div>
                   </div>

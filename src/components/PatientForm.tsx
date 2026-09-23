@@ -3,6 +3,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import { usePatientsStore } from "@/stores/patients";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import { PatientDedupeModal } from "@/components/PatientDedupeModal";
 import { AudioButton } from "@/components/AudioButton";
 import { PhotoCapture } from "@/components/PhotoCapture";
@@ -69,6 +71,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
   const onSubmit = async (data: PatientFormData) => {
     setSubmitError("");
+    // Enforced here as well as on the route: registration writes a record.
+    const role = useAuthStore.getState().currentUser?.role;
+    if (!role || !can(role, "register")) {
+      setSubmitError("Your role cannot register patients. Ask a registration volunteer, nurse, doctor or administrator.");
+      return;
+    }
     setLoading(true);
     try {
       const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
@@ -103,7 +111,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         });
 
         if (!portalResult.success) {
-          console.warn("Portal enrollment failed:", portalResult.error);
+          // The error text can echo the contact details, so it is not logged.
+          console.warn("Portal enrollment failed");
           pushToast({
             id: crypto.randomUUID(),
             title: "Portal access not set up",
@@ -111,7 +120,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             body: `The patient is registered, but portal enrolment failed (${portalResult.error}). You can enable it later from their record.`,
           });
         } else {
-          console.log("Portal account created:", portalResult.portalUserId);
+          console.log("Portal account created");
           pushToast({
             id: crypto.randomUUID(),
             title: "Portal access enabled",
@@ -147,6 +156,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     setShowDedupeModal(false);
 
     if (action === "create_new" && dedupeData) {
+      const role = useAuthStore.getState().currentUser?.role;
+      if (!role || !can(role, "register")) {
+        setSubmitError("Your role cannot register patients. Ask a registration volunteer, nurse, doctor or administrator.");
+        setDedupeData(null);
+        return;
+      }
       // Force create new patient (bypass duplicate check)
       try {
         // Staff confirmed this is a different person: keep their real name
@@ -160,7 +175,10 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         );
         onSuccess?.(patientId);
       } catch (error) {
-        console.error("Error creating new patient:", error);
+        console.error(
+          "Error creating new patient:",
+          error instanceof Error ? error.name : error,
+        );
         setSubmitError(
           "The patient was not registered — the record could not be saved. Try again.",
         );
@@ -195,31 +213,33 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <img
                     src={photo}
                     alt="Patient"
-                    className="w-32 h-32 rounded-full object-cover border-4 border-gray-200"
+                    className="w-32 h-32 rounded-full object-cover border-4 border-line"
                   />
                 ) : (
-                  <div className="w-32 h-32 rounded-full bg-gray-100 flex items-center justify-center border-4 border-gray-200">
-                    <UserIcon className="h-16 w-16 text-gray-400" />
+                  <div className="w-32 h-32 rounded-full bg-surface-sunken flex items-center justify-center border-4 border-line">
+                    <UserIcon className="h-16 w-16 text-ink-disabled" aria-hidden />
                   </div>
                 )}
                 {photo && (
                   <button
                     type="button"
                     onClick={handleRemovePhoto}
-                    className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1 m-1"
+                    aria-label="Remove photo"
+                    className="absolute top-0 right-0 m-1 flex h-11 w-11 items-center justify-center rounded-full bg-danger text-white hover:bg-danger-fg"
                   >
-                    ×
+                    <span aria-hidden>×</span>
                   </button>
                 )}
                 <button
                   type="button"
                   onClick={() => setShowPhotoCapture(true)}
-                  className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-2 cursor-pointer hover:bg-primary/90 transition-colors touch-target"
+                  aria-label={photo ? "Change photo" : "Take a photo"}
+                  className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-2 cursor-pointer hover:bg-primary-hover transition-colors touch-target"
                 >
-                  <CameraIcon className="h-5 w-5" />
+                  <CameraIcon className="h-5 w-5" aria-hidden />
                 </button>
               </div>
-              <p className="text-sm text-gray-600">
+              <p className="text-body text-ink-muted">
                 Tap camera to {photo ? "change" : "add"} photo
               </p>
             </div>
@@ -229,7 +249,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div>
                 <label
                   htmlFor="givenName"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+                  className="field-label"
                 >
                   {t("patient.givenName")} *
                 </label>
@@ -248,7 +268,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <p
                     id="givenName-error"
                     role="alert"
-                    className="text-red-600 text-sm mt-1"
+                    className="field-error"
                   >
                     {errors.givenName.message}
                   </p>
@@ -258,7 +278,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div>
                 <label
                   htmlFor="familyName"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+                  className="field-label"
                 >
                   {t("patient.familyName")} *
                 </label>
@@ -277,7 +297,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <p
                     id="familyName-error"
                     role="alert"
-                    className="text-red-600 text-sm mt-1"
+                    className="field-error"
                   >
                     {errors.familyName.message}
                   </p>
@@ -290,7 +310,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div>
                 <label
                   htmlFor="sex"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+                  className="field-label"
                 >
                   Sex *
                 </label>
@@ -311,7 +331,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <p
                     id="sex-error"
                     role="alert"
-                    className="text-red-600 text-sm mt-1"
+                    className="field-error"
                   >
                     {errors.sex.message}
                   </p>
@@ -321,7 +341,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div>
                 <label
                   htmlFor="dob"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+                  className="field-label"
                 >
                   Date of Birth *
                 </label>
@@ -339,7 +359,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <p
                     id="dob-error"
                     role="alert"
-                    className="text-red-600 text-sm mt-1"
+                    className="field-error"
                   >
                     {errors.dob.message}
                   </p>
@@ -353,7 +373,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div>
                 <label
                   htmlFor="phone"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+                  className="field-label"
                 >
                   {t("patient.phone")} (at least one contact required)
                 </label>
@@ -370,7 +390,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <p
                     id="phone-error"
                     role="alert"
-                    className="text-red-600 text-sm mt-1"
+                    className="field-error"
                   >
                     {errors.phone.message}
                   </p>
@@ -380,7 +400,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div>
                 <label
                   htmlFor="email"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+                  className="field-label"
                 >
                   Email (at least one contact required)
                 </label>
@@ -397,7 +417,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <p
                     id="email-error"
                     role="alert"
-                    className="text-red-600 text-sm mt-1"
+                    className="field-error"
                   >
                     {errors.email.message}
                   </p>
@@ -409,7 +429,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             <div>
               <label
                 htmlFor="address"
-                className="block text-sm font-medium text-gray-700 mb-2"
+                className="field-label"
               >
                 {t("patient.address")} *
               </label>
@@ -427,7 +447,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                 <p
                   id="address-error"
                   role="alert"
-                  className="text-red-600 text-sm mt-1"
+                  className="field-error"
                 >
                   {errors.address.message}
                 </p>
@@ -440,7 +460,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div>
                 <label
                   htmlFor="state"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+                  className="field-label"
                 >
                   {t("patient.state")} *
                 </label>
@@ -467,7 +487,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <p
                     id="state-error"
                     role="alert"
-                    className="text-red-600 text-sm mt-1"
+                    className="field-error"
                   >
                     {errors.state.message}
                   </p>
@@ -477,18 +497,24 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div>
                 <label
                   htmlFor="lga"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+                  className="field-label"
                 >
                   {t("patient.lga")} *
                 </label>
                 <select
                   {...register("lga")}
                   id="lga"
-                  className={`input-field ${!watchedState ? "bg-gray-100 cursor-not-allowed" : ""}`}
+                  className={`input-field ${!watchedState ? "bg-surface-sunken cursor-not-allowed" : ""}`}
                   disabled={!watchedState || availableLGAs.length === 0}
                   aria-required="true"
                   aria-invalid={errors.lga ? "true" : "false"}
-                  aria-describedby={errors.lga ? "lga-error" : "lga-hint"}
+                  aria-describedby={
+                    errors.lga
+                      ? "lga-error"
+                      : watchedState && availableLGAs.length > 0
+                        ? "lga-hint"
+                        : undefined
+                  }
                 >
                   <option value="">
                     {!watchedState
@@ -507,13 +533,13 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   <p
                     id="lga-error"
                     role="alert"
-                    className="text-red-600 text-sm mt-1"
+                    className="field-error"
                   >
                     {errors.lga.message}
                   </p>
                 )}
                 {watchedState && availableLGAs.length > 0 && (
-                  <p id="lga-hint" className="text-gray-500 text-xs mt-1">
+                  <p id="lga-hint" className="field-hint">
                     {availableLGAs.length} LGAs available
                   </p>
                 )}
@@ -525,7 +551,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             <div>
               <label
                 htmlFor="familyId"
-                className="block text-sm font-medium text-gray-700 mb-2"
+                className="field-label"
               >
                 Family ID (Optional)
               </label>
@@ -538,12 +564,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             </div>
 
             {/* Portal Access Section */}
-            <div className="border-t pt-6 mt-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                <h3 className="text-sm font-semibold text-blue-900 mb-2">
+            <div className="border-t border-line pt-6 mt-6">
+              <div className="rounded-md border border-info-line bg-info-soft p-4 mb-4 text-info-fg">
+                <h3 className="text-label font-semibold mb-2">
                   Patient Portal Access
                 </h3>
-                <p className="text-sm text-blue-800">
+                <p className="text-body">
                   Enable secure online access to medical records, appointments,
                   and test results. Patients can view their health information
                   anytime via phone or email.
@@ -556,7 +582,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                     {...register("portalEnabled")}
                     type="checkbox"
                     id="portalEnabled"
-                    className="mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary"
+                    className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
                     onChange={(e) => {
                       // Auto-check portalEnabled if email or phone exists
                       const hasContact = watch("email") || watch("phone");
@@ -570,12 +596,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   />
                   <label
                     htmlFor="portalEnabled"
-                    className="ml-2 text-sm text-gray-700"
+                    className="ml-2 text-body text-ink"
                   >
                     <span className="font-medium">
                       Enable patient portal access
                     </span>
-                    <span className="text-gray-600 block mt-1">
+                    <span className="text-ink-muted block mt-1">
                       Patient will receive login instructions via{" "}
                       {watch("email") ? "email" : "SMS"}
                     </span>
@@ -589,18 +615,18 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                         {...register("termsAccepted")}
                         type="checkbox"
                         id="termsAccepted"
-                        className="mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary"
+                        className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
                       />
                       <label
                         htmlFor="termsAccepted"
-                        className="ml-2 text-sm text-gray-700"
+                        className="ml-2 text-body text-ink"
                       >
                         I have explained portal access terms to the patient and
                         they agree
                       </label>
                     </div>
                     {errors.termsAccepted && (
-                      <p className="text-red-600 text-sm ml-6">
+                      <p className="field-error ml-6" role="alert">
                         {errors.termsAccepted.message}
                       </p>
                     )}
@@ -610,16 +636,16 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                         {...register("sendInviteNow")}
                         type="checkbox"
                         id="sendInviteNow"
-                        className="mt-1 h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary"
+                        className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
                       />
                       <label
                         htmlFor="sendInviteNow"
-                        className="ml-2 text-sm text-gray-700"
+                        className="ml-2 text-body text-ink"
                       >
                         <span className="font-medium">
                           Send portal invitation now
                         </span>
-                        <span className="text-gray-600 block mt-1">
+                        <span className="text-ink-muted block mt-1">
                           Uncheck to send invitation later from patient details
                           page
                         </span>

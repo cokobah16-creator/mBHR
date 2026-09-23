@@ -3,12 +3,38 @@ import { db } from "@/db";
 import { queryCache } from "@/utils/queryCache";
 import logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
+import { mergePulledRow } from "@/sync/pullMerge";
+import { markersAfterUpload } from "@/sync/uploadMarkers";
+import { syncErrorCode } from "@/sync/errorCode";
 
-interface SyncResult {
+export interface TableSyncFailure {
+  /** This device's table name. */
+  table: string;
+  /** Short reason, for display. */
+  error: string;
+}
+
+export interface SyncResult {
   success: boolean;
   pushed: number;
   pulled: number;
+  /**
+   * Uploads the server refused. Those records stay on this device, still
+   * marked unsent, and are retried on the next sync.
+   */
+  failedUploads: number;
+  /**
+   * @deprecated Same number as failedUploads: uploads the server refused,
+   * not edit conflicts. Kept so existing callers keep working.
+   */
   conflicts: number;
+  /**
+   * Downloaded rows not written because this device has changes to them
+   * that are not uploaded yet.
+   */
+  keptLocalEdits: number;
+  /** syncAll only: tables that did not finish (local error or failed download). */
+  failedTables?: TableSyncFailure[];
   error?: string;
 }
 
@@ -20,12 +46,41 @@ interface TableSyncConfig {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   remoteToLocal: (remote: any) => any;
   hasDirtyFlag: boolean;
+  /** This device's primary key field; "id" when not given. */
+  primaryKey?: string;
+}
+
+const EPOCH_CURSOR = "1970-01-01";
+const PULL_PAGE_SIZE = 100;
+/** Pages per table per run (PULL_PAGE_SIZE rows each); the rest come next run. */
+const PULL_MAX_PAGES = 10;
+const PULL_CURSOR_KEY = (localTable: string) =>
+  `enhanced_sync_cursor:${localTable}`;
+
+function emptyResult(error: string): SyncResult {
+  return {
+    success: false,
+    pushed: 0,
+    pulled: 0,
+    failedUploads: 0,
+    conflicts: 0,
+    keptLocalEdits: 0,
+    error,
+  };
 }
 
 export class EnhancedSync {
   private client: SupabaseClient | null = null;
   private syncing = false;
+  /** When Sync now last downloaded rows for each table (shown to staff). */
   private lastSyncTimes: Map<string, Date> = new Map();
+  /**
+   * Newest server updated_at downloaded per table (also saved in settings).
+   * Downloads continue from here, so rows past the page limit are fetched
+   * next time instead of being skipped (a cursor taken from this device's
+   * clock skipped them).
+   */
+  private pullCursors: Map<string, string> = new Map();
 
   initialize(url: string, anonKey: string): boolean {
     if (!url || !anonKey || url === "your_supabase_project_url_here") {
@@ -40,13 +95,38 @@ export class EnhancedSync {
       logger.log("Supabase client initialized successfully");
       return true;
     } catch (error) {
-      logger.error("Failed to initialize Supabase client", error);
+      logger.error("Failed to initialize Supabase client", syncErrorCode(error));
       return false;
     }
   }
 
   isInitialized(): boolean {
     return this.client !== null;
+  }
+
+  /** Where this table's download continues: this session's cursor, else the saved one. */
+  private async readPullCursor(localTable: string): Promise<string> {
+    const inSession = this.pullCursors.get(localTable);
+    if (inSession) return inSession;
+    try {
+      const saved = await db.settings.get(PULL_CURSOR_KEY(localTable));
+      if (saved && typeof saved.value === "string" && saved.value) {
+        return saved.value;
+      }
+    } catch {
+      // Not readable: start from the oldest rows (nothing is skipped).
+    }
+    return EPOCH_CURSOR;
+  }
+
+  private async savePullCursor(localTable: string, cursor: string): Promise<void> {
+    this.pullCursors.set(localTable, cursor);
+    try {
+      await db.settings.put({ key: PULL_CURSOR_KEY(localTable), value: cursor });
+    } catch {
+      // Kept for this session only; after a restart the download repeats
+      // from the last saved point, which re-reads rows but skips none.
+    }
   }
 
   isSyncing(): boolean {
@@ -328,6 +408,7 @@ export class EnhancedSync {
         localTable: "gamificationWallets",
         remoteTable: "gamification_wallets",
         hasDirtyFlag: true,
+        primaryKey: "volunteerId",
         localToRemote: (w) => ({
           volunteer_id: w.volunteerId,
           tokens: w.tokens,
@@ -583,19 +664,14 @@ export class EnhancedSync {
   }
 
   async syncTable(config: TableSyncConfig): Promise<SyncResult> {
-    if (!this.client) {
-      return {
-        success: false,
-        pushed: 0,
-        pulled: 0,
-        conflicts: 0,
-        error: "Not initialized",
-      };
-    }
+    if (!this.client) return emptyResult("Not initialized");
 
+    const key = config.primaryKey ?? "id";
     let pushed = 0;
     let pulled = 0;
-    let conflicts = 0;
+    let failedUploads = 0;
+    let keptLocalEdits = 0;
+    let downloadError: string | undefined;
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -617,66 +693,122 @@ export class EnhancedSync {
             .upsert(remoteData);
 
           if (!error) {
-            await table.update(record.id, {
-              _dirty: 0,
-              _syncedAt: new Date().toISOString(),
+            // Mark it clean only if it was not edited during the upload; a
+            // newer edit stays marked unsent (and safe from the download).
+            const syncedAt = new Date().toISOString();
+            await db.transaction("rw", table, async () => {
+              const current = await table.get(record[key]);
+              await table.update(
+                record[key],
+                markersAfterUpload(record, current, syncedAt),
+              );
             });
             pushed++;
           } else {
-            logger.error(`Failed to push ${config.localTable} record`, error);
-            conflicts++;
+            // Stays marked unsent; retried on the next sync.
+            logger.error(
+              `[sync] upload refused for ${config.localTable}`,
+              syncErrorCode(error),
+            );
+            failedUploads++;
           }
         }
       }
 
-      // Pull new/updated records
-      const lastSync =
-        this.lastSyncTimes.get(config.localTable)?.toISOString() ||
-        "1970-01-01";
+      // Pull new/updated records, oldest first, from where the last
+      // download stopped (saved on this device, so an app restart does not
+      // start again from the oldest rows). A full page means more rows are
+      // waiting, so keep going, up to PULL_MAX_PAGES pages per run.
+      let cursor = await this.readPullCursor(config.localTable);
 
-      const { data: remoteRecords, error: pullError } = await this.client
-        .from(config.remoteTable)
-        .select("*")
-        .gt("updated_at", lastSync)
-        .order("updated_at", { ascending: true })
-        .limit(100);
+      for (let page = 0; page < PULL_MAX_PAGES; page++) {
+        const { data: remoteRecords, error: pullError } = await this.client
+          .from(config.remoteTable)
+          .select("*")
+          .gt("updated_at", cursor)
+          .order("updated_at", { ascending: true })
+          .limit(PULL_PAGE_SIZE);
 
-      if (!pullError && remoteRecords) {
-        for (const remote of remoteRecords) {
-          const localData = config.remoteToLocal(remote);
-          await table.put(localData);
-          pulled++;
+        if (pullError) {
+          const code = syncErrorCode(pullError);
+          logger.error(`[sync] download failed for ${config.localTable}`, code);
+          downloadError = `Download failed (${code})`;
+          break;
         }
+        if (!remoteRecords || remoteRecords.length === 0) break;
 
-        if (remoteRecords.length > 0) {
-          this.lastSyncTimes.set(config.localTable, new Date());
-        }
+        let newest = cursor;
+        // Read and write each row in one transaction so an edit saved on
+        // this device in between cannot be overwritten.
+        await db.transaction("rw", table, async () => {
+          for (const remote of remoteRecords) {
+            // The cursor advances past every row, applied or kept local.
+            if (typeof remote.updated_at === "string" && remote.updated_at > newest) {
+              newest = remote.updated_at;
+            }
+            const incoming = config.remoteToLocal(remote);
+            const localRow = await table.get(incoming[key]);
+            // Rows with unsent changes on this device are kept (their upload
+            // is retried); others get the server row laid over the local
+            // one so device-only fields survive.
+            const decision = mergePulledRow(localRow, incoming);
+            if (decision.kind === "kept-local") {
+              keptLocalEdits++;
+              continue;
+            }
+            await table.put(decision.row);
+            pulled++;
+          }
+        });
+
+        this.lastSyncTimes.set(config.localTable, new Date());
+        // Rows without a usable updated_at cannot move the cursor; stop
+        // instead of asking for the same page again.
+        if (newest === cursor) break;
+        cursor = newest;
+        await this.savePullCursor(config.localTable, cursor);
+        if (remoteRecords.length < PULL_PAGE_SIZE) break;
       }
 
       // Clear cache for this table
       queryCache.invalidatePattern(new RegExp(`^${config.localTable}:`));
 
-      return { success: true, pushed, pulled, conflicts };
+      return {
+        success: downloadError === undefined,
+        pushed,
+        pulled,
+        failedUploads,
+        conflicts: failedUploads,
+        keptLocalEdits,
+        error: downloadError,
+      };
     } catch (error: unknown) {
-      logger.error(`Sync failed for ${config.localTable}`, error);
+      logger.error(
+        `[sync] sync failed for ${config.localTable}`,
+        syncErrorCode(error),
+      );
       return {
         success: false,
         pushed,
         pulled,
-        conflicts,
+        failedUploads,
+        conflicts: failedUploads,
+        keptLocalEdits,
         error: getErrorMessage(error),
       };
     }
   }
 
+  /**
+   * Sync every table. `success` is true only when every table finished;
+   * `failedTables` lists the ones that did not. Uploads the server refused
+   * are counted in `failedUploads` and do not by themselves fail a table.
+   */
   async syncAll(): Promise<SyncResult> {
     if (!this.client || this.syncing) {
       return {
-        success: false,
-        pushed: 0,
-        pulled: 0,
-        conflicts: 0,
-        error: "Already syncing or not initialized",
+        ...emptyResult("Already syncing or not initialized"),
+        failedTables: [],
       };
     }
 
@@ -685,7 +817,9 @@ export class EnhancedSync {
 
     let totalPushed = 0;
     let totalPulled = 0;
-    let totalConflicts = 0;
+    let totalFailedUploads = 0;
+    let totalKeptLocal = 0;
+    const failedTables: TableSyncFailure[] = [];
 
     try {
       logger.log("Starting full sync...");
@@ -696,36 +830,49 @@ export class EnhancedSync {
         const result = await this.syncTable(config);
         totalPushed += result.pushed;
         totalPulled += result.pulled;
-        totalConflicts += result.conflicts;
+        totalFailedUploads += result.failedUploads;
+        totalKeptLocal += result.keptLocalEdits;
 
         if (!result.success) {
-          logger.error(
-            `Failed to sync table: ${config.localTable}`,
-            result.error,
-          );
+          failedTables.push({
+            table: config.localTable,
+            error: result.error ?? "Sync failed",
+          });
+          logger.error(`[sync] table did not sync: ${config.localTable}`);
         }
       }
 
       const duration = Date.now() - startTime;
       logger.log(
-        `Sync completed in ${duration}ms - Pushed: ${totalPushed}, Pulled: ${totalPulled}, Conflicts: ${totalConflicts}`,
+        `Sync completed in ${duration}ms - Pushed: ${totalPushed}, Pulled: ${totalPulled}, Refused uploads: ${totalFailedUploads}, Kept local edits: ${totalKeptLocal}, Tables failed: ${failedTables.length}`,
       );
 
+      const success = failedTables.length === 0;
       return {
-        success: true,
+        success,
         pushed: totalPushed,
         pulled: totalPulled,
-        conflicts: totalConflicts,
+        failedUploads: totalFailedUploads,
+        conflicts: totalFailedUploads,
+        keptLocalEdits: totalKeptLocal,
+        failedTables,
+        error: success
+          ? undefined
+          : `${failedTables.length} of ${configs.length} tables did not sync: ${failedTables
+              .map((f) => f.table)
+              .join(", ")}`,
       };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-      logger.error("Full sync failed", error);
+    } catch (error: unknown) {
+      logger.error("[sync] full sync failed", syncErrorCode(error));
       return {
         success: false,
         pushed: totalPushed,
         pulled: totalPulled,
-        conflicts: totalConflicts,
-        error: error.message,
+        failedUploads: totalFailedUploads,
+        conflicts: totalFailedUploads,
+        keptLocalEdits: totalKeptLocal,
+        failedTables,
+        error: getErrorMessage(error),
       };
     } finally {
       this.syncing = false;

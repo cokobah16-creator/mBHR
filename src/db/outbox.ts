@@ -12,7 +12,8 @@ export interface OutboundMessage {
   locale: string;
   templateKey: MsgKey | string;
   payload: Record<string, string | number>;
-  status: "queued" | "sending" | "sent" | "delivered" | "failed";
+  // "cancelled": staff stopped it before it was sent; no sender picks it up.
+  status: "queued" | "sending" | "sent" | "delivered" | "failed" | "cancelled";
   createdAt: string; // ISO
   scheduledFor?: string; // ISO - for future delivery
   attempts: number;
@@ -85,16 +86,23 @@ export class MessageQueue {
     return message.id;
   }
 
-  // Get pending messages ready to send
+  // Get pending messages ready to send. `filter` narrows them to the ones a
+  // sender handles (the outbox is shared by several senders); it is applied
+  // before the limit, so other messages cannot crowd out the wanted ones.
   static async getPendingMessages(
     limit: number = 50,
+    filter?: (msg: OutboundMessage) => boolean,
   ): Promise<OutboundMessage[]> {
     const now = new Date().toISOString();
 
     return outboxDb.outboundMessages
       .where("status")
       .equals("queued")
-      .and((msg) => !msg.scheduledFor || msg.scheduledFor <= now)
+      .and(
+        (msg) =>
+          (!msg.scheduledFor || msg.scheduledFor <= now) &&
+          (!filter || filter(msg)),
+      )
       .limit(limit)
       .toArray();
   }
@@ -108,21 +116,28 @@ export class MessageQueue {
     });
   }
 
-  // Mark message as failed
-  static async markFailed(messageId: string, error: string): Promise<void> {
+  // Mark message as failed. It is queued again until the maximum attempts,
+  // then failed; returns that new status (undefined if there is no message).
+  static async markFailed(
+    messageId: string,
+    error: string,
+  ): Promise<OutboundMessage["status"] | undefined> {
     const message = await outboxDb.outboundMessages.get(messageId);
-    if (!message) return;
+    if (!message) return undefined;
 
     const attempts = message.attempts + 1;
     const maxAttempts = 3;
+    const status: OutboundMessage["status"] =
+      attempts >= maxAttempts ? "failed" : "queued";
 
     await outboxDb.outboundMessages.update(messageId, {
-      status: attempts >= maxAttempts ? "failed" : "queued",
+      status,
       attempts,
       lastAttemptAt: new Date().toISOString(),
       errorMessage: error,
       _dirty: 1,
     });
+    return status;
   }
 
   // Format phone number to E.164

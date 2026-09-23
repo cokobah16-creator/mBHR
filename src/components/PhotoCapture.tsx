@@ -1,10 +1,24 @@
 import React, { useState, useRef, useCallback } from 'react'
-import { CameraIcon, XMarkIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
+import { CameraIcon, XMarkIcon, ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 interface PhotoCaptureProps {
   onCapture: (photoDataUrl: string) => void
   onCancel: () => void
   currentPhoto?: string
+}
+
+function cameraErrorMessage(err: unknown): string {
+  const name = err instanceof Error ? err.name : ''
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return 'Camera access was blocked. Allow the camera in the browser settings, or continue without a photo.'
+  }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+    return 'No camera was found on this device. Continue without a photo.'
+  }
+  if (name === 'NotReadableError') {
+    return 'The camera is in use by another app. Close it and try again.'
+  }
+  return 'The camera could not start. Try again, or continue without a photo.'
 }
 
 export function PhotoCapture({ onCapture, onCancel, currentPhoto }: PhotoCaptureProps) {
@@ -33,11 +47,18 @@ export function PhotoCapture({ onCapture, onCancel, currentPhoto }: PhotoCapture
         videoRef.current.srcObject = mediaStream
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Camera access denied'
-      setError(errorMsg)
-      console.error('Camera error:', err)
+      setError(cameraErrorMessage(err))
+      console.error('Camera error:', err instanceof Error ? err.name : err)
     }
   }, [])
+
+  // The <video> element only mounts once the camera is active, so attach the
+  // stream after that render as well.
+  React.useEffect(() => {
+    if (cameraActive && stream && videoRef.current && videoRef.current.srcObject !== stream) {
+      videoRef.current.srcObject = stream
+    }
+  }, [cameraActive, stream])
 
   const stopCamera = useCallback(() => {
     if (stream) {
@@ -109,31 +130,42 @@ export function PhotoCapture({ onCapture, onCancel, currentPhoto }: PhotoCapture
   }, [stopCamera])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75">
-      <div className="relative w-full max-w-md bg-white rounded-lg shadow-xl p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="photo-capture-title"
+        className="relative w-full max-w-md rounded-lg border border-line bg-surface p-6 shadow-xl"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') handleCancel()
+        }}
+      >
         <button
+          type="button"
           onClick={handleCancel}
-          className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600"
+          className="btn-ghost absolute right-3 top-3 px-2"
+          aria-label="Close without taking a photo"
         >
-          <XMarkIcon className="h-6 w-6" />
+          <XMarkIcon className="h-6 w-6" aria-hidden />
         </button>
 
-        <h2 className="text-xl font-bold text-gray-900 mb-4">
-          {preview ? 'Photo Preview' : 'Capture Photo'}
+        <h2 id="photo-capture-title" className="mb-4 text-h2 text-ink">
+          {preview ? 'Photo preview' : 'Take a photo'}
         </h2>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
-            {error}
+          <div className="banner banner-danger mb-4" role="alert">
+            <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <span>{error}</span>
           </div>
         )}
 
-        <div className="relative bg-gray-100 rounded-lg overflow-hidden mb-4">
+        <div className="relative mb-4 overflow-hidden rounded-lg border border-line bg-surface-sunken">
           {preview ? (
             <img
               src={preview}
-              alt="Captured photo"
-              className="w-full h-64 object-cover"
+              alt="Captured photo of the patient"
+              className="h-64 w-full object-cover"
             />
           ) : cameraActive ? (
             <video
@@ -141,12 +173,13 @@ export function PhotoCapture({ onCapture, onCancel, currentPhoto }: PhotoCapture
               autoPlay
               playsInline
               muted
-              className="w-full h-64 object-cover"
+              aria-label="Camera preview"
+              className="h-64 w-full object-cover"
             />
           ) : (
-            <div className="w-full h-64 flex flex-col items-center justify-center text-gray-400">
-              <CameraIcon className="h-16 w-16 mb-2" />
-              <p className="text-sm">Click Start Camera to begin</p>
+            <div className="flex h-64 w-full flex-col items-center justify-center text-ink-muted">
+              <CameraIcon className="mb-2 h-12 w-12" aria-hidden />
+              <p className="text-body">Select Start camera to begin</p>
             </div>
           )}
 
@@ -156,44 +189,49 @@ export function PhotoCapture({ onCapture, onCancel, currentPhoto }: PhotoCapture
         <div className="flex gap-3">
           {!preview && !cameraActive && (
             <button
+              type="button"
+              autoFocus
               onClick={startCamera}
-              className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+              className="btn-primary flex-1"
             >
-              <CameraIcon className="h-5 w-5" />
-              Start Camera
+              <CameraIcon className="h-5 w-5" aria-hidden />
+              Start camera
             </button>
           )}
 
           {cameraActive && !preview && (
             <button
+              type="button"
               onClick={capturePhoto}
-              className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+              className="btn-primary flex-1"
             >
-              Capture Photo
+              Take photo
             </button>
           )}
 
           {preview && (
             <>
               <button
+                type="button"
                 onClick={retakePhoto}
-                className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition-colors flex items-center justify-center gap-2"
+                className="btn-secondary flex-1"
               >
-                <ArrowPathIcon className="h-5 w-5" />
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
                 Retake
               </button>
               <button
+                type="button"
                 onClick={confirmPhoto}
-                className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors"
+                className="btn-primary flex-1"
               >
-                Use Photo
+                Use photo
               </button>
             </>
           )}
         </div>
 
-        <p className="mt-3 text-xs text-gray-500 text-center">
-          Photos are compressed to 200x200px and stored locally
+        <p className="mt-3 text-center text-caption text-ink-muted">
+          Photos are reduced to 200 × 200 px and saved with the patient record.
         </p>
       </div>
     </div>

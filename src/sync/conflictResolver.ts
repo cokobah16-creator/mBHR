@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { ConflictData } from "@/components/ConflictResolutionModal";
+import { namedSyncError } from "./errorCode";
 
 export type ResolutionStrategy = "keep-local" | "keep-remote" | "manual";
 
@@ -7,6 +8,7 @@ interface Resolution {
   [field: string]: "local" | "remote";
 }
 
+// Server table name -> this device's table (same mapping as the adapter).
 const tableMap: Record<string, string> = {
   app_users: "users",
   patients: "patients",
@@ -16,6 +18,8 @@ const tableMap: Record<string, string> = {
   dispenses: "dispenses",
   inventory: "inventory",
   queue: "queue",
+  patient_allergies: "patientAllergies",
+  patient_preferences: "patientPreferences",
 };
 
 export async function resolveConflict(
@@ -45,13 +49,20 @@ export async function resolveConflict(
     }
 
     const mappedData = mapRemoteToLocal(remoteData, conflict.entityType);
+    // Lay the server copy over this device's row rather than replacing it,
+    // so fields kept only on this device (patient search keys and merge
+    // links, queue assignee and ticket number) are not lost.
+    const localRow = await table.get(conflict.entityId);
 
     await table.put({
+      ...(localRow ?? {}),
       ...mappedData,
       id: conflict.entityId,
       _dirty: 0,
       _syncedAt: new Date().toISOString(),
-      updatedAt: new Date(conflict.remoteTimestamp),
+      // The copy just read from the server may be newer than the one the
+      // conflict was raised on; keep its own timestamp when it has one.
+      updatedAt: mappedData.updatedAt ?? new Date(conflict.remoteTimestamp),
     });
   } else if (strategy === "manual" && manualResolution) {
     if (!localData || !remoteData) {
@@ -60,9 +71,12 @@ export async function resolveConflict(
       );
     }
 
-    const resolvedData: Record<string, unknown> = { id: conflict.entityId };
+    // Only the chosen fields change; every other field of the local record
+    // is kept (a put here would have replaced the whole record).
+    const resolvedData: Record<string, unknown> = {};
 
     for (const [field, choice] of Object.entries(manualResolution)) {
+      if (field === "id") continue; // the primary key never changes
       if (choice === "local") {
         resolvedData[field] = localData[field];
       } else {
@@ -71,12 +85,15 @@ export async function resolveConflict(
       }
     }
 
-    await table.put({
+    const updated = await table.update(conflict.entityId, {
       ...resolvedData,
       _dirty: 1,
       updatedAt: new Date(),
       _syncedAt: null,
     });
+    // update() writes nothing when the record is not on this device; say so
+    // instead of reporting the choice as applied.
+    if (!updated) throw namedSyncError("LocalRecordMissing");
   }
 }
 
@@ -147,6 +164,27 @@ function mapRemoteToLocal(
       full_name: "fullName",
       admin_access: "adminAccess",
       admin_permanent: "adminPermanent",
+      created_at: "createdAt",
+      updated_at: "updatedAt",
+    },
+    patient_allergies: {
+      patient_id: "patientId",
+      allergy_type: "allergyType",
+      onset_date: "onsetDate",
+      is_active: "isActive",
+      created_at: "createdAt",
+      updated_at: "updatedAt",
+      created_by: "createdBy",
+    },
+    patient_preferences: {
+      patient_id: "patientId",
+      preferred_language: "preferredLanguage",
+      communication_channel: "communicationChannel",
+      best_contact_time: "bestContactTime",
+      dietary_restrictions: "dietaryRestrictions",
+      religious_cultural: "religiousCultural",
+      appointment_reminders: "appointmentReminders",
+      medication_reminders: "medicationReminders",
       created_at: "createdAt",
       updated_at: "updatedAt",
     },

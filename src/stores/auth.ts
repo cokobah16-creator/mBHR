@@ -4,6 +4,10 @@ import { db, User, Session, generateId } from "@/db";
 import { verifyPin } from "@/utils/pin";
 import * as logger from "@/lib/logger";
 import { supabase } from "@/lib/supabase";
+import {
+  clearStoredSupabaseAuth,
+  isSupabaseAuthKey,
+} from "@/lib/supabaseAuthStorage";
 
 interface AuthState {
   currentUser: User | null;
@@ -29,6 +33,115 @@ interface AuthState {
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
 const STAFF_SESSION_DURATION = 12 * 60 * 60 * 1000; // 12 hours
+/** How long logout waits for the online sign-out before clearing it locally. */
+const CLOUD_SIGN_OUT_TIMEOUT_MS = 5000;
+
+/**
+ * The online (Supabase) sign-in stored in this browser, with its auth user id
+ * ("" when it cannot be read), or null when there is certainly none. Every
+ * Supabase client in the app, staff and patient portal alike, keeps its
+ * sign-in under the same "sb-<project>-auth-token" key, so there is at most
+ * one.
+ */
+function readStoredCloudSignIn(): { userId: string } | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !isSupabaseAuthKey(key) || key.endsWith("-code-verifier")) {
+        continue;
+      }
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      let userId = "";
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        const user =
+          parsed && typeof parsed === "object"
+            ? (parsed as { user?: { id?: unknown } }).user
+            : undefined;
+        if (typeof user?.id === "string") userId = user.id;
+      } catch {
+        // Unreadable, but still a stored sign-in.
+      }
+      return { userId };
+    }
+  } catch {
+    // Storage blocked: supabase-js may hold the sign-in elsewhere, so treat
+    // it as present and let signOut() decide.
+    return { userId: "" };
+  }
+  return null;
+}
+
+/**
+ * End this device's online sign-in when a staff member logs out, so the next
+ * person on a shared tablet cannot sync or write to the cloud under the
+ * previous person's account. Best effort: never throws, and the local logout
+ * never waits for it.
+ *
+ * scope "local" ends only this device's sign-in; the staff member stays
+ * signed in on their other devices. Offline, signOut() cannot reach the
+ * server and keeps the stored sign-in, so it is then removed from this device
+ * directly (as the patient portal's own sign-out does), unless someone else
+ * has signed in since.
+ */
+async function endCloudSignIn(): Promise<void> {
+  const client = supabase;
+  if (!client) return;
+  const before = readStoredCloudSignIn();
+  if (!before) return;
+
+  let ended = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), CLOUD_SIGN_OUT_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([
+      client.auth.signOut({ scope: "local" }),
+      timedOut,
+    ]);
+    if (result === "timeout") {
+      logger.warn("[Auth] Online sign-out timed out");
+    } else if (result.error) {
+      logger.warn("[Auth] Online sign-out failed:", result.error.name);
+    } else {
+      ended = true;
+    }
+  } catch (error) {
+    logger.warn(
+      "[Auth] Online sign-out failed:",
+      error instanceof Error ? error.name : typeof error,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+  if (ended) return;
+
+  const now = readStoredCloudSignIn();
+  if (now && now.userId === before.userId) {
+    clearStoredSupabaseAuth();
+    logger.info("[Auth] Removed the online sign-in from this device");
+  }
+}
+
+/** The online sign-out started by the last logout, while it is still running. */
+let cloudSignOutInFlight: Promise<void> | null = null;
+
+/**
+ * Start ending the online sign-in in the background. The tracked promise
+ * never rejects (an unhandled rejection would surface as an app error), and
+ * loginOnline waits for it so a new online sign-in is not removed by the
+ * previous person's sign-out finishing late.
+ */
+function startCloudSignOut(): void {
+  const run: Promise<void> = endCloudSignIn()
+    .catch(() => undefined)
+    .finally(() => {
+      if (cloudSignOutInFlight === run) cloudSignOutInFlight = null;
+    });
+  cloudSignOutInFlight = run;
+}
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -98,7 +211,10 @@ export const useAuthStore = create<AuthState>()(
           state.incrementFailedAttempts();
           return false;
         } catch (error) {
-          logger.error("Login error:", error);
+          logger.error(
+            "Login error:",
+            error instanceof Error ? error.name : typeof error,
+          );
           state.incrementFailedAttempts();
           return false;
         }
@@ -114,13 +230,17 @@ export const useAuthStore = create<AuthState>()(
         }
 
         try {
+          // Let the previous person's online sign-out finish first (at most
+          // a few seconds), so it cannot remove this new sign-in.
+          if (cloudSignOutInFlight) await cloudSignOutInFlight;
+
           const { data, error } = await supabase.auth.signInWithPassword({
             email,
             password,
           });
 
           if (error || !data.user) {
-            logger.error("Online login error:", error?.message);
+            logger.error("Online login error:", error?.name ?? "no user");
             state.incrementFailedAttempts();
             return false;
           }
@@ -184,7 +304,10 @@ export const useAuthStore = create<AuthState>()(
 
           return true;
         } catch (error) {
-          logger.error("Online login error:", error);
+          logger.error(
+            "Online login error:",
+            error instanceof Error ? error.name : typeof error,
+          );
           state.incrementFailedAttempts();
           return false;
         }
@@ -194,7 +317,15 @@ export const useAuthStore = create<AuthState>()(
         const state = get();
 
         if (state.currentSession) {
-          await db.sessions.delete(state.currentSession.id);
+          try {
+            await db.sessions.delete(state.currentSession.id);
+          } catch (error) {
+            // A leftover session row must not keep this person signed in.
+            logger.error(
+              "[Auth] Could not remove the session record:",
+              error instanceof Error ? error.name : typeof error,
+            );
+          }
         }
 
         set({
@@ -204,6 +335,10 @@ export const useAuthStore = create<AuthState>()(
           sessionExpiresAt: null,
           lastActivityAt: null,
         });
+
+        // Also end the online sign-in, in the background: the local logout
+        // above is already complete and never waits for the network.
+        startCloudSignOut();
       },
 
       setCurrentUser: (user: User | null) => {

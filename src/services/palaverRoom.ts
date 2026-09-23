@@ -1,6 +1,16 @@
 import { supabase } from "@/lib/supabase";
 import logger from "@/lib/logger";
 
+// Palaver Room: direct messages and announcements between staff.
+// "Palaver" is West African Pidgin for a discussion or conference.
+//
+// Messages live only in Supabase (palaver_messages, palaver_broadcasts).
+// Nothing is stored on the device, so every call needs the online service.
+//
+// Logging: only error codes/names are logged. Server error messages and
+// details can echo row contents (names, message text), so they are never
+// logged or passed to the UI.
+
 export type MessagePriority = "normal" | "urgent" | "critical";
 export type TargetRole =
   | "doctor"
@@ -49,6 +59,11 @@ export interface SendMessageParams {
   body: string;
   priority?: MessagePriority;
   parentId?: string;
+  /**
+   * Optional client-generated UUID for the stored row. Sending again with
+   * the same id after a lost response does not store the message twice.
+   */
+  clientId?: string;
 }
 
 export interface SendBroadcastParams {
@@ -66,6 +81,52 @@ export interface PalaverAvailabilityStatus {
   reason?: string;
   details?: string;
 }
+
+/**
+ * Why a Palaver Room request did not complete.
+ * - not_configured: no Supabase client on this device.
+ * - no_rows: the request succeeded but changed nothing (usually the
+ *   server's access rules did not allow it for this account).
+ * - server: the online service returned an error.
+ */
+export type PalaverErrorReason = "not_configured" | "no_rows" | "server";
+
+export class PalaverError extends Error {
+  readonly reason: PalaverErrorReason;
+  /** PostgREST / Postgres error code, when the server gave one. */
+  readonly code?: string;
+
+  constructor(reason: PalaverErrorReason, message: string, code?: string) {
+    super(message);
+    this.name = "PalaverError";
+    this.reason = reason;
+    this.code = code;
+  }
+}
+
+function codeOf(err: unknown): string | undefined {
+  if (err && typeof err === "object") {
+    const c = (err as { code?: unknown }).code;
+    if (typeof c === "string" && c) return c;
+  }
+  return undefined;
+}
+
+/** Log-safe tag for an error: its code or name, never its message. */
+function errorTag(err: unknown): string {
+  const code = codeOf(err);
+  if (code) return code;
+  if (err instanceof Error) return err.name;
+  if (err && typeof err === "object") {
+    const n = (err as { name?: unknown }).name;
+    if (typeof n === "string" && n) return n;
+  }
+  return "unknown";
+}
+
+// Ids are interpolated into a PostgREST `or` filter, so only accept the
+// characters our ids use (ULIDs and UUIDs).
+const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
 class PalaverRoomService {
   getAvailabilityStatus(): PalaverAvailabilityStatus {
@@ -104,15 +165,20 @@ class PalaverRoomService {
     return { available: true };
   }
 
+  /**
+   * Returns the stored message, or null when Supabase is not configured on
+   * this device (nothing was sent). Throws PalaverError on a server error.
+   */
   async sendMessage(params: SendMessageParams): Promise<PalaverMessage | null> {
     if (!supabase) {
-      logger.warn("Supabase not configured - message not sent");
+      logger.warn("[palaver] Supabase not configured - message not sent");
       return null;
     }
 
     const { data, error } = await supabase
       .from("palaver_messages")
       .insert({
+        ...(params.clientId ? { id: params.clientId } : {}),
         sender_id: params.senderId,
         sender_name: params.senderName,
         recipient_id: params.recipientId,
@@ -125,22 +191,42 @@ class PalaverRoomService {
       .select()
       .single();
 
-    if (error) {
-      logger.error("Failed to send message:", error);
-      throw new Error(`Failed to send message: ${error.message}`);
+    // 23505 on a retry with the same client id: an earlier attempt was
+    // stored but its response never arrived. Return the stored row.
+    if (error && params.clientId && codeOf(error) === "23505") {
+      const existing = await supabase
+        .from("palaver_messages")
+        .select("*")
+        .eq("id", params.clientId)
+        .maybeSingle();
+      if (!existing.error && existing.data) {
+        logger.log("[palaver] Message was already stored");
+        return existing.data as PalaverMessage;
+      }
     }
 
-    logger.log(
-      `Message sent from ${params.senderName} to ${params.recipientName}`,
-    );
+    if (error) {
+      logger.error("[palaver] Send failed:", errorTag(error));
+      throw new PalaverError(
+        "server",
+        "The message was not sent.",
+        codeOf(error),
+      );
+    }
+
+    logger.log("[palaver] Message sent");
     return data;
   }
 
+  /**
+   * Returns the stored announcement, or null when Supabase is not configured
+   * on this device (nothing was posted).
+   */
   async sendBroadcast(
     params: SendBroadcastParams,
   ): Promise<PalaverBroadcast | null> {
     if (!supabase) {
-      logger.warn("Supabase not configured - broadcast not sent");
+      logger.warn("[palaver] Supabase not configured - broadcast not sent");
       return null;
     }
 
@@ -159,63 +245,73 @@ class PalaverRoomService {
       .single();
 
     if (error) {
-      logger.error("Failed to send broadcast:", error);
-      throw new Error(`Failed to send broadcast: ${error.message}`);
+      logger.error("[palaver] Broadcast failed:", errorTag(error));
+      throw new PalaverError(
+        "server",
+        "The announcement was not posted.",
+        codeOf(error),
+      );
     }
 
-    logger.log(
-      `Broadcast sent to ${params.targetRole} by ${params.senderName}`,
-    );
+    logger.log(`[palaver] Broadcast posted to ${params.targetRole}`);
     return data;
   }
 
+  /** Non-archived messages the user sent or received, newest first. */
   async getInboxMessages(userId: string): Promise<PalaverMessage[]> {
     if (!supabase) {
-      logger.warn("Supabase not configured - cannot fetch inbox");
-      throw new Error(
+      logger.warn("[palaver] Supabase not configured - cannot fetch inbox");
+      throw new PalaverError(
+        "not_configured",
         "Messaging service not available. Please check your connection.",
       );
     }
 
-    try {
-      const { data: received, error: receivedError } = await supabase
-        .from("palaver_messages")
-        .select("*")
-        .eq("recipient_id", userId)
-        .eq("is_archived", false)
-        .order("created_at", { ascending: false });
+    const { data: received, error: receivedError } = await supabase
+      .from("palaver_messages")
+      .select("*")
+      .eq("recipient_id", userId)
+      .eq("is_archived", false)
+      .order("created_at", { ascending: false });
 
-      if (receivedError) {
-        logger.error("Failed to fetch received messages:", receivedError);
-        throw new Error(`Failed to load messages: ${receivedError.message}`);
-      }
-
-      const { data: sent, error: sentError } = await supabase
-        .from("palaver_messages")
-        .select("*")
-        .eq("sender_id", userId)
-        .eq("is_archived", false)
-        .order("created_at", { ascending: false });
-
-      if (sentError) {
-        logger.error("Failed to fetch sent messages:", sentError);
-        throw new Error(`Failed to load messages: ${sentError.message}`);
-      }
-
-      const allMessages = [...(received || []), ...(sent || [])];
-      const uniqueMessages = allMessages.filter(
-        (msg, index, self) => self.findIndex((m) => m.id === msg.id) === index,
+    if (receivedError) {
+      logger.error("[palaver] Inbox fetch failed:", errorTag(receivedError));
+      throw new PalaverError(
+        "server",
+        "Messages could not be loaded.",
+        codeOf(receivedError),
       );
-      uniqueMessages.sort(
-        (a, b) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      );
-
-      return uniqueMessages;
-    } catch (err) {
-      logger.error("Inbox fetch error:", err);
-      throw err;
     }
+
+    const { data: sent, error: sentError } = await supabase
+      .from("palaver_messages")
+      .select("*")
+      .eq("sender_id", userId)
+      .eq("is_archived", false)
+      .order("created_at", { ascending: false });
+
+    if (sentError) {
+      logger.error("[palaver] Sent fetch failed:", errorTag(sentError));
+      throw new PalaverError(
+        "server",
+        "Messages could not be loaded.",
+        codeOf(sentError),
+      );
+    }
+
+    const allMessages: PalaverMessage[] = [
+      ...(received || []),
+      ...(sent || []),
+    ];
+    const uniqueMessages = allMessages.filter(
+      (msg, index, self) => self.findIndex((m) => m.id === msg.id) === index,
+    );
+    uniqueMessages.sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+
+    return uniqueMessages;
   }
 
   async getSentMessages(userId: string): Promise<PalaverMessage[]> {
@@ -228,13 +324,14 @@ class PalaverRoomService {
       .order("created_at", { ascending: false });
 
     if (error) {
-      logger.error("Failed to fetch sent messages:", error);
+      logger.error("[palaver] Sent fetch failed:", errorTag(error));
       return [];
     }
 
     return data || [];
   }
 
+  /** Unread, non-archived messages received by the user. 0 on any failure. */
   async getUnreadCount(userId: string): Promise<number> {
     if (!supabase) return 0;
 
@@ -246,7 +343,7 @@ class PalaverRoomService {
       .eq("is_archived", false);
 
     if (error) {
-      logger.error("Failed to fetch unread count:", error);
+      logger.error("[palaver] Unread count failed:", errorTag(error));
       return 0;
     }
 
@@ -269,104 +366,195 @@ class PalaverRoomService {
       .eq("id", messageId);
 
     if (error) {
-      logger.error("Failed to mark message as read:", error);
+      logger.error("[palaver] Mark read failed:", errorTag(error));
     }
   }
 
-  async archiveMessage(messageId: string): Promise<void> {
-    if (!supabase) return;
+  /**
+   * Marks every unread message from `otherUserId` to `userId` as read.
+   * Returns false when nothing could be updated (offline, not configured or
+   * a server error); unread counts then stay as they are, which is accurate.
+   */
+  async markConversationRead(
+    userId: string,
+    otherUserId: string,
+  ): Promise<boolean> {
+    if (!supabase) return false;
 
     const { error } = await supabase
       .from("palaver_messages")
-      .update({ is_archived: true })
-      .eq("id", messageId);
+      .update({
+        is_read: true,
+        read_at: new Date().toISOString(),
+      })
+      .eq("recipient_id", userId)
+      .eq("sender_id", otherUserId)
+      .eq("is_read", false);
 
     if (error) {
-      logger.error("Failed to archive message:", error);
-      throw new Error(`Failed to archive message: ${error.message}`);
+      logger.error("[palaver] Mark conversation read failed:", errorTag(error));
+      return false;
+    }
+    return true;
+  }
+
+  /** Throws PalaverError("no_rows") when the server changed nothing. */
+  async archiveMessage(messageId: string): Promise<void> {
+    if (!supabase) {
+      throw new PalaverError("not_configured", "Messaging is not set up.");
+    }
+
+    const { data, error } = await supabase
+      .from("palaver_messages")
+      .update({ is_archived: true })
+      .eq("id", messageId)
+      .select("id");
+
+    if (error) {
+      logger.error("[palaver] Archive failed:", errorTag(error));
+      throw new PalaverError(
+        "server",
+        "The message was not archived.",
+        codeOf(error),
+      );
+    }
+    if (!data || data.length === 0) {
+      throw new PalaverError("no_rows", "The message was not archived.");
     }
   }
 
+  /**
+   * Archives every message between the two users. Returns how many of the
+   * conversation's messages the server actually archived, so the caller can
+   * say so when only some could be changed.
+   */
   async archiveConversation(
     userId: string,
     otherUserId: string,
-  ): Promise<void> {
-    if (!supabase) return;
+  ): Promise<{ archived: number; total: number }> {
+    if (!supabase) {
+      throw new PalaverError("not_configured", "Messaging is not set up.");
+    }
 
     const conversation = await this.getConversation(userId, otherUserId);
     const ids = conversation.map((m) => m.id);
-    if (ids.length === 0) return;
+    if (ids.length === 0) return { archived: 0, total: 0 };
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("palaver_messages")
       .update({ is_archived: true })
-      .in("id", ids);
+      .in("id", ids)
+      .select("id");
 
     if (error) {
-      logger.error("Failed to archive conversation:", error);
-      throw new Error(`Failed to archive conversation: ${error.message}`);
+      logger.error("[palaver] Archive conversation failed:", errorTag(error));
+      throw new PalaverError(
+        "server",
+        "The conversation was not archived.",
+        codeOf(error),
+      );
     }
+    return { archived: data?.length ?? 0, total: ids.length };
   }
 
+  /** Throws PalaverError("no_rows") when the server deleted nothing. */
   async deleteMessage(messageId: string): Promise<void> {
-    if (!supabase) return;
+    if (!supabase) {
+      throw new PalaverError("not_configured", "Messaging is not set up.");
+    }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("palaver_messages")
       .delete()
-      .eq("id", messageId);
+      .eq("id", messageId)
+      .select("id");
 
     if (error) {
-      logger.error("Failed to delete message:", error);
-      throw new Error(`Failed to delete message: ${error.message}`);
+      logger.error("[palaver] Delete failed:", errorTag(error));
+      throw new PalaverError(
+        "server",
+        "The message was not deleted.",
+        codeOf(error),
+      );
+    }
+    if (!data || data.length === 0) {
+      throw new PalaverError("no_rows", "The message was not deleted.");
     }
   }
 
+  /**
+   * Hides an announcement for everyone (sets is_active = false).
+   * Throws PalaverError("no_rows") when the server changed nothing.
+   */
   async deleteBroadcast(broadcastId: string): Promise<void> {
-    if (!supabase) return;
+    if (!supabase) {
+      throw new PalaverError("not_configured", "Messaging is not set up.");
+    }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("palaver_broadcasts")
       .update({ is_active: false })
-      .eq("id", broadcastId);
+      .eq("id", broadcastId)
+      .select("id");
 
     if (error) {
-      logger.error("Failed to dismiss broadcast:", error);
-      throw new Error(`Failed to dismiss broadcast: ${error.message}`);
+      logger.error("[palaver] Dismiss broadcast failed:", errorTag(error));
+      throw new PalaverError(
+        "server",
+        "The announcement was not removed.",
+        codeOf(error),
+      );
+    }
+    if (!data || data.length === 0) {
+      throw new PalaverError("no_rows", "The announcement was not removed.");
     }
   }
 
-  async getBroadcasts(userRole: string): Promise<PalaverBroadcast[]> {
+  /**
+   * Active, unexpired announcements for the user's role, newest first.
+   * When `userId` is given, the user's own announcements are included too,
+   * whoever they were addressed to, so the sender can see and remove them.
+   * Returns [] when Supabase is not configured; throws on a server error.
+   */
+  async getBroadcasts(
+    userRole: string,
+    userId?: string,
+  ): Promise<PalaverBroadcast[]> {
     if (!supabase) {
-      logger.warn("Supabase not configured - cannot fetch broadcasts");
+      logger.warn("[palaver] Supabase not configured - cannot fetch broadcasts");
       return [];
     }
 
     const roleTargets = this.getRoleTargets(userRole);
+    const ownId = userId && SAFE_ID.test(userId) ? userId : null;
 
-    try {
-      const { data, error } = await supabase
-        .from("palaver_broadcasts")
-        .select("*")
-        .eq("is_active", true)
-        .in("target_role", roleTargets)
-        .order("created_at", { ascending: false });
+    let query = supabase
+      .from("palaver_broadcasts")
+      .select("*")
+      .eq("is_active", true);
+    query = ownId
+      ? query.or(
+          `target_role.in.(${roleTargets.join(",")}),sender_id.eq.${ownId}`,
+        )
+      : query.in("target_role", roleTargets);
 
-      if (error) {
-        logger.error("Failed to fetch broadcasts:", error);
-        return [];
-      }
+    const { data, error } = await query.order("created_at", {
+      ascending: false,
+    });
 
-      const now = new Date();
-      const filtered = (data || []).filter(
-        (b) => !b.expires_at || new Date(b.expires_at) > now,
+    if (error) {
+      logger.error("[palaver] Broadcast fetch failed:", errorTag(error));
+      throw new PalaverError(
+        "server",
+        "Announcements could not be loaded.",
+        codeOf(error),
       );
-
-      return filtered;
-    } catch (err) {
-      logger.error("Broadcasts fetch error:", err);
-      return [];
     }
+
+    const now = new Date();
+    return ((data || []) as PalaverBroadcast[]).filter(
+      (b) => !b.expires_at || new Date(b.expires_at) > now,
+    );
   }
 
   async markBroadcastRead(broadcastId: string, userId: string): Promise<void> {
@@ -384,49 +572,66 @@ class PalaverRoomService {
     );
 
     if (error) {
-      logger.error("Failed to mark broadcast as read:", error);
+      logger.error("[palaver] Mark broadcast read failed:", errorTag(error));
     }
   }
 
+  /**
+   * Every message between the two users (including archived ones), oldest
+   * first. Returns [] when Supabase is not configured; throws on a server
+   * error so an empty conversation is never shown in place of a failure.
+   */
   async getConversation(
     userId: string,
     otherUserId: string,
   ): Promise<PalaverMessage[]> {
     if (!supabase) return [];
 
-    try {
-      const { data: sent, error: sentError } = await supabase
-        .from("palaver_messages")
-        .select("*")
-        .eq("sender_id", userId)
-        .eq("recipient_id", otherUserId);
+    const { data: sent, error: sentError } = await supabase
+      .from("palaver_messages")
+      .select("*")
+      .eq("sender_id", userId)
+      .eq("recipient_id", otherUserId);
 
-      const { data: received, error: receivedError } = await supabase
-        .from("palaver_messages")
-        .select("*")
-        .eq("sender_id", otherUserId)
-        .eq("recipient_id", userId);
-
-      if (sentError) {
-        logger.error("Failed to fetch sent messages:", sentError);
-        return [];
-      }
-      if (receivedError) {
-        logger.error("Failed to fetch received messages:", receivedError);
-        return [];
-      }
-
-      const allMessages = [...(sent || []), ...(received || [])];
-      allMessages.sort(
-        (a, b) =>
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    if (sentError) {
+      logger.error("[palaver] Conversation fetch failed:", errorTag(sentError));
+      throw new PalaverError(
+        "server",
+        "The conversation could not be loaded.",
+        codeOf(sentError),
       );
-
-      return allMessages;
-    } catch (err) {
-      logger.error("Failed to fetch conversation:", err);
-      return [];
     }
+
+    const { data: received, error: receivedError } = await supabase
+      .from("palaver_messages")
+      .select("*")
+      .eq("sender_id", otherUserId)
+      .eq("recipient_id", userId);
+
+    if (receivedError) {
+      logger.error(
+        "[palaver] Conversation fetch failed:",
+        errorTag(receivedError),
+      );
+      throw new PalaverError(
+        "server",
+        "The conversation could not be loaded.",
+        codeOf(receivedError),
+      );
+    }
+
+    // A message to yourself would appear in both lists.
+    const byId = new Map<string, PalaverMessage>();
+    for (const m of [...(sent || []), ...(received || [])] as PalaverMessage[]) {
+      byId.set(m.id, m);
+    }
+    const allMessages = [...byId.values()];
+    allMessages.sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+
+    return allMessages;
   }
 
   async getMessageThread(parentId: string): Promise<PalaverMessage[]> {
@@ -444,11 +649,11 @@ class PalaverRoomService {
         .eq("parent_id", parentId);
 
       if (parentError) {
-        logger.error("Failed to fetch parent message:", parentError);
+        logger.error("[palaver] Parent fetch failed:", errorTag(parentError));
         return [];
       }
       if (repliesError) {
-        logger.error("Failed to fetch replies:", repliesError);
+        logger.error("[palaver] Replies fetch failed:", errorTag(repliesError));
         return [];
       }
 
@@ -460,7 +665,7 @@ class PalaverRoomService {
 
       return allMessages;
     } catch (err) {
-      logger.error("Failed to fetch thread:", err);
+      logger.error("[palaver] Thread fetch failed:", errorTag(err));
       return [];
     }
   }

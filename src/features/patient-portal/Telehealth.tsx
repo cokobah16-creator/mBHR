@@ -1,19 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { formatNigerianDate, formatTime } from "@/utils/dateFormat";
 import {
   VideoCameraIcon,
-  CalendarIcon,
+  CalendarDaysIcon,
   ClockIcon,
-  UserIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
   XMarkIcon,
+  ArrowPathIcon,
 } from "@heroicons/react/24/outline";
 import * as logger from "@/lib/logger";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   TELEVISIT_JOIN_WINDOW_AFTER_MIN,
+  TELEVISIT_JOIN_WINDOW_BEFORE_MIN,
   canJoinTelevisit,
   cancelTelevisitRequest,
   getPatientTelevisitRequests,
@@ -28,6 +29,14 @@ import type {
   TelevisitRequestStatus,
   TelevisitStatus,
 } from "@/services/televisits";
+import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
+import {
+  appointmentRequestStatusInfo,
+  appointmentStatusInfo,
+  formatPortalDate,
+  formatPortalLongDate,
+  formatPortalTime,
+} from "./portalStatus";
 
 const JOIN_WINDOW_REFRESH_MS = 30000;
 
@@ -38,6 +47,9 @@ const ACTIVE_VISIT_STATUSES: TelevisitStatus[] = [
 ];
 
 const OPEN_REQUEST_STATUSES: TelevisitRequestStatus[] = ["pending", "approved"];
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function readPatientId(): string | null {
   try {
@@ -65,68 +77,6 @@ function isUpcoming(visit: Televisit, now: Date): boolean {
   );
 }
 
-function visitStatusLabel(status: TelevisitStatus): string {
-  switch (status) {
-    case "in-progress":
-      return "In progress";
-    case "no-show":
-      return "Missed";
-    default:
-      return status.charAt(0).toUpperCase() + status.slice(1);
-  }
-}
-
-function visitStatusColor(status: TelevisitStatus): string {
-  switch (status) {
-    case "scheduled":
-    case "confirmed":
-      return "bg-blue-100 text-blue-800";
-    case "arrived":
-    case "in-progress":
-      return "bg-green-100 text-green-800";
-    case "completed":
-      return "bg-gray-100 text-gray-800";
-    case "no-show":
-      return "bg-amber-100 text-amber-800";
-    case "cancelled":
-      return "bg-red-100 text-red-800";
-    default:
-      return "bg-gray-100 text-gray-800";
-  }
-}
-
-function requestStatusLabel(status: TelevisitRequestStatus): string {
-  switch (status) {
-    case "pending":
-      return "Awaiting review";
-    case "approved":
-      return "Approved";
-    case "declined":
-      return "Declined";
-    case "scheduled":
-      return "Scheduled";
-    case "cancelled":
-      return "Cancelled";
-    default:
-      return status;
-  }
-}
-
-function requestStatusColor(status: TelevisitRequestStatus): string {
-  switch (status) {
-    case "pending":
-      return "bg-amber-100 text-amber-800";
-    case "approved":
-    case "scheduled":
-      return "bg-green-100 text-green-800";
-    case "declined":
-    case "cancelled":
-      return "bg-red-100 text-red-800";
-    default:
-      return "bg-gray-100 text-gray-800";
-  }
-}
-
 function timeSlotLabel(slot?: string): string {
   switch (slot) {
     case "morning":
@@ -140,10 +90,8 @@ function timeSlotLabel(slot?: string): string {
   }
 }
 
-function preferredDateLabel(preferredDate: string): string {
-  const [year, month, day] = preferredDate.split("-").map(Number);
-  if (!year || !month || !day) return preferredDate;
-  return formatNigerianDate(new Date(year, month - 1, day));
+function errorName(err: unknown): string {
+  return err instanceof Error ? err.name : "unknown";
 }
 
 export function Telehealth() {
@@ -153,6 +101,7 @@ export function Telehealth() {
   const [visits, setVisits] = useState<Televisit[]>([]);
   const [requests, setRequests] = useState<TelevisitRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [now, setNow] = useState(() => new Date());
 
@@ -167,6 +116,11 @@ export function Telehealth() {
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState("");
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     const id = readPatientId();
@@ -211,8 +165,9 @@ export function Telehealth() {
       ]);
       setVisits(visitRows);
       setRequests(requestRows);
+      setLoaded(true);
     } catch (err) {
-      logger.error("Error loading televisits:", err);
+      logger.error("Error loading televisits:", errorName(err));
       setLoadError("We could not load your video visits. Please try again.");
     } finally {
       setLoading(false);
@@ -222,6 +177,49 @@ export function Telehealth() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    submittingRef.current = submitting;
+  }, [submitting]);
+
+  const closeRequestModal = useCallback(() => {
+    if (submittingRef.current) return;
+    setShowRequestModal(false);
+  }, []);
+
+  // Request dialog: focus the first field, keep Tab inside, Escape closes,
+  // and focus goes back to the button that opened it.
+  useEffect(() => {
+    if (!showRequestModal) return;
+    const opener = openerRef.current;
+    reasonRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeRequestModal();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const items = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
+      );
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      opener?.focus();
+    };
+  }, [showRequestModal, closeRequestModal]);
 
   const handleJoinCall = (visit: Televisit) => {
     if (!available || !visit.meetingLink || !canJoinTelevisit(visit, now)) {
@@ -247,11 +245,15 @@ export function Telehealth() {
       setRequestReason("");
       setPreferredDate("");
       setPreferredTime("");
-      setSuccessMessage("Request sent. We will confirm by SMS.");
+      setSuccessMessage(
+        "Request sent. The clinic team will review it. When they book a time, it will show on this page.",
+      );
       await loadData();
     } catch (err) {
-      logger.error("Error requesting televisit:", err);
-      setRequestError("Failed to send your request. Please try again.");
+      logger.error("Error requesting televisit:", errorName(err));
+      setRequestError(
+        "Your request was not sent. Check your connection and try again.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -267,15 +269,18 @@ export function Telehealth() {
       setSuccessMessage("Your request has been cancelled.");
       await loadData();
     } catch (err) {
-      logger.error("Error cancelling televisit request:", err);
-      setCancelError("Failed to cancel the request. Please try again.");
+      logger.error("Error cancelling televisit request:", errorName(err));
+      setCancelError(
+        "The request was not cancelled. Check your connection and try again.",
+      );
     } finally {
       setCancellingId(null);
     }
   };
 
-  const openRequestModal = () => {
+  const openRequestModal = (e?: { currentTarget: HTMLElement }) => {
     if (!available) return;
+    openerRef.current = e?.currentTarget ?? null;
     setRequestError("");
     setSuccessMessage("");
     setShowRequestModal(true);
@@ -295,333 +300,238 @@ export function Telehealth() {
     openRequests.length > 0 ||
     declinedRequests.length > 0;
 
-  const requestButtonClass = available
-    ? "bg-blue-600 text-white hover:bg-blue-700"
-    : "bg-gray-200 text-gray-500 cursor-not-allowed";
-
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <PortalListSkeleton label="Loading your video visits" rows={3} />;
   }
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Telehealth</h1>
-            <p className="text-gray-600 mt-2">
-              Video visits with your healthcare providers
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={openRequestModal}
-            disabled={!available}
-            className={`px-6 py-3 rounded-lg transition-colors font-medium flex items-center gap-2 ${requestButtonClass}`}
-          >
-            <CalendarIcon className="w-5 h-5" />
-            Request Video Visit
-          </button>
-        </div>
-      </div>
+  const requestButton = (
+    <button
+      type="button"
+      onClick={openRequestModal}
+      disabled={!available}
+      className="btn-primary"
+    >
+      <CalendarDaysIcon className="h-5 w-5" aria-hidden />
+      Ask for a video visit
+    </button>
+  );
 
+  return (
+    <PortalPage
+      title="Video visits"
+      description="Talk to a health worker by video from your phone. Visits the clinic books for you show here."
+      actions={requestButton}
+    >
       {!available && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-          <ExclamationTriangleIcon className="w-6 h-6 text-amber-600 flex-shrink-0" />
-          <div>
-            <p className="font-semibold text-amber-900">
-              Video visits need an internet connection.
-            </p>
-            <p className="text-sm text-amber-800 mt-1">
-              You are currently offline, or this deployment is not connected to
-              the online portal. Requesting, joining and cancelling video visits
-              is unavailable until you are back online.
-            </p>
-          </div>
-        </div>
+        <PortalNotice
+          tone={isSupabaseEnabled ? "offline" : "info"}
+          title={
+            isSupabaseEnabled
+              ? "You are offline"
+              : "Video visits are not available here"
+          }
+        >
+          {isSupabaseEnabled
+            ? loaded
+              ? "You are seeing what was loaded before the connection dropped. Asking for, joining and cancelling video visits need an internet connection."
+              : "Video visits need an internet connection. Connect to see, ask for, join or cancel them."
+            : "This portal is not connected to the clinic's online system, so video visits cannot be used here."}
+        </PortalNotice>
       )}
 
       {successMessage && (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <CheckCircleIcon className="w-6 h-6 text-green-600 flex-shrink-0" />
-            <p className="text-sm text-green-800 mt-0.5">{successMessage}</p>
-          </div>
+        <div className="banner banner-success" role="status">
+          <p className="min-w-0 flex-1">{successMessage}</p>
           <button
             type="button"
             onClick={() => setSuccessMessage("")}
-            className="text-green-700 hover:text-green-900"
-            aria-label="Dismiss"
+            className="btn-ghost -my-2 -mr-2"
+            aria-label="Dismiss message"
           >
-            <XMarkIcon className="w-5 h-5" />
+            <XMarkIcon className="h-5 w-5" aria-hidden />
           </button>
         </div>
       )}
 
       {loadError && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between gap-3">
-          <p className="text-sm text-red-800">{loadError}</p>
-          <button
-            type="button"
-            onClick={() => loadData()}
-            className="text-sm font-medium text-red-700 hover:text-red-900"
-          >
-            Retry
-          </button>
-        </div>
+        <PortalNotice
+          tone="danger"
+          action={
+            <button
+              type="button"
+              onClick={() => loadData()}
+              className="btn-secondary"
+            >
+              <ArrowPathIcon className="h-5 w-5" aria-hidden />
+              Try again
+            </button>
+          }
+        >
+          {loadError}
+        </PortalNotice>
       )}
 
-      <div className="bg-info-soft rounded-lg p-6 border border-info-line">
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
-            <VideoCameraIcon className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-gray-900 text-lg">
-              Benefits of Telehealth
-            </h3>
-            <ul className="mt-2 space-y-2 text-sm text-gray-700">
-              <li className="flex items-center gap-2">
-                <CheckCircleIcon className="w-4 h-4 text-green-600" />
-                Consult with doctors from the comfort of your home
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircleIcon className="w-4 h-4 text-green-600" />
-                No travel time or waiting rooms
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircleIcon className="w-4 h-4 text-green-600" />
-                Convenient for follow-up appointments
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircleIcon className="w-4 h-4 text-green-600" />
-                Private video room link sent to your phone by SMS
-              </li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
       {upcomingVisits.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200 bg-blue-50">
-            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <CalendarIcon className="w-6 h-6 text-blue-600" />
-              Upcoming Video Visits
+        <section className="panel" aria-labelledby="tv-upcoming">
+          <div className="panel-header">
+            <h2 id="tv-upcoming" className="panel-title">
+              Upcoming video visits
             </h2>
           </div>
-
-          <div className="divide-y divide-gray-200">
+          <ul className="divide-y divide-line">
             {upcomingVisits.map((visit) => {
               const canJoin = available && canJoinTelevisit(visit, now);
               const hasLink = Boolean(visit.meetingLink);
+              const status = appointmentStatusInfo(visit.status);
 
               return (
-                <div
-                  key={visit.id}
-                  className="p-6 hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                          <UserIcon className="w-6 h-6 text-blue-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-gray-900 text-lg">
-                            Your doctor
-                          </h3>
-                          <p className="text-gray-600 text-sm">Video visit</p>
-                        </div>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${visitStatusColor(visit.status)}`}
-                        >
-                          {visitStatusLabel(visit.status)}
-                        </span>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                        <div className="flex items-center gap-2 text-gray-700">
-                          <CalendarIcon className="w-4 h-4 text-gray-400" />
-                          <span>{formatNigerianDate(visit.scheduledAt)}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-gray-700">
-                          <ClockIcon className="w-4 h-4 text-gray-400" />
-                          <span>
-                            {formatTime(visit.scheduledAt)} (
-                            {visit.durationMinutes} min)
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-gray-700">
-                          <VideoCameraIcon className="w-4 h-4 text-gray-400" />
-                          <span>Video Call</span>
-                        </div>
-                      </div>
-
-                      {visit.reason && (
-                        <div className="mt-3">
-                          <p className="text-sm font-medium text-gray-700">
-                            Reason: {visit.reason}
-                          </p>
-                        </div>
-                      )}
-
-                      {canJoin && hasLink && (
-                        <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-4">
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                            <div>
-                              <p className="font-semibold text-green-900">
-                                Your visit is ready!
-                              </p>
-                              <p className="text-sm text-green-700">
-                                Click below to join the video call
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => handleJoinCall(visit)}
-                              className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center gap-2"
-                            >
-                              <VideoCameraIcon className="w-5 h-5" />
-                              Join Call
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {canJoin && !hasLink && (
-                        <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-4">
-                          <p className="text-sm text-amber-800">
-                            The video room link is not ready yet. Please check
-                            the SMS we sent you or contact the clinic.
-                          </p>
-                        </div>
-                      )}
-
-                      {!canJoin && (
-                        <div className="mt-4">
-                          <button
-                            type="button"
-                            disabled
-                            className="px-6 py-3 bg-gray-200 text-gray-500 rounded-lg font-medium flex items-center gap-2 cursor-not-allowed"
-                          >
-                            <ClockIcon className="w-5 h-5" />
-                            Join opens at{" "}
-                            {formatTime(televisitJoinOpensAt(visit))}
-                          </button>
-                        </div>
-                      )}
+                <li key={visit.id} className="space-y-3 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-h3 text-ink">
+                        {formatPortalLongDate(visit.scheduledAt)}
+                      </p>
+                      <p className="flex items-center gap-1.5 text-body tabular-nums text-ink-secondary">
+                        <ClockIcon className="h-4 w-4 shrink-0" aria-hidden />
+                        {formatPortalTime(visit.scheduledAt)} ·{" "}
+                        {visit.durationMinutes} minutes
+                      </p>
                     </div>
+                    <StatusBadge tone={status.tone} icon>
+                      {status.label}
+                    </StatusBadge>
                   </div>
-                </div>
+
+                  {visit.reason && (
+                    <p className="text-body text-ink-secondary">
+                      <span className="text-ink-muted">Reason: </span>
+                      {visit.reason}
+                    </p>
+                  )}
+
+                  {canJoin && hasLink && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-success-line bg-success-soft p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-body text-success-fg">
+                        <span className="font-medium">
+                          Your video visit is open.
+                        </span>{" "}
+                        Join now to talk to the health worker.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleJoinCall(visit)}
+                        className="btn-primary"
+                      >
+                        <VideoCameraIcon className="h-5 w-5" aria-hidden />
+                        Join video visit
+                      </button>
+                    </div>
+                  )}
+
+                  {canJoin && !hasLink && (
+                    <PortalNotice tone="warning">
+                      The link for this video visit is not ready yet. Refresh
+                      this page closer to the time, or send the clinic a
+                      message.
+                    </PortalNotice>
+                  )}
+
+                  {!canJoin && (
+                    <div>
+                      <button type="button" disabled className="btn-secondary">
+                        <ClockIcon className="h-5 w-5" aria-hidden />
+                        {available
+                          ? `Join opens at ${formatPortalTime(televisitJoinOpensAt(visit))}`
+                          : "Joining needs an internet connection"}
+                      </button>
+                    </div>
+                  )}
+                </li>
               );
             })}
-          </div>
-        </div>
+          </ul>
+        </section>
       )}
 
       {(openRequests.length > 0 || declinedRequests.length > 0) && (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <ClockIcon className="w-6 h-6 text-amber-600" />
-              Your Requests
+        <section className="panel" aria-labelledby="tv-requests">
+          <div className="panel-header">
+            <h2 id="tv-requests" className="panel-title">
+              Your requests
             </h2>
           </div>
 
           {cancelError && (
-            <div className="mx-6 mt-4 bg-red-50 border border-red-200 rounded-lg p-3">
-              <p className="text-sm text-red-800">{cancelError}</p>
+            <div className="px-4 pt-4">
+              <PortalNotice tone="danger">{cancelError}</PortalNotice>
             </div>
           )}
 
-          <div className="divide-y divide-gray-200">
+          <ul className="divide-y divide-line">
             {[...openRequests, ...declinedRequests].map((request) => {
               const canCancel = request.status === "pending";
               const isConfirming = confirmCancelId === request.id;
               const isCancelling = cancellingId === request.id;
+              const status = appointmentRequestStatusInfo(request.status);
 
               return (
-                <div
-                  key={request.id}
-                  className="p-6 hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div className="flex-1 min-w-[200px]">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <h3 className="font-semibold text-gray-900">
-                          Video visit request
-                        </h3>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${requestStatusColor(request.status)}`}
-                        >
-                          {requestStatusLabel(request.status)}
-                        </span>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
-                        <div className="flex items-center gap-2">
-                          <CalendarIcon className="w-4 h-4 text-gray-400" />
-                          <span>
-                            Preferred:{" "}
-                            {preferredDateLabel(request.preferredDate)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <ClockIcon className="w-4 h-4 text-gray-400" />
-                          <span>{timeSlotLabel(request.preferredTime)}</span>
-                        </div>
-                      </div>
-
-                      {request.reason && (
-                        <p className="mt-3 text-sm text-gray-700">
-                          <span className="font-medium">Reason:</span>{" "}
-                          {request.reason}
-                        </p>
-                      )}
-
-                      {request.status === "declined" && request.reviewNotes && (
-                        <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3">
-                          <p className="text-sm text-red-800">
-                            <span className="font-medium">
-                              Note from clinic:
-                            </span>{" "}
-                            {request.reviewNotes}
-                          </p>
-                        </div>
-                      )}
+                <li key={request.id} className="space-y-3 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-body font-medium text-ink">
+                        Video visit request
+                      </p>
+                      <p className="text-body text-ink-secondary">
+                        Preferred: {formatPortalDate(request.preferredDate)} ·{" "}
+                        {timeSlotLabel(request.preferredTime)}
+                      </p>
                     </div>
-
-                    {canCancel && !isConfirming && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCancelError("");
-                          setConfirmCancelId(request.id);
-                        }}
-                        disabled={!available || Boolean(cancellingId)}
-                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Cancel request
-                      </button>
-                    )}
+                    <StatusBadge tone={status.tone} icon>
+                      {status.label}
+                    </StatusBadge>
                   </div>
 
+                  {request.reason && (
+                    <p className="text-body text-ink-secondary">
+                      <span className="text-ink-muted">Reason: </span>
+                      {request.reason}
+                    </p>
+                  )}
+
+                  {request.status === "declined" && request.reviewNotes && (
+                    <p className="rounded-md bg-surface-sunken p-3 text-body text-ink">
+                      <span className="text-ink-muted">
+                        Note from the clinic:{" "}
+                      </span>
+                      {request.reviewNotes}
+                    </p>
+                  )}
+
+                  {canCancel && !isConfirming && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCancelError("");
+                        setConfirmCancelId(request.id);
+                      }}
+                      disabled={!available || Boolean(cancellingId)}
+                      className="btn-secondary"
+                    >
+                      Cancel request
+                    </button>
+                  )}
+
                   {canCancel && isConfirming && (
-                    <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <p className="text-sm text-amber-900 font-medium">
+                    <div className="flex flex-col gap-3 rounded-md border border-warning-line bg-warning-soft p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-body font-medium text-warning-fg">
                         Cancel this video visit request?
                       </p>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={() => setConfirmCancelId(null)}
                           disabled={isCancelling}
-                          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-white transition-colors text-sm font-medium disabled:opacity-50"
+                          className="btn-secondary"
                         >
                           Keep request
                         </button>
@@ -629,131 +539,138 @@ export function Telehealth() {
                           type="button"
                           onClick={() => handleCancelRequest(request.id)}
                           disabled={!available || isCancelling}
-                          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                          className="btn-danger"
                         >
-                          {isCancelling ? "Cancelling..." : "Yes, cancel"}
+                          {isCancelling ? "Cancelling…" : "Yes, cancel"}
                         </button>
                       </div>
                     </div>
                   )}
-                </div>
+                </li>
               );
             })}
-          </div>
-        </div>
+          </ul>
+        </section>
       )}
 
       {pastVisits.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-bold text-gray-900">
-              Past Video Visits
+        <section className="panel" aria-labelledby="tv-past">
+          <div className="panel-header">
+            <h2 id="tv-past" className="panel-title">
+              Past video visits
             </h2>
           </div>
-
-          <div className="divide-y divide-gray-200">
-            {pastVisits.map((visit) => (
-              <div
-                key={visit.id}
-                className="p-6 hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center">
-                        <UserIcon className="w-6 h-6 text-gray-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-900">
-                          Your doctor
-                        </h3>
-                        <p className="text-gray-600 text-sm">Video visit</p>
-                      </div>
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${visitStatusColor(visit.status)}`}
-                      >
-                        {visitStatusLabel(visit.status)}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
-                      <div className="flex items-center gap-2">
-                        <CalendarIcon className="w-4 h-4 text-gray-400" />
-                        <span>{formatNigerianDate(visit.scheduledAt)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <ClockIcon className="w-4 h-4 text-gray-400" />
-                        <span>{formatTime(visit.scheduledAt)}</span>
-                      </div>
+          <ul className="divide-y divide-line">
+            {pastVisits.map((visit) => {
+              const status = appointmentStatusInfo(visit.status);
+              return (
+                <li key={visit.id} className="p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-body font-medium text-ink">
+                        {formatPortalDate(visit.scheduledAt)} ·{" "}
+                        {formatPortalTime(visit.scheduledAt)}
+                      </p>
                       {visit.reason && (
-                        <div>
-                          <span className="font-medium">Reason:</span>{" "}
+                        <p className="text-body text-ink-secondary">
+                          <span className="text-ink-muted">Reason: </span>
                           {visit.reason}
-                        </div>
+                        </p>
                       )}
                     </div>
+                    <StatusBadge tone={status.tone} icon>
+                      {status.label}
+                    </StatusBadge>
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
+      {!hasAnything && available && !loadError && (
+        <div className="panel">
+          <EmptyState
+            icon={VideoCameraIcon}
+            title="No video visits yet"
+            description="Ask for a video visit and the clinic team will review it. When they book a time, it will show here."
+            action={requestButton}
+          />
         </div>
       )}
 
-      {!hasAnything && (
-        <div className="bg-white rounded-xl shadow-sm p-12 text-center">
-          <VideoCameraIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">
-            No Video Visits Yet
-          </h3>
-          <p className="text-gray-600 mb-6">
-            Request your first video visit with a healthcare provider
-          </p>
-          <button
-            type="button"
-            onClick={openRequestModal}
-            disabled={!available}
-            className={`px-6 py-3 rounded-lg transition-colors font-medium inline-flex items-center gap-2 ${requestButtonClass}`}
-          >
-            <CalendarIcon className="w-5 h-5" />
-            Request Video Visit
-          </button>
+      <section className="panel" aria-labelledby="tv-how">
+        <div className="panel-header">
+          <h2 id="tv-how" className="panel-title">
+            How video visits work
+          </h2>
         </div>
-      )}
+        <ol className="panel-body list-decimal space-y-1.5 pl-9 text-body text-ink-secondary">
+          <li>Ask for a video visit and choose a day that suits you.</li>
+          <li>The clinic team reviews your request.</li>
+          <li>When they book a time, it shows on this page.</li>
+          <li>
+            The Join button opens {TELEVISIT_JOIN_WINDOW_BEFORE_MIN} minutes
+            before the start time. You need a phone with internet and a
+            camera.
+          </li>
+        </ol>
+      </section>
 
       {showRequestModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">
-              Request a Video Visit
-            </h2>
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+          <div
+            className="absolute inset-0 bg-ink/50"
+            onClick={closeRequestModal}
+            aria-hidden
+          />
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tv-request-title"
+            className="relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-surface p-5 shadow-2xl sm:rounded-2xl"
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <h2 id="tv-request-title" className="text-h1 text-ink">
+                Ask for a video visit
+              </h2>
+              <button
+                type="button"
+                onClick={closeRequestModal}
+                disabled={submitting}
+                className="btn-ghost -mr-2 -mt-1"
+                aria-label="Close"
+              >
+                <XMarkIcon className="h-6 w-6" aria-hidden />
+              </button>
+            </div>
 
             <form onSubmit={handleRequestSubmit} className="space-y-4">
               <div>
-                <label
-                  htmlFor="televisit-reason"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Reason for Consultation *
+                <label htmlFor="televisit-reason" className="field-label">
+                  Reason for the video visit (required)
                 </label>
                 <textarea
+                  ref={reasonRef}
                   id="televisit-reason"
                   value={requestReason}
                   onChange={(e) => setRequestReason(e.target.value)}
                   required
                   rows={3}
                   disabled={submitting}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Brief description of your health concern"
+                  aria-describedby="televisit-reason-hint"
+                  className="input-field"
                 />
+                <p id="televisit-reason-hint" className="field-hint">
+                  A short description of your health concern.
+                </p>
               </div>
 
               <div>
-                <label
-                  htmlFor="televisit-date"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Preferred Date *
+                <label htmlFor="televisit-date" className="field-label">
+                  Preferred day (required)
                 </label>
                 <input
                   id="televisit-date"
@@ -763,16 +680,13 @@ export function Telehealth() {
                   required
                   disabled={submitting}
                   min={new Date().toISOString().split("T")[0]}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="input-field"
                 />
               </div>
 
               <div>
-                <label
-                  htmlFor="televisit-time"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Preferred Time *
+                <label htmlFor="televisit-time" className="field-label">
+                  Preferred time (required)
                 </label>
                 <select
                   id="televisit-time"
@@ -780,7 +694,7 @@ export function Telehealth() {
                   onChange={(e) => setPreferredTime(e.target.value)}
                   required
                   disabled={submitting}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="input-field"
                 >
                   <option value="">Select time</option>
                   <option value="morning">Morning (8:00 AM - 12:00 PM)</option>
@@ -791,50 +705,36 @@ export function Telehealth() {
                 </select>
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
-                  We will review your request and send the confirmed time and
-                  video link to your phone by SMS.
-                </p>
-              </div>
+              <PortalNotice tone="info">
+                This is a request, not a booking. The clinic team will review
+                it, and the booked time will show on this page.
+              </PortalNotice>
 
               {requestError && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <p className="text-sm text-red-800">{requestError}</p>
-                </div>
+                <PortalNotice tone="danger">{requestError}</PortalNotice>
               )}
 
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowRequestModal(false)}
+                  onClick={closeRequestModal}
                   disabled={submitting}
-                  className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  className="btn-secondary flex-1"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting || !available}
-                  className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  className="btn-primary flex-1"
                 >
-                  {submitting ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Sending...
-                    </>
-                  ) : (
-                    <>
-                      <CalendarIcon className="w-5 h-5" />
-                      Submit Request
-                    </>
-                  )}
+                  {submitting ? "Sending…" : "Send request"}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
+    </PortalPage>
   );
 }

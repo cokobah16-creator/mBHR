@@ -1,5 +1,7 @@
 import type { User } from "@/db";
 
+// Keep in step with Role in src/auth/roles.ts: route guards (RequireRoles)
+// name roles from both lists.
 export const ROLES = [
   "volunteer",
   "inventory_lead",
@@ -7,6 +9,9 @@ export const ROLES = [
   "nurse",
   "doctor",
   "admin",
+  "lead_clinician",
+  "auditor",
+  "guest",
 ] as const;
 
 export type Role = (typeof ROLES)[number];
