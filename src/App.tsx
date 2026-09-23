@@ -17,15 +17,10 @@ import {
 import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { AuthCallback } from "@/components/AuthCallback";
-import {
-  PageSkeleton,
-  PortalSkeleton,
-  ScreenSkeleton,
-} from "@/components/ui/Skeleton";
-
-// Public legal pages
-const PrivacyPolicy = lazy(() => import("@/pages/legal/PrivacyPolicy"));
-const TermsOfUse = lazy(() => import("@/pages/legal/TermsOfUse"));
+// Eager: the reset page must load before supabase-js strips the token from the
+// URL, and services/passwordReset captures that URL when it is first imported.
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 
 // Core pages - loaded eagerly for initial navigation
 const Dashboard = lazy(() =>
@@ -426,10 +421,21 @@ function App() {
           {/* Supabase auth email-confirmation redirect */}
           <Route path="/auth/callback" element={<AuthCallback />} />
 
+          {/* Password recovery (Supabase accounts: online staff + patient portal) */}
+          <Route
+            path="/forgot-password"
+            element={<ForgotPassword audience="staff" />}
+          />
+          <Route path="/reset-password" element={<ResetPassword />} />
+
           {/* Patient Portal Routes */}
           <Route path="/patient" element={<PatientPortalLanding />} />
           <Route path="/patient/login" element={<PatientLogin />} />
           <Route path="/patient/register" element={<PatientRegister />} />
+          <Route
+            path="/patient/forgot-password"
+            element={<ForgotPassword audience="patient" />}
+          />
           <Route
             path="/patient/*"
             element={

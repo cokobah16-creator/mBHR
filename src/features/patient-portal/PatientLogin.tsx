@@ -212,9 +212,20 @@ export function PatientLogin() {
                 disabled={loading}
                 autoComplete="current-password"
               />
-              {!isSupabaseEnabled && (
+              {isSupabaseEnabled ? (
+                <div className="mt-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => navigate("/patient/forgot-password")}
+                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+              ) : (
                 <p className="mt-1 text-xs text-gray-500">
-                  Enter the 6-digit PIN you chose when you registered.
+                  Enter the 6-digit PIN you chose when you registered. Forgot
+                  it? Ask clinic staff to help you reset it.
                 </p>
               )}
               {form.formState.errors.credential && (

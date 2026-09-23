@@ -279,6 +279,10 @@ export default function Login() {
                     Failed attempts: {attempts}/5
                   </span>
                 )}
+                <span className="text-xs text-gray-500">
+                  Forgot your PIN? Ask an administrator to set a new one under
+                  Users.
+                </span>
               </div>
             )}
 
@@ -311,6 +315,12 @@ export default function Login() {
                     required
                     autoComplete="current-password"
                   />
+                  <Link
+                    to="/forgot-password"
+                    className="self-end text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Forgot password?
+                  </Link>
                 </div>
               </>
             )}
