@@ -324,6 +324,7 @@ export default function TicketIssuer() {
                   <PatientSearch
                     onPatientSelect={(patient) => choosePatient(patient)}
                     placeholder="Search by name or phone"
+                    labelledBy="ticket-patient-label"
                   />
                   <p className="field-hint">
                     Start typing to search patients on this device. Not

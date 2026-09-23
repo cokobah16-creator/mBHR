@@ -346,24 +346,32 @@ export function UserManagement() {
 
       await db.users.delete(target.id);
 
-      let serverResult: "none" | "accepted" | "failed" = "none";
+      // Staff accounts sync through the server's app_users table. Ask for the
+      // deleted row back: row-level security can silently match nothing.
+      let serverResult: "none" | "removed" | "not_removed" = "none";
       if (supabase) {
         try {
-          const { error } = await supabase.from("users").delete().eq("id", target.id);
-          serverResult = error ? "failed" : "accepted";
+          const { data, error } = await supabase
+            .from("app_users")
+            .delete()
+            .eq("id", target.id)
+            .select("id");
+          serverResult = !error && (data?.length ?? 0) > 0 ? "removed" : "not_removed";
         } catch (error) {
           console.error("Error deleting user on server:", errorName(error));
-          serverResult = "failed";
+          serverResult = "not_removed";
         }
       }
 
       setPendingDeleteUser(null);
-      if (serverResult === "failed") {
+      const otherDevices =
+        " Other devices keep their own copy of the account until it is deleted there too.";
+      if (serverResult === "not_removed") {
         pushToast({
           id: generateId(),
           tone: "warning",
           title: "Deleted on this device only",
-          body: `${target.fullName} was removed here, but the server copy could not be removed. The account may come back after the next sync; delete it again when online.`,
+          body: `${target.fullName} was removed here, but the server copy was not removed (offline, not permitted, or not on the server). The account may come back after the next sync; delete it again when online.${otherDevices}`,
         });
       } else {
         pushToast({
@@ -371,8 +379,8 @@ export function UserManagement() {
           tone: "success",
           title: "Account deleted",
           body:
-            serverResult === "accepted"
-              ? `${target.fullName} was removed from this device and the server accepted the delete request.`
+            serverResult === "removed"
+              ? `${target.fullName} was removed from this device and from the server.${otherDevices}`
               : `${target.fullName} was removed from this device.`,
         });
       }

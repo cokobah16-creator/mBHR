@@ -382,15 +382,17 @@ export function ScheduleReminderForm({
                 </>
               ) : (
                 <>
-                  <label className="block">
+                  <div>
                     <span id={FIELD_IDS.patientId} tabIndex={-1} className="field-label">
                       Patient
                     </span>
                     <PatientSearch
                       onPatientSelect={choosePatient}
                       placeholder="Search by name or phone"
+                      labelledBy={FIELD_IDS.patientId}
+                      describedBy={errors.patientId ? `${FIELD_IDS.patientId}-error` : undefined}
                     />
-                  </label>
+                  </div>
                   {errors.patientId ? (
                     <p id={`${FIELD_IDS.patientId}-error`} className="field-error">
                       {errors.patientId}

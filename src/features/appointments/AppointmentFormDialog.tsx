@@ -354,13 +354,16 @@ export function AppointmentFormDialog({
               </>
             ) : (
               <>
-                <label className="block">
-                  <span className="field-label">Patient</span>
+                <div>
+                  <span id="appointment-patient-label" className="field-label">
+                    Patient
+                  </span>
                   <PatientSearch
                     onPatientSelect={handlePatientSelect}
                     placeholder="Search by name or phone"
+                    labelledBy="appointment-patient-label"
                   />
-                </label>
+                </div>
                 <p
                   className={errors.patient ? "field-error" : "field-hint"}
                   role={errors.patient ? "alert" : undefined}

@@ -70,7 +70,7 @@ function deviceBody(plan: DevicePlan, device: DeviceOutcome): string {
   }
   if (device === "applied") {
     return plan.kind === "merge_patients"
-      ? "The records were merged on this device and will upload at the next sync."
+      ? "The records were merged on this device. Their visits and other history upload at the next sync, but the merge link itself stays on this device: other devices still list the duplicate until it is merged there."
       : "This device's copy was updated and will upload at the next sync.";
   }
   if (plan.kind === "none") {

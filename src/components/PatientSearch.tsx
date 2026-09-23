@@ -7,9 +7,19 @@ interface PatientSearchProps {
   onPatientSelect: (patient: Patient) => void
   placeholder?: string
   className?: string
+  /** id of the visible label for the search box (preferred over wrapping this in a <label>). */
+  labelledBy?: string
+  /** id(s) of hint or error text for the search box. */
+  describedBy?: string
 }
 
-export function PatientSearch({ onPatientSelect, placeholder = "Search patients...", className = "" }: PatientSearchProps) {
+export function PatientSearch({
+  onPatientSelect,
+  placeholder = "Search patients...",
+  className = "",
+  labelledBy,
+  describedBy,
+}: PatientSearchProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Patient[]>([])
   const [showResults, setShowResults] = useState(false)
@@ -58,6 +68,14 @@ export function PatientSearch({ onPatientSelect, placeholder = "Search patients.
     if (e.key === 'Escape') setShowResults(false)
   }
 
+  // Escape on a result closes the list and returns to the search box.
+  const handleListKeyDown = (e: React.KeyboardEvent<HTMLUListElement>) => {
+    if (e.key === 'Escape') {
+      setShowResults(false)
+      inputRef.current?.focus()
+    }
+  }
+
   const getPatientAge = (dob: string) => {
     const birthDate = new Date(dob)
     const today = new Date()
@@ -74,7 +92,9 @@ export function PatientSearch({ onPatientSelect, placeholder = "Search patients.
   const open = showResults && query.trim().length > 0
 
   return (
-    <div className={`relative ${className}`}>
+    // data-local-escape tells enclosing dialogs (useDialogFocus) that Escape
+    // belongs to the open suggestion list, not to the dialog.
+    <div className={`relative ${className}`} data-local-escape={open ? '' : undefined}>
       <div className="relative">
         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
           <MagnifyingGlassIcon className="h-5 w-5 text-ink-muted" aria-hidden />
@@ -88,7 +108,9 @@ export function PatientSearch({ onPatientSelect, placeholder = "Search patients.
           onKeyDown={handleKeyDown}
           className="input-field pl-10"
           placeholder={placeholder}
-          aria-label={hasOuterLabel ? undefined : placeholder}
+          aria-labelledby={labelledBy}
+          aria-describedby={describedBy}
+          aria-label={labelledBy || hasOuterLabel ? undefined : placeholder}
           aria-controls={open && results.length > 0 ? listId : undefined}
           aria-autocomplete="list"
           autoComplete="off"
@@ -107,6 +129,7 @@ export function PatientSearch({ onPatientSelect, placeholder = "Search patients.
         <ul
           id={listId}
           aria-label="Matching patients"
+          onKeyDown={handleListKeyDown}
           className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto rounded-md border border-line bg-surface shadow-lg"
         >
           {results.map((patient) => (

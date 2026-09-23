@@ -149,7 +149,9 @@ export function PortalStatusCard({
           body:
             server.state === "not-configured"
               ? "Saved on this device only: no server is connected."
-              : "Saved on this device. The change uploads at the next sync.",
+              : enable
+                ? "Saved on this device."
+                : "Turned off on this device. Portal access settings are not synced, so an online portal account is not blocked by this.",
         });
         await loadStatus();
         onStatusChange?.();
@@ -538,7 +540,7 @@ export function PortalStatusCard({
         <p>
           {server.state === "not-configured"
             ? "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."
-            : `${firstName} will not be able to sign in to the patient portal once this change syncs.`}{" "}
+            : `Portal access will be turned off on this device. This setting is not synced, so it does not block ${firstName}'s online portal account if they have one.`}{" "}
           Their records are not deleted.
         </p>
         <p>You can turn access back on later.</p>

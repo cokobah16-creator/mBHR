@@ -202,13 +202,16 @@ export function ScheduleTelevisitDialog({
               </>
             ) : (
               <>
-                <label className="block">
-                  <span className="field-label">Patient</span>
+                <div>
+                  <span id="televisit-patient-label" className="field-label">
+                    Patient
+                  </span>
                   <PatientSearch
                     onPatientSelect={handlePatientSelect}
                     placeholder="Search by name or phone"
+                    labelledBy="televisit-patient-label"
                   />
-                </label>
+                </div>
                 <p className="field-hint">
                   {patient
                     ? `Selected: ${patient.name}`

@@ -49,7 +49,8 @@ export function useDialogFocus(
         const target = event.target;
         if (
           target instanceof HTMLElement &&
-          target.getAttribute("aria-expanded") === "true"
+          (target.getAttribute("aria-expanded") === "true" ||
+            target.closest("[data-local-escape]"))
         ) {
           return;
         }

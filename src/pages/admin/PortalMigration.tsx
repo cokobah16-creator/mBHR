@@ -408,7 +408,7 @@ export function PortalMigration() {
                   {run.failed > 0 && ` ${run.failed} failed.`}{" "}
                   {server.state === "not-configured"
                     ? "Saved on this device only: no server is connected."
-                    : "Saved on this device; the change uploads at the next sync."}
+                    : "Saved on this device. Portal access settings are not synced to other devices."}
                   {run.sendInvitations &&
                     run.failed > 0 &&
                     " A patient whose invitation failed may still have portal access turned on."}
@@ -612,7 +612,7 @@ export function PortalMigration() {
           this device
           {server.state === "not-configured"
             ? ". No server is connected, so nothing is uploaded and patients cannot use the portal until one is."
-            : " and uploaded at the next sync. They will be able to see their records in the patient portal once they register."}
+            : ". This setting is not synced to other devices. Patients can see their records in the patient portal once they register."}
         </p>
         {confirming?.sendInvitations && (
           <p>

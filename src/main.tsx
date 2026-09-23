@@ -38,6 +38,15 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     sendDefaultPii: false,
     beforeBreadcrumb(breadcrumb) {
       if (breadcrumb.category === "console") return null;
+      // Click/input breadcrumbs describe the element with its aria-label or
+      // title, which can name a patient or a medicine ("Update Amoxicillin",
+      // "Change patient (currently …)"). Keep only the element type.
+      if (breadcrumb.category === "ui.click" || breadcrumb.category === "ui.input") {
+        if (breadcrumb.message) {
+          breadcrumb.message = breadcrumb.message.replace(/\[[^\]]*\]/g, "");
+        }
+        if (breadcrumb.data) delete breadcrumb.data["ui.component_name"];
+      }
       if (breadcrumb.data && typeof breadcrumb.data.url === "string") {
         breadcrumb.data.url = breadcrumb.data.url.split("?")[0];
       }
