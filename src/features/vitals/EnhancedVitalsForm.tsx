@@ -2,9 +2,11 @@ import React, { useState, useEffect } from "react";
 import { useT } from "@/hooks/useT";
 import { useAuthStore } from "@/stores/auth";
 import { db, generateId } from "@/db";
+import { can } from "@/auth/roles";
 import { recordStageEvent } from "@/services/stageEvents";
 import { VisualNumberInput } from "@/components/VisualNumberInput";
-import { assessVitals, getFlagColor, getFlagLabel } from "@/utils/vitals";
+import { assessVitals, getFlagTone, getFlagLabel } from "@/utils/vitals";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import {
   HeartIcon,
   ExclamationTriangleIcon,
@@ -95,7 +97,10 @@ export default function EnhancedVitalsForm({
 
       setRanges(rangeMap);
     } catch (error) {
-      console.error("Error loading vitals ranges:", error);
+      console.error(
+        "Error loading vitals ranges:",
+        error instanceof Error ? error.name : error,
+      );
     }
   };
 
@@ -158,6 +163,12 @@ export default function EnhancedVitalsForm({
   };
 
   const handleSubmit = async () => {
+    // Permission is checked at the point of writing, not only by the route.
+    if (!currentUser || !can(currentUser.role, "vitals")) {
+      alert("Your role cannot record vital signs. Nothing was saved.");
+      return;
+    }
+
     if (warnings.length > 0) {
       const proceed = confirm(
         `There are ${warnings.length} warnings about these vitals. Do you want to proceed?\n\n${warnings.join("\n")}`,
@@ -206,7 +217,10 @@ export default function EnhancedVitalsForm({
 
       onSuccess?.();
     } catch (error) {
-      console.error("Error saving vitals:", error);
+      console.error(
+        "Error saving vitals:",
+        error instanceof Error ? error.name : error,
+      );
       alert("Failed to save vitals");
     } finally {
       setLoading(false);
@@ -228,28 +242,27 @@ export default function EnhancedVitalsForm({
     return "normal";
   };
 
-  const getStatusColor = (status: string | null) => {
+  const getStatusTone = (status: string | null): Tone => {
     switch (status) {
       case "low":
-        return "text-blue-600 bg-blue-50";
       case "high":
-        return "text-red-600 bg-red-50";
+        return "warning";
       case "normal":
-        return "text-green-600 bg-green-50";
+        return "success";
       default:
-        return "text-gray-600 bg-gray-50";
+        return "neutral";
     }
   };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center space-x-3">
-        <HeartIcon className="h-8 w-8 text-primary" />
+        <HeartIcon className="h-6 w-6 text-ink-muted" aria-hidden />
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">
+          <h2 className="text-h2 text-ink">
             Enhanced Vitals Recording
           </h2>
-          <p className="text-gray-600">
+          <p className="text-body text-ink-muted">
             Age: {patientAge} years • Sex:{" "}
             {patientSex === "M"
               ? "Male"
@@ -265,7 +278,7 @@ export default function EnhancedVitalsForm({
         <div className="space-y-6">
           {/* Height and Weight */}
           <div className="card">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
+            <h3 className="text-h3 text-ink mb-4">
               Anthropometric
             </h3>
             <div className="space-y-6">
@@ -297,7 +310,7 @@ export default function EnhancedVitalsForm({
 
           {/* Vital Signs */}
           <div className="card">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
+            <h3 className="text-h3 text-ink mb-4">
               Vital Signs
             </h3>
             <div className="space-y-6">
@@ -327,9 +340,9 @@ export default function EnhancedVitalsForm({
               />
 
               <div>
-                <label className="block text-lg font-medium text-gray-700 mb-4 text-center">
+                <p className="block text-h3 text-ink-secondary mb-4 text-center">
                   {t("vitals.bloodPressure")}
-                </label>
+                </p>
                 <div className="grid grid-cols-2 gap-4">
                   <VisualNumberInput
                     value={vitals.systolic}
@@ -375,13 +388,13 @@ export default function EnhancedVitalsForm({
         <div className="space-y-6">
           {/* BMI Display */}
           {bmi && (
-            <div className="card bg-blue-50 border-blue-200">
+            <div className="card">
               <div className="text-center">
-                <h3 className="text-lg font-medium text-blue-800 mb-2">
+                <h3 className="text-h3 text-ink mb-2">
                   Body Mass Index
                 </h3>
-                <div className="text-4xl font-bold text-blue-900">{bmi}</div>
-                <div className="text-sm text-blue-600 mt-2">
+                <div className="text-display tabular-nums text-ink">{bmi}</div>
+                <div className="text-body text-ink-secondary mt-2">
                   {bmi < 18.5
                     ? "Underweight"
                     : bmi < 25
@@ -396,7 +409,7 @@ export default function EnhancedVitalsForm({
 
           {/* Vital Status Indicators */}
           <div className="card">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
+            <h3 className="text-h3 text-ink mb-4">
               Range Validation
             </h3>
             <div className="space-y-3">
@@ -412,10 +425,10 @@ export default function EnhancedVitalsForm({
                 return (
                   <div
                     key={key}
-                    className="flex items-center justify-between p-3 rounded-lg border"
+                    className="flex items-center justify-between p-3 rounded-md border border-line"
                   >
                     <div>
-                      <span className="font-medium text-gray-900">
+                      <span className="font-medium text-ink">
                         {key === "heightCm"
                           ? "Height"
                           : key === "weightKg"
@@ -432,17 +445,15 @@ export default function EnhancedVitalsForm({
                                       ? "SpO2"
                                       : key}
                       </span>
-                      <div className="text-sm text-gray-600">
+                      <div className="text-body text-ink-secondary">
                         {value} {getMetricUnit(key)}
                         {range && ` (normal: ${range.min}-${range.max})`}
                       </div>
                     </div>
                     {status && (
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(status)}`}
-                      >
+                      <StatusBadge tone={getStatusTone(status)} icon>
                         {status}
-                      </span>
+                      </StatusBadge>
                     )}
                   </div>
                 );
@@ -452,14 +463,14 @@ export default function EnhancedVitalsForm({
 
           {/* Warnings */}
           {warnings.length > 0 && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div className="rounded-lg border border-warning-line bg-warning-soft p-4 text-warning-fg">
               <div className="flex items-center space-x-2 mb-3">
-                <ExclamationTriangleIcon className="h-5 w-5 text-yellow-600" />
-                <h3 className="font-medium text-yellow-800">
+                <ExclamationTriangleIcon className="h-5 w-5 text-warning" aria-hidden />
+                <h3 className="text-h3">
                   Validation Warnings
                 </h3>
               </div>
-              <ul className="text-sm text-yellow-700 space-y-1">
+              <ul className="text-body space-y-1">
                 {warnings.map((warning, index) => (
                   <li key={index}>• {warning}</li>
                 ))}
@@ -469,30 +480,27 @@ export default function EnhancedVitalsForm({
 
           {/* Clinical Flags */}
           {flags.length > 0 && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="rounded-lg border border-danger-line bg-danger-soft p-4 text-danger-fg">
               <div className="flex items-center space-x-2 mb-3">
-                <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
-                <h3 className="font-medium text-red-800">Clinical Alerts</h3>
+                <ExclamationTriangleIcon className="h-5 w-5 text-danger" aria-hidden />
+                <h3 className="text-h3">Clinical Alerts</h3>
               </div>
               <div className="flex flex-wrap gap-2">
                 {flags.map((flag) => (
-                  <span
-                    key={flag}
-                    className={`px-3 py-1 rounded-full text-sm font-medium ${getFlagColor(flag)}`}
-                  >
+                  <StatusBadge key={flag} tone={getFlagTone(flag)}>
                     {getFlagLabel(flag)}
-                  </span>
+                  </StatusBadge>
                 ))}
               </div>
             </div>
           )}
 
           {/* Normal Ranges Reference */}
-          <div className="card bg-gray-50">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
+          <div className="card bg-surface-sunken">
+            <h3 className="text-h3 text-ink mb-4">
               Normal Ranges
             </h3>
-            <div className="text-sm text-gray-700 space-y-2">
+            <div className="text-body text-ink-secondary space-y-2">
               <p>
                 <strong>Age Group:</strong>{" "}
                 {patientAge < 18 ? "Pediatric" : "Adult"}
@@ -521,9 +529,9 @@ export default function EnhancedVitalsForm({
         <button
           onClick={handleSubmit}
           disabled={loading || Object.values(vitals).every((v) => v <= 0)}
-          className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="btn-primary flex-1"
         >
-          {loading ? "Saving..." : "Save Enhanced Vitals"}
+          {loading ? "Saving…" : "Save Enhanced Vitals"}
         </button>
         {onCancel && (
           <button onClick={onCancel} className="btn-secondary">

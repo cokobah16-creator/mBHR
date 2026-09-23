@@ -1,14 +1,18 @@
-import React, { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useT } from "@/hooks/useT";
 import { db, StockBatch } from "@/db";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import { getMessageService } from "@/services/messaging";
 import * as logger from "@/lib/logger";
+import { formatNigerianDate } from "@/utils/dateFormat";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import {
   BeakerIcon,
   ExclamationTriangleIcon,
-  ClockIcon,
-  CheckCircleIcon,
   XCircleIcon,
+  MinusIcon,
+  PlusIcon,
 } from "@heroicons/react/24/outline";
 
 interface DispenseAllocation {
@@ -25,6 +29,23 @@ interface FEFODispenserProps {
   onCancel?: () => void;
 }
 
+function getExpiryStatus(expiryDate: Date): { label: string; tone: Tone } {
+  const now = new Date();
+  const daysUntilExpiry = Math.ceil(
+    // new Date() also copes with lots whose expiry was stored as a string.
+    (new Date(expiryDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
+  if (daysUntilExpiry < 0) return { label: "Expired", tone: "danger" };
+  if (daysUntilExpiry <= 30) {
+    return { label: "Expires within 30 days", tone: "warning" };
+  }
+  if (daysUntilExpiry <= 90) {
+    return { label: "Expires within 90 days", tone: "warning" };
+  }
+  return { label: "In date", tone: "success" };
+}
+
 export default function FEFODispenser({
   patientId,
   visitId,
@@ -32,62 +53,74 @@ export default function FEFODispenser({
   onCancel,
 }: FEFODispenserProps) {
   const { t } = useT();
+  const currentUser = useAuthStore((s) => s.currentUser);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [medications, setMedications] = useState<any[]>([]);
   const [batches, setBatches] = useState<StockBatch[]>([]);
   const [selectedMedication, setSelectedMedication] = useState("");
   const [requestedQty, setRequestedQty] = useState(1);
-  const [allocation, setAllocation] = useState<DispenseAllocation[]>([]);
   const [dosage, setDosage] = useState("");
   const [directions, setDirections] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  useEffect(() => {
-    loadMedications();
-  }, []);
-
-  useEffect(() => {
-    if (selectedMedication) {
-      loadBatchesForMedication(selectedMedication);
-    }
-  }, [selectedMedication]);
-
-  useEffect(() => {
-    if (selectedMedication && requestedQty > 0) {
-      calculateFEFOAllocation();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMedication, requestedQty, batches]);
-
-  const loadMedications = async () => {
+  const loadMedications = useCallback(async () => {
     try {
       const items = await db.inventory.where("onHandQty").above(0).toArray();
       setMedications(items);
     } catch (error) {
-      logger.error("Error loading medications:", error);
+      logger.error(
+        "Error loading medications:",
+        error instanceof Error ? error.name : error,
+      );
+      setErrorMessage(
+        "Stock could not be read from this device. Reload and try again.",
+      );
     }
-  };
+  }, []);
 
-  const loadBatchesForMedication = async (medicationId: string) => {
-    try {
-      const stockBatches = await db.stockBatches
-        .where("drugId")
-        .equals(medicationId)
-        .and((batch) => batch.qtyOnHand > 0)
-        .toArray();
+  const loadBatchesForMedication = useCallback(
+    async (medicationId: string): Promise<StockBatch[]> => {
+      try {
+        return await db.stockBatches
+          .where("drugId")
+          .equals(medicationId)
+          .and((batch) => batch.qtyOnHand > 0)
+          .toArray();
+      } catch (error) {
+        logger.error(
+          "Error loading batches:",
+          error instanceof Error ? error.name : error,
+        );
+        return [];
+      }
+    },
+    [],
+  );
 
-      setBatches(stockBatches);
-    } catch (error) {
-      logger.error("Error loading batches:", error);
-      setBatches([]);
+  useEffect(() => {
+    loadMedications();
+  }, [loadMedications]);
+
+  useEffect(() => {
+    // Never allocate against the previous medicine's lots while the new
+    // medicine's lots are loading, and ignore a slower load for a medicine
+    // that is no longer selected.
+    let cancelled = false;
+    setBatches([]);
+    if (selectedMedication) {
+      loadBatchesForMedication(selectedMedication).then((loaded) => {
+        if (!cancelled) setBatches(loaded);
+      });
     }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMedication, loadBatchesForMedication]);
 
-  const calculateFEFOAllocation = () => {
-    if (!batches.length || requestedQty <= 0) {
-      setAllocation([]);
-      return;
+  const allocation = useMemo<DispenseAllocation[]>(() => {
+    if (!selectedMedication || !batches.length || requestedQty <= 0) {
+      return [];
     }
 
     // Sort by expiry date (First Expired, First Out)
@@ -113,41 +146,8 @@ export default function FEFODispenser({
       remaining -= allocateQty;
     }
 
-    setAllocation(allocations);
-  };
-
-  const getExpiryStatus = (expiryDate: Date) => {
-    const now = new Date();
-    const daysUntilExpiry = Math.ceil(
-      (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-    );
-
-    if (daysUntilExpiry < 0) {
-      return {
-        status: "expired",
-        color: "text-red-600 bg-red-50",
-        icon: XCircleIcon,
-      };
-    } else if (daysUntilExpiry <= 30) {
-      return {
-        status: "expiring",
-        color: "text-yellow-600 bg-yellow-50",
-        icon: ExclamationTriangleIcon,
-      };
-    } else if (daysUntilExpiry <= 90) {
-      return {
-        status: "warning",
-        color: "text-orange-600 bg-orange-50",
-        icon: ClockIcon,
-      };
-    } else {
-      return {
-        status: "good",
-        color: "text-green-600 bg-green-50",
-        icon: CheckCircleIcon,
-      };
-    }
-  };
+    return allocations;
+  }, [selectedMedication, batches, requestedQty]);
 
   const canDispense = (): boolean => {
     return !!(
@@ -162,6 +162,11 @@ export default function FEFODispenser({
 
   const handleDispense = async () => {
     if (!canDispense()) return;
+
+    if (!currentUser || !can(currentUser.role, "dispense")) {
+      setErrorMessage("Only pharmacists and administrators can dispense.");
+      return;
+    }
 
     setLoading(true);
     setErrorMessage("");
@@ -178,7 +183,7 @@ export default function FEFODispenser({
         qty: requestedQty,
         dosage,
         directions,
-        dispensedBy: "Pharmacist", // In real app, use current user
+        dispensedBy: currentUser.fullName || "Pharmacist",
         dispensedAt: new Date(),
         _dirty: 1,
       };
@@ -216,12 +221,18 @@ export default function FEFODispenser({
           reminderDate,
         );
       } catch (error) {
-        logger.warn("Failed to queue reminder:", error);
+        logger.warn(
+          "Failed to queue reminder:",
+          error instanceof Error ? error.name : error,
+        );
       }
 
       onSuccess?.();
     } catch (error) {
-      logger.error("Error dispensing medication:", error);
+      logger.error(
+        "Error dispensing medication:",
+        error instanceof Error ? error.name : error,
+      );
       setErrorMessage(
         t("error.dispenseFailed") || "Failed to dispense medication",
       );
@@ -232,32 +243,32 @@ export default function FEFODispenser({
 
   const totalAvailable = allocation.reduce((sum, a) => sum + a.qty, 0);
   const isShortfall = totalAvailable < requestedQty;
+  const selectedMed = medications.find((m) => m.id === selectedMedication);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center space-x-3">
-        <BeakerIcon className="h-8 w-8 text-primary" />
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <BeakerIcon className="h-6 w-6 text-ink-muted" aria-hidden />
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">
-            FEFO Medication Dispense
-          </h2>
-          <p className="text-gray-600">
-            First Expired, First Out - automatic batch selection
+          <h2 className="text-h2 text-ink">Dispense medicine</h2>
+          <p className="text-body text-ink-muted">
+            Lots are chosen automatically, earliest expiry first.
           </p>
         </div>
       </div>
 
-      <div className="card">
-        <div className="space-y-6">
+      <div className="panel">
+        <div className="panel-body space-y-6">
           {/* Medication Selection */}
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3">
+            <label htmlFor="fefo-medication" className="field-label">
               Medication *
             </label>
             <select
+              id="fefo-medication"
               value={selectedMedication}
               onChange={(e) => setSelectedMedication(e.target.value)}
-              className="input-field text-lg"
+              className="input-field"
             >
               <option value="">Select medication</option>
               {medications.map((med) => (
@@ -270,113 +281,110 @@ export default function FEFODispenser({
 
           {/* Quantity Selection */}
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3">
+            <label htmlFor="fefo-qty" className="field-label">
               Quantity *
             </label>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => setRequestedQty(Math.max(1, requestedQty - 1))}
-                className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center hover:bg-red-200 touch-target-large"
+                disabled={requestedQty <= 1}
+                className="btn-secondary px-3"
+                aria-label="Decrease quantity"
               >
-                <span className="text-xl font-bold">−</span>
+                <MinusIcon className="h-5 w-5" aria-hidden />
               </button>
 
-              <div className="text-center">
-                <input
-                  type="number"
-                  value={requestedQty}
-                  onChange={(e) =>
-                    setRequestedQty(Math.max(1, parseInt(e.target.value) || 1))
-                  }
-                  min="1"
-                  className="w-20 text-2xl font-bold text-center border-2 border-gray-300 rounded-lg py-2"
-                />
-              </div>
+              <input
+                id="fefo-qty"
+                type="number"
+                inputMode="numeric"
+                value={requestedQty}
+                onChange={(e) =>
+                  setRequestedQty(Math.max(1, parseInt(e.target.value) || 1))
+                }
+                min="1"
+                className="input-field w-24 text-center text-h2 tabular-nums"
+              />
 
               <button
                 type="button"
                 onClick={() => setRequestedQty(requestedQty + 1)}
-                className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 touch-target-large"
+                className="btn-secondary px-3"
+                aria-label="Increase quantity"
               >
-                <span className="text-xl font-bold">+</span>
+                <PlusIcon className="h-5 w-5" aria-hidden />
               </button>
             </div>
           </div>
 
           {/* FEFO Allocation Display */}
           {allocation.length > 0 && (
-            <div>
-              <h3 className="text-lg font-medium text-gray-700 mb-3">
-                Batch Allocation (FEFO Order)
-              </h3>
+            <div className="space-y-3">
+              <h3 className="section-label">Lots to use (earliest expiry first)</h3>
 
               {isShortfall && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-                  <div className="flex items-center space-x-2">
-                    <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
-                    <span className="text-sm text-red-800">
-                      Insufficient stock: {totalAvailable} available,{" "}
-                      {requestedQty} requested
-                    </span>
-                  </div>
+                <div className="banner banner-danger" role="alert">
+                  <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <span>
+                    Not enough stock: {totalAvailable} available, {requestedQty}{" "}
+                    requested.
+                  </span>
                 </div>
               )}
 
-              <div className="space-y-3">
+              <ul className="divide-y divide-line rounded-md border border-line">
                 {allocation.map((alloc, index) => {
                   const expiryStatus = getExpiryStatus(alloc.expiryDate);
-                  const StatusIcon = expiryStatus.icon;
-
                   return (
-                    <div key={alloc.batchId} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-medium text-gray-900">
-                            Batch {index + 1}: {alloc.lotNumber}
-                          </div>
-                          <div className="text-sm text-gray-600">
-                            Quantity: {alloc.qty} • Expires:{" "}
-                            {alloc.expiryDate.toLocaleDateString()}
-                          </div>
+                    <li
+                      key={alloc.batchId}
+                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
+                    >
+                      <div>
+                        <div className="font-medium text-ink">
+                          Lot {index + 1}: {alloc.lotNumber}
                         </div>
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${expiryStatus.color}`}
-                        >
-                          <StatusIcon className="h-3 w-3 mr-1" />
-                          {expiryStatus.status}
-                        </span>
+                        <div className="text-caption tabular-nums text-ink-muted">
+                          Take {alloc.qty} · expires{" "}
+                          {formatNigerianDate(alloc.expiryDate)}
+                        </div>
                       </div>
-                    </div>
+                      <StatusBadge tone={expiryStatus.tone} icon>
+                        {expiryStatus.label}
+                      </StatusBadge>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             </div>
           )}
 
           {/* Dosage and Directions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
-              <label className="block text-lg font-medium text-gray-700 mb-3">
+              <label htmlFor="fefo-dosage" className="field-label">
                 Dosage *
               </label>
               <input
+                id="fefo-dosage"
                 type="text"
                 value={dosage}
                 onChange={(e) => setDosage(e.target.value)}
-                className="input-field text-lg"
-                placeholder="e.g., 1 tablet, 5ml"
+                className="input-field"
+                placeholder="e.g. 1 tablet, 5 ml"
               />
             </div>
 
             <div>
-              <label className="block text-lg font-medium text-gray-700 mb-3">
+              <label htmlFor="fefo-directions" className="field-label">
                 Directions *
               </label>
               <textarea
+                id="fefo-directions"
                 value={directions}
                 onChange={(e) => setDirections(e.target.value)}
-                className="input-field text-lg"
+                className="input-field"
                 rows={3}
                 placeholder="Take twice daily with food"
               />
@@ -385,29 +393,37 @@ export default function FEFODispenser({
 
           {/* Error Message */}
           {errorMessage && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <div className="flex items-center space-x-2">
-                <XCircleIcon className="h-5 w-5 text-red-600" />
-                <span className="text-sm text-red-800">{errorMessage}</span>
-              </div>
+            <div className="banner banner-danger" role="alert">
+              <XCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <span>{errorMessage}</span>
             </div>
           )}
 
           {/* Action Buttons */}
-          <div className="flex space-x-4 pt-6">
-            <button
-              onClick={handleDispense}
-              disabled={!canDispense() || loading || isShortfall}
-              className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Dispensing..." : "Dispense & Set Reminder"}
-            </button>
+          <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row">
             {onCancel && (
-              <button onClick={onCancel} className="btn-secondary">
+              <button type="button" onClick={onCancel} className="btn-secondary">
                 Cancel
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleDispense}
+              disabled={!canDispense() || loading || isShortfall}
+              className="btn-primary flex-1"
+            >
+              {loading
+                ? "Dispensing…"
+                : selectedMed
+                  ? `Dispense ${requestedQty} × ${selectedMed.itemName}`
+                  : "Dispense and queue reminder"}
+            </button>
           </div>
+          <p className="field-hint">
+            An SMS reminder for tomorrow at 9:00 AM is queued on this device if
+            the patient has a phone number. It is sent only when the device is
+            online and SMS sending is set up.
+          </p>
         </div>
       </div>
     </div>

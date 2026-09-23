@@ -1,20 +1,25 @@
-import React, { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useT } from "@/hooks/useT";
 import { useAuthStore } from "@/stores/auth";
-import { db, generateId } from "@/db";
+import { db, generateId, type StockBatch } from "@/db";
 import { recordStageEvent } from "@/services/stageEvents";
 import { getMessageService } from "@/services/messaging";
 import { can } from "@/auth/roles";
 import * as logger from "@/lib/logger";
 import { getPatientAllergies } from "@/services/allergies";
+import { formatNigerianDate } from "@/utils/dateFormat";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import {
   BeakerIcon,
   ExclamationTriangleIcon,
-  ClockIcon,
   CheckCircleIcon,
   XCircleIcon,
   ShieldExclamationIcon,
   InformationCircleIcon,
+  LockClosedIcon,
+  MinusIcon,
+  PlusIcon,
 } from "@heroicons/react/24/outline";
 
 interface DrugInteraction {
@@ -40,6 +45,50 @@ interface EnhancedPharmacyProps {
   onCancel?: () => void;
 }
 
+// Drug interaction database (simplified). Only these pairs are checked.
+const INTERACTION_DATABASE: DrugInteraction[] = [
+  {
+    drug1: "Warfarin",
+    drug2: "Aspirin",
+    severity: "major",
+    description: "Increased bleeding risk",
+    action: "Monitor INR closely, consider alternative",
+  },
+  {
+    drug1: "ACE Inhibitor",
+    drug2: "Potassium",
+    severity: "moderate",
+    description: "Risk of hyperkalemia",
+    action: "Monitor potassium levels",
+  },
+  {
+    drug1: "NSAID",
+    drug2: "ACE Inhibitor",
+    severity: "moderate",
+    description: "Reduced antihypertensive effect",
+    action: "Monitor blood pressure",
+  },
+];
+
+const INTERACTION_TONE: Record<DrugInteraction["severity"], Tone> = {
+  major: "danger",
+  moderate: "warning",
+  minor: "info",
+};
+
+function getExpiryStatus(daysUntilExpiry: number): { label: string; tone: Tone } {
+  if (daysUntilExpiry < 0) return { label: "Expired", tone: "danger" };
+  if (daysUntilExpiry <= 30) {
+    return { label: "Expires within 30 days", tone: "warning" };
+  }
+  if (daysUntilExpiry <= 90) {
+    return { label: "Expires within 90 days", tone: "warning" };
+  }
+  return { label: "In date", tone: "success" };
+}
+
+type ReminderState = "queued" | "failed" | null;
+
 export default function EnhancedPharmacy({
   patientId,
   visitId,
@@ -54,78 +103,16 @@ export default function EnhancedPharmacy({
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedMedication, setSelectedMedication] = useState("");
   const [requestedQty, setRequestedQty] = useState(1);
-  const [allocation, setAllocation] = useState<DispenseAllocation[]>([]);
   const [dosage, setDosage] = useState("");
   const [directions, setDirections] = useState("");
   const [patientAllergies, setPatientAllergies] = useState<string[]>([]);
   const [currentMedications, setCurrentMedications] = useState<string[]>([]);
-  const [interactions, setInteractions] = useState<DrugInteraction[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCounseling, setShowCounseling] = useState(false);
+  const [reminderState, setReminderState] = useState<ReminderState>(null);
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Drug interaction database (simplified)
-  const interactionDatabase: DrugInteraction[] = [
-    {
-      drug1: "Warfarin",
-      drug2: "Aspirin",
-      severity: "major",
-      description: "Increased bleeding risk",
-      action: "Monitor INR closely, consider alternative",
-    },
-    {
-      drug1: "ACE Inhibitor",
-      drug2: "Potassium",
-      severity: "moderate",
-      description: "Risk of hyperkalemia",
-      action: "Monitor potassium levels",
-    },
-    {
-      drug1: "NSAID",
-      drug2: "ACE Inhibitor",
-      severity: "moderate",
-      description: "Reduced antihypertensive effect",
-      action: "Monitor blood pressure",
-    },
-  ];
-
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (selectedMedication) {
-      loadBatchesForMedication(selectedMedication);
-      checkInteractions();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMedication, currentMedications]);
-
-  useEffect(() => {
-    if (selectedMedication && requestedQty > 0) {
-      calculateFEFOAllocation();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMedication, requestedQty, batches]);
-
-  // Only pharmacists and admins can access
-  if (!currentUser || !can(currentUser.role, "dispense")) {
-    return (
-      <div className="text-center py-12">
-        <ExclamationTriangleIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">
-          Access Restricted
-        </h3>
-        <p className="text-gray-600">
-          Only pharmacists and administrators can access enhanced pharmacy
-          features.
-        </p>
-      </div>
-    );
-  }
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [medicationsData, , recentDispenses] = await Promise.all([
         db.inventory.where("onHandQty").above(0).toArray(),
@@ -157,29 +144,79 @@ export default function EnhancedPharmacy({
         .map((a) => a.allergen);
       setPatientAllergies(allergyNames);
     } catch (error) {
-      logger.error("Error loading pharmacy data:", error);
+      logger.error(
+        "Error loading pharmacy data:",
+        error instanceof Error ? error.name : error,
+      );
+      setErrorMessage(
+        "Stock or patient details could not be read from this device. Reload and try again.",
+      );
     }
-  };
+  }, [patientId]);
 
-  const loadBatchesForMedication = async (medicationId: string) => {
-    try {
-      const stockBatches = await db.stockBatches
-        .where("drugId")
-        .equals(medicationId)
-        .and((batch) => batch.qtyOnHand > 0)
-        .toArray();
+  const loadBatchesForMedication = useCallback(
+    async (medicationId: string): Promise<StockBatch[]> => {
+      try {
+        return await db.stockBatches
+          .where("drugId")
+          .equals(medicationId)
+          .and((batch) => batch.qtyOnHand > 0)
+          .toArray();
+      } catch (error) {
+        logger.error(
+          "Error loading batches:",
+          error instanceof Error ? error.name : error,
+        );
+        return [];
+      }
+    },
+    [],
+  );
 
-      setBatches(stockBatches);
-    } catch (error) {
-      logger.error("Error loading batches:", error);
-      setBatches([]);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    // Never allocate against the previous medicine's lots while the new
+    // medicine's lots are loading, and ignore a slower load for a medicine
+    // that is no longer selected.
+    let cancelled = false;
+    setBatches([]);
+    if (selectedMedication) {
+      loadBatchesForMedication(selectedMedication).then((loaded) => {
+        if (!cancelled) setBatches(loaded);
+      });
     }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMedication, loadBatchesForMedication]);
 
-  const calculateFEFOAllocation = () => {
-    if (!batches.length || requestedQty <= 0) {
-      setAllocation([]);
-      return;
+  const interactions = useMemo<DrugInteraction[]>(() => {
+    if (!selectedMedication) return [];
+    const selectedMed = medications.find((m) => m.id === selectedMedication);
+    if (!selectedMed) return [];
+
+    return INTERACTION_DATABASE.filter((interaction) => {
+      const medName = selectedMed.itemName.toLowerCase();
+      return currentMedications.some((currentMed) => {
+        const currentName = currentMed.toLowerCase();
+        return (
+          (interaction.drug1.toLowerCase().includes(medName.split(" ")[0]) &&
+            interaction.drug2
+              .toLowerCase()
+              .includes(currentName.split(" ")[0])) ||
+          (interaction.drug2.toLowerCase().includes(medName.split(" ")[0]) &&
+            interaction.drug1.toLowerCase().includes(currentName.split(" ")[0]))
+        );
+      });
+    });
+  }, [selectedMedication, medications, currentMedications]);
+
+  const allocation = useMemo<DispenseAllocation[]>(() => {
+    if (!selectedMedication || !batches.length || requestedQty <= 0) {
+      return [];
     }
 
     // Sort by expiry date (First Expired, First Out)
@@ -211,83 +248,29 @@ export default function EnhancedPharmacy({
       remaining -= allocateQty;
     }
 
-    setAllocation(allocations);
-  };
+    return allocations;
+  }, [selectedMedication, batches, requestedQty]);
 
-  const checkInteractions = () => {
-    if (!selectedMedication) {
-      setInteractions([]);
-      return;
-    }
+  // Only pharmacists and admins can access
+  if (!currentUser || !can(currentUser.role, "dispense")) {
+    return (
+      <div className="panel">
+        <EmptyState
+          icon={LockClosedIcon}
+          title="Dispensing is restricted"
+          description="Only pharmacists and administrators can dispense medicines."
+        />
+      </div>
+    );
+  }
 
-    const selectedMed = medications.find((m) => m.id === selectedMedication);
-    if (!selectedMed) return;
-
-    const foundInteractions = interactionDatabase.filter((interaction) => {
-      const medName = selectedMed.itemName.toLowerCase();
-      return currentMedications.some((currentMed) => {
-        const currentName = currentMed.toLowerCase();
-        return (
-          (interaction.drug1.toLowerCase().includes(medName.split(" ")[0]) &&
-            interaction.drug2
-              .toLowerCase()
-              .includes(currentName.split(" ")[0])) ||
-          (interaction.drug2.toLowerCase().includes(medName.split(" ")[0]) &&
-            interaction.drug1.toLowerCase().includes(currentName.split(" ")[0]))
-        );
-      });
-    });
-
-    setInteractions(foundInteractions);
-  };
-
-  const getExpiryStatus = (daysUntilExpiry: number) => {
-    if (daysUntilExpiry < 0) {
-      return {
-        status: "expired",
-        color: "text-red-600 bg-red-50",
-        icon: XCircleIcon,
-      };
-    } else if (daysUntilExpiry <= 30) {
-      return {
-        status: "expiring",
-        color: "text-yellow-600 bg-yellow-50",
-        icon: ExclamationTriangleIcon,
-      };
-    } else if (daysUntilExpiry <= 90) {
-      return {
-        status: "warning",
-        color: "text-orange-600 bg-orange-50",
-        icon: ClockIcon,
-      };
-    } else {
-      return {
-        status: "good",
-        color: "text-green-600 bg-green-50",
-        icon: CheckCircleIcon,
-      };
-    }
-  };
-
-  const getInteractionSeverityColor = (
-    severity: DrugInteraction["severity"],
-  ) => {
-    switch (severity) {
-      case "major":
-        return "bg-red-100 text-red-800 border-red-200";
-      case "moderate":
-        return "bg-yellow-100 text-yellow-800 border-yellow-200";
-      case "minor":
-        return "bg-blue-100 text-blue-800 border-blue-200";
-    }
-  };
+  const selectedMed = medications.find((m) => m.id === selectedMedication);
+  const totalAvailable = allocation.reduce((sum, a) => sum + a.qty, 0);
+  const isShortfall = totalAvailable < requestedQty;
+  const hasExpiredBatches = allocation.some((a) => a.daysUntilExpiry < 0);
+  const hasMajorInteractions = interactions.some((i) => i.severity === "major");
 
   const canDispense = () => {
-    const hasExpiredBatches = allocation.some((a) => a.daysUntilExpiry < 0);
-    const hasMajorInteractions = interactions.some(
-      (i) => i.severity === "major",
-    );
-
     return (
       selectedMedication &&
       requestedQty > 0 &&
@@ -300,10 +283,26 @@ export default function EnhancedPharmacy({
     );
   };
 
+  const blockers: string[] = [];
+  if (!selectedMedication) blockers.push("choose a medicine");
+  else if (allocation.length === 0) blockers.push("no in-stock lots found");
+  else if (isShortfall) blockers.push("not enough stock");
+  if (hasExpiredBatches) blockers.push("an expired lot would be used");
+  if (hasMajorInteractions) blockers.push("a major interaction is flagged");
+  if (!dosage.trim()) blockers.push("enter the dose");
+  if (!directions.trim()) blockers.push("enter directions");
+
   const handleDispense = async () => {
     if (!canDispense()) return;
 
+    // Permission is re-checked at the point of writing, not only on render.
+    if (!can(currentUser.role, "dispense")) {
+      setErrorMessage("Only pharmacists and administrators can dispense.");
+      return;
+    }
+
     setLoading(true);
+    setErrorMessage("");
     try {
       const medication = medications.find((m) => m.id === selectedMedication);
       if (!medication) throw new Error("Medication not found");
@@ -362,13 +361,21 @@ export default function EnhancedPharmacy({
           directions,
           reminderDate,
         );
+        setReminderState("queued");
       } catch (error) {
-        logger.warn("Failed to queue reminder:", error);
+        logger.warn(
+          "Failed to queue reminder:",
+          error instanceof Error ? error.name : error,
+        );
+        setReminderState("failed");
       }
 
       setShowCounseling(true);
     } catch (error) {
-      logger.error("Error dispensing medication:", error);
+      logger.error(
+        "Error dispensing medication:",
+        error instanceof Error ? error.name : error,
+      );
       setErrorMessage(t("error.dispenseFailed"));
     } finally {
       setLoading(false);
@@ -382,178 +389,192 @@ export default function EnhancedPharmacy({
 
   if (showCounseling) {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center space-x-3">
-          <InformationCircleIcon className="h-8 w-8 text-primary" />
+      <section className="panel mx-auto max-w-2xl" aria-labelledby="counsel-title">
+        <div className="panel-header">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">
-              Patient Counseling
+            <h2 id="counsel-title" className="panel-title">
+              Patient counselling
             </h2>
-            <p className="text-gray-600">
-              Review medication instructions with patient
+            <p className="text-caption text-ink-muted">
+              Go through the instructions with the patient before they leave.
             </p>
           </div>
         </div>
 
-        <div className="card max-w-2xl mx-auto">
-          <div className="space-y-6">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h3 className="font-medium text-blue-800 mb-2">
-                Medication Dispensed
-              </h3>
-              <p className="text-blue-700">
-                <strong>
-                  {
-                    medications.find((m) => m.id === selectedMedication)
-                      ?.itemName
-                  }
-                </strong>{" "}
-                × {requestedQty}
+        <div className="panel-body space-y-5">
+          <div className="banner banner-success" role="status">
+            <CheckCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <div>
+              <p className="font-medium">Dispensed and saved on this device</p>
+              <p>
+                <strong>{selectedMed?.itemName}</strong> × {requestedQty}
               </p>
-              <p className="text-blue-700">
-                <strong>Dosage:</strong> {dosage}
+              <p>
+                <strong>Dose:</strong> {dosage}
               </p>
-              <p className="text-blue-700">
-                <strong>Instructions:</strong> {directions}
+              <p>
+                <strong>Directions:</strong> {directions}
               </p>
             </div>
-
-            <div className="space-y-4">
-              <h3 className="text-lg font-medium text-gray-900">
-                Counseling Checklist
-              </h3>
-
-              <div className="space-y-3">
-                {[
-                  "Explained how to take the medication",
-                  "Reviewed dosage and timing",
-                  "Discussed potential side effects",
-                  "Confirmed patient understanding",
-                  "Provided written instructions",
-                  "Scheduled follow-up reminder",
-                ].map((item, index) => (
-                  <label key={index} className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      className="h-5 w-5 text-primary focus:ring-primary border-gray-300 rounded"
-                    />
-                    <span className="text-gray-700">{item}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <div className="flex items-center space-x-2">
-                <CheckCircleIcon className="h-5 w-5 text-green-600" />
-                <span className="text-green-800 font-medium">
-                  SMS reminder scheduled for tomorrow at 9:00 AM
-                </span>
-              </div>
-            </div>
-
-            <button onClick={completeCounseling} className="btn-primary w-full">
-              Complete Dispensing
-            </button>
           </div>
+
+          <fieldset className="space-y-2">
+            <legend className="section-label mb-2">Counselling checklist</legend>
+            {[
+              "Explained how to take the medication",
+              "Reviewed dosage and timing",
+              "Discussed potential side effects",
+              "Confirmed patient understanding",
+              "Provided written instructions",
+              "Scheduled follow-up reminder",
+            ].map((item, index) => (
+              <label
+                key={index}
+                className="flex min-h-touch-target items-center gap-3 text-body text-ink"
+              >
+                <input
+                  type="checkbox"
+                  className="h-5 w-5 rounded border-line-strong text-primary focus:ring-primary"
+                />
+                <span>{item}</span>
+              </label>
+            ))}
+          </fieldset>
+
+          {reminderState === "queued" && (
+            <div className="banner banner-info" role="status">
+              <InformationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <span>
+                SMS reminder queued on this device for tomorrow at 9:00 AM. It
+                is sent only when the device is online and SMS sending is set
+                up.
+              </span>
+            </div>
+          )}
+          {reminderState === "failed" && (
+            <div className="banner banner-warning" role="status">
+              <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <span>
+                No SMS reminder was set up (the patient may have no phone
+                number on record). Remind the patient in person.
+              </span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={completeCounseling}
+            className="btn-primary w-full"
+          >
+            Finish counselling
+          </button>
         </div>
-      </div>
+      </section>
     );
   }
 
-  const totalAvailable = allocation.reduce((sum, a) => sum + a.qty, 0);
-  const isShortfall = totalAvailable < requestedQty;
-  const hasExpiredBatches = allocation.some((a) => a.daysUntilExpiry < 0);
-  const hasMajorInteractions = interactions.some((i) => i.severity === "major");
-
   return (
-    <div className="space-y-6">
-      <div className="flex items-center space-x-3">
-        <BeakerIcon className="h-8 w-8 text-primary" />
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <BeakerIcon className="h-6 w-6 text-ink-muted" aria-hidden />
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">
-            Enhanced Pharmacy
-          </h2>
-          <p className="text-gray-600">
-            FEFO dispensing with interaction checking
+          <h2 className="text-h2 text-ink">Dispense medicine</h2>
+          <p className="text-body text-ink-muted">
+            Lots are used in order of expiry (first expired, first out).
           </p>
         </div>
       </div>
 
-      {/* Current Medications Alert */}
-      {currentMedications.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-center space-x-2 mb-2">
-            <InformationCircleIcon className="h-5 w-5 text-blue-600" />
-            <h3 className="font-medium text-blue-800">Current Medications</h3>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {currentMedications.map((med, index) => (
-              <span
-                key={index}
-                className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
-              >
-                {med}
-              </span>
-            ))}
+      {/* Patient Allergies Warning */}
+      {patientAllergies.length > 0 && (
+        <div className="banner banner-danger" role="alert">
+          <ShieldExclamationIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <div>
+            <p className="font-semibold">
+              Allergies recorded ({patientAllergies.length})
+            </p>
+            <ul className="mt-1 flex flex-wrap gap-2">
+              {patientAllergies.map((allergy, index) => (
+                <li key={index}>
+                  <StatusBadge tone="danger">{allergy}</StatusBadge>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-caption">
+              Check the medicine against these allergies before dispensing.
+            </p>
           </div>
         </div>
       )}
 
-      {/* Patient Allergies Warning */}
-      {patientAllergies.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-center space-x-2 mb-2">
-            <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
-            <h3 className="font-medium text-red-800">Patient Allergies</h3>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {patientAllergies.map((allergy, index) => (
-              <span
-                key={index}
-                className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-sm font-medium"
-              >
-                {allergy}
-              </span>
-            ))}
+      {/* Current Medications */}
+      {currentMedications.length > 0 && (
+        <div className="banner banner-info">
+          <InformationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <div>
+            <p className="font-medium">Dispensed in the last 30 days</p>
+            <ul className="mt-1 flex flex-wrap gap-2">
+              {currentMedications.map((med, index) => (
+                <li key={index} className="badge badge-neutral">
+                  {med}
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       )}
 
       {/* Drug Interactions Alert */}
       {interactions.length > 0 && (
-        <div className="space-y-3">
+        <section
+          className="space-y-2"
+          aria-labelledby="ep-interactions-title"
+          role="alert"
+        >
+          <h3 id="ep-interactions-title" className="sr-only">
+            Interactions to check
+          </h3>
           {interactions.map((interaction, index) => (
             <div
               key={index}
-              className={`border rounded-lg p-4 ${getInteractionSeverityColor(interaction.severity)}`}
+              className={`banner ${
+                interaction.severity === "major"
+                  ? "banner-danger"
+                  : interaction.severity === "moderate"
+                    ? "banner-warning"
+                    : "banner-info"
+              }`}
             >
-              <div className="flex items-center space-x-2 mb-2">
-                <ShieldExclamationIcon className="h-5 w-5" />
-                <h3 className="font-medium">
-                  {interaction.severity.toUpperCase()} Drug Interaction
-                </h3>
+              <ShieldExclamationIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold">
+                    {interaction.drug1} and {interaction.drug2}
+                  </span>
+                  <StatusBadge tone={INTERACTION_TONE[interaction.severity]} icon>
+                    {interaction.severity} interaction
+                  </StatusBadge>
+                </div>
+                <p>{interaction.description}</p>
+                <p className="font-medium">Action: {interaction.action}</p>
               </div>
-              <p className="text-sm mb-2">{interaction.description}</p>
-              <p className="text-sm font-medium">
-                Action: {interaction.action}
-              </p>
             </div>
           ))}
-        </div>
+        </section>
       )}
 
-      <div className="card">
-        <div className="space-y-6">
+      <div className="panel">
+        <div className="panel-body space-y-6">
           {/* Medication Selection */}
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3">
+            <label htmlFor="ep-medication" className="field-label">
               {t("pharmacy.medication")} *
             </label>
             <select
+              id="ep-medication"
               value={selectedMedication}
               onChange={(e) => setSelectedMedication(e.target.value)}
-              className="input-field text-lg"
+              className="input-field"
             >
               <option value="">{t("simple.selectMedication")}</option>
               {medications.map((med) => (
@@ -563,139 +584,138 @@ export default function EnhancedPharmacy({
                 </option>
               ))}
             </select>
+            <p className="field-hint">
+              Interaction check covers only a few common pairs (warfarin and
+              aspirin, ACE inhibitor and potassium, NSAID and ACE inhibitor)
+              against medicines dispensed to this patient in the last 30 days.
+              It is not a complete interaction check.
+            </p>
           </div>
 
-          {/* Quantity Selection with Visual Input */}
+          {/* Quantity Selection */}
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3">
+            <label htmlFor="ep-qty" className="field-label">
               {t("pharmacy.quantity")} *
             </label>
-            <div className="flex items-center justify-center space-x-4">
+            <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => setRequestedQty(Math.max(1, requestedQty - 1))}
-                className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center hover:bg-red-200 touch-target-large"
+                disabled={requestedQty <= 1}
+                className="btn-secondary px-3"
+                aria-label="Decrease quantity"
               >
-                <span className="text-xl font-bold">−</span>
+                <MinusIcon className="h-5 w-5" aria-hidden />
               </button>
 
-              <div className="text-center">
-                <input
-                  type="number"
-                  value={requestedQty}
-                  onChange={(e) =>
-                    setRequestedQty(Math.max(1, parseInt(e.target.value) || 1))
-                  }
-                  min="1"
-                  className="w-24 text-3xl font-bold text-center border-2 border-gray-300 rounded-lg py-2"
-                />
-                {requestedQty <= 10 && (
-                  <div className="flex justify-center gap-1 mt-2">
-                    {Array.from({ length: requestedQty }, (_, i) => (
-                      <div
-                        key={i}
-                        className="w-3 h-3 bg-primary rounded-full"
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
+              <input
+                id="ep-qty"
+                type="number"
+                inputMode="numeric"
+                value={requestedQty}
+                onChange={(e) =>
+                  setRequestedQty(Math.max(1, parseInt(e.target.value) || 1))
+                }
+                min="1"
+                className="input-field w-24 text-center text-h2 tabular-nums"
+              />
 
               <button
                 type="button"
                 onClick={() => setRequestedQty(requestedQty + 1)}
-                className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 touch-target-large"
+                className="btn-secondary px-3"
+                aria-label="Increase quantity"
               >
-                <span className="text-xl font-bold">+</span>
+                <PlusIcon className="h-5 w-5" aria-hidden />
               </button>
             </div>
+            {requestedQty <= 10 && (
+              <div className="mt-2 flex gap-1" aria-hidden>
+                {Array.from({ length: requestedQty }, (_, i) => (
+                  <div key={i} className="h-3 w-3 rounded-full bg-primary" />
+                ))}
+              </div>
+            )}
           </div>
 
           {/* FEFO Allocation Display */}
           {allocation.length > 0 && (
-            <div>
-              <h3 className="text-lg font-medium text-gray-700 mb-3">
-                FEFO Batch Allocation
-              </h3>
+            <div className="space-y-3">
+              <h3 className="section-label">Lots to use (earliest expiry first)</h3>
 
               {isShortfall && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-                  <div className="flex items-center space-x-2">
-                    <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
-                    <span className="text-sm text-red-800">
-                      Insufficient stock: {totalAvailable} available,{" "}
-                      {requestedQty} requested
-                    </span>
-                  </div>
+                <div className="banner banner-danger" role="alert">
+                  <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <span>
+                    Not enough stock: {totalAvailable} available, {requestedQty}{" "}
+                    requested.
+                  </span>
                 </div>
               )}
 
               {hasExpiredBatches && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-                  <div className="flex items-center space-x-2">
-                    <XCircleIcon className="h-5 w-5 text-red-600" />
-                    <span className="text-sm text-red-800">
-                      Cannot dispense: Some batches have expired
-                    </span>
-                  </div>
+                <div className="banner banner-danger" role="alert">
+                  <XCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <span>
+                    Cannot dispense: an expired lot would be used. Set expired
+                    stock aside and update the lot quantities.
+                  </span>
                 </div>
               )}
 
-              <div className="space-y-3">
+              <ul className="divide-y divide-line rounded-md border border-line">
                 {allocation.map((alloc, index) => {
                   const expiryStatus = getExpiryStatus(alloc.daysUntilExpiry);
-                  const StatusIcon = expiryStatus.icon;
-
                   return (
-                    <div key={alloc.batchId} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-medium text-gray-900">
-                            Batch {index + 1}: {alloc.lotNumber}
-                          </div>
-                          <div className="text-sm text-gray-600">
-                            Quantity: {alloc.qty} • Expires:{" "}
-                            {new Date(alloc.expiryDate).toLocaleDateString()}(
-                            {alloc.daysUntilExpiry} days)
-                          </div>
+                    <li
+                      key={alloc.batchId}
+                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
+                    >
+                      <div>
+                        <div className="font-medium text-ink">
+                          Lot {index + 1}: {alloc.lotNumber}
                         </div>
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${expiryStatus.color}`}
-                        >
-                          <StatusIcon className="h-3 w-3 mr-1" />
-                          {expiryStatus.status}
-                        </span>
+                        <div className="text-caption tabular-nums text-ink-muted">
+                          Take {alloc.qty} · expires{" "}
+                          {formatNigerianDate(alloc.expiryDate)} (
+                          {alloc.daysUntilExpiry} days)
+                        </div>
                       </div>
-                    </div>
+                      <StatusBadge tone={expiryStatus.tone} icon>
+                        {expiryStatus.label}
+                      </StatusBadge>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             </div>
           )}
 
           {/* Dosage and Directions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
-              <label className="block text-lg font-medium text-gray-700 mb-3">
+              <label htmlFor="ep-dosage" className="field-label">
                 {t("pharmacy.dosage")} *
               </label>
               <input
+                id="ep-dosage"
                 type="text"
                 value={dosage}
                 onChange={(e) => setDosage(e.target.value)}
-                className="input-field text-lg"
+                className="input-field"
                 placeholder={t("simple.dosageExample")}
               />
             </div>
 
             <div>
-              <label className="block text-lg font-medium text-gray-700 mb-3">
+              <label htmlFor="ep-directions" className="field-label">
                 {t("pharmacy.directions")} *
               </label>
               <textarea
+                id="ep-directions"
                 value={directions}
                 onChange={(e) => setDirections(e.target.value)}
-                className="input-field text-lg"
+                className="input-field"
                 rows={3}
                 placeholder={t("simple.directionsExample")}
               />
@@ -704,45 +724,54 @@ export default function EnhancedPharmacy({
 
           {/* Safety Warnings */}
           {(hasExpiredBatches || hasMajorInteractions) && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <div className="flex items-center space-x-2 mb-2">
-                <ShieldExclamationIcon className="h-5 w-5 text-red-600" />
-                <h3 className="font-medium text-red-800">Safety Alert</h3>
+            <div className="banner banner-danger">
+              <ShieldExclamationIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <div>
+                <p className="font-semibold">Dispensing is blocked</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {hasExpiredBatches && <li>Expired medicine cannot be dispensed.</li>}
+                  {hasMajorInteractions && (
+                    <li>A major drug interaction is flagged. Check with the prescriber.</li>
+                  )}
+                </ul>
               </div>
-              <ul className="text-sm text-red-700 space-y-1">
-                {hasExpiredBatches && (
-                  <li>• Cannot dispense expired medication</li>
-                )}
-                {hasMajorInteractions && (
-                  <li>• Major drug interaction detected</li>
-                )}
-              </ul>
             </div>
           )}
 
           {/* Error Message */}
           {errorMessage && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <div className="flex items-center space-x-2">
-                <XCircleIcon className="h-5 w-5 text-red-600" />
-                <span className="text-sm text-red-800">{errorMessage}</span>
-              </div>
+            <div className="banner banner-danger" role="alert">
+              <XCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <span>{errorMessage}</span>
             </div>
           )}
 
           {/* Action Buttons */}
-          <div className="flex space-x-4 pt-6">
-            <button
-              onClick={handleDispense}
-              disabled={!canDispense() || loading}
-              className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? t("pharmacy.dispensing") : "Dispense & Counsel"}
-            </button>
-            {onCancel && (
-              <button onClick={onCancel} className="btn-secondary">
-                {t("action.cancel")}
+          <div className="space-y-2 border-t border-line pt-4">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              {onCancel && (
+                <button type="button" onClick={onCancel} className="btn-secondary">
+                  {t("action.cancel")}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleDispense}
+                disabled={!canDispense() || loading}
+                className="btn-primary flex-1"
+                aria-describedby={blockers.length > 0 ? "ep-blockers" : undefined}
+              >
+                {loading
+                  ? t("pharmacy.dispensing")
+                  : selectedMed
+                    ? `Dispense ${requestedQty} × ${selectedMed.itemName}`
+                    : "Dispense and counsel"}
               </button>
+            </div>
+            {blockers.length > 0 && !loading && (
+              <p id="ep-blockers" className="field-hint">
+                To dispense: {blockers.join(", ")}.
+              </p>
             )}
           </div>
         </div>

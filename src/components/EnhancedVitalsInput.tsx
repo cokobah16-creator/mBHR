@@ -65,7 +65,10 @@ export function EnhancedVitalsInput({
 
       setRange(vitalsRange || null);
     } catch (error) {
-      console.error("Error loading vital range:", error);
+      console.error(
+        "Error loading vital range:",
+        error instanceof Error ? error.name : error,
+      );
     } finally {
       setLoading(false);
     }
@@ -97,28 +100,28 @@ export function EnhancedVitalsInput({
       case "critical":
         return {
           icon: ExclamationTriangleIcon,
-          color: "text-red-700 bg-red-50 border-red-200",
+          color: "banner-danger",
           message: "Critical value - immediate attention required",
           priority: "high",
         };
       case "high":
         return {
           icon: ExclamationTriangleIcon,
-          color: "text-orange-700 bg-orange-50 border-orange-200",
+          color: "banner-warning",
           message: "Above normal - consider recheck",
           priority: "medium",
         };
       case "low":
         return {
           icon: ExclamationTriangleIcon,
-          color: "text-yellow-700 bg-yellow-50 border-yellow-200",
+          color: "banner-warning",
           message: "Below normal - verify reading",
           priority: "medium",
         };
       case "normal":
         return {
           icon: CheckCircleIcon,
-          color: "text-green-700 bg-green-50 border-green-200",
+          color: "banner-success",
           message: "Within normal range",
           priority: "low",
         };
@@ -139,11 +142,11 @@ export function EnhancedVitalsInput({
     <div className="space-y-2">
       <label
         htmlFor={inputId}
-        className="block text-sm font-medium text-gray-700"
+        className="field-label"
       >
         {label}
         {range && !loading && (
-          <span className="ml-2 text-xs text-gray-500">
+          <span className="ml-2 text-caption font-normal text-ink-muted">
             (Normal: {range.min}-{range.max} {unit})
           </span>
         )}
@@ -158,14 +161,14 @@ export function EnhancedVitalsInput({
           id={inputId}
           type="number"
           step={step}
-          className={`input-field ${
+          className={`input-field pr-10 tabular-nums ${
             statusDisplay?.priority === "high"
-              ? "border-red-300 ring-red-200"
+              ? "border-danger"
               : statusDisplay?.priority === "medium"
-                ? "border-yellow-300 ring-yellow-200"
+                ? "border-warning"
                 : status === "normal"
-                  ? "border-green-300 ring-green-200"
-                  : "border-gray-300"
+                  ? "border-success"
+                  : ""
           }`}
           placeholder={placeholder}
           aria-invalid={hasError ? "true" : "false"}
@@ -181,15 +184,16 @@ export function EnhancedVitalsInput({
         />
 
         {statusDisplay && (
-          <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+          <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
             <statusDisplay.icon
               className={`h-5 w-5 ${
                 statusDisplay.priority === "high"
-                  ? "text-red-600"
+                  ? "text-danger"
                   : statusDisplay.priority === "medium"
-                    ? "text-yellow-600"
-                    : "text-green-600"
+                    ? "text-warning"
+                    : "text-success"
               }`}
+              aria-hidden="true"
             />
           </div>
         )}
@@ -199,20 +203,18 @@ export function EnhancedVitalsInput({
       {statusDisplay && (
         <div
           id={statusId}
-          className={`p-2 rounded-lg border text-sm ${statusDisplay.color}`}
+          className={`banner px-3 py-2 text-label ${statusDisplay.color}`}
           role={statusDisplay.priority === "high" ? "alert" : "status"}
           aria-live={statusDisplay.priority === "high" ? "assertive" : "polite"}
         >
-          <div className="flex items-center space-x-2">
-            <statusDisplay.icon className="h-4 w-4" aria-hidden="true" />
-            <span>{statusDisplay.message}</span>
-          </div>
+          <statusDisplay.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>{statusDisplay.message}</span>
         </div>
       )}
 
       {/* Range Info */}
       {range && !loading && (
-        <p id={rangeId} className="text-xs text-gray-500">
+        <p id={rangeId} className="text-caption text-ink-muted">
           Age {patientAge},{" "}
           {patientSex === "M"
             ? "Male"
@@ -225,7 +227,7 @@ export function EnhancedVitalsInput({
 
       {/* Validation Error */}
       {hasError && (
-        <p id={errorId} className="text-red-600 text-sm" role="alert">
+        <p id={errorId} className="field-error" role="alert">
           {String(errors[name]?.message || "")}
         </p>
       )}

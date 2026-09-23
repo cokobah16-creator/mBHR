@@ -29,8 +29,6 @@ export function StepperForm({
   const { t, speak } = useT();
   const [currentStep, setCurrentStep] = useState(0);
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _canGoNext = currentStep < steps.length - 1;
   const canGoPrev = currentStep > 0;
   const isLastStep = currentStep === steps.length - 1;
   const currentStepData = steps[currentStep];
@@ -48,7 +46,10 @@ export function StepperForm({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await speak(nextStep.audioKey as any);
         } catch (error) {
-          console.warn("Audio playback failed:", error);
+          console.warn(
+            "Audio playback failed:",
+            error instanceof Error ? error.name : error,
+          );
         }
       }
     }
@@ -66,7 +67,10 @@ export function StepperForm({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await speak(currentStepData.audioKey as any);
       } catch (error) {
-        console.warn("Audio playback failed:", error);
+        console.warn(
+          "Audio playback failed:",
+          error instanceof Error ? error.name : error,
+        );
       }
     }
   };
@@ -76,57 +80,75 @@ export function StepperForm({
       {/* Progress Indicator */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-medium text-gray-600">
+          <span className="text-label text-ink-secondary">
             {t("stepper.step")} {currentStep + 1} {t("common.of")}{" "}
             {steps.length}
           </span>
-          <span className="text-sm text-gray-500">
+          <span className="text-caption tabular-nums text-ink-muted">
             {Math.round(((currentStep + 1) / steps.length) * 100)}%
           </span>
         </div>
 
-        <div className="w-full bg-gray-200 rounded-full h-3">
+        <div
+          className="w-full bg-surface-sunken border border-line rounded-full h-3"
+          role="progressbar"
+          aria-valuemin={1}
+          aria-valuemax={steps.length}
+          aria-valuenow={currentStep + 1}
+          aria-valuetext={`${t("stepper.step")} ${currentStep + 1} ${t("common.of")} ${steps.length}: ${currentStepData.title}`}
+        >
           <div
-            className="bg-primary h-3 rounded-full transition-all duration-300"
+            className="bg-primary h-full rounded-full transition-[width] duration-150"
             style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
           />
         </div>
 
-        <div className="flex justify-between mt-2">
+        <ol className="flex justify-between mt-2">
           {steps.map((step, index) => (
-            <div
+            <li
               key={step.id}
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
+              aria-current={index === currentStep ? "step" : undefined}
+              className={`w-8 h-8 rounded-full flex items-center justify-center text-label transition-colors ${
                 index < currentStep
-                  ? "bg-green-500 text-white"
+                  ? "bg-success text-white"
                   : index === currentStep
                     ? "bg-primary text-white"
-                    : "bg-gray-300 text-gray-600"
+                    : "bg-surface-sunken border border-line-strong text-ink-muted"
               }`}
             >
               {index < currentStep ? (
-                <CheckIcon className="h-4 w-4" />
+                <CheckIcon className="h-4 w-4" aria-hidden />
               ) : (
-                index + 1
+                <span aria-hidden>{index + 1}</span>
               )}
-            </div>
+              <span className="sr-only">
+                {step.title}
+                {index < currentStep
+                  ? " (done)"
+                  : index === currentStep
+                    ? " (current)"
+                    : ""}
+              </span>
+            </li>
           ))}
-        </div>
+        </ol>
       </div>
 
       {/* Step Header */}
       <div className="text-center mb-6">
         <div className="flex items-center justify-center space-x-3 mb-2">
-          <h2 className="text-2xl font-bold text-gray-900">
+          <h2 className="text-h1 text-ink">
             {currentStepData.title}
           </h2>
           {currentStepData.audioKey && (
             <button
+              type="button"
               onClick={playStepAudio}
-              className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors touch-target"
+              className="btn-ghost px-2"
               title={t("accessibility.playAudio")}
+              aria-label={t("accessibility.playAudio")}
             >
-              <SpeakerWaveIcon className="h-5 w-5" />
+              <SpeakerWaveIcon className="h-5 w-5" aria-hidden />
             </button>
           )}
         </div>
@@ -138,28 +160,30 @@ export function StepperForm({
       {/* Navigation */}
       <div className="flex justify-between items-center">
         <button
+          type="button"
           onClick={handlePrev}
           disabled={!canGoPrev}
-          className="btn-secondary inline-flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="btn-secondary"
         >
-          <ChevronLeftIcon className="h-5 w-5" />
+          <ChevronLeftIcon className="h-5 w-5" aria-hidden />
           <span>{t("action.back")}</span>
         </button>
 
         <div className="flex space-x-4">
           {onCancel && (
-            <button onClick={onCancel} className="btn-secondary">
+            <button type="button" onClick={onCancel} className="btn-secondary">
               {t("action.cancel")}
             </button>
           )}
 
           <button
+            type="button"
             onClick={handleNext}
             disabled={currentStepData.isValid === false}
-            className="btn-primary inline-flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-primary"
           >
             <span>{isLastStep ? t("action.complete") : t("action.next")}</span>
-            {!isLastStep && <ChevronRightIcon className="h-5 w-5" />}
+            {!isLastStep && <ChevronRightIcon className="h-5 w-5" aria-hidden />}
           </button>
         </div>
       </div>

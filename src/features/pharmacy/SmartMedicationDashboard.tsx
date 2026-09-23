@@ -1,303 +1,365 @@
 import { useState } from 'react'
 import { smartMedication } from '@/services/smartMedication'
 import type { MedicationReview } from '@/services/smartMedication'
+import { StatusBadge, type Tone } from '@/components/ui/StatusBadge'
 import {
   ShieldExclamationIcon,
   BeakerIcon,
-  CalculatorIcon,
   ChartBarIcon,
-  ClockIcon,
+  ClipboardDocumentListIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon
+  InformationCircleIcon,
 } from '@heroicons/react/24/outline'
+
+const RISK_DISPLAY: Record<
+  MedicationReview['overallRisk'],
+  { label: string; tone: Tone; banner: string }
+> = {
+  danger: { label: 'Allergy conflict', tone: 'danger', banner: 'banner-danger' },
+  warning: { label: 'Major interaction flagged', tone: 'warning', banner: 'banner-warning' },
+  caution: { label: 'Check needed', tone: 'warning', banner: 'banner-warning' },
+  safe: { label: 'No flags from built-in checks', tone: 'neutral', banner: 'banner-info' },
+}
+
+const SEVERITY_TONE: Record<string, Tone> = {
+  critical: 'critical',
+  major: 'danger',
+  moderate: 'warning',
+  minor: 'info',
+}
+
+/** Service text carries emoji markers; the UI shows its own icons instead. */
+function stripMarker(text: string): string {
+  return text.replace(/^(⚠️?|✓)\s*/u, '').trim()
+}
+
+/**
+ * The service's all-clear line ("appears safe and appropriate") only means
+ * none of the built-in rules fired. Say exactly that instead.
+ */
+const ALL_CLEAR_TEXT =
+  'No flags from the built-in checks. This does not confirm the combination is safe — medicines not on the built-in list are not checked at all.'
 
 export function SmartMedicationDashboard() {
   const [patientId, setPatientId] = useState('')
   const [medications, setMedications] = useState('')
   const [review, setReview] = useState<MedicationReview | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   const performReview = async () => {
     if (!patientId || !medications) return
 
     setLoading(true)
+    setError('')
     try {
       const medList = medications.split(',').map(m => m.trim()).filter(Boolean)
       const result = await smartMedication.performMedicationReview(patientId, medList)
       setReview(result)
-    } catch (error) {
-      console.error('Medication review failed:', error)
+    } catch (err) {
+      console.error('Medication review failed:', err instanceof Error ? err.name : err)
+      setReview(null)
+      setError(
+        'The check could not run. Make sure the patient ID belongs to a patient on this device, then try again.',
+      )
     } finally {
       setLoading(false)
     }
   }
 
-  const getRiskColor = (risk: string) => {
-    switch (risk) {
-      case 'danger': return 'bg-red-500'
-      case 'warning': return 'bg-orange-500'
-      case 'caution': return 'bg-yellow-500'
-      default: return 'bg-green-500'
-    }
-  }
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'critical': return 'border-red-600 bg-red-50'
-      case 'major': return 'border-orange-600 bg-orange-50'
-      case 'moderate': return 'border-yellow-600 bg-yellow-50'
-      default: return 'border-blue-600 bg-blue-50'
-    }
-  }
+  const risk = review ? RISK_DISPLAY[review.overallRisk] : null
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-          <BeakerIcon className="h-7 w-7 text-blue-600" />
-          Smart Medication Management
-        </h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Patient ID
-            </label>
-            <input
-              type="text"
-              value={patientId}
-              onChange={(e) => setPatientId(e.target.value)}
-              className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-              placeholder="Enter patient ID"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Medications (comma-separated)
-            </label>
-            <input
-              type="text"
-              value={medications}
-              onChange={(e) => setMedications(e.target.value)}
-              className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-              placeholder="paracetamol, amoxicillin, ibuprofen"
-            />
-          </div>
+    <div className="space-y-4">
+      <section className="panel" aria-labelledby="med-check-title">
+        <div className="panel-header">
+          <h2 id="med-check-title" className="panel-title flex items-center gap-2">
+            <BeakerIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+            Medication safety check
+          </h2>
         </div>
+        <div className="panel-body space-y-4">
+          <div className="banner banner-info">
+            <InformationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <p>
+              Rule-based prompts from a small built-in list, the patient’s recorded allergies
+              and their dispensing history on this device. Runs offline. It is not a verified
+              interaction database and can both miss and over-flag interactions — confirm with a
+              current drug reference and the prescriber.
+            </p>
+          </div>
 
-        <button
-          onClick={performReview}
-          disabled={loading || !patientId || !medications}
-          className="w-full md:w-auto px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400"
-        >
-          {loading ? 'Analyzing...' : 'Perform Safety Review'}
-        </button>
-      </div>
-
-      {review && (
-        <>
-          <div className={`rounded-lg shadow-sm p-6 border-l-4 ${getRiskColor(review.overallRisk)} bg-white`}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Overall Risk Assessment</h3>
-              <span className={`px-3 py-1 rounded-full text-white text-sm font-medium uppercase ${getRiskColor(review.overallRisk)}`}>
-                {review.overallRisk}
-              </span>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label htmlFor="smd-patient" className="field-label">
+                Patient ID
+              </label>
+              <input
+                id="smd-patient"
+                type="text"
+                value={patientId}
+                onChange={(e) => setPatientId(e.target.value)}
+                className="input-field"
+                placeholder="Record ID from the patient page"
+              />
             </div>
 
-            <div className="space-y-2">
-              {review.recommendations.map((rec, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  {rec.includes('✓') ? (
-                    <CheckCircleIcon className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
-                  ) : (
-                    <ExclamationTriangleIcon className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
-                  )}
-                  <p className="text-sm text-gray-700">{rec}</p>
-                </div>
-              ))}
+            <div>
+              <label htmlFor="smd-meds" className="field-label">
+                Medicines
+              </label>
+              <input
+                id="smd-meds"
+                type="text"
+                value={medications}
+                onChange={(e) => setMedications(e.target.value)}
+                className="input-field"
+                placeholder="paracetamol, amoxicillin, ibuprofen"
+                aria-describedby="smd-meds-hint"
+              />
+              <p id="smd-meds-hint" className="field-hint">
+                Separate medicines with commas.
+              </p>
             </div>
           </div>
+
+          {error && (
+            <div className="banner banner-danger" role="alert">
+              <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={performReview}
+            disabled={loading || !patientId || !medications}
+            className="btn-primary w-full md:w-auto"
+          >
+            {loading ? 'Checking…' : 'Run safety check'}
+          </button>
+          <p className="sr-only" role="status" aria-live="polite">
+            {loading ? 'Checking medicines' : review ? 'Check complete' : ''}
+          </p>
+        </div>
+      </section>
+
+      {review && risk && (
+        <>
+          <section className="panel" aria-labelledby="med-check-summary">
+            <div className="panel-header">
+              <h3 id="med-check-summary" className="panel-title">
+                Result
+              </h3>
+              <StatusBadge tone={risk.tone} icon>
+                {risk.label}
+              </StatusBadge>
+            </div>
+            <ul className="panel-body space-y-2">
+              {review.recommendations.map((rec, idx) => {
+                const ok = rec.includes('✓')
+                return (
+                  <li key={idx} className="flex items-start gap-2 text-body text-ink-secondary">
+                    {ok ? (
+                      <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0 text-info" aria-hidden />
+                    ) : (
+                      <ExclamationTriangleIcon
+                        className="mt-0.5 h-5 w-5 shrink-0 text-warning"
+                        aria-hidden
+                      />
+                    )}
+                    <span>{ok ? ALL_CLEAR_TEXT : stripMarker(rec)}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
 
           {review.allergyConflicts.length > 0 && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-red-900 mb-4 flex items-center gap-2">
-                <ShieldExclamationIcon className="h-6 w-6" />
-                Allergy Conflicts Detected
-              </h3>
+            <section
+              className="rounded-lg border border-danger-line bg-danger-soft"
+              aria-labelledby="med-check-allergies"
+            >
+              <div className="flex items-center gap-2 border-b border-danger-line px-4 py-3">
+                <ShieldExclamationIcon className="h-5 w-5 text-danger" aria-hidden />
+                <h3 id="med-check-allergies" className="text-h3 text-danger-fg">
+                  Possible allergy conflicts ({review.allergyConflicts.length})
+                </h3>
+              </div>
 
-              <div className="space-y-4">
+              <ul className="space-y-3 p-4">
                 {review.allergyConflicts.map((conflict, idx) => (
-                  <div key={idx} className="bg-white border border-red-300 rounded-lg p-4">
-                    <div className="flex items-start justify-between mb-2">
+                  <li key={idx} className="rounded-md border border-danger-line bg-surface p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
-                        <p className="font-semibold text-red-900">{conflict.allergyType} Allergy</p>
-                        <p className="text-sm text-red-700 mt-1">{conflict.recommendation}</p>
+                        <p className="font-semibold text-ink">{conflict.allergyType} allergy</p>
+                        <p className="mt-1 text-body text-ink-secondary">{conflict.recommendation}</p>
                       </div>
-                      <span className="px-2 py-1 rounded bg-red-600 text-white text-xs font-medium uppercase">
+                      <StatusBadge
+                        tone={conflict.severity === 'life-threatening' ? 'critical' : 'danger'}
+                      >
                         {conflict.severity}
-                      </span>
+                      </StatusBadge>
                     </div>
 
                     {conflict.alternatives.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-red-200">
-                        <p className="text-sm font-medium text-gray-700 mb-1">Alternative Medications:</p>
+                      <div className="mt-3 border-t border-line pt-3">
+                        <p className="section-label mb-1">Alternatives to consider</p>
                         <div className="flex flex-wrap gap-2">
                           {conflict.alternatives.map((alt, i) => (
-                            <span key={i} className="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-medium">
+                            <span key={i} className="badge badge-neutral">
                               {alt}
                             </span>
                           ))}
                         </div>
                       </div>
                     )}
-                  </div>
+                  </li>
                 ))}
-              </div>
-            </div>
+              </ul>
+            </section>
           )}
 
           {review.interactions.length > 0 && (
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <BeakerIcon className="h-6 w-6 text-blue-600" />
-                Drug Interactions ({review.interactions.length})
-              </h3>
-
-              <div className="space-y-3">
-                {review.interactions.map((interaction, idx) => (
-                  <div key={idx} className={`border-l-4 rounded-lg p-4 ${getSeverityColor(interaction.severity)}`}>
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <p className="font-semibold text-gray-900">
-                          {interaction.drug1} ↔ {interaction.drug2}
-                        </p>
-                        <p className="text-sm text-gray-700 mt-1">{interaction.description}</p>
-                      </div>
-                      <span className={`px-2 py-1 rounded text-white text-xs font-medium uppercase ${
-                        interaction.severity === 'critical' ? 'bg-red-600' :
-                        interaction.severity === 'major' ? 'bg-orange-600' :
-                        interaction.severity === 'moderate' ? 'bg-yellow-600' :
-                        'bg-blue-600'
-                      }`}>
-                        {interaction.severity}
-                      </span>
-                    </div>
-
-                    <div className="mt-2 pt-2 border-t border-gray-200">
-                      <p className="text-sm font-medium text-gray-700">Recommendation:</p>
-                      <p className="text-sm text-gray-600 mt-1">{interaction.recommendation}</p>
-                    </div>
-
-                    <div className="mt-2 flex gap-2">
-                      {interaction.references.map((ref, i) => (
-                        <span key={i} className="text-xs text-gray-500">
-                          Ref: {ref}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+            <section className="panel" aria-labelledby="med-check-interactions">
+              <div className="panel-header">
+                <h3 id="med-check-interactions" className="panel-title flex items-center gap-2">
+                  <BeakerIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+                  Interactions to check ({review.interactions.length})
+                </h3>
               </div>
-            </div>
+              <div className="panel-body space-y-3">
+                <p className="text-caption text-ink-muted">
+                  Flagged by built-in rules, not a verified interaction list. Pairs described as a
+                  “potential interaction” have no specific rule behind them — look them up before
+                  acting.
+                </p>
+                <ul className="space-y-3">
+                  {review.interactions.map((interaction, idx) => (
+                    <li key={idx} className="rounded-md border border-line p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-ink">
+                            {interaction.drug1} and {interaction.drug2}
+                          </p>
+                          <p className="mt-1 text-body text-ink-secondary">
+                            {interaction.description}
+                          </p>
+                        </div>
+                        <StatusBadge tone={SEVERITY_TONE[interaction.severity] ?? 'neutral'} icon>
+                          {interaction.severity}
+                        </StatusBadge>
+                      </div>
+
+                      <div className="mt-2 border-t border-line pt-2">
+                        <p className="text-label text-ink">Suggested check</p>
+                        <p className="mt-1 text-body text-ink-secondary">
+                          {interaction.recommendation}
+                        </p>
+                      </div>
+
+                      <p className="mt-2 text-caption text-ink-muted">
+                        {interaction.references.length > 0
+                          ? `Source: ${interaction.references.join('; ')}`
+                          : 'Source: built-in rule list (no published reference recorded)'}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <ChartBarIcon className="h-6 w-6 text-blue-600" />
-                Adherence Prediction
-              </h3>
-
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">Adherence Score</span>
-                  <span className="text-2xl font-bold text-gray-900">{review.adherencePrediction.score}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-3">
-                  <div
-                    className={`h-3 rounded-full ${
-                      review.adherencePrediction.score >= 70 ? 'bg-green-500' :
-                      review.adherencePrediction.score >= 50 ? 'bg-yellow-500' :
-                      'bg-red-500'
-                    }`}
-                    style={{ width: `${review.adherencePrediction.score}%` }}
-                  ></div>
-                </div>
-                <p className="text-sm text-gray-600 mt-1 capitalize">
-                  Likelihood: {review.adherencePrediction.likelihood.replace('-', ' ')}
-                </p>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <section className="panel" aria-labelledby="med-check-adherence">
+              <div className="panel-header">
+                <h3 id="med-check-adherence" className="panel-title flex items-center gap-2">
+                  <ChartBarIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+                  Adherence estimate
+                </h3>
               </div>
-
-              {review.adherencePrediction.riskFactors.length > 0 && (
-                <div className="mb-4">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Risk Factors:</p>
-                  <ul className="space-y-1">
-                    {review.adherencePrediction.riskFactors.map((factor, i) => (
-                      <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
-                        <span className="text-orange-600">•</span>
-                        <span>{factor}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {review.adherencePrediction.supportStrategies.length > 0 && (
+              <div className="panel-body space-y-4">
+                <p className="text-caption text-ink-muted">
+                  A rule-based score from age, the number of medicines and pharmacy visits recorded
+                  on this device. Use it as a prompt to talk with the patient, not a prediction.
+                </p>
                 <div>
-                  <p className="text-sm font-medium text-gray-700 mb-2">Support Strategies:</p>
-                  <ul className="space-y-1">
-                    {review.adherencePrediction.supportStrategies.map((strategy, i) => (
-                      <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
-                        <span className="text-blue-600">✓</span>
-                        <span>{strategy}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <ClockIcon className="h-6 w-6 text-blue-600" />
-                Medication List
-              </h3>
-
-              <div className="space-y-2">
-                {review.medications.map((med, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <span className="font-medium text-gray-900 capitalize">{med}</span>
-                    <span className="text-sm text-gray-600">#{idx + 1}</span>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-label text-ink">Score</span>
+                    <span className="text-stat tabular-nums text-ink">
+                      {review.adherencePrediction.score}
+                      <span className="text-body text-ink-muted"> / 100</span>
+                    </span>
                   </div>
-                ))}
-              </div>
-
-              <div className="mt-4 pt-4 border-t">
-                <p className="text-sm text-gray-600">
-                  Total medications: <span className="font-semibold">{review.medications.length}</span>
-                </p>
-                {review.medications.length > 5 && (
-                  <p className="text-sm text-orange-600 mt-1">
-                    ⚠️ Polypharmacy detected - consider medication review
+                  <div
+                    className="h-2 w-full rounded-full bg-surface-sunken"
+                    role="meter"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={review.adherencePrediction.score}
+                    aria-label="Adherence score"
+                  >
+                    <div
+                      className="h-2 rounded-full bg-ink-muted"
+                      style={{ width: `${review.adherencePrediction.score}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-body capitalize text-ink-secondary">
+                    Likelihood of adherence: {review.adherencePrediction.likelihood.replace('-', ' ')}
                   </p>
+                </div>
+
+                {review.adherencePrediction.riskFactors.length > 0 && (
+                  <div>
+                    <p className="section-label mb-2">Risk factors</p>
+                    <ul className="list-disc space-y-1 pl-5 text-body text-ink-secondary">
+                      {review.adherencePrediction.riskFactors.map((factor, i) => (
+                        <li key={i}>{factor}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {review.adherencePrediction.supportStrategies.length > 0 && (
+                  <div>
+                    <p className="section-label mb-2">Support to offer</p>
+                    <ul className="list-disc space-y-1 pl-5 text-body text-ink-secondary">
+                      {review.adherencePrediction.supportStrategies.map((strategy, i) => (
+                        <li key={i}>{strategy}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
-            </div>
-          </div>
+            </section>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <CalculatorIcon className="h-5 w-5 text-blue-600 mt-0.5" />
-              <div className="text-sm text-blue-900">
-                <p className="font-medium mb-1">Smart Medication Safety System</p>
-                <p className="text-blue-800">
-                  These checks use a built-in list of common interactions, the patient’s recorded allergies
-                  and standard dose ranges. They run offline and are not exhaustive — always confirm with a
-                  current drug reference and the prescriber.
-                </p>
+            <section className="panel" aria-labelledby="med-check-list">
+              <div className="panel-header">
+                <h3 id="med-check-list" className="panel-title flex items-center gap-2">
+                  <ClipboardDocumentListIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+                  Medicines checked
+                </h3>
+                <span className="text-caption text-ink-muted">
+                  {review.medications.length} total
+                </span>
               </div>
-            </div>
+              <ol className="divide-y divide-line">
+                {review.medications.map((med, idx) => (
+                  <li key={idx} className="flex items-center justify-between px-4 py-3">
+                    <span className="font-medium capitalize text-ink">{med}</span>
+                    <span className="text-caption tabular-nums text-ink-muted">#{idx + 1}</span>
+                  </li>
+                ))}
+              </ol>
+              {review.medications.length > 5 && (
+                <div className="border-t border-line p-4">
+                  <div className="banner banner-warning">
+                    <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                    <span>More than 5 medicines — consider a medication review.</span>
+                  </div>
+                </div>
+              )}
+            </section>
           </div>
         </>
       )}
