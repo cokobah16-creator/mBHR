@@ -1,11 +1,10 @@
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useAuthStore } from "@/stores/auth";
 import { db } from "@/db";
 import { mbhrDb } from "@/db/mbhr";
 import { can } from "@/auth/roles";
-import { queryCache, createCacheKey } from "@/utils/queryCache";
 import { OfflineAnalytics } from "@/components/OfflineAnalytics";
 import { EnhancedQueueBoard } from "@/components/EnhancedQueueBoard";
 import { ExportButtons } from "@/components/ExportButtons";
@@ -26,59 +25,8 @@ import { getFlagLabel, getFlagTone } from "@/utils/vitals";
 
 export function Dashboard() {
   const { currentUser } = useAuthStore();
-  const [stats, setStats] = useState({
-    totalPatients: 0,
-    todayRegistrations: 0,
-    totalUsers: 0,
-  });
   const [showAppointments, setShowAppointments] = useState(false);
   const [showSync, setShowSync] = useState(false);
-
-  const loadStats = useCallback(async () => {
-    try {
-      // Check cache first
-      const cacheKey = createCacheKey(
-        "dashboard",
-        "stats",
-        new Date().toDateString(),
-      );
-      const cached = queryCache.get<typeof stats>(cacheKey);
-
-      if (cached) {
-        setStats(cached);
-        return;
-      }
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const [totalPatients, todayRegistrations, totalUsers] = await Promise.all(
-        [
-          db.patients.count(),
-          db.patients.where("createdAt").between(today, tomorrow).count(),
-          db.users.count(),
-        ],
-      );
-
-      const newStats = {
-        totalPatients,
-        todayRegistrations,
-        totalUsers,
-      };
-
-      setStats(newStats);
-      // Cache for 5 minutes
-      queryCache.set(cacheKey, newStats, 5 * 60 * 1000);
-    } catch (error) {
-      console.error("Error loading stats:", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadStats();
-  }, [loadStats]);
 
   const startOfToday = useMemo(() => {
     const d = new Date();
