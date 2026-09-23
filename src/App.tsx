@@ -832,13 +832,6 @@ function App() {
                           </RequireRoles>
                         }
                       />
-                      {/* Temporarily disabled - corrupted file
-                    <Route path="/pharmacy/enhanced/:visitId" element={
-                      <RequireRoles roles={['pharmacist', 'admin']}>
-                        <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
-                      </RequireRoles>
-                    } />
-                    */}
                       <Route
                         path="/labs"
                         element={
