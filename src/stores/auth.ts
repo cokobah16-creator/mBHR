@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 import {
   clearStoredSupabaseAuth,
   isSupabaseAuthKey,
-} from "@/features/patient-portal/portalSession";
+} from "@/lib/supabaseAuthStorage";
 
 interface AuthState {
   currentUser: User | null;

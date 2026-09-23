@@ -17,7 +17,11 @@ export interface PharmacyTask {
   roles: Role[];
 }
 
-/** Pharmacy tasks, shared by the nav's pharmacy menu and /pharmacy/menu. */
+/**
+ * Pharmacy tasks, shared by the nav's pharmacy menu and /pharmacy/menu.
+ * Lives beside the shell, not in features/pharmacy (a separate build chunk),
+ * because the shell loads at startup.
+ */
 export const PHARMACY_TASKS: PharmacyTask[] = [
   {
     to: "/rx/dispense",

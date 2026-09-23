@@ -35,6 +35,13 @@ export interface TrainingActivity {
   liveData?: string;
 }
 
+/**
+ * Who may open the prize shop and restock leaderboard (mirrors App.tsx):
+ * everyone who can take part in training, including pharmacists, who earn
+ * restock tokens.
+ */
+export const TOKEN_PAGE_ROLES: Role[] = ["volunteer", "nurse", "pharmacist", "admin"];
+
 export const TRAINING_ACTIVITIES: TrainingActivity[] = [
   {
     id: "knowledge-blitz",
@@ -78,7 +85,8 @@ export const TRAINING_ACTIVITIES: TrainingActivity[] = [
     name: "Restock game",
     description: "Record supplies you have put on the shelf and earn prize-shop tokens.",
     href: "/inv/game",
-    roles: ["volunteer", "nurse", "admin"],
+    // The route requires the inventory permission (App.tsx).
+    roles: ["pharmacist", "admin"],
     permission: "inventory",
     reward: "1–5 tokens per tap",
     timing: "No time limit",

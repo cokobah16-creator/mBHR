@@ -3,7 +3,7 @@ import { ChevronRightIcon, LockClosedIcon } from "@heroicons/react/24/outline";
 import { useAuthStore } from "@/stores/auth";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { pharmacyTasksForRole } from "@/features/pharmacy/pharmacyTasks";
+import { pharmacyTasksForRole } from "@/components/shell/pharmacyTasks";
 
 export default function PharmacyMenu() {
   const role = useAuthStore((s) => s.currentUser?.role);

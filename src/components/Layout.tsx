@@ -8,7 +8,7 @@ import useLowStockWatcher from "@/features/inventory/useLowStockWatcher";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { AccessibilityControls } from "@/components/AccessibilityControls";
 import { can, getRoleDisplayName, type Role } from "@/auth/roles";
-import { pharmacyTasksForRole } from "@/features/pharmacy/pharmacyTasks";
+import { pharmacyTasksForRole } from "@/components/shell/pharmacyTasks";
 import { ActiveSiteControl } from "@/components/shell/ActiveSiteControl";
 import { SyncStatusControl } from "@/components/shell/SyncStatusControl";
 import { hasAnyAdminEntry } from "@/features/admin/adminSections";
@@ -247,7 +247,7 @@ export function Layout({ children }: LayoutProps) {
             ]
           : []),
         { key: "pharmacy", name: t("nav.pharmacy"), href: "/pharmacy", icon: BeakerIcon },
-        ...(hasRole("doctor", "nurse", "admin", "lead_clinician")
+        ...(hasRole("doctor", "nurse", "admin")
           ? [
               { key: "labs", name: "Labs", href: "/labs", icon: DocumentMagnifyingGlassIcon },
             ]

@@ -21,11 +21,13 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { TrainingModeFrame } from "@/components/training/TrainingModeFrame";
 import { TrainingStat } from "@/components/training/TrainingWidgets";
 import {
+  TOKEN_PAGE_ROLES,
   TRAINING_ACTIVITIES,
   activityAccessNote,
   canOpenActivity,
   type TrainingActivityId,
 } from "@/components/training/trainingActivities";
+import type { Role } from "@/auth/roles";
 import { badgeLabel } from "@/components/training/trainingRules";
 
 interface GameHubProps {
@@ -40,7 +42,14 @@ const ACTIVITY_ICONS: Record<TrainingActivityId, typeof HeartIcon> = {
   restock: CubeIcon,
 };
 
-const MORE_LINKS = [
+// `roles` mirrors each route's guard in App.tsx; undefined = any signed-in role.
+const MORE_LINKS: {
+  href: string;
+  name: string;
+  description: string;
+  icon: typeof StarIcon;
+  roles?: Role[];
+}[] = [
   {
     href: "/quests",
     name: "Quest board",
@@ -52,12 +61,14 @@ const MORE_LINKS = [
     name: "Prize shop",
     description: "Spend Restock game tokens.",
     icon: GiftIcon,
+    roles: TOKEN_PAGE_ROLES,
   },
   {
     href: "/inv/leaderboard",
     name: "Restock leaderboard",
     description: "Prize-shop tokens per staff member.",
     icon: TrophyIcon,
+    roles: TOKEN_PAGE_ROLES,
   },
 ];
 
@@ -264,7 +275,7 @@ export function GameHub({ className = "" }: GameHubProps) {
               Quests, prizes and rankings
             </h2>
             <ul className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {MORE_LINKS.map((l) => (
+              {MORE_LINKS.filter((l) => !l.roles || (!!role && l.roles.includes(role))).map((l) => (
                 <li key={l.href}>
                   <Link
                     to={l.href}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useGam } from "@/stores/gamification";
 import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import { db } from "@/db";
 import {
   ArrowPathIcon,
@@ -23,6 +24,8 @@ const MAX_ROWS = 50;
 
 export default function Leaderboard() {
   const currentUserId = useAuthStore((s) => s.currentUser?.id);
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const canRestock = !!role && can(role, "inventory");
   const [rows, setRows] = useState<LeaderboardRow[]>([]);
   const [hiddenLegacyWallet, setHiddenLegacyWallet] = useState(false);
   const [state, setState] = useState<LoadState>("loading");
@@ -102,9 +105,11 @@ export default function Leaderboard() {
             title="No tokens earned yet"
             description="Tokens appear here after someone records a restock in the Restock game on this device."
             action={
-              <Link to="/inv/game" className="btn-secondary">
-                Open the Restock game
-              </Link>
+              canRestock ? (
+                <Link to="/inv/game" className="btn-secondary">
+                  Open the Restock game
+                </Link>
+              ) : undefined
             }
           />
         </div>

@@ -629,7 +629,7 @@ function App() {
                       <Route
                         path="/inv/prizes"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                          <RequireRoles roles={["volunteer", "nurse", "pharmacist", "admin"]}>
                             <PrizeShop />
                           </RequireRoles>
                         }
@@ -679,7 +679,7 @@ function App() {
                       <Route
                         path="/inv/leaderboard"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                          <RequireRoles roles={["volunteer", "nurse", "pharmacist", "admin"]}>
                             <Leaderboard />
                           </RequireRoles>
                         }
@@ -842,9 +842,9 @@ function App() {
                       <Route
                         path="/labs"
                         element={
-                          <RequireRoles
-                            roles={["doctor", "nurse", "admin", "lead_clinician"]}
-                          >
+                          /* Matches the server's lab_orders/lab_results policies
+                             (doctor, nurse, admin); widen both together. */
+                          <RequireRoles roles={["doctor", "nurse", "admin"]}>
                             <LabResultsDashboard />
                           </RequireRoles>
                         }

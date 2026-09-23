@@ -50,9 +50,10 @@ describe("canOpenActivity", () => {
 
   it("also needs the page permission (restock needs inventory)", () => {
     expect(canOpenActivity(byId("restock"), "admin")).toBe(true);
+    expect(canOpenActivity(byId("restock"), "pharmacist")).toBe(true);
     expect(canOpenActivity(byId("restock"), "nurse")).toBe(false);
     expect(activityAccessNote(byId("restock"), "nurse")).toBe(
-      "Needs inventory permission.",
+      "For pharmacist or admin.",
     );
   });
 

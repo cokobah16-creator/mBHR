@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useGam } from "@/stores/gamification";
 import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import { useToast } from "@/stores/toast";
 import { db as mbhrDb } from "@/db/mbhr";
 import { generateId } from "@/db";
@@ -53,6 +54,7 @@ const PRIZES = [
 export default function PrizeShop() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const userId = currentUser?.id;
+  const canRestock = !!currentUser && can(currentUser.role, "inventory");
   const wallet = useGam((s) => s.wallet);
   const spendTokens = useGam((s) => s.spendTokens);
   const ensureWallet = useGam((s) => s.ensureWallet);
@@ -193,9 +195,13 @@ export default function PrizeShop() {
           <div className="panel-body space-y-2 text-body text-ink-secondary">
             <p>
               These tokens come only from the{" "}
-              <Link to="/inv/game" className="text-primary-fg underline">
-                Restock game
-              </Link>
+              {canRestock ? (
+                <Link to="/inv/game" className="text-primary-fg underline">
+                  Restock game
+                </Link>
+              ) : (
+                "Restock game (pharmacists and administrators)"
+              )}
               , when you record supplies you have put on the shelf:
             </p>
             <ul className="list-disc space-y-1 pl-5">
