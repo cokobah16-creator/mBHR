@@ -555,7 +555,14 @@ function App() {
                           </RequireRoles>
                         }
                       />
-                      <Route path="/register" element={<Register />} />
+                      <Route
+                        path="/register"
+                        element={
+                          <RequirePermission permission="register">
+                            <Register />
+                          </RequirePermission>
+                        }
+                      />
                       <Route path="/patients" element={<Patients />} />
                       <Route path="/patients/:id" element={<PatientDetail />} />
                       <Route path="/queue" element={<Queue />} />
@@ -792,7 +799,11 @@ function App() {
                       />
                       <Route
                         path="/simple/register"
-                        element={<SimpleRegister />}
+                        element={
+                          <RequirePermission permission="register">
+                            <SimpleRegister />
+                          </RequirePermission>
+                        }
                       />
                       {/* "/pharmacy" is the visit dispensing screen (above); the
                           task menu has its own path so it is reachable. */}

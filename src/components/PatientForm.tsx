@@ -3,6 +3,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import { usePatientsStore } from "@/stores/patients";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import { PatientDedupeModal } from "@/components/PatientDedupeModal";
 import { AudioButton } from "@/components/AudioButton";
 import { PhotoCapture } from "@/components/PhotoCapture";
@@ -69,6 +71,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
   const onSubmit = async (data: PatientFormData) => {
     setSubmitError("");
+    // Enforced here as well as on the route: registration writes a record.
+    const role = useAuthStore.getState().currentUser?.role;
+    if (!role || !can(role, "register")) {
+      setSubmitError("Your role cannot register patients. Ask a registration volunteer, nurse, doctor or administrator.");
+      return;
+    }
     setLoading(true);
     try {
       const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
@@ -148,6 +156,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
     setShowDedupeModal(false);
 
     if (action === "create_new" && dedupeData) {
+      const role = useAuthStore.getState().currentUser?.role;
+      if (!role || !can(role, "register")) {
+        setSubmitError("Your role cannot register patients. Ask a registration volunteer, nurse, doctor or administrator.");
+        setDedupeData(null);
+        return;
+      }
       // Force create new patient (bypass duplicate check)
       try {
         // Staff confirmed this is a different person: keep their real name

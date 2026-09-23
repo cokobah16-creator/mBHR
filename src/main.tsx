@@ -51,11 +51,14 @@ if (import.meta.env.VITE_SENTRY_DSN) {
         delete event.request.cookies;
       }
       if (event.user) event.user = event.user.id ? { id: event.user.id } : undefined;
-      // Exception messages can embed record data; keep type and stack only
-      // for our own DUPLICATES_FOUND signal.
+      // Exception messages and extra context can embed record data (names,
+      // phone numbers, notes, raw Supabase errors). Send only the error type
+      // and stack; our own DUPLICATES_FOUND signal keeps its code.
       event.exception?.values?.forEach((v) => {
-        if (v.value?.startsWith("DUPLICATES_FOUND:")) v.value = "DUPLICATES_FOUND";
+        v.value = v.value?.startsWith("DUPLICATES_FOUND") ? "DUPLICATES_FOUND" : v.type ?? "Error";
       });
+      delete event.extra;
+      if (event.message) event.message = "Message withheld (may contain patient data)";
       if (import.meta.env.MODE !== "production") {
         console.log("Sentry event:", event);
       }
@@ -66,13 +69,16 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 
 // Global error visibility + Sentry capture
 window.addEventListener("error", (ev) => {
-  console.error("[global error]", ev.message, ev.error);
+  // Full detail only in development: messages can carry patient data.
+  if (import.meta.env.DEV) console.error("[global error]", ev.message, ev.error);
+  else console.error("[global error]", ev.error instanceof Error ? ev.error.name : "Error");
   if (import.meta.env.VITE_SENTRY_DSN && ev.error instanceof Error) {
     Sentry.captureException(ev.error, { tags: { source: "window.error" } });
   }
 });
 window.addEventListener("unhandledrejection", (ev) => {
-  console.error("[unhandledrejection]", ev.reason);
+  if (import.meta.env.DEV) console.error("[unhandledrejection]", ev.reason);
+  else console.error("[unhandledrejection]", ev.reason instanceof Error ? ev.reason.name : typeof ev.reason);
   if (import.meta.env.VITE_SENTRY_DSN) {
     const err =
       ev.reason instanceof Error ? ev.reason : new Error(String(ev.reason));

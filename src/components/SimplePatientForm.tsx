@@ -4,6 +4,8 @@ import { StepperForm } from "@/components/StepperForm";
 import { PatientDedupeModal } from "@/components/PatientDedupeModal";
 import { VisualNumberInput } from "@/components/VisualNumberInput";
 import { usePatientsStore } from "@/stores/patients";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG } from "@/utils/nigeria";
 import {
   UserIcon,
@@ -27,6 +29,10 @@ export function SimplePatientForm({
 }: SimplePatientFormProps) {
   const { t } = useT();
   const { addPatient } = usePatientsStore();
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const mayRegister = !!role && can(role, "register");
+  const refuseRegistration = () =>
+    alert("Your role cannot register patients. Ask a registration volunteer, nurse, doctor or administrator.");
 
   const [dedupeData, setDedupeData] = useState<{
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -94,6 +100,10 @@ export function SimplePatientForm({
   };
 
   const handleComplete = async () => {
+    if (!mayRegister) {
+      refuseRegistration();
+      return;
+    }
     setLoading(true);
     try {
       const dob = calculateDOB(formData.age);
@@ -393,6 +403,10 @@ export function SimplePatientForm({
       return;
     }
     if (action === "create_new" && pending) {
+      if (!mayRegister) {
+        refuseRegistration();
+        return;
+      }
       try {
         const patientId = await addPatient(
           { ...pending.patient, photoUrl: formData.photo || undefined },
