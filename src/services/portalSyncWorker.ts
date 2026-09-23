@@ -1,21 +1,43 @@
 /**
  * Portal Background Sync Worker
  *
- * Handles automatic processing of queued portal invitations
- * and syncing portal activity between local DB and Supabase
+ * Handles queued portal invitations in the device outbox and syncs portal
+ * activity between the local DB and Supabase.
+ *
+ * Honesty rules: the device outbox is shared with medication and appointment
+ * reminders, so this worker only touches portal invitations. It has no SMS or
+ * email provider of its own and never marks a message sent: an invitation
+ * with stored text is left for the notification worker (which sends it
+ * through the server), and any other invitation is recorded as not sent.
  */
 
 import { db } from "@/db";
 import { supabase } from "@/lib/supabase";
-import { MessageQueue } from "@/db/outbox";
+import { MessageQueue, type OutboundMessage } from "@/db/outbox";
 import * as logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
+import { isWorkerSendable } from "@/features/notifications/smsOutbox";
+import {
+  PORTAL_PROVIDER_NOT_CONFIGURED_ERROR,
+  isPortalInvitationMessage,
+} from "./portalInvitationQueue";
+import { safeErrorLabel } from "./logSafe";
 
 let isProcessing = false;
 let syncIntervalId: number | null = null;
 
 /**
- * Process queued portal invitations from outbox
+ * Portal invitations this worker must handle: due, queued, and not ones the
+ * notification worker can send itself.
+ */
+function isForThisWorker(message: OutboundMessage): boolean {
+  return isPortalInvitationMessage(message) && !isWorkerSendable(message);
+}
+
+/**
+ * Process queued portal invitations from the device outbox.
+ * `succeeded` counts invitations that were really sent; this worker has no
+ * provider, so it stays 0 until one is wired in here.
  */
 export async function processPortalInvitationQueue(): Promise<{
   processed: number;
@@ -29,55 +51,57 @@ export async function processPortalInvitationQueue(): Promise<{
 
   isProcessing = true;
   let processed = 0;
-  let succeeded = 0;
+  const succeeded = 0;
   let failed = 0;
 
   try {
-    // Get pending messages from outbox
-    const pendingMessages = await MessageQueue.getPendingMessages(20);
+    // Only portal invitations: reminders in the same outbox belong to the
+    // notification worker and must not be touched here.
+    const pendingMessages = await MessageQueue.getPendingMessages(
+      20,
+      isForThisWorker,
+    );
 
     for (const message of pendingMessages) {
       try {
         processed++;
 
-        // For development, just mark as sent
-        if (import.meta.env.DEV) {
-          await MessageQueue.markSent(message.id);
+        // No SMS/email provider is wired up in this worker (in development
+        // or production). Record the attempt as not sent; the message is
+        // retried and ends as failed after the maximum attempts. It is never
+        // marked sent without a real send.
+        const status = await MessageQueue.markFailed(
+          message.id,
+          PORTAL_PROVIDER_NOT_CONFIGURED_ERROR,
+        );
+        failed++;
 
-          // Update patient invitation status
+        // Once it has given up, the patient's invitation must not keep
+        // showing "queued".
+        if (status === "failed") {
           await db.patients
             .where("id")
             .equals(message.patientId)
             .modify((patient) => {
-              if (patient.portalInvitation) {
-                patient.portalInvitation.lastStatus = "sent";
+              if (patient.portalInvitation?.lastStatus === "queued") {
+                patient.portalInvitation.lastStatus = "failed";
+                patient.portalInvitation.failureReason =
+                  PORTAL_PROVIDER_NOT_CONFIGURED_ERROR;
                 patient._dirty = 1;
               }
-            });
-
-          succeeded++;
-          logger.info(
-            `[DEV] Processed portal invitation for patient: ${message.patientId}`,
-          );
-          continue;
+            })
+            .catch((error: unknown) =>
+              logger.error(
+                "Could not record a failed portal invitation:",
+                safeErrorLabel(error),
+              ),
+            );
         }
-
-        // Production: SMS/Email gateway not yet wired up.
-        // Hold the message in the queue (mark failed) so it retries when a
-        // provider (e.g. Termii, Twilio) is integrated here.
-        logger.warn(
-          `[portal-sync] No SMS/Email provider configured — message ${message.id} held for retry`,
-        );
-        await MessageQueue.markFailed(
-          message.id,
-          "SMS/Email provider not configured",
-        );
-        failed++;
       } catch (error: unknown) {
         failed++;
         logger.error(
-          `Failed to process invitation for patient ${message.patientId}:`,
-          error,
+          "Failed to process a portal invitation:",
+          safeErrorLabel(error),
         );
         await MessageQueue.markFailed(message.id, getErrorMessage(error));
 
@@ -96,12 +120,15 @@ export async function processPortalInvitationQueue(): Promise<{
     }
 
     if (processed > 0) {
-      logger.info(
-        `Portal invitation queue processed: ${succeeded} succeeded, ${failed} failed`,
+      logger.warn(
+        `[portal-sync] No SMS/Email provider configured: ${failed} portal invitation(s) not sent (retried, then marked failed)`,
       );
     }
   } catch (error) {
-    logger.error("Error processing portal invitation queue:", error);
+    logger.error(
+      "Error processing portal invitation queue:",
+      safeErrorLabel(error),
+    );
   } finally {
     isProcessing = false;
   }
@@ -127,6 +154,11 @@ export async function syncPortalActivityFromSupabase(): Promise<{
       return { synced: 0, errors: 0 };
     }
 
+    // No server connection in this build: there is nothing to sync from.
+    if (!supabase) {
+      return { synced: 0, errors: 0 };
+    }
+
     // Get all patients with portal enabled
     const patientsWithPortal = await db.patients
       .where("portalEnabled")
@@ -147,7 +179,10 @@ export async function syncPortalActivityFromSupabase(): Promise<{
         .in("id", patientIds);
 
       if (error) {
-        logger.error("Error fetching portal activity from Supabase:", error);
+        logger.error(
+          "Error fetching portal activity from Supabase:",
+          safeErrorLabel(error),
+        );
         return { synced: 0, errors: patientIds.length };
       }
 
@@ -177,13 +212,13 @@ export async function syncPortalActivityFromSupabase(): Promise<{
             });
 
             synced++;
-            logger.info(
-              `Synced portal activity for patient: ${supabasePatient.id}`,
-            );
           }
         } catch (error) {
           errors++;
-          logger.error(`Error syncing patient ${supabasePatient.id}:`, error);
+          logger.error(
+            "Error syncing portal activity for a patient:",
+            safeErrorLabel(error),
+          );
         }
       }
 
@@ -193,11 +228,11 @@ export async function syncPortalActivityFromSupabase(): Promise<{
         );
       }
     } catch (error) {
-      logger.error("Error in Supabase query:", error);
+      logger.error("Error in Supabase query:", safeErrorLabel(error));
       errors = patientIds.length;
     }
   } catch (error) {
-    logger.error("Error syncing portal activity:", error);
+    logger.error("Error syncing portal activity:", safeErrorLabel(error));
   }
 
   return { synced, errors };
@@ -233,12 +268,16 @@ export function startPortalSyncWorker(intervalSeconds: number = 30): void {
   logger.info(`Starting portal sync worker (every ${intervalSeconds}s)`);
 
   // Run initial sync
-  runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
+  runPortalSync().catch((e) =>
+    logger.error("Portal sync failed:", safeErrorLabel(e)),
+  );
 
   // Set up periodic sync
   syncIntervalId = window.setInterval(() => {
     if (navigator.onLine) {
-      runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
+      runPortalSync().catch((e) =>
+        logger.error("Portal sync failed:", safeErrorLabel(e)),
+      );
     } else {
       logger.info("Offline, skipping scheduled portal sync");
     }
@@ -266,7 +305,9 @@ export function stopPortalSyncWorker(): void {
  */
 function handleOnline() {
   logger.info("Connection restored, running portal sync...");
-  runPortalSync().catch((e) => logger.error("Portal sync failed:", e));
+  runPortalSync().catch((e) =>
+    logger.error("Portal sync failed:", safeErrorLabel(e)),
+  );
 }
 
 /**

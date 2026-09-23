@@ -1,15 +1,29 @@
 import { outboxDb, MessageQueue, OutboundMessage } from "@/db/outbox";
 import { db } from "@/db";
 import { getPatientPreference } from "./preferences";
+import { ReminderSkippedError, reminderSkipReason } from "./reminderEligibility";
 import * as logger from "@/lib/logger";
 
+export { ReminderSkippedError } from "./reminderEligibility";
+
+/** Stored on a message that could not go out because no gateway is set up. */
+export const SMS_PROVIDER_NOT_CONFIGURED_ERROR = "SMS provider not configured";
+
 export interface SMSGateway {
+  /**
+   * False when the gateway cannot send anything (no provider set up).
+   * Gateways that leave it out are treated as configured.
+   */
+  readonly configured?: boolean;
   send(
     message: OutboundMessage,
   ): Promise<{ success: boolean; messageId?: string; error?: string }>;
 }
 
-// Termii SMS Gateway (popular in Nigeria)
+// Termii SMS Gateway (popular in Nigeria).
+// SECURITY: this sends the Termii API key from the browser, so anyone using
+// the app can read it. The server function send-sms-reminder (used by
+// services/notificationWorker) keeps the key in server secrets instead.
 export class TermiiGateway implements SMSGateway {
   constructor(
     private apiKey: string,
@@ -66,23 +80,21 @@ export class TermiiGateway implements SMSGateway {
   }
 }
 
-// Mock gateway for testing
+// Stand-in used when no SMS provider is set up. It never sends anything, so
+// it never reports success: a message it is given stays unsent.
 export class MockGateway implements SMSGateway {
+  readonly configured = false;
+
   async send(
     message: OutboundMessage,
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    logger.info("[MockGateway] SMS send:", {
-      to: message.to,
+    // Template and channel only: the number and payload identify the patient.
+    logger.info("[MockGateway] SMS not sent, no provider configured:", {
       template: message.templateKey,
-      payload: message.payload,
+      channel: message.channel,
     });
 
-    // Simulate random success/failure for testing (~90% success rate)
-    const success = crypto.getRandomValues(new Uint8Array(1))[0] > 25;
-
-    return success
-      ? { success: true, messageId: `mock_${Date.now()}` }
-      : { success: false, error: "Mock delivery failure" };
+    return { success: false, error: SMS_PROVIDER_NOT_CONFIGURED_ERROR };
   }
 }
 
@@ -94,7 +106,11 @@ export class MessageService {
     this.gateway = gateway;
   }
 
-  // Queue medication reminder
+  /**
+   * Queues a medication reminder in the device outbox and returns its id.
+   * Throws ReminderSkippedError (nothing is queued) when the patient turned
+   * medication reminders off or has no phone number.
+   */
   async queueMedicationReminder(
     patientId: string,
     medicationName: string,
@@ -106,6 +122,8 @@ export class MessageService {
     if (!patient) throw new Error("Patient not found");
 
     const preferences = await getPatientPreference(patientId);
+    const skip = reminderSkipReason("medication", patient, preferences);
+    if (skip) throw new ReminderSkippedError("medication", skip);
     const locale = preferences?.preferredLanguage || "en";
 
     return MessageQueue.queueMessage(
@@ -127,7 +145,11 @@ export class MessageService {
     );
   }
 
-  // Queue appointment reminder
+  /**
+   * Queues an appointment reminder in the device outbox and returns its id.
+   * Throws ReminderSkippedError (nothing is queued) when the patient turned
+   * appointment reminders off or has no phone number.
+   */
   async queueAppointmentReminder(
     patientId: string,
     appointmentDate: Date,
@@ -136,14 +158,25 @@ export class MessageService {
     const patient = await db.patients.get(patientId);
     if (!patient) throw new Error("Patient not found");
 
+    const preferences = await getPatientPreference(patientId);
+    const skip = reminderSkipReason("appointment", patient, preferences);
+    if (skip) throw new ReminderSkippedError("appointment", skip);
+
     return MessageQueue.queueMessage(
       patientId,
       patient.phone,
       "appointment.reminder",
       {
         patientName: `${patient.givenName} ${patient.familyName}`,
-        date: appointmentDate.toLocaleDateString(),
-        time: appointmentDate.toLocaleTimeString(),
+        date: appointmentDate.toLocaleDateString("en-NG", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }),
+        time: appointmentDate.toLocaleTimeString("en-NG", {
+          hour: "numeric",
+          minute: "2-digit",
+        }),
         clinicName: "MBHR Clinic",
       },
       {
@@ -154,8 +187,21 @@ export class MessageService {
     );
   }
 
-  // Process outbox (send queued messages)
-  async processOutbox(): Promise<{ sent: number; failed: number }> {
+  /**
+   * Sends due messages through the gateway. A message is marked sent only
+   * when the gateway reports success. With no provider set up nothing is
+   * attempted: messages stay queued on this device (the notification worker
+   * can still send them through the server) and `skipped` says why.
+   */
+  async processOutbox(): Promise<{
+    sent: number;
+    failed: number;
+    skipped?: "not_configured";
+  }> {
+    if (this.gateway.configured === false) {
+      return { sent: 0, failed: 0, skipped: "not_configured" };
+    }
+
     const pending = await MessageQueue.getPendingMessages(50);
     let sent = 0;
     let failed = 0;
@@ -203,7 +249,7 @@ export function selectGateway(
     return new TermiiGateway(termiiKey, termiiSender);
   }
   logger.warn(
-    "[MessageService] VITE_TERMII_API_KEY not set — using mock gateway. Set this env var to enable real SMS delivery.",
+    "[MessageService] VITE_TERMII_API_KEY not set — this service will not send SMS itself. Queued reminders stay queued for the notification worker, which sends them through the send-sms-reminder server function when it is set up.",
   );
   return new MockGateway();
 }

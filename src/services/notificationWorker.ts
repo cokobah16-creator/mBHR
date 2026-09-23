@@ -1,7 +1,6 @@
 import { supabase } from "../lib/supabase";
 import { db, OutboundMessage } from "../db";
 import { outboxDb } from "../db/outbox";
-import type { OutboundMessage as DeviceOutboxMessage } from "../db/outbox";
 import { markReminderSent, markReminderFailed } from "./sms";
 import { composeSms } from "./messageTemplates";
 import {
@@ -54,13 +53,6 @@ export const SMS_DEMO_MODE_ERROR =
   "sms_demo_mode: the server logged this message but did not send it";
 const NOT_CONFIGURED_ERROR = "sms_not_configured";
 const TEMPLATE_ERROR = "message text could not be prepared";
-
-// OutboundMessage["status"] in db/index.ts and db/outbox.ts does not list
-// "cancelled" yet. Dexie stores the value as-is and every sender only picks
-// up "queued" messages, so a cancelled message is never sent.
-const CANCELLED_STATUS = "cancelled" as unknown as OutboundMessage["status"];
-const CANCELLED_OUTBOX_STATUS =
-  "cancelled" as unknown as DeviceOutboxMessage["status"];
 
 let isProcessing = false;
 let processingInterval: ReturnType<typeof setInterval> | null = null;
@@ -613,13 +605,13 @@ export async function cancelDeviceMessage(
       .where("id")
       .equals(id)
       .and((m) => m.status === "queued")
-      .modify({ status: CANCELLED_OUTBOX_STATUS, _dirty: 1 });
+      .modify({ status: "cancelled", _dirty: 1 });
     return changed > 0;
   }
   const changed = await db.outboundMessages
     .where("id")
     .equals(id)
     .and((m) => m.status === "queued")
-    .modify({ status: CANCELLED_STATUS, _dirty: 1 });
+    .modify({ status: "cancelled", _dirty: 1 });
   return changed > 0;
 }

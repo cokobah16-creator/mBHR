@@ -7,6 +7,7 @@
 
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
+import { safeErrorLabel } from "./logSafe";
 
 export interface EnrollmentResult {
   success: boolean;
@@ -26,6 +27,20 @@ export interface PatientEnrollmentData {
 }
 
 /**
+ * Why portal accounts cannot be created from this device right now, or null.
+ * Portal accounts live only on the mBHR server.
+ */
+function serverUnavailableReason(): string | null {
+  if (!supabase) {
+    return "Portal accounts are made on the mBHR server, which is not connected on this device";
+  }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return "This device is offline. Portal accounts can only be made when it is online";
+  }
+  return null;
+}
+
+/**
  * Enroll a patient in the portal (creates portal user account)
  * Called automatically when staff registers a patient with contact info
  */
@@ -40,6 +55,13 @@ export async function enrollPatientInPortal(
         success: false,
         error: "Patient must have email or phone number for portal access",
       };
+    }
+
+    // Say plainly that this needs the server, instead of failing on a
+    // missing client or a network error.
+    const unavailable = serverUnavailableReason();
+    if (unavailable) {
+      return { success: false, error: unavailable };
     }
 
     // Check if patient already has portal account
@@ -108,7 +130,11 @@ export async function enrollPatientInPortal(
       .single();
 
     if (createError || !newPortalUser) {
-      logger.error("Failed to create portal user:", createError);
+      // The raw error can echo the email or phone that clashed.
+      logger.error(
+        "Failed to create portal user:",
+        createError ? safeErrorLabel(createError) : "no row returned",
+      );
       return {
         success: false,
         error: "Failed to create portal account",
@@ -124,7 +150,7 @@ export async function enrollPatientInPortal(
       })
       .eq("id", patientId);
 
-    logger.info(`Portal account created for patient ${patientId}`);
+    logger.info("Portal account created on the server");
 
     return {
       success: true,
@@ -132,7 +158,7 @@ export async function enrollPatientInPortal(
       invitationSent: false,
     };
   } catch (error) {
-    logger.error("Error in enrollPatientInPortal:", error);
+    logger.error("Error in enrollPatientInPortal:", safeErrorLabel(error));
     return {
       success: false,
       error: "An error occurred during enrollment",
@@ -141,8 +167,12 @@ export async function enrollPatientInPortal(
 }
 
 /**
- * Send portal invitation to existing patient
- * Sends OTP via email or SMS for first-time login
+ * Prepare a portal invitation for an existing patient: makes sure the portal
+ * account exists and records the invitation time on the server.
+ *
+ * No email or SMS is sent from here (none is wired up), so the result always
+ * has `invitationSent: false`. Use services/portalEnrollment
+ * sendPortalInvitation to actually send one.
  */
 export async function sendPortalInvitation(
   patientId: string,
@@ -193,8 +223,8 @@ export async function sendPortalInvitation(
       }
     }
 
-    // In a real implementation, you would send an email/SMS invitation here
-    // For now, just mark as invited
+    // No email/SMS provider is wired up here: only the invitation time is
+    // recorded. Never report the invitation as sent.
     await supabase
       .from("patients")
       .update({
@@ -202,14 +232,14 @@ export async function sendPortalInvitation(
       })
       .eq("id", patientId);
 
-    logger.info(`Invitation sent to patient ${patientId}`);
+    logger.info("Portal invitation recorded on the server; no message sent");
 
     return {
       success: true,
-      invitationSent: true,
+      invitationSent: false,
     };
   } catch (error) {
-    logger.error("Error in sendPortalInvitation:", error);
+    logger.error("Error in sendPortalInvitation:", safeErrorLabel(error));
     return {
       success: false,
       error: "Failed to send invitation",
@@ -245,7 +275,10 @@ export async function canEnrollInPortal(patientId: string): Promise<{
 
     return { canEnroll: true };
   } catch (error) {
-    logger.error("Error checking enrollment eligibility:", error);
+    logger.error(
+      "Error checking enrollment eligibility:",
+      safeErrorLabel(error),
+    );
     return { canEnroll: false, reason: "Error checking eligibility" };
   }
 }
@@ -265,10 +298,36 @@ export async function bulkEnrollPatients(patientIds: string[]): Promise<{
   let failed = 0;
   const errors: Array<{ patientId: string; error: string }> = [];
 
-  const { data: patients } = await supabase
+  // Without the server nothing can be enrolled; say why for every patient
+  // instead of reporting them as "not found".
+  const unavailable = serverUnavailableReason();
+  if (unavailable) {
+    return {
+      success: 0,
+      failed: patientIds.length,
+      errors: patientIds.map((patientId) => ({ patientId, error: unavailable })),
+    };
+  }
+
+  const { data: patients, error: loadError } = await supabase
     .from("patients")
     .select("*")
     .in("id", patientIds);
+
+  if (loadError) {
+    logger.error(
+      "Bulk enrollment: could not load patients:",
+      safeErrorLabel(loadError),
+    );
+    return {
+      success: 0,
+      failed: patientIds.length,
+      errors: patientIds.map((patientId) => ({
+        patientId,
+        error: "Could not load this patient from the server. Try again.",
+      })),
+    };
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const found = new Map((patients ?? []).map((p: any) => [p.id, p]));
@@ -337,7 +396,7 @@ export async function getPortalStatus(patientId: string): Promise<{
       portalUserId: portalUser?.id,
     };
   } catch (error) {
-    logger.error("Error getting portal status:", error);
+    logger.error("Error getting portal status:", safeErrorLabel(error));
     return {
       enrolled: false,
       verified: false,
