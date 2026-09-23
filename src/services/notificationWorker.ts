@@ -6,6 +6,7 @@ import { composeSms } from "./messageTemplates";
 import {
   MAX_SEND_ATTEMPTS,
   PROVIDER_ACCEPTED_AT_KEY,
+  PROVIDER_ACCEPTED_MARKER,
   PROVIDER_MESSAGE_ID_KEY,
   isWorkerSendable,
   outboxTemplateFor,
@@ -239,6 +240,11 @@ async function processMedicationReminders(): Promise<{
         .update({
           status: "sent",
           sent_at: new Date().toISOString(),
+          // Evidence the provider accepted it (the table has no provider
+          // column); the outbox shows other 'sent' rows as not confirmed.
+          error_message: result.messageId
+            ? `${PROVIDER_ACCEPTED_MARKER} (${result.messageId})`
+            : PROVIDER_ACCEPTED_MARKER,
         })
         .eq("id", reminder.id);
       sent++;

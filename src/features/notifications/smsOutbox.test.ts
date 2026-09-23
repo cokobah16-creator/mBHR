@@ -126,6 +126,28 @@ describe("normalising stored records", () => {
     expect(item.key).toBe("server:r1");
     expect(item.state).toBe("sent");
     expect(item.sentAt).toEqual(NOW);
+    // No provider evidence stored: not shown as accepted by the provider.
+    expect(item.sentConfirmation).toBe("unconfirmed");
+  });
+
+  it("shows a server reminder as sent to the provider only with the worker's marker", () => {
+    const base = {
+      id: "r2",
+      patientId: "p1",
+      medicationName: "Metformin",
+      dosage: "500 mg",
+      scheduledAt: NOW,
+      phoneNumber: "08031234567",
+      message: "Hello",
+      status: "sent",
+      sentAt: NOW,
+    };
+    expect(
+      fromServerReminder({ ...base, errorMessage: "Accepted by SMS provider (abc123)" }).sentConfirmation,
+    ).toBe("provider");
+    expect(
+      fromServerReminder({ ...base, errorMessage: "Marked sent by staff: phoned the patient" }).sentConfirmation,
+    ).toBe("staff");
   });
 });
 
@@ -457,7 +479,7 @@ describe("who recorded a message as sent", () => {
     expect(stateTone(staff, NOW, null)).toBe("neutral");
     expect(explainState(staff, ctx())).toMatch(/mBHR did not send it/);
 
-    const provider = fromServerReminder(base);
+    const provider = fromServerReminder({ ...base, errorMessage: "Accepted by SMS provider" });
     expect(provider.sentConfirmation).toBe("provider");
     expect(explainState(provider, ctx())).toMatch(/No delivery receipt/);
 

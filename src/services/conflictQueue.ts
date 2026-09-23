@@ -230,6 +230,21 @@ export class ConflictQueueService {
     return this.checkExistingConflict(entityId, conflictType);
   }
 
+  /** Id of the open conflict of this type for the record, or null. */
+  async findOpenConflictId(entityId: string, conflictType: ConflictType): Promise<string | null> {
+    if (!supabase) return null;
+    const { data, error } = await supabase
+      .from("conflict_resolutions")
+      .select("id")
+      .eq("entity_id", entityId)
+      .eq("conflict_type", conflictType)
+      .in("status", OPEN_STATUSES)
+      .limit(1);
+    if (error) throw error;
+    const row = data?.[0] as { id?: unknown } | undefined;
+    return typeof row?.id === "string" ? row.id : null;
+  }
+
   async createConflict(params: {
     conflictType: ConflictType;
     entityType: string;

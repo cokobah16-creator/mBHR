@@ -25,6 +25,7 @@ import { resolveConflict } from "@/sync/conflictResolver";
 import { queueSyncConflicts } from "@/sync/queueConflicts";
 import { namedSyncError, syncErrorCode } from "@/sync/errorCode";
 import { loadLocalRecord } from "@/features/conflicts/localContext";
+import { canResolveOnDevice } from "@/features/conflicts/deviceResolution";
 import { conflictQueueService } from "@/services/conflictQueue";
 import { ConflictResolutionModal, type ConflictData } from "../ConflictResolutionModal";
 import { usePopover } from "./usePopover";
@@ -81,10 +82,27 @@ export function SyncStatusControl() {
           result.conflicts,
           currentUser ? { id: currentUser.id, role: currentUser.role } : undefined,
         );
-        if (canResolve) {
-          setConflicts(result.conflicts);
-          setCurrentConflict(result.conflicts[0]);
-        } else {
+        // Settle here only what the review queue would let this role settle
+        // without approval; everything else stays on the review list.
+        const onDevice = currentUser
+          ? result.conflicts.filter((c) => canResolveOnDevice(currentUser.role, c))
+          : [];
+        const forReview = result.conflicts.length - onDevice.length;
+        if (onDevice.length > 0) {
+          setConflicts(onDevice);
+          setCurrentConflict(onDevice[0]);
+        }
+        if (canResolve && forReview > 0) {
+          push({
+            id: generateId(),
+            tone: "warning",
+            title: `${forReview} record${forReview === 1 ? "" : "s"} need${forReview === 1 ? "s" : ""} approval`,
+            body:
+              queued.notQueued > 0
+                ? "These changes include sensitive patient details and must be decided under Administration › Sync conflicts. Some are not on that list yet: sign in online and run Sync now again. Until then this device's changes are not uploaded."
+                : "These changes include sensitive patient details and must be decided under Administration › Sync conflicts. Until then this device's changes are not uploaded.",
+          });
+        } else if (!canResolve) {
           const n = result.conflicts.length;
           push({
             id: generateId(),
@@ -117,8 +135,9 @@ export function SyncStatusControl() {
   ) => {
     if (!currentConflict) return;
     const conflict = currentConflict;
-    // Checked here, not only by hiding the dialog: this writes patient data.
-    if (!currentUser || !can(currentUser.role, "resolve_conflicts")) {
+    // Checked here, not only by hiding the dialog: this writes patient data,
+    // with the same rules the review queue applies.
+    if (!currentUser || !canResolveOnDevice(currentUser.role, conflict)) {
       console.error("Failed to resolve conflict:", "NotPermitted");
       throw namedSyncError("NotPermitted");
     }
@@ -168,6 +187,25 @@ export function SyncStatusControl() {
       // The record is already written; a missing audit entry is not a
       // failed resolution.
       console.error("Audit entry for a sync conflict was not saved:", syncErrorCode(error));
+    }
+
+    // Close the matching entry on the shared review list, so it is not
+    // decided again (possibly the other way) from Administration. Best
+    // effort: without an online sign-in it stays open for a reviewer.
+    try {
+      const openId = await conflictQueueService.findOpenConflictId(conflict.entityId, "sync_conflict");
+      if (openId) {
+        await conflictQueueService.resolve({
+          conflictId: openId,
+          strategy: strategy === "keep-local" ? "keep_local" : strategy === "keep-remote" ? "keep_remote" : "manual",
+          resolutionDetails: { appliedOnDevice: true, fields: resolution ?? null },
+          resolvedBy: currentUser.id,
+          resolverRole: actorRole,
+          justification: "Decided in the Sync now dialog and applied on this device.",
+        });
+      }
+    } catch (error) {
+      console.error("Review-list entry for a sync conflict was not closed:", syncErrorCode(error));
     }
 
     const remaining = conflicts.slice(1);

@@ -292,6 +292,17 @@ export function isStaffMarkedSent(errorMessage: string | undefined): boolean {
   return (errorMessage || "").trim().toLowerCase().startsWith(STAFF_SENT_MARKER);
 }
 
+/**
+ * Stored by the notification worker when the SMS provider accepted a server
+ * reminder. Rows marked sent before this marker existed (demo mode, the old
+ * "Mark sent" button) carry no evidence and are shown as not confirmed.
+ */
+export const PROVIDER_ACCEPTED_MARKER = "accepted by sms provider";
+
+export function isProviderAccepted(errorMessage: string | undefined): boolean {
+  return (errorMessage || "").trim().toLowerCase().startsWith(PROVIDER_ACCEPTED_MARKER);
+}
+
 export function fromServerReminder(r: StoredServerReminder): OutboxItem {
   const id = r.id ?? "";
   const state = stateFromServerStatus(r.status);
@@ -304,7 +315,9 @@ export function fromServerReminder(r: StoredServerReminder): OutboxItem {
       state === "sent"
         ? isStaffMarkedSent(r.errorMessage)
           ? "staff"
-          : "provider"
+          : isProviderAccepted(r.errorMessage)
+            ? "provider"
+            : "unconfirmed"
         : undefined,
     patientId: r.patientId,
     phone: r.phoneNumber || "",

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Patient, type QueueItem } from "@/db";
 import { useAuthStore } from "@/stores/auth";
-import { can, type Permission } from "@/auth/roles";
+import { canManageQueue } from "@/features/tickets/queueBoardModel";
 import { recordStageEvent } from "@/services/stageEvents";
 import { queueManagement } from "@/services/queueManagement";
 import { patientStatusFromQueue } from "@/services/patientStatus";
@@ -21,13 +21,6 @@ import {
 const STAGES = ["registration", "vitals", "consult", "pharmacy"] as const;
 type Stage = (typeof STAGES)[number];
 
-// Acting on a stage needs that stage's permission (RBAC matrix in auth/roles).
-const STAGE_PERMISSION: Record<Stage, Permission> = {
-  registration: "register",
-  vitals: "vitals",
-  consult: "consult",
-  pharmacy: "dispense",
-};
 
 // Stage colour marks workflow position only; it never fills a card.
 const STAGE_MARKER: Record<Stage, string> = {
@@ -98,8 +91,10 @@ export function EnhancedQueueBoard() {
     [activeItems],
   );
 
-  const canActOn = (stage: Stage) =>
-    !!currentUser && can(currentUser.role, STAGE_PERMISSION[stage]);
+  // Moving patients through the queue is front-desk logistics: the same
+  // rule as the Queue page and the ticket board (canManageQueue). Clinical
+  // work at each stage is permission-checked on its own screen.
+  const canActOn = (_stage: Stage) => canManageQueue(currentUser?.role);
 
   const patientName = (item: QueueItem) => {
     const p = patientMap.get(item.patientId);
@@ -126,7 +121,7 @@ export function EnhancedQueueBoard() {
 
   const callNext = (stage: Stage) => {
     if (!canActOn(stage)) {
-      setActionError(`Your role cannot call patients at ${FLOW_STAGE_LABELS[stage].toLowerCase()}.`);
+      setActionError("Your role can view the queue but cannot call or move patients.");
       return;
     }
     const nextItem = activeItems
@@ -153,7 +148,7 @@ export function EnhancedQueueBoard() {
    */
   const finish = (stage: Stage, item: QueueItem, sendOn: boolean) => {
     if (!canActOn(stage)) {
-      setActionError(`Your role cannot update patients at ${FLOW_STAGE_LABELS[stage].toLowerCase()}.`);
+      setActionError("Your role can view the queue but cannot call or move patients.");
       return;
     }
     const next = nextStageOf(stage);
