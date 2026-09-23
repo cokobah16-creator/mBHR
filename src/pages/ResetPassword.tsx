@@ -26,9 +26,10 @@ const SESSION_WAIT_MS = 10_000;
  * services/passwordReset captures the landing URL before supabase-js strips
  * the token from it.
  *
- * Which sign-in page the links point at is worked out from the recovery
- * session (staff or patient account). Older links carried ?for=staff|patient
- * instead; that hint is still honoured when present.
+ * The links point at the staff or the patient sign-in according to the ?for=
+ * hint the email link carries. A link that Supabase redirected to the Site URL
+ * (allow-list misconfiguration) arrives here without it, so the account type
+ * is then looked up from the recovery session instead.
  */
 export default function ResetPassword() {
   const [params] = useSearchParams();

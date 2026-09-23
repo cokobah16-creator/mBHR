@@ -4,14 +4,16 @@
  *
  * Flow:
  *   1. /forgot-password or /patient/forgot-password calls requestPasswordReset().
- *      Supabase emails a one-time link that comes back to /reset-password.
- *      That redirect URL carries nothing else, so it can be put on the
- *      project's redirect allow list exactly as it is: Supabase drops a
- *      redirect URL that is not on the list and sends the user to the
- *      project's Site URL instead (see docs/PASSWORD_RECOVERY.md).
+ *      Supabase emails a one-time link that comes back to
+ *      /reset-password?for=<audience>. Supabase only honours that URL when it
+ *      is on the project's redirect allow list (or on the Site URL's host);
+ *      otherwise it silently sends the user to the Site URL instead, without
+ *      the query string, and lib/recoveryLanding moves the token on to
+ *      /reset-password from there (see docs/PASSWORD_RECOVERY.md).
  *   2. The link lands on /reset-password. supabase-js (detectSessionInUrl) turns
- *      the token in the URL into a short-lived recovery session, and the page
- *      works out from that session whether the account is staff or patient.
+ *      the token in the URL into a short-lived recovery session. The page reads
+ *      the audience from ?for= or, when the link lost it in step 1's fallback,
+ *      works it out from the recovery session.
  *   3. The user picks a new password; completePasswordReset() saves it and then
  *      signs out everywhere, so a session opened by whoever had the old password
  *      does not survive the reset.
@@ -32,7 +34,7 @@ export const RESEND_COOLDOWN_SECONDS = 60;
 /** The URL this tab was opened with, captured before supabase-js strips the token from it. */
 const landingUrl = typeof window !== "undefined" ? window.location.href : "";
 
-/** Reads the `?for=` hint that older reset links carried; anything unknown is a patient. */
+/** Reads the `?for=` hint the reset link carries; anything unknown is a patient. */
 export function parseAudience(value: string | null | undefined): ResetAudience {
   return value === "staff" ? "staff" : "patient";
 }
@@ -42,20 +44,25 @@ export function loginPathFor(audience: ResetAudience): string {
 }
 
 /**
- * Where the email link comes back to. This must match the project's redirect
- * allow list exactly (no query string, so an exact entry works), which is why
- * the audience is not encoded here; see resolveResetAudience().
+ * Where the email link comes back to. Supabase keeps the query string on both
+ * the success and the error redirect, so ?for= reaches the reset page in every
+ * case and the page can point at the right sign-in even for an expired link.
+ * An allow-list entry for this path must therefore admit a query string: the
+ * Site URL's host always does; for any other host use
+ * `https://<host>/reset-password**` (see docs/PASSWORD_RECOVERY.md).
  */
-export function resetRedirectUrl(origin: string): string {
-  return `${origin}/reset-password`;
+export function resetRedirectUrl(origin: string, audience: ResetAudience): string {
+  return `${origin}/reset-password?for=${audience}`;
 }
 
 /**
- * Works out which sign-in page the account behind a recovery session belongs
- * to. Staff accounts have a staff_roles row, which RLS lets the account itself
- * read; every other account is a patient-portal account. Anything that stops
- * the lookup (offline, RLS, network) is answered with "patient", which only
- * affects where the "sign in" links point.
+ * Fallback for a link that arrived without ?for= (Supabase drops the query
+ * string when it falls back to the Site URL). Works out which sign-in page the
+ * account behind a recovery session belongs to: staff accounts have a
+ * staff_roles row, which RLS lets the account itself read; every other account
+ * is a patient-portal account. Anything that stops the lookup (offline, RLS,
+ * network) is answered with "patient", which only affects where the "sign in"
+ * links point.
  */
 export async function resolveResetAudience(userId: string): Promise<ResetAudience> {
   if (!supabase || !userId) return "patient";
@@ -76,15 +83,15 @@ export async function resolveResetAudience(userId: string): Promise<ResetAudienc
 }
 
 export interface RecoveryLanding {
-  /** The URL carries a recovery token (implicit `type=recovery` or a PKCE `code`). */
+  /** The URL hash carries an implicit-flow recovery token (`type=recovery` plus an access token). */
   hasToken: boolean;
   /** Error Supabase put in the URL, e.g. an expired or already-used link. */
   error: string | null;
 }
 
 /**
- * Reads what the email link put in the URL. Supabase uses the hash for the
- * implicit flow and the query string for PKCE, and reports errors in either.
+ * Reads what the email link put in the URL. Supabase puts the implicit-flow
+ * token in the hash and reports errors in either the hash or the query string.
  */
 export function parseRecoveryLanding(href: string = landingUrl): RecoveryLanding {
   let url: URL;
@@ -109,8 +116,11 @@ export function parseRecoveryLanding(href: string = landingUrl): RecoveryLanding
     };
   }
 
-  const hasToken =
-    read("type") === "recovery" || (!!query.get("code") && !hash.get("access_token"));
+  // Only a real token counts. `type=recovery` on its own (or a PKCE-style
+  // ?code=, which this app's client never issues) must not let a browser that
+  // is merely signed in reach the password form. With a token present,
+  // supabase-js drops any stored session if the token does not verify.
+  const hasToken = hash.get("type") === "recovery" && !!hash.get("access_token");
   return { hasToken, error: null };
 }
 
@@ -162,7 +172,7 @@ export async function requestPasswordReset(
 
   try {
     const { error } = await supabase.auth.resetPasswordForEmail(address, {
-      redirectTo: resetRedirectUrl(origin),
+      redirectTo: resetRedirectUrl(origin, audience),
     });
     if (error) {
       if (error.status === 429 || /rate limit|only request this after|too many/i.test(error.message)) {

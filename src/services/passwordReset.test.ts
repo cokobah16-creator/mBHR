@@ -40,11 +40,15 @@ describe("parseRecoveryLanding", () => {
     ).toEqual({ hasToken: true, error: null });
   });
 
-  it("detects a PKCE code in the query string", () => {
-    expect(parseRecoveryLanding("https://app.test/reset-password?code=xyz")).toEqual({
-      hasToken: true,
-      error: null,
-    });
+  it("does not accept a recovery claim without a token", () => {
+    for (const href of [
+      "https://app.test/reset-password?type=recovery",
+      "https://app.test/reset-password#type=recovery",
+      "https://app.test/reset-password?code=xyz",
+      "https://app.test/reset-password?for=staff#type=recovery&expires_in=3600",
+    ]) {
+      expect(parseRecoveryLanding(href)).toEqual({ hasToken: false, error: null });
+    }
   });
 
   it("reports an expired link", () => {
@@ -83,8 +87,13 @@ describe("helpers", () => {
     expect(loginPathFor("patient")).toBe("/patient/login");
   });
 
-  it("builds a redirect URL with nothing to trip the allow list", () => {
-    expect(resetRedirectUrl("https://app.test")).toBe("https://app.test/reset-password");
+  it("builds the audience-specific redirect URL", () => {
+    expect(resetRedirectUrl("https://app.test", "staff")).toBe(
+      "https://app.test/reset-password?for=staff",
+    );
+    expect(resetRedirectUrl("https://app.test", "patient")).toBe(
+      "https://app.test/reset-password?for=patient",
+    );
   });
 
   it("validates the new password", () => {
@@ -103,17 +112,17 @@ describe("requestPasswordReset", () => {
     expect(resetPasswordForEmail).not.toHaveBeenCalled();
   });
 
-  it("normalises the address and sends the same redirect for every audience", async () => {
+  it("normalises the address and sends the audience-specific redirect", async () => {
     resetPasswordForEmail.mockResolvedValue({ error: null });
     const r = await requestPasswordReset("  Nurse@Clinic.NG ", "staff", "https://app.test");
     expect(r).toEqual({ ok: true });
     expect(resetPasswordForEmail).toHaveBeenCalledWith("nurse@clinic.ng", {
-      redirectTo: "https://app.test/reset-password",
+      redirectTo: "https://app.test/reset-password?for=staff",
     });
 
     await requestPasswordReset("patient@example.com", "patient", "https://app.test");
     expect(resetPasswordForEmail).toHaveBeenLastCalledWith("patient@example.com", {
-      redirectTo: "https://app.test/reset-password",
+      redirectTo: "https://app.test/reset-password?for=patient",
     });
   });
 
