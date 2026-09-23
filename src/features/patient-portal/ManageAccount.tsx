@@ -22,7 +22,7 @@ import {
   readPortalUser,
   type PortalSessionUser,
 } from "./account/portalSession";
-import { useOnlineStatus } from "./account/useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 type AccountTab = "profile" | "notifications" | "security";
 

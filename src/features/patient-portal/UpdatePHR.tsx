@@ -15,7 +15,7 @@ import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { errorName, readPortalUser } from "./account/portalSession";
-import { useOnlineStatus } from "./account/useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface PHRField {
   label: string;

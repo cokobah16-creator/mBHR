@@ -56,7 +56,7 @@ import {
   LabResultEntryDialog,
   type LabResultFormValues,
 } from "./LabResultEntryDialog";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface LabResultsDashboardProps {
   /**

@@ -24,7 +24,7 @@ import {
   type SharingFlags,
 } from "./account/sharingChanges";
 import { ConfirmDialog } from "./account/ConfirmDialog";
-import { useOnlineStatus } from "./account/useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { errorName } from "./account/portalSession";
 
 interface DataSharingPreferences {

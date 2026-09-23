@@ -13,7 +13,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
 import { conditionStatusInfo, formatPortalDate } from "./portalStatus";
 import { readPortalUser } from "./portalSession";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface MedicalCondition {
   id: string;

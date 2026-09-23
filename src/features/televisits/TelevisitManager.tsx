@@ -62,7 +62,7 @@ import {
   patientPlaceholder,
   type PatientLabel,
 } from "@/features/appointments/patientLabels";
-import { useOnlineStatus } from "@/features/appointments/useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { copyText } from "./clipboard";
 import {
   ScheduleTelevisitDialog,

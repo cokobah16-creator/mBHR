@@ -13,7 +13,7 @@ import * as logger from "@/lib/logger";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
 import { formatPortalDate, formatPortalLongDate } from "./portalStatus";
 import { clearPortalSession, readPortalUser } from "./portalSession";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 const BACK_CRUMB = { label: "Your visits", to: "/patient/medical-history" };
 

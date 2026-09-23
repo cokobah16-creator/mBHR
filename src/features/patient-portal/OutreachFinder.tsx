@@ -19,7 +19,7 @@ import {
   writeOutreachCache,
 } from "./account/outreachCache";
 import { errorName } from "./account/portalSession";
-import { useOnlineStatus } from "./account/useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface OutreachEvent {
   id: string;

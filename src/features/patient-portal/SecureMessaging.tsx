@@ -27,7 +27,7 @@ import {
   writeMessageQueue,
   type QueuedMessage,
 } from "./messageQueue";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface Message {
   id: string;

@@ -13,7 +13,7 @@ import * as logger from "@/lib/logger";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
 import { appendUnique, formatPortalLongDate } from "./portalStatus";
 import { readPortalUser } from "./portalSession";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 const PAGE_SIZE = 10;
 

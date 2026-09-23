@@ -18,7 +18,7 @@ import { Skeleton, SkeletonText } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "./account/ConfirmDialog";
 import { formatFileSize } from "./account/displayStatus";
 import { errorName, readPortalUser } from "./account/portalSession";
-import { useOnlineStatus } from "./account/useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface Document {
   id: string;

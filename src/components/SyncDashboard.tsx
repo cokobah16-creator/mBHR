@@ -10,7 +10,7 @@ import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
 import { conflictQueueService } from "@/services/conflictQueue";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { useOnline } from "@/features/conflicts/useOnline";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { formatConflictAge, formatTimestamp, humanise } from "@/features/conflicts/conflictLabels";
 import { deriveSyncHeadline } from "@/features/conflicts/syncStatus";
 import { countDirtyIn, ENHANCED_ONLY_TABLES } from "@/features/conflicts/syncCounts";
@@ -73,7 +73,7 @@ function plural(n: number, word: string): string {
 }
 
 export function SyncDashboard() {
-  const online = useOnline();
+  const online = useOnlineStatus();
   const configured = enhancedSync.isInitialized();
   const role = useAuthStore((s) => s.currentUser?.role);
   const lastSuccessAt = useSyncStore((s) => s.lastSuccessAt);

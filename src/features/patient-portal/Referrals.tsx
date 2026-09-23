@@ -20,7 +20,7 @@ import {
   referralStatusDisplay,
 } from "./account/displayStatus";
 import { errorName, readPortalUser } from "./account/portalSession";
-import { useOnlineStatus } from "./account/useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface Referral {
   id: string;

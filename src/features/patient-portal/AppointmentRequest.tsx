@@ -25,7 +25,7 @@ import {
   upcomingAppointments,
 } from "./portalStatus";
 import { clearPortalSession, readPortalUser } from "./portalSession";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { Skeleton } from "@/components/ui/Skeleton";
 
 const appointmentTypes = [

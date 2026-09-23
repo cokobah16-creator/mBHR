@@ -13,7 +13,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
 import { formatPortalDate, labHasResult, labStatusInfo } from "./portalStatus";
 import { readPortalUser } from "./portalSession";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface LabResult {
   id: string;

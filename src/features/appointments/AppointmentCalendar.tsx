@@ -90,7 +90,7 @@ import {
   patientPlaceholder,
   type PatientLabel,
 } from "./patientLabels";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface AppointmentCalendarProps {
   /** Only show and default to this provider's appointments. */

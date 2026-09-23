@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 
+/** navigator.onLine, read safely (true where there is no navigator). */
+export function isDeviceOnline(): boolean {
+  return typeof navigator === "undefined" ? true : navigator.onLine !== false;
+}
+
 /**
  * Tracks navigator.onLine and re-renders when the browser reports the
  * connection going up or down. It reflects the device's network interface,
@@ -7,9 +12,7 @@ import { useEffect, useState } from "react";
  * request failures.
  */
 export function useOnlineStatus(): boolean {
-  const [online, setOnline] = useState(() =>
-    typeof navigator === "undefined" ? true : navigator.onLine !== false,
-  );
+  const [online, setOnline] = useState(isDeviceOnline);
 
   useEffect(() => {
     const goOnline = () => setOnline(true);

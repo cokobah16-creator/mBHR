@@ -18,7 +18,7 @@ import {
   type LabOrder,
 } from '@/services/labs'
 import { describeLabError, ORDER_STATUS_META, PRIORITY_LABEL } from './labWorklist'
-import { useOnlineStatus } from './useOnlineStatus'
+import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 
 const labOrderSchema = z.object({
   testName: z.string().trim().min(1, 'Enter a test name, or choose one of the common tests'),

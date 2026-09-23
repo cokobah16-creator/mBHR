@@ -46,7 +46,7 @@ import {
   type PatientMessageParams,
   type UnsentMessage,
 } from "./unsentMessages";
-import { isDeviceOnline, useOnlineStatus } from "./useOnlineStatus";
+import { isDeviceOnline, useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useLiveMessageUpdates } from "./useLiveMessageUpdates";
 import { usePanelFocus } from "./usePanelFocus";
 import {

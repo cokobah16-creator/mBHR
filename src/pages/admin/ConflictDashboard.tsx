@@ -30,7 +30,7 @@ import { ConflictDetailDialog } from "@/features/conflicts/ConflictDetailDialog"
 import { ConflictListTable } from "@/features/conflicts/ConflictListTable";
 import { ResolvedConflictTable } from "@/features/conflicts/ResolvedConflictTable";
 import { BulkResolveDialog } from "@/features/conflicts/BulkResolveDialog";
-import { useOnline } from "@/features/conflicts/useOnline";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { ConflictFiltersBar } from "@/features/conflicts/ConflictFiltersBar";
 import { ConflictCounts } from "@/features/conflicts/ConflictCounts";
 import { ConflictEmptyState } from "@/features/conflicts/ConflictEmptyState";
@@ -79,7 +79,7 @@ function plural(n: number, word: string): string {
 export default function ConflictDashboard() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const { push } = useToast();
-  const online = useOnline();
+  const online = useOnlineStatus();
   const available = conflictQueueService.isAvailable();
 
   const actor = useMemo<ConflictActor | null>(

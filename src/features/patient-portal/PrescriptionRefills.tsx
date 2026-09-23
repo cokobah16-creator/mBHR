@@ -18,7 +18,7 @@ import {
   readPortalUser,
   resolveActivePatientId,
 } from "./portalSession";
-import { useOnlineStatus } from "./useOnlineStatus";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface MedicineItem {
   key: string;
