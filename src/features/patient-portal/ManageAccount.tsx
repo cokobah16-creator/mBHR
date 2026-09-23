@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { supabase as supabaseAuth } from "@/lib/supabaseClient";
+import { requestPasswordReset } from "@/services/passwordReset";
 import * as logger from "@/lib/logger";
 import {
   UserCircleIcon,
@@ -101,8 +103,22 @@ export function ManageAccount() {
     setSuccess("");
 
     try {
-      // This would trigger an OTP to reset password
-      setSuccess("Password reset link sent to your phone/email");
+      const { data } = supabaseAuth
+        ? await supabaseAuth.auth.getUser()
+        : { data: { user: null } };
+      const email = data.user?.email ?? portalUser?.email;
+      if (!email) {
+        setError(
+          "There is no email address on this account. Ask clinic staff to help you reset your password.",
+        );
+        return;
+      }
+      const result = await requestPasswordReset(email, "patient");
+      if (result.ok) {
+        setSuccess(`We've emailed a password reset link to ${email}.`);
+      } else {
+        setError(result.message);
+      }
     } catch (err) {
       logger.error("Error initiating password reset:", err);
       setError("Failed to send password reset link");
@@ -305,8 +321,8 @@ export function ManageAccount() {
                     Password
                   </h3>
                   <p className="text-gray-600 mb-4">
-                    Reset your password using your registered phone number or
-                    email
+                    We'll email you a link to choose a new password. You'll be
+                    signed out on all devices once it's changed.
                   </p>
                   <button
                     onClick={initiatePasswordReset}
