@@ -108,7 +108,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
         description:
           "Records changed both on this device and on the server: choose which version to keep.",
         to: "/admin/conflicts",
-        access: { kind: "roles", roles: ["admin", "doctor", "nurse"] },
+        access: { kind: "roles", roles: ["admin", "doctor", "nurse", "lead_clinician", "auditor"] },
       },
       {
         id: "fhir-export",

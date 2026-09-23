@@ -10,6 +10,7 @@ import { AccessibilityControls } from "@/components/AccessibilityControls";
 import { can, getRoleDisplayName } from "@/auth/roles";
 import { ActiveSiteControl } from "@/components/shell/ActiveSiteControl";
 import { SyncStatusControl } from "@/components/shell/SyncStatusControl";
+import { hasAnyAdminEntry } from "@/features/admin/adminSections";
 import {
   HomeIcon,
   UserGroupIcon,
@@ -38,6 +39,7 @@ import {
   DocumentTextIcon,
   CalendarDaysIcon,
   Cog6ToothIcon,
+  Squares2X2Icon,
 } from "@heroicons/react/24/outline";
 
 // Pharmacy Overlay Component
@@ -254,7 +256,7 @@ export function Layout({ children }: LayoutProps) {
             ]
           : []),
         { key: "pharmacy", name: t("nav.pharmacy"), href: "/pharmacy", icon: BeakerIcon },
-        ...(hasRole("doctor", "nurse", "admin")
+        ...(hasRole("doctor", "nurse", "admin", "lead_clinician")
           ? [
               { key: "labs", name: "Labs", href: "/labs", icon: DocumentMagnifyingGlassIcon },
             ]
@@ -288,7 +290,7 @@ export function Layout({ children }: LayoutProps) {
       label: "Games & training",
       items: [
         { key: "games", name: t("nav.games"), href: "/games", icon: TrophyIcon },
-        ...(hasRole("volunteer", "nurse", "admin")
+        ...(hasPerm("inventory")
           ? [{ key: "restock", name: t("nav.restock_game"), href: "/inv/game", icon: GiftIcon }]
           : []),
       ],
@@ -296,13 +298,16 @@ export function Layout({ children }: LayoutProps) {
     {
       label: "Administration",
       items: [
+        ...(hasAnyAdminEntry(role)
+          ? [{ key: "admin", name: "Overview", href: "/admin", icon: Squares2X2Icon }]
+          : []),
         ...(hasPerm("users")
           ? [
               { key: "users", name: t("nav.user_management"), href: "/users", icon: UsersIcon },
-              { key: "approvals", name: t("nav.approve_games"), href: "/admin/approvals", icon: CheckCircleIcon },
+              { key: "approvals", name: "Training game approvals", href: "/admin/approvals", icon: CheckCircleIcon },
             ]
           : []),
-        ...(hasRole("admin", "doctor", "nurse") && hasPerm("resolve_conflicts")
+        ...(hasRole("admin", "doctor", "nurse", "lead_clinician", "auditor") && hasPerm("resolve_conflicts")
           ? [{ key: "conflicts", name: "Sync conflicts", href: "/admin/conflicts", icon: DocumentDuplicateIcon }]
           : []),
         ...(hasRole("admin")
@@ -313,6 +318,9 @@ export function Layout({ children }: LayoutProps) {
   ].filter((g) => g.items.length > 0);
 
   const isItemActive = (item: NavItem) => {
+    // The overview is the parent of every /admin/* page; only highlight it
+    // on the overview itself so the specific page's item stays active.
+    if (item.key === "admin") return location.pathname === "/admin";
     if (item.key === "pharmacy") {
       return (
         location.pathname.startsWith("/rx/") ||

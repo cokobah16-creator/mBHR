@@ -79,9 +79,10 @@ describe("adminSectionsForRole", () => {
   });
 
   it("follows the RBAC matrix for permission-based entries", () => {
-    // auditor and lead_clinician hold the export permission but not users
-    expect(ids("auditor")).toEqual(["fhir-export"]);
-    expect(ids("lead_clinician")).toEqual(["fhir-export"]);
+    // auditor and lead_clinician hold the export permission but not users;
+    // both approve sync conflicts, so the conflicts route admits them too.
+    expect(ids("auditor")).toEqual(["conflicts", "fhir-export"]);
+    expect(ids("lead_clinician")).toEqual(["conflicts", "fhir-export"]);
   });
 
   it("drops sections whose entries are all hidden", () => {
