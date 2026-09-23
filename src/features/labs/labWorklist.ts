@@ -88,6 +88,20 @@ export const PRIORITY_LABEL: Record<LabOrder["priority"], string> = {
   routine: "Routine",
 };
 
+const INTERPRETATIONS: readonly Interpretation[] = ["normal", "abnormal", "critical"];
+
+/**
+ * True only for a deliberately chosen interpretation. Used before a result
+ * is written: an empty or unknown value must never reach the server, where
+ * the column's default would file it as "normal".
+ */
+export function isInterpretation(value: unknown): value is Interpretation {
+  return (
+    typeof value === "string" &&
+    (INTERPRETATIONS as readonly string[]).includes(value)
+  );
+}
+
 const SEVERITY_RANK: Record<Interpretation, number> = {
   critical: 2,
   abnormal: 1,

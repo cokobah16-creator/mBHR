@@ -20,9 +20,22 @@ export type Permission =
   | "users" // Manage users
   | "approve_phi_conflicts" // Approve high-sensitivity PHI conflict resolutions
   | "audit_access" // Access audit logs and compliance reports
-  | "resolve_conflicts"; // Resolve data conflicts
+  | "resolve_conflicts" // Resolve data conflicts
+  /**
+   * Mark lab results reviewed (the clinical review of a result, including
+   * abnormal and critical ones). Kept separate from "consult" so it can be
+   * granted to other authorised professionals (for example lab scientists
+   * or senior nurses) without granting consultations.
+   *
+   * Which roles hold it must follow DIOF's clinical policy, and must match
+   * public.app_role_has_permission(..., 'lab_review') in the database, which
+   * enforces the same rule on the server. Change both together.
+   */
+  | "lab_review";
 
-// Role permission matrix
+// Role permission matrix. lab_review is granted to doctor, lead_clinician
+// and admin for now; that list must follow DIOF clinical policy and match
+// public.app_role_has_permission in the database.
 const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
   volunteer: {
     register: true,
@@ -35,6 +48,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: false,
+    lab_review: false,
   },
   nurse: {
     register: true,
@@ -47,6 +61,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: true,
+    lab_review: false,
   },
   doctor: {
     register: true,
@@ -59,6 +74,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: true,
+    lab_review: true,
   },
   pharmacist: {
     register: false,
@@ -71,6 +87,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: false,
+    lab_review: false,
   },
   admin: {
     register: true,
@@ -83,6 +100,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: true,
     audit_access: true,
     resolve_conflicts: true,
+    lab_review: true,
   },
   guest: {
     register: false,
@@ -95,6 +113,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: false,
+    lab_review: false,
   },
   auditor: {
     register: false,
@@ -107,6 +126,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: true,
     audit_access: true,
     resolve_conflicts: true,
+    lab_review: false,
   },
   lead_clinician: {
     register: true,
@@ -119,6 +139,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: true,
     audit_access: true,
     resolve_conflicts: true,
+    lab_review: true,
   },
 };
 

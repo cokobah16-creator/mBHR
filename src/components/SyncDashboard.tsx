@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
-import { ArrowPathIcon, SignalSlashIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, LockClosedIcon, SignalSlashIcon } from "@heroicons/react/24/outline";
 import { enhancedSync } from "@/services/enhancedSync";
 import { countUnsyncedRecords } from "@/sync/adapter";
 import { useSyncStore } from "@/stores/syncStore";
@@ -14,6 +14,14 @@ import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { formatConflictAge, formatTimestamp, humanise } from "@/features/conflicts/conflictLabels";
 import { deriveSyncHeadline } from "@/features/conflicts/syncStatus";
 import { countDirtyIn, ENHANCED_ONLY_TABLES } from "@/features/conflicts/syncCounts";
+import {
+  checkCloudSession,
+  useCloudSession,
+  NO_CLOUD_SESSION_DETAIL,
+  NO_CLOUD_SESSION_LABEL,
+  ONLINE_SIGN_IN_HINT,
+  ONLINE_SIGN_IN_PATH,
+} from "@/lib/cloudSession";
 
 /** Tables the dashboard's Sync now (enhanced sync) downloads. */
 const SESSION_TABLES = [
@@ -85,6 +93,8 @@ export function SyncDashboard() {
   const errorMessage = useSyncStore((s) => s.errorMessage);
   const adapterSyncing = useSyncStore((s) => s.status === "syncing");
   const operations = useOperationsQueue((s) => s.operations);
+  const cloudSession = useCloudSession();
+  const noSession = configured && cloudSession === "signed_out";
 
   const coreWaiting = useLiveQuery(() => countUnsyncedRecords(), []);
   const extraWaiting = useLiveQuery(() => countDirtyIn(ENHANCED_ONLY_TABLES), []);
@@ -138,6 +148,9 @@ export function SyncDashboard() {
 
   const handleSync = async () => {
     if (syncing || !online) return;
+    // Without an online sign-in (for example after a PIN unlock) no sync
+    // may start; the status below explains how to sign in online.
+    if (!(await checkCloudSession())) return;
     setRunning(true);
     try {
       const result = await enhancedSync.syncAll();
@@ -187,16 +200,25 @@ export function SyncDashboard() {
   }
 
   const conflictCount = conflicts.state === "ok" ? conflicts.count : null;
-  const headline = deriveSyncHeadline({
-    configured,
-    online,
-    syncing,
-    waiting,
-    failed,
-    errorMessage,
-    conflicts: conflictCount,
-    lastSuccessText: lastSuccessAt > 0 ? formatTimestamp(new Date(lastSuccessAt)) : null,
-  });
+  const headline = noSession
+    ? {
+        tone: "warning" as const,
+        title: NO_CLOUD_SESSION_LABEL,
+        detail:
+          waiting && waiting > 0
+            ? `${plural(waiting, "change")} saved on this device, not uploaded. ${NO_CLOUD_SESSION_DETAIL}`
+            : NO_CLOUD_SESSION_DETAIL,
+      }
+    : deriveSyncHeadline({
+        configured,
+        online,
+        syncing,
+        waiting,
+        failed,
+        errorMessage,
+        conflicts: conflictCount,
+        lastSuccessText: lastSuccessAt > 0 ? formatTimestamp(new Date(lastSuccessAt)) : null,
+      });
 
   const conflictValue = (() => {
     switch (conflicts.state) {
@@ -252,7 +274,7 @@ export function SyncDashboard() {
         <button
           type="button"
           onClick={handleSync}
-          disabled={syncing || !online}
+          disabled={syncing || !online || noSession}
           className="btn-primary"
         >
           <ArrowPathIcon
@@ -271,7 +293,22 @@ export function SyncDashboard() {
           <p className="min-w-0 flex-1 text-body text-ink-secondary">{headline.detail}</p>
         </div>
 
-        {!online && (
+        {noSession && (
+          <div className="banner banner-warning">
+            <LockClosedIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <div className="space-y-1">
+              <p>Sync now needs an online sign-in. {ONLINE_SIGN_IN_HINT}</p>
+              <Link
+                to={ONLINE_SIGN_IN_PATH}
+                className="inline-flex min-h-touch-target items-center font-medium underline hover:no-underline"
+              >
+                Sign in online
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {!online && !noSession && (
           <div className="banner banner-warning">
             <SignalSlashIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <p>You are offline. Sync now is available when the connection returns.</p>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowPathIcon,
   CheckCircleIcon,
@@ -7,6 +7,7 @@ import {
   ExclamationTriangleIcon,
   SignalSlashIcon,
   ServerIcon,
+  LockClosedIcon,
 } from "@heroicons/react/20/solid";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
@@ -30,8 +31,17 @@ import { conflictQueueService } from "@/services/conflictQueue";
 import { ConflictResolutionModal, type ConflictData } from "../ConflictResolutionModal";
 import { usePopover } from "./usePopover";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  checkCloudSession,
+  useCloudSession,
+  NO_CLOUD_SESSION_DETAIL,
+  NO_CLOUD_SESSION_LABEL,
+  ONLINE_SIGN_IN_HINT,
+  ONLINE_SIGN_IN_PATH,
+} from "@/lib/cloudSession";
+import { deriveSyncIndicatorKind, type SyncIndicatorKind } from "@/lib/syncIndicator";
 
-type Kind = "offline" | "local" | "syncing" | "error" | "conflict" | "pending" | "synced" | "idle";
+type Kind = SyncIndicatorKind;
 
 function clock(ts: number) {
   return new Date(ts).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" });
@@ -55,6 +65,8 @@ export function SyncStatusControl() {
   const [conflicts, setConflicts] = useState<ConflictData[]>([]);
   const [currentConflict, setCurrentConflict] = useState<ConflictData | null>(null);
   const [conflictCount, setConflictCount] = useState(0);
+  const cloudSession = useCloudSession();
+  const noSession = syncEnabled && cloudSession === "signed_out";
 
   const loadConflicts = useCallback(async () => {
     if (!isOnlineSyncEnabled()) return;
@@ -73,6 +85,17 @@ export function SyncStatusControl() {
   }, [loadConflicts]);
 
   const handleSync = async () => {
+    // A PIN unlock opens this device's records only. Without an online
+    // sign-in nothing may start a sync (or recreate the sign-in).
+    if (!(await checkCloudSession())) {
+      push({
+        id: generateId(),
+        tone: "warning",
+        title: NO_CLOUD_SESSION_LABEL,
+        body: `${NO_CLOUD_SESSION_DETAIL} ${ONLINE_SIGN_IN_HINT}`,
+      });
+      return;
+    }
     syncStore.setStatus("syncing");
     try {
       const result = await syncNow();
@@ -220,23 +243,19 @@ export function SyncStatusControl() {
   const failed = queueStore.getFailedCount();
   const syncing = syncStore.status === "syncing";
 
-  const kind: Kind = !online
-    ? "offline"
-    : !syncEnabled
-      ? "local"
-      : syncing
-        ? "syncing"
-        : syncStore.errorMessage || failed > 0
-          ? "error"
-          : conflictCount > 0
-            ? "conflict"
-            : pending > 0
-              ? "pending"
-              : syncStore.lastSuccessAt > 0
-                ? "synced"
-                : "idle";
+  const kind: Kind = deriveSyncIndicatorKind({
+    online,
+    syncEnabled,
+    cloudSession,
+    syncing,
+    hasError: !!syncStore.errorMessage || failed > 0,
+    conflictCount,
+    pending,
+    lastSuccessAt: syncStore.lastSuccessAt,
+  });
 
   const view: Record<Kind, { label: string; Icon: typeof CheckCircleIcon; cls: string }> = {
+    no_session: { label: NO_CLOUD_SESSION_LABEL, Icon: LockClosedIcon, cls: "text-warning" },
     offline: { label: "Offline", Icon: SignalSlashIcon, cls: "text-ink-secondary" },
     local: { label: "This device only", Icon: ServerIcon, cls: "text-ink-secondary" },
     syncing: { label: "Syncing", Icon: ArrowPathIcon, cls: "text-info" },
@@ -284,6 +303,18 @@ export function SyncStatusControl() {
               </dd>
             </div>
             {syncEnabled && (
+              <div className="flex justify-between gap-3 px-3 py-2.5">
+                <dt className="text-ink-muted">Online sign-in</dt>
+                <dd className="font-medium text-ink">
+                  {cloudSession === "signed_in"
+                    ? "Signed in"
+                    : cloudSession === "signed_out"
+                      ? "Not signed in"
+                      : "Checking…"}
+                </dd>
+              </div>
+            )}
+            {syncEnabled && (
               <>
                 <div className="flex justify-between gap-3 px-3 py-2.5">
                   <dt className="text-ink-muted">Last successful sync</dt>
@@ -320,6 +351,23 @@ export function SyncStatusControl() {
               {syncStore.errorMessage}
             </p>
           )}
+          {noSession && (
+            <div className="mx-3 mb-2 banner banner-warning text-caption" role="status">
+              <LockClosedIcon className="h-4 w-4 shrink-0" aria-hidden />
+              <div className="min-w-0 space-y-1">
+                <p className="font-medium">{NO_CLOUD_SESSION_LABEL}</p>
+                <p>{NO_CLOUD_SESSION_DETAIL}</p>
+                <Link
+                  to={ONLINE_SIGN_IN_PATH}
+                  onClick={() => setOpen(false)}
+                  className="inline-flex min-h-touch-target items-center font-medium underline hover:no-underline"
+                >
+                  Sign in online
+                </Link>
+                <p>{ONLINE_SIGN_IN_HINT}</p>
+              </div>
+            </div>
+          )}
           {!syncEnabled && (
             <p className="px-3 pb-3 text-caption text-ink-muted">
               Records are saved on this device only.
@@ -330,7 +378,7 @@ export function SyncStatusControl() {
               <button
                 type="button"
                 onClick={handleSync}
-                disabled={syncing || !online}
+                disabled={syncing || !online || noSession}
                 className="btn-primary flex-1 min-h-10 py-2"
               >
                 <ArrowPathIcon className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} aria-hidden />

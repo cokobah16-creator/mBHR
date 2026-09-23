@@ -5,6 +5,7 @@ import {
   deriveLabStage,
   describeLabError,
   formatResultValue,
+  isInterpretation,
   isLabFilter,
   matchesFilter,
   matchesSearch,
@@ -196,5 +197,39 @@ describe("describeLabError", () => {
     expect(describeLabError(new Error("boom"), "Not sent.")).toBe(
       "Not sent. Check the connection and try again.",
     );
+  });
+});
+
+describe("isInterpretation", () => {
+  it("accepts only a deliberately chosen interpretation", () => {
+    expect(isInterpretation("normal")).toBe(true);
+    expect(isInterpretation("abnormal")).toBe(true);
+    expect(isInterpretation("critical")).toBe(true);
+  });
+
+  it("rejects empty, missing or unknown values instead of treating them as normal", () => {
+    expect(isInterpretation("")).toBe(false);
+    expect(isInterpretation(undefined)).toBe(false);
+    expect(isInterpretation(null)).toBe(false);
+    expect(isInterpretation("Normal")).toBe(false);
+    expect(isInterpretation("high")).toBe(false);
+  });
+});
+
+describe("severity is never downgraded to normal", () => {
+  it("keeps the worst interpretation when a normal result follows an abnormal or critical one", () => {
+    expect(
+      worstInterpretation([{ interpretation: "critical" }, { interpretation: "normal" }]),
+    ).toBe("critical");
+    expect(
+      worstInterpretation([{ interpretation: "normal" }, { interpretation: "abnormal" }]),
+    ).toBe("abnormal");
+  });
+
+  it("sorts an unreviewed critical result ahead of an unreviewed normal one", () => {
+    const base = { stage: "awaiting_review" as LabStage, priority: "routine" as const };
+    const critical: WorklistSortable = { ...base, severity: "critical" };
+    const normal: WorklistSortable = { ...base, severity: "normal" };
+    expect([normal, critical].sort(compareWorklist)[0]).toBe(critical);
   });
 });
