@@ -45,6 +45,7 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import { getActiveSiteName } from "@/services/activeSite";
+import { queueManagement } from "@/services/queueManagement";
 
 const STAGE_PERMISSION: Record<FlowStage, Permission> = {
   registration: "vitals",
@@ -195,6 +196,19 @@ export function PatientDetail() {
       };
 
       await db.visits.add(visit);
+
+      // A newly registered patient still sits in the registration queue.
+      // Finish that stage first, or saving vitals would only advance them
+      // to vitals and leave them a stage behind.
+      const current = await db.queue
+        .where("patientId")
+        .equals(patient.id)
+        .and((i) => i.status !== "done")
+        .first();
+      if (current?.stage === "registration") {
+        await queueManagement.moveToNextStage(patient.id);
+      }
+
       navigate(`/vitals/${visit.id}`);
     } catch (error) {
       console.error("Error starting visit:", error);

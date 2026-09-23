@@ -401,8 +401,13 @@ export async function pullChanges() {
     let maxTs = since;
     for (const row of data ?? []) {
       const mapped = fromDB(row, mapFromDB[t]);
+      // Queue rows carry device-local fields the column map does not sync
+      // (assignee, ticket number, priority); lay the remote row over the
+      // local one instead of replacing it, so those survive a pull.
+      const localRow = t === "queue" ? await db.queue.get(mapped.id) : undefined;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (db as any)[localTable].put({
+        ...localRow,
         ...mapped,
         _dirty: 0,
         _syncedAt: new Date().toISOString(),

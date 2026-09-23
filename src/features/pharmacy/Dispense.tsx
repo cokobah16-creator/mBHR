@@ -44,6 +44,8 @@ export default function Dispense() {
   const [items, setItems] = useState<PharmacyItem[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [allergens, setAllergens] = useState<string[]>([]);
+  const [allergyStatus, setAllergyStatus] = useState<"loading" | "ready" | "error">("ready");
+  const [allergyRetry, setAllergyRetry] = useState(0);
   const [selected, setSelected] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -90,18 +92,32 @@ export default function Dispense() {
   useEffect(() => {
     setAllergyAck(false);
     setError("");
+    setAllergens([]);
     if (!chosenPatientId) {
-      setAllergens([]);
+      setAllergyStatus("ready");
       return;
     }
+    // Dispensing stays blocked until this patient's allergies are known;
+    // a failed lookup must never read as "no allergies".
+    setAllergyStatus("loading");
+    let stale = false;
     db.patientAllergies
       .where("patientId")
       .equals(chosenPatientId)
       .filter((a) => a.isActive === 1 && a.allergyType === "medication")
       .toArray()
-      .then((as) => setAllergens(as.map((a) => a.allergen)))
-      .catch(() => setAllergens([]));
-  }, [selected, chosenPatientId]);
+      .then((as) => {
+        if (stale) return;
+        setAllergens(as.map((a) => a.allergen));
+        setAllergyStatus("ready");
+      })
+      .catch(() => {
+        if (!stale) setAllergyStatus("error");
+      });
+    return () => {
+      stale = true;
+    };
+  }, [selected, chosenPatientId, allergyRetry]);
 
   const plans: LinePlan[] = useMemo(() => {
     if (!chosen) return [];
@@ -131,6 +147,7 @@ export default function Dispense() {
     !!chosen &&
     plans.length > 0 &&
     shortLines.length === 0 &&
+    allergyStatus === "ready" &&
     (allergyHits.length === 0 || allergyAck) &&
     !loading;
 
@@ -322,6 +339,28 @@ export default function Dispense() {
                   <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
                   {error}
                 </div>
+              )}
+
+              {allergyStatus === "error" && (
+                <div className="banner banner-danger" role="alert">
+                  <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <span className="flex-1">
+                    This patient's allergies could not be read, so dispensing is blocked.
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setAllergyRetry((n) => n + 1)}
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+
+              {allergyStatus === "loading" && (
+                <p className="text-caption text-ink-muted" role="status">
+                  Checking recorded allergies…
+                </p>
               )}
 
               {allergyHits.length > 0 && (
