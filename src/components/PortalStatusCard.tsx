@@ -2,25 +2,20 @@
  * Portal Status Card Component
  *
  * Displays patient portal enrollment status with:
- * - Enable/disable toggle
+ * - Enable/disable switch (turning access off asks for confirmation)
  * - Verification status
  * - Last login date
  * - Invitation history
- * - Send/resend invitation button with rate limiting
+ * - Send/resend invitation button with rate limiting, and an honest
+ *   message when no email or SMS could be sent
  */
 
-import React, { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  ShieldCheckIcon,
   EnvelopeIcon,
-  PhoneIcon,
-  ClockIcon,
-  CheckCircleIcon,
-  ArrowPathIcon,
-  ExclamationCircleIcon,
-  GlobeAltIcon,
   ClipboardDocumentIcon,
   ClipboardDocumentCheckIcon,
+  LinkIcon,
 } from "@heroicons/react/24/outline";
 import {
   getPortalStatus,
@@ -31,7 +26,14 @@ import {
 } from "@/services/portalEnrollment";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useToast } from "@/stores/toast";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
+import { generateId } from "@/db";
 import { getErrorMessage } from "@/utils/errors";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
+import { useServerStatus } from "@/features/admin/useServerStatus";
 
 interface PortalStatusCardProps {
   patientId: string;
@@ -39,15 +41,41 @@ interface PortalStatusCardProps {
   onStatusChange?: () => void;
 }
 
+// "sent" is recorded both when the server sent the message and when no
+// message could be sent and staff were given a link to share instead.
+const INVITE_STATUS: Record<
+  NonNullable<PortalStatusInfo["inviteStatus"]>,
+  { label: string; tone: Tone }
+> = {
+  queued: { label: "Queued", tone: "info" },
+  sent: { label: "Sent or link shared", tone: "info" },
+  delivered: { label: "Delivered", tone: "success" },
+  failed: { label: "Failed", tone: "danger" },
+};
+
+const formatCountdown = (seconds: number): string => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+};
+
 export function PortalStatusCard({
   patientId,
   patientName,
   onStatusChange,
 }: PortalStatusCardProps) {
+  const role = useAuthStore((s) => s.currentUser?.role);
+  // Portal access is part of the patient's registration details.
+  const canEdit = !!role && can(role, "register");
+  const server = useServerStatus();
+  const firstName = patientName.split(" ")[0];
+  const titleId = `portal-card-${patientId}`;
+
   const [status, setStatus] = useState<PortalStatusInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [confirmDisable, setConfirmDisable] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
   const [inviteLink, setInviteLink] = useState<{
     url: string;
@@ -56,20 +84,7 @@ export function PortalStatusCard({
   const [copied, setCopied] = useState(false);
   const { push: pushToast } = useToast();
 
-  useEffect(() => {
-    loadStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId]);
-
-  // Countdown timer for rate limiting
-  useEffect(() => {
-    if (countdown > 0) {
-      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [countdown]);
-
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     setLoading(true);
     try {
       const portalStatus = await getPortalStatus(patientId);
@@ -86,41 +101,71 @@ export function PortalStatusCard({
         setCountdown(secondsUntil);
       }
     } catch (error) {
-      console.error("Error loading portal status:", error);
+      console.error(
+        "Error loading portal status:",
+        error instanceof Error ? error.name : error,
+      );
     } finally {
       setLoading(false);
     }
-  };
+  }, [patientId]);
 
-  const handleTogglePortal = async () => {
+  useEffect(() => {
+    loadStatus();
+  }, [loadStatus]);
+
+  // Countdown timer for rate limiting
+  useEffect(() => {
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [countdown]);
+
+  const setPortalAccess = async (enable: boolean) => {
+    setConfirmDisable(false);
     if (!status) return;
+    if (!canEdit) {
+      pushToast({
+        id: generateId(),
+        tone: "error",
+        title: "Not allowed",
+        body: "Your role cannot change portal access.",
+      });
+      return;
+    }
 
     setToggling(true);
     try {
-      const result = status.enabled
-        ? await disablePortalAccess(patientId)
-        : await enablePortalAccess(patientId, { termsAccepted: true });
+      const result = enable
+        ? await enablePortalAccess(patientId, { termsAccepted: true })
+        : await disablePortalAccess(patientId);
 
       if (result.success) {
         pushToast({
-          id: crypto.randomUUID(),
-          title: "Success",
-          body: `Portal access ${status.enabled ? "disabled" : "enabled"} successfully`,
+          id: generateId(),
+          tone: "success",
+          title: enable ? "Portal access turned on" : "Portal access turned off",
+          body:
+            server.state === "not-configured"
+              ? "Saved on this device only: no server is connected."
+              : "Saved on this device. The change uploads at the next sync.",
         });
         await loadStatus();
         onStatusChange?.();
       } else {
         pushToast({
-          id: crypto.randomUUID(),
-          title: "Error",
-          body: result.error || "Failed to update portal access",
+          id: generateId(),
+          tone: "error",
+          title: "Portal access not changed",
+          body: result.error || "Try again.",
         });
       }
-       
     } catch (error: unknown) {
       pushToast({
-        id: crypto.randomUUID(),
-        title: "Error",
+        id: generateId(),
+        tone: "error",
+        title: "Portal access not changed",
         body: getErrorMessage(error),
       });
     } finally {
@@ -128,39 +173,56 @@ export function PortalStatusCard({
     }
   };
 
+  const handleSwitch = () => {
+    if (!status) return;
+    if (status.enabled) setConfirmDisable(true);
+    else setPortalAccess(true);
+  };
+
   const handleSendInvitation = async () => {
+    if (!canEdit) {
+      pushToast({
+        id: generateId(),
+        tone: "error",
+        title: "Not allowed",
+        body: "Your role cannot send portal invitations.",
+      });
+      return;
+    }
     setSending(true);
     try {
       const result = await sendPortalInvitation(patientId);
 
       if (result.success) {
         if (result.registrationUrl) {
-          // Show the registration link — amber if offline (no email sent), green if delivered
+          // Show the registration link: a warning if no email/SMS was sent
           setInviteLink({
             url: result.registrationUrl,
             delivered: !result.demoOTP,
           });
         } else {
           pushToast({
-            id: crypto.randomUUID(),
-            title: "Invitation Sent",
-            body: "Portal invitation sent successfully.",
+            id: generateId(),
+            tone: "success",
+            title: "Invitation sent",
+            body: "Portal invitation sent.",
           });
         }
         await loadStatus();
         onStatusChange?.();
       } else {
         pushToast({
-          id: crypto.randomUUID(),
-          title: "Error",
-          body: result.error || "Failed to send invitation",
+          id: generateId(),
+          tone: "error",
+          title: "Invitation not sent",
+          body: result.error || "Try again.",
         });
       }
-       
     } catch (error: unknown) {
       pushToast({
-        id: crypto.randomUUID(),
-        title: "Error",
+        id: generateId(),
+        tone: "error",
+        title: "Invitation not sent",
         body: getErrorMessage(error),
       });
     } finally {
@@ -170,310 +232,284 @@ export function PortalStatusCard({
 
   const handleCopyLink = async () => {
     if (!inviteLink) return;
-    await navigator.clipboard.writeText(inviteLink.url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    try {
+      await navigator.clipboard.writeText(inviteLink.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      pushToast({
+        id: generateId(),
+        tone: "warning",
+        title: "Could not copy the link",
+        body: "Select the link and copy it yourself.",
+      });
+    }
   };
 
-  const formatCountdown = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  if (loading) {
+  if (loading && !status) {
     return (
-      <div className="card">
-        <div className="flex items-center justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <section className="panel" aria-labelledby={titleId}>
+        <div className="panel-header">
+          <h2 id={titleId} className="panel-title">
+            Patient portal
+          </h2>
         </div>
-      </div>
+        <div className="panel-body space-y-3" aria-hidden>
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+        <span role="status" className="sr-only">
+          Loading portal status
+        </span>
+      </section>
     );
   }
 
   if (!status) {
     return (
-      <div className="card bg-gray-50">
-        <div className="flex items-center space-x-3">
-          <ExclamationCircleIcon className="h-6 w-6 text-gray-400" />
-          <p className="text-gray-600">Portal status unavailable</p>
+      <section className="panel" aria-labelledby={titleId}>
+        <div className="panel-header">
+          <h2 id={titleId} className="panel-title">
+            Patient portal
+          </h2>
         </div>
-      </div>
+        <p className="panel-body text-body text-ink-muted">
+          Portal status could not be read for this patient on this device.
+        </p>
+      </section>
     );
   }
 
-  const getStatusBadge = () => {
-    if (!status.enabled) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-          Disabled
-        </span>
-      );
-    }
-    if (status.verified) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-          <CheckCircleIcon className="h-3.5 w-3.5 mr-1" />
-          Verified
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-        <ClockIcon className="h-3.5 w-3.5 mr-1" />
-        Pending Verification
-      </span>
-    );
-  };
+  const statusBadge = !status.enabled ? (
+    <StatusBadge tone="neutral" icon>
+      Not enabled
+    </StatusBadge>
+  ) : status.verified ? (
+    <StatusBadge tone="success" icon>
+      Verified
+    </StatusBadge>
+  ) : (
+    <StatusBadge tone="warning">Pending verification</StatusBadge>
+  );
 
-  const getInviteStatusBadge = () => {
-    if (!status.inviteStatus) return null;
-
-    const statusConfig = {
-      queued: { color: "bg-blue-100 text-blue-800", label: "Queued" },
-      sent: { color: "bg-indigo-100 text-indigo-800", label: "Sent" },
-      delivered: { color: "bg-green-100 text-green-800", label: "Delivered" },
-      failed: { color: "bg-red-100 text-red-800", label: "Failed" },
-    };
-
-    const config = statusConfig[status.inviteStatus];
-    return (
-      <span
-        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config.color}`}
-      >
-        {config.label}
-      </span>
-    );
-  };
+  const invite = status.inviteStatus ? INVITE_STATUS[status.inviteStatus] : null;
+  const contactLabel =
+    status.contactMethod === "email"
+      ? "Email"
+      : status.contactMethod === "phone"
+        ? "SMS"
+        : "None recorded";
 
   return (
-    <div className="card">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center space-x-3">
-          <div className="p-2 bg-blue-100 rounded-lg">
-            <GlobeAltIcon className="h-6 w-6 text-blue-600" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900">
-              Patient Portal Access
-            </h3>
-            <p className="text-sm text-gray-600">
-              Online medical records and appointments
-            </p>
-          </div>
+    <section className="panel" aria-labelledby={titleId}>
+      <div className="panel-header">
+        <div>
+          <h2 id={titleId} className="panel-title">
+            Patient portal
+          </h2>
+          <p className="text-caption text-ink-muted">
+            Online access to their medical records and appointments
+          </p>
         </div>
-        {getStatusBadge()}
+        {statusBadge}
       </div>
 
-      <div className="space-y-4">
-        {/* Portal Status Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Enabled/Disabled Status */}
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-            <div className="flex items-center space-x-2">
-              <ShieldCheckIcon className="h-5 w-5 text-gray-500" />
-              <span className="text-sm font-medium text-gray-700">
-                Portal Access
-              </span>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={status.enabled}
-                onChange={handleTogglePortal}
-                disabled={toggling}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
+      <div className="panel-body space-y-4">
+        {/* Access switch */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p id={`${titleId}-access`} className="text-label text-ink">
+              Portal access
+            </p>
+            <p className="text-caption text-ink-muted">
+              {canEdit
+                ? status.enabled
+                  ? "The patient can register and sign in to the portal."
+                  : "Turn on only after the patient agrees to use the portal."
+                : "Your role cannot change portal access."}
+            </p>
           </div>
-
-          {/* Contact Method */}
-          {status.contactMethod && (
-            <div className="flex items-center space-x-2 p-3 bg-gray-50 rounded-lg">
-              {status.contactMethod === "email" ? (
-                <EnvelopeIcon className="h-5 w-5 text-gray-500" />
-              ) : (
-                <PhoneIcon className="h-5 w-5 text-gray-500" />
-              )}
-              <div>
-                <p className="text-sm font-medium text-gray-700">
-                  {status.contactMethod === "email" ? "Email" : "SMS"}
-                </p>
-                <p className="text-xs text-gray-600">Contact method</p>
-              </div>
-            </div>
-          )}
-
-          {/* Last Login */}
-          {status.lastLogin && (
-            <div className="flex items-center space-x-2 p-3 bg-gray-50 rounded-lg">
-              <ClockIcon className="h-5 w-5 text-gray-500" />
-              <div>
-                <p className="text-sm font-medium text-gray-700">
-                  {formatNigerianDate(status.lastLogin)}
-                </p>
-                <p className="text-xs text-gray-600">Last login</p>
-              </div>
-            </div>
-          )}
-
-          {/* Invitation Count */}
-          {status.inviteCount > 0 && (
-            <div className="flex items-center space-x-2 p-3 bg-gray-50 rounded-lg">
-              <EnvelopeIcon className="h-5 w-5 text-gray-500" />
-              <div>
-                <p className="text-sm font-medium text-gray-700">
-                  {status.inviteCount}{" "}
-                  {status.inviteCount === 1 ? "invitation" : "invitations"}
-                </p>
-                <p className="text-xs text-gray-600">Sent</p>
-              </div>
-            </div>
+          {canEdit ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={status.enabled}
+              aria-labelledby={`${titleId}-access`}
+              onClick={handleSwitch}
+              disabled={toggling}
+              className="flex min-h-touch-target items-center gap-2 rounded-md px-2 text-label text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            >
+              <span
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  status.enabled ? "bg-primary" : "bg-line-strong"
+                }`}
+                aria-hidden
+              >
+                <span
+                  className={`inline-block h-5 w-5 rounded-full bg-surface transition-transform ${
+                    status.enabled ? "translate-x-[22px]" : "translate-x-0.5"
+                  }`}
+                />
+              </span>
+              <span className="w-8 text-left">{status.enabled ? "On" : "Off"}</span>
+            </button>
+          ) : (
+            <span className="text-label text-ink">
+              {status.enabled ? "On" : "Off"}
+            </span>
           )}
         </div>
+
+        {/* Facts */}
+        <dl className="grid gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-3">
+          <div className="bg-surface-sunken px-3 py-2">
+            <dt className="text-caption text-ink-muted">Contact method</dt>
+            <dd className="text-label text-ink">{contactLabel}</dd>
+          </div>
+          <div className="bg-surface-sunken px-3 py-2">
+            <dt className="text-caption text-ink-muted">Last portal sign-in</dt>
+            <dd className="text-label text-ink tabular-nums">
+              {status.lastLogin ? formatNigerianDate(status.lastLogin) : "Never"}
+            </dd>
+          </div>
+          <div className="bg-surface-sunken px-3 py-2">
+            <dt className="text-caption text-ink-muted">Invitations</dt>
+            <dd className="text-label text-ink tabular-nums">
+              {status.inviteCount || 0}
+            </dd>
+          </div>
+        </dl>
 
         {/* Invitation Status */}
         {status.enabled && status.lastInviteSent && (
-          <div className="border-t pt-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-gray-700">
-                Last Invitation
-              </span>
-              {getInviteStatusBadge()}
-            </div>
-            <p className="text-sm text-gray-600">
-              Sent {formatNigerianDate(status.lastInviteSent)}
-            </p>
+          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
+            <span className="text-label text-ink">Last invitation</span>
+            <span className="text-body text-ink-secondary tabular-nums">
+              {formatNigerianDate(status.lastInviteSent)}
+            </span>
+            {invite && (
+              <StatusBadge tone={invite.tone} icon>
+                {invite.label}
+              </StatusBadge>
+            )}
           </div>
         )}
 
         {/* Registration link panel — shown after sending invitation */}
         {inviteLink && (
-          <div className="border-t pt-4">
-            <div
-              className={`rounded-lg p-4 space-y-3 ${
-                inviteLink.delivered
-                  ? "bg-green-50 border border-green-300"
-                  : "bg-amber-50 border border-amber-300"
-              }`}
-            >
-              <p
-                className={`text-sm font-semibold ${
-                  inviteLink.delivered ? "text-green-900" : "text-amber-900"
-                }`}
-              >
-                {inviteLink.delivered
-                  ? "Invitation sent — registration link also shown below"
-                  : "No email service — share this link with the patient"}
-              </p>
-              <p
-                className={`text-xs ${
-                  inviteLink.delivered ? "text-green-800" : "text-amber-800"
-                }`}
-              >
-                {inviteLink.delivered
-                  ? "The patient will receive an email with this link. You can also copy and share it directly."
-                  : "Email requires Supabase + RESEND_API_KEY. Read this link aloud, show it on screen, or copy it and send via WhatsApp/SMS."}
-              </p>
+          <div
+            className={`space-y-3 rounded-md border px-4 py-3 ${
+              inviteLink.delivered
+                ? "border-success-line bg-success-soft"
+                : "border-warning-line bg-warning-soft"
+            }`}
+            role="status"
+          >
+            <div className="flex items-start gap-2">
+              {inviteLink.delivered ? (
+                <EnvelopeIcon className="mt-0.5 h-5 w-5 shrink-0 text-success" aria-hidden />
+              ) : (
+                <LinkIcon className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden />
+              )}
               <div
-                className={`flex items-center gap-2 bg-white rounded-md px-3 py-2 border ${
-                  inviteLink.delivered ? "border-green-300" : "border-amber-300"
+                className={`space-y-1 text-body ${
+                  inviteLink.delivered ? "text-success-fg" : "text-warning-fg"
                 }`}
               >
-                <span className="text-xs text-gray-700 truncate flex-1 font-mono">
-                  {inviteLink.url}
-                </span>
-                <button
-                  onClick={handleCopyLink}
-                  className={`shrink-0 flex items-center gap-1 text-xs font-medium ${
-                    inviteLink.delivered
-                      ? "text-green-800 hover:text-green-900"
-                      : "text-amber-800 hover:text-amber-900"
-                  }`}
-                  title="Copy to clipboard"
-                >
-                  {copied ? (
-                    <>
-                      <ClipboardDocumentCheckIcon className="h-4 w-4 text-green-600" />
-                      <span className="text-green-700">Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <ClipboardDocumentIcon className="h-4 w-4" />
-                      Copy
-                    </>
-                  )}
-                </button>
+                <p className="font-medium">
+                  {inviteLink.delivered
+                    ? `Invitation sent by ${status.contactMethod === "email" ? "email" : "SMS"}`
+                    : "No email or SMS was sent"}
+                </p>
+                <p className="text-caption">
+                  {inviteLink.delivered
+                    ? "The patient will receive this registration link. You can also copy it and share it directly."
+                    : "Share this link with the patient: read it out, show it on screen, or send it by WhatsApp or SMS."}
+                </p>
               </div>
-              <p
-                className={`text-xs ${
-                  inviteLink.delivered ? "text-green-800" : "text-amber-800"
-                }`}
-              >
-                The patient's contact will be pre-filled. They only need to
-                enter their <strong>date of birth</strong> to complete
-                registration.
-              </p>
             </div>
+            <div className="flex items-center gap-2 rounded-md border border-line bg-surface px-3 py-1">
+              <span className="min-w-0 flex-1 truncate font-mono text-caption text-ink-secondary">
+                {inviteLink.url}
+              </span>
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="btn-ghost shrink-0"
+                aria-label="Copy registration link"
+              >
+                {copied ? (
+                  <>
+                    <ClipboardDocumentCheckIcon className="h-4 w-4" aria-hidden />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <ClipboardDocumentIcon className="h-4 w-4" aria-hidden />
+                    Copy
+                  </>
+                )}
+              </button>
+            </div>
+            <p className="text-caption text-ink-secondary">
+              The patient's contact is pre-filled. They only need to enter their
+              date of birth to finish registering.
+            </p>
           </div>
         )}
 
         {/* Send/Resend Button */}
         {status.enabled && (
-          <div className="border-t pt-4 space-y-3">
+          <div className="space-y-3 border-t border-line pt-4">
             {status.contactMethod ? (
-              <button
-                onClick={handleSendInvitation}
-                disabled={sending || countdown > 0}
-                className={`w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg font-medium transition-colors ${
-                  countdown === 0 && !sending
-                    ? "bg-blue-600 hover:bg-blue-700 text-white"
-                    : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                }`}
-              >
-                {sending ? (
-                  <>
-                    <ArrowPathIcon className="h-5 w-5 animate-spin" />
-                    <span>Sending...</span>
-                  </>
-                ) : countdown > 0 ? (
-                  <>
-                    <ClockIcon className="h-5 w-5" />
-                    <span>
-                      Resend available in {formatCountdown(countdown)}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <EnvelopeIcon className="h-5 w-5" />
-                    <span>
-                      {status.inviteCount > 0 ? "Resend" : "Send"} Portal
-                      Invitation
-                    </span>
-                  </>
-                )}
-              </button>
+              canEdit && (
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={handleSendInvitation}
+                    disabled={sending || countdown > 0}
+                    className="btn-primary w-full sm:w-auto"
+                  >
+                    {server.available ? (
+                      <EnvelopeIcon className="h-5 w-5" aria-hidden />
+                    ) : (
+                      <LinkIcon className="h-5 w-5" aria-hidden />
+                    )}
+                    {sending
+                      ? "Sending…"
+                      : countdown > 0
+                        ? `Resend available in ${formatCountdown(countdown)}`
+                        : server.available
+                          ? `${(status.inviteCount || 0) > 0 ? "Resend" : "Send"} portal invitation`
+                          : "Create registration link"}
+                  </button>
+                  {!server.available && (
+                    <p className="text-caption text-ink-muted">
+                      {server.state === "offline"
+                        ? "This device is offline, so no email or SMS can be sent. You'll get a link to share with the patient."
+                        : "No server is connected, so no email or SMS can be sent. You'll get a link to share with the patient."}
+                    </p>
+                  )}
+                </div>
+              )
             ) : (
-              <div className="text-center py-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4">
+              <div className="banner banner-warning">
                 Add an email or phone number to this patient's record before
                 sending a portal invitation.
               </div>
             )}
 
             {/* Patient access instructions for staff */}
-            {status.inviteCount > 0 && !status.verified && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-xs font-semibold text-blue-800 mb-1">
-                  What to tell the patient:
-                </p>
-                <p className="text-xs text-blue-700">
+            {(status.inviteCount || 0) > 0 && !status.verified && (
+              <div className="rounded-md border border-line bg-surface-sunken px-3 py-2">
+                <p className="text-label text-ink">What to tell the patient</p>
+                <p className="text-caption text-ink-secondary">
                   Go to <strong>{window.location.origin}/patient/login</strong>,
-                  click "Register here", and enter your{" "}
+                  choose "Register here", and enter your{" "}
                   {status.contactMethod === "email"
                     ? "email address"
                     : "phone number"}{" "}
-                  + date of birth.
+                  and date of birth.
                 </p>
               </div>
             )}
@@ -482,15 +518,31 @@ export function PortalStatusCard({
 
         {/* Enable Portal Prompt */}
         {!status.enabled && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <p className="text-sm text-blue-800">
-              Enable portal access to allow {patientName.split(" ")[0]} to view
-              medical records, schedule appointments, and communicate securely
-              online.
-            </p>
-          </div>
+          <p className="text-body text-ink-secondary">
+            Turning on portal access lets {firstName} view their medical
+            records, request appointments and message the clinic online.
+          </p>
         )}
       </div>
-    </div>
+
+      <ConfirmDialog
+        open={confirmDisable}
+        title={`Turn off portal access for ${firstName}?`}
+        confirmLabel="Turn off access"
+        tone="danger"
+        busy={toggling}
+        busyLabel="Turning off…"
+        onConfirm={() => setPortalAccess(false)}
+        onCancel={() => setConfirmDisable(false)}
+      >
+        <p>
+          {server.state === "not-configured"
+            ? "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."
+            : `${firstName} will not be able to sign in to the patient portal once this change syncs.`}{" "}
+          Their records are not deleted.
+        </p>
+        <p>You can turn access back on later.</p>
+      </ConfirmDialog>
+    </section>
   );
 }

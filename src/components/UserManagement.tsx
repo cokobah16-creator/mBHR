@@ -1,633 +1,894 @@
-import React, { useState, useEffect } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { db, User, generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
-import { derivePinHash, newSaltB64 } from "@/utils/pin";
+import { useToast } from "@/stores/toast";
+import { derivePinHash, newSaltB64, verifyPin } from "@/utils/pin";
 import { countOtherActiveAdmins, LAST_ADMIN_MESSAGE } from "@/db/firstRun";
-import { getRoleColor, getRoleDisplayName } from "@/auth/roles";
+import { can, getRoleDisplayName } from "@/auth/roles";
 import { supabase } from "@/lib/supabase";
+import { formatNigerianDate } from "@/utils/dateFormat";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
+import {
+  ASSIGNABLE_ROLES,
+  validateStaffForm,
+  describeRoleAccess,
+  gainedAccess,
+  lostAccess,
+  type StaffFormErrors,
+  type StaffFormValues,
+} from "@/features/admin/staffForm";
 import {
   UserPlusIcon,
   PencilIcon,
   TrashIcon,
-  EyeIcon,
-  EyeSlashIcon,
+  UsersIcon,
+  NoSymbolIcon,
+  CheckCircleIcon,
 } from "@heroicons/react/24/outline";
 
-// PINs are stored only as PBKDF2 hashes, so the one thing this column can ever
-// reveal is the published PIN of a demo account. Those exist in development
-// only (see src/db/seed.ts) — in a production build every row is masked.
-const DEMO_SEED_PINS: Record<string, string> = {
-  "Admin User": "123456",
-  "Dr. Sarah Johnson": "234567",
-  "Nurse Mary": "345678",
-  "Pharmacist John": "456789",
-  "Volunteer Mike": "567890",
+type FormState = StaffFormValues & {
+  adminAccess: boolean;
+  adminPermanent: boolean;
 };
 
-function displayPin(fullName: string): string {
-  if (!import.meta.env.DEV) return "••••••";
-  return DEMO_SEED_PINS[fullName] ?? "••••••";
+const EMPTY_FORM: FormState = {
+  fullName: "",
+  role: "volunteer",
+  email: "",
+  phone: "",
+  pin: "",
+  confirmPin: "",
+  adminAccess: false,
+  adminPermanent: false,
+};
+
+function errorName(error: unknown) {
+  return error instanceof Error ? error.name : error;
 }
 
+/**
+ * Staff accounts stored on this device. PINs are only ever typed in: they
+ * are stored as PBKDF2 hashes and never shown again after they are set.
+ */
 export function UserManagement() {
-  const { currentUser } = useAuthStore();
-  const [users, setUsers] = useState<User[]>([]);
-  const [showAddForm, setShowAddForm] = useState(false);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const { push: pushToast } = useToast();
+  const canManage = !!currentUser && can(currentUser.role, "users");
+
+  const [users, setUsers] = useState<User[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [errors, setErrors] = useState<StaffFormErrors>({});
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [confirmRoleChange, setConfirmRoleChange] = useState(false);
+
+  const [pendingStatusUser, setPendingStatusUser] = useState<User | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
   const [pendingDeleteUser, setPendingDeleteUser] = useState<User | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [showPins, setShowPins] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    fullName: "",
-    role: "volunteer" as User["role"],
-    email: "",
-    phone: "",
-    pin: "",
-    adminAccess: false,
-    adminPermanent: false,
-  });
 
-  useEffect(() => {
-    loadUsers();
-  }, []);
-
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     try {
       const allUsers = await db.users.orderBy("createdAt").toArray();
       setUsers(allUsers);
+      setLoadError(false);
     } catch (error) {
-      console.error("Error loading users:", error);
+      console.error("Error loading users:", errorName(error));
+      setLoadError(true);
+      setUsers((prev) => prev ?? []);
     }
-  };
+  }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
 
-    if (!formData.fullName || !formData.pin || formData.pin.length !== 6) {
-      alert("Please fill all fields and ensure PIN is 6 digits");
-      return;
-    }
-
-    // Prevent non-admins from granting admin access
-    if (formData.adminAccess && currentUser?.role !== "admin") {
-      alert("Only admins can grant admin access");
-      return;
-    }
-
-    // Prevent making users permanent admin unless current user is permanent admin
-    if (formData.adminPermanent && !currentUser?.adminPermanent) {
-      alert("Only permanent admins can create other permanent admins");
-      return;
-    }
-    setLoading(true);
-    try {
-      const salt = newSaltB64();
-      const pinHash = await derivePinHash(formData.pin, salt);
-
-      if (editingUser) {
-        // Prevent editing permanent admin status unless current user is permanent admin
-        if (editingUser.adminPermanent && !currentUser?.adminPermanent) {
-          alert("Cannot modify permanent admin users");
-          setLoading(false);
-          return;
-        }
-
-        // Losing the last admin locks user management away permanently:
-        // nothing else grants the `users` permission, and first-run setup
-        // refuses to run while an active account exists.
-        if (
-          editingUser.role === "admin" &&
-          formData.role !== "admin" &&
-          (await countOtherActiveAdmins(editingUser.id)) === 0
-        ) {
-          alert(LAST_ADMIN_MESSAGE);
-          setLoading(false);
-          return;
-        }
-
-        // Update existing user
-        await db.users.update(editingUser.id, {
-          fullName: formData.fullName,
-          role: formData.role,
-          email: formData.email || undefined,
-          phone: formData.phone || undefined,
-          pinHash,
-          pinSalt: salt,
-          adminAccess: formData.adminAccess,
-          adminPermanent: formData.adminPermanent,
-          updatedAt: new Date(),
-        });
-      } else {
-        // Create new user
-        const newUser: User = {
-          id: generateId(),
-          fullName: formData.fullName,
-          role: formData.role,
-          email: formData.email || undefined,
-          phone: formData.phone || undefined,
-          pinHash,
-          pinSalt: salt,
-          adminAccess: formData.adminAccess,
-          adminPermanent: formData.adminPermanent,
-          isActive: 1,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-
-        await db.users.add(newUser);
-      }
-
-      await loadUsers();
-      resetForm();
-    } catch (error) {
-      console.error("Error saving user:", error);
-      alert("Failed to save user");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const denied = () =>
+    pushToast({
+      id: generateId(),
+      tone: "error",
+      title: "Not allowed",
+      body: "Only an administrator can change staff accounts.",
+    });
 
   const resetForm = () => {
-    setFormData({
-      fullName: "",
-      role: "volunteer",
-      email: "",
-      phone: "",
-      pin: "",
-      adminAccess: false,
-      adminPermanent: false,
-    });
-    setShowAddForm(false);
+    setForm(EMPTY_FORM);
+    setErrors({});
+    setFormError("");
+    setShowForm(false);
     setEditingUser(null);
+    setConfirmRoleChange(false);
+  };
+
+  const openCreate = () => {
+    setForm(EMPTY_FORM);
+    setErrors({});
+    setFormError("");
+    setEditingUser(null);
+    setShowForm(true);
   };
 
   const startEdit = (user: User) => {
-    setFormData({
+    setForm({
       fullName: user.fullName,
       role: user.role,
       email: user.email || "",
       phone: user.phone || "",
-      pin: "", // Don't pre-fill PIN for security
+      pin: "", // never pre-filled: PINs are stored only as hashes
+      confirmPin: "",
       adminAccess: user.adminAccess || false,
       adminPermanent: user.adminPermanent || false,
     });
+    setErrors({});
+    setFormError("");
     setEditingUser(user);
-    setShowAddForm(true);
+    setShowForm(true);
   };
 
-  const toggleUserStatus = async (user: User) => {
-    if (user.id === currentUser?.id) {
-      alert("Cannot deactivate your own account");
+  /** Another account (active or not) that would sign in with this PIN. */
+  const pinInUse = async (pin: string, excludeId?: string) => {
+    const others = await db.users
+      .filter((u) => u.id !== excludeId && !!u.pinHash && !!u.pinSalt)
+      .toArray();
+    for (const u of others) {
+      if (await verifyPin(pin, u.pinHash, u.pinSalt)) return true;
+    }
+    return false;
+  };
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    setFormError("");
+    if (!canManage) {
+      denied();
       return;
     }
 
-    if (user.adminPermanent) {
-      alert("Cannot deactivate permanent admin users");
+    const found = validateStaffForm(form, editingUser ? "edit" : "create");
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      setFormError("Check the highlighted fields.");
       return;
     }
 
-    if (
-      user.isActive === 1 &&
-      user.role === "admin" &&
-      (await countOtherActiveAdmins(user.id)) === 0
-    ) {
-      alert(LAST_ADMIN_MESSAGE);
+    // Only admins can grant admin access
+    if (form.adminAccess && currentUser?.role !== "admin") {
+      setFormError("Only an administrator can grant admin access.");
+      return;
+    }
+    // Only permanent admins can create other permanent admins
+    if (form.adminPermanent && !currentUser?.adminPermanent) {
+      setFormError("Only a permanent admin can make another permanent admin.");
+      return;
+    }
+    // Only permanent admins can modify permanent admin accounts
+    if (editingUser?.adminPermanent && !currentUser?.adminPermanent) {
+      setFormError("Only a permanent admin can change a permanent admin account.");
       return;
     }
 
+    if (editingUser && editingUser.role !== form.role) {
+      setConfirmRoleChange(true);
+      return;
+    }
+    save();
+  };
+
+  const save = async () => {
+    if (!canManage) {
+      denied();
+      return;
+    }
+    setSaving(true);
+    setFormError("");
     try {
+      // Losing the last admin locks user management away permanently:
+      // nothing else grants the `users` permission, and first-run setup
+      // refuses to run while an active account exists.
+      if (
+        editingUser &&
+        editingUser.role === "admin" &&
+        form.role !== "admin" &&
+        (await countOtherActiveAdmins(editingUser.id)) === 0
+      ) {
+        setConfirmRoleChange(false);
+        setFormError(LAST_ADMIN_MESSAGE);
+        return;
+      }
+
+      const newPin = form.pin !== "";
+      if (newPin && (await pinInUse(form.pin, editingUser?.id))) {
+        setConfirmRoleChange(false);
+        setErrors({ pin: "Another account already uses this PIN. Choose a different PIN." });
+        setFormError("Check the highlighted fields.");
+        return;
+      }
+
+      const fullName = form.fullName.trim();
+      const pinFields = newPin
+        ? await (async () => {
+            const pinSalt = newSaltB64();
+            return { pinHash: await derivePinHash(form.pin, pinSalt), pinSalt };
+          })()
+        : {};
+
+      if (editingUser) {
+        await db.users.update(editingUser.id, {
+          fullName,
+          role: form.role,
+          email: form.email.trim() || undefined,
+          phone: form.phone.trim() || undefined,
+          ...pinFields,
+          adminAccess: form.adminAccess,
+          adminPermanent: form.adminPermanent,
+          updatedAt: new Date(),
+        });
+      } else {
+        const newUser: User = {
+          id: generateId(),
+          fullName,
+          role: form.role,
+          email: form.email.trim() || undefined,
+          phone: form.phone.trim() || undefined,
+          pinHash: "",
+          pinSalt: "",
+          ...pinFields,
+          adminAccess: form.adminAccess,
+          adminPermanent: form.adminPermanent,
+          isActive: 1,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        await db.users.add(newUser);
+      }
+
+      pushToast({
+        id: generateId(),
+        tone: "success",
+        title: editingUser ? "Staff account updated" : "Staff account added",
+        body: editingUser
+          ? `${fullName} · ${getRoleDisplayName(form.role)}${newPin ? " · new PIN set" : ""}`
+          : `${fullName} can now sign in on this device with their PIN.`,
+      });
+      resetForm();
+      await loadUsers();
+    } catch (error) {
+      console.error("Error saving user:", errorName(error));
+      setConfirmRoleChange(false);
+      setFormError("The account was not saved. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const setActive = async (user: User, active: boolean) => {
+    if (!canManage) {
+      denied();
+      return;
+    }
+    const refuse = (body: string) => {
+      pushToast({ id: generateId(), tone: "error", title: "Could not change the account", body });
+    };
+    if (user.id === currentUser?.id) {
+      refuse("You cannot deactivate your own account.");
+      return;
+    }
+    if (user.adminPermanent) {
+      refuse("Permanent admin accounts cannot be deactivated.");
+      return;
+    }
+    setStatusBusy(true);
+    try {
+      if (
+        !active &&
+        user.role === "admin" &&
+        (await countOtherActiveAdmins(user.id)) === 0
+      ) {
+        refuse(LAST_ADMIN_MESSAGE);
+        return;
+      }
       await db.users.update(user.id, {
-        isActive: user.isActive === 1 ? 0 : 1,
+        isActive: active ? 1 : 0,
         updatedAt: new Date(),
+      });
+      pushToast({
+        id: generateId(),
+        tone: "success",
+        title: active ? "Account activated" : "Account deactivated",
+        body: active
+          ? `${user.fullName} can sign in on this device again.`
+          : `${user.fullName} can no longer sign in on this device.`,
       });
       await loadUsers();
     } catch (error) {
-      console.error("Error toggling user status:", error);
+      console.error("Error toggling user status:", errorName(error));
+      refuse("The change was not saved. Try again.");
+    } finally {
+      setStatusBusy(false);
+      setPendingStatusUser(null);
     }
   };
 
   const deleteUser = async () => {
-    if (!pendingDeleteUser) return;
-
-    if (
-      pendingDeleteUser.role === "admin" &&
-      (await countOtherActiveAdmins(pendingDeleteUser.id)) === 0
-    ) {
-      alert(LAST_ADMIN_MESSAGE);
+    const target = pendingDeleteUser;
+    if (!target) return;
+    if (!canManage) {
+      denied();
       setPendingDeleteUser(null);
+      return;
+    }
+    const refuse = (body: string) => {
+      setPendingDeleteUser(null);
+      pushToast({ id: generateId(), tone: "error", title: "Account not deleted", body });
+    };
+    if (target.id === currentUser?.id) {
+      refuse("You cannot delete your own account.");
+      return;
+    }
+    if (target.adminPermanent) {
+      refuse("Permanent admin accounts cannot be deleted.");
       return;
     }
 
     setDeleting(true);
     try {
-      await db.users.delete(pendingDeleteUser.id);
-      if (supabase) {
-        await supabase.from("users").delete().eq("id", pendingDeleteUser.id);
+      if (target.role === "admin" && (await countOtherActiveAdmins(target.id)) === 0) {
+        refuse(LAST_ADMIN_MESSAGE);
+        return;
       }
+
+      await db.users.delete(target.id);
+
+      let serverResult: "none" | "accepted" | "failed" = "none";
+      if (supabase) {
+        try {
+          const { error } = await supabase.from("users").delete().eq("id", target.id);
+          serverResult = error ? "failed" : "accepted";
+        } catch (error) {
+          console.error("Error deleting user on server:", errorName(error));
+          serverResult = "failed";
+        }
+      }
+
       setPendingDeleteUser(null);
+      if (serverResult === "failed") {
+        pushToast({
+          id: generateId(),
+          tone: "warning",
+          title: "Deleted on this device only",
+          body: `${target.fullName} was removed here, but the server copy could not be removed. The account may come back after the next sync; delete it again when online.`,
+        });
+      } else {
+        pushToast({
+          id: generateId(),
+          tone: "success",
+          title: "Account deleted",
+          body:
+            serverResult === "accepted"
+              ? `${target.fullName} was removed from this device and the server accepted the delete request.`
+              : `${target.fullName} was removed from this device.`,
+        });
+      }
       await loadUsers();
     } catch (error) {
-      console.error("Error deleting user:", error);
-      alert("Failed to delete user. Please try again.");
+      console.error("Error deleting user:", errorName(error));
+      refuse("The account was not deleted. Try again.");
     } finally {
       setDeleting(false);
     }
   };
 
+  const isEditing = !!editingUser;
+  const roleOptions = ASSIGNABLE_ROLES.includes(form.role)
+    ? ASSIGNABLE_ROLES
+    : [...ASSIGNABLE_ROLES, form.role];
+  const editingSelf = isEditing && editingUser?.id === currentUser?.id;
+
+  const fieldProps = (field: keyof StaffFormErrors) => ({
+    "aria-invalid": errors[field] ? true : undefined,
+    "aria-describedby": errors[field] ? `staff-${field}-error` : undefined,
+  });
+  const fieldError = (field: keyof StaffFormErrors) =>
+    errors[field] ? (
+      <p id={`staff-${field}-error`} className="field-error">
+        {errors[field]}
+      </p>
+    ) : null;
+
+  const pinDescribedBy = ["staff-pin-hint", errors.pin && "staff-pin-error"]
+    .filter(Boolean)
+    .join(" ");
+
+  const canEditUser = (u: User) => !(u.adminPermanent && !currentUser?.adminPermanent);
+  const canChangeStatus = (u: User) => u.id !== currentUser?.id && !u.adminPermanent;
+  const canDeleteUser = (u: User) => u.id !== currentUser?.id && !u.adminPermanent;
+
+  const renderActions = (u: User, compact = false) => {
+    const editable = canEditUser(u);
+    const statusable = canChangeStatus(u);
+    const deletable = canDeleteUser(u);
+    if (!editable && !statusable && !deletable) {
+      return <span className="text-caption text-ink-muted">Protected account</span>;
+    }
+    return (
+      <div className={`flex flex-wrap items-center gap-1 ${compact ? "" : "justify-end"}`}>
+        {editable && (
+          <button
+            type="button"
+            onClick={() => startEdit(u)}
+            className="btn-ghost"
+            aria-label={`Edit ${u.fullName}`}
+          >
+            <PencilIcon className="h-4 w-4" aria-hidden />
+            Edit
+          </button>
+        )}
+        {statusable &&
+          (u.isActive === 1 ? (
+            <button
+              type="button"
+              onClick={() => setPendingStatusUser(u)}
+              className="btn-ghost"
+              aria-label={`Deactivate ${u.fullName}`}
+            >
+              <NoSymbolIcon className="h-4 w-4" aria-hidden />
+              Deactivate
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setActive(u, true)}
+              disabled={statusBusy}
+              className="btn-ghost"
+              aria-label={`Activate ${u.fullName}`}
+            >
+              <CheckCircleIcon className="h-4 w-4" aria-hidden />
+              Activate
+            </button>
+          ))}
+        {deletable && (
+          <button
+            type="button"
+            onClick={() => setPendingDeleteUser(u)}
+            className="btn-ghost text-danger-fg hover:text-danger-fg"
+            aria-label={`Delete ${u.fullName}`}
+          >
+            <TrashIcon className="h-4 w-4" aria-hidden />
+            Delete
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderAdminFlags = (u: User) => (
+    <div className="flex flex-wrap gap-1">
+      {u.adminPermanent && <StatusBadge tone="info">Permanent admin</StatusBadge>}
+      {u.adminAccess && <StatusBadge>Admin access</StatusBadge>}
+      {!u.adminAccess && !u.adminPermanent && (
+        <span className="text-caption text-ink-muted">None</span>
+      )}
+    </div>
+  );
+
+  const renderStatus = (u: User) =>
+    u.isActive === 1 ? (
+      <StatusBadge tone="success" icon>
+        Active
+      </StatusBadge>
+    ) : (
+      <StatusBadge tone="neutral" icon>
+        Deactivated
+      </StatusBadge>
+    );
+
+  const oldRole = editingUser?.role;
+  const gained = oldRole ? gainedAccess(oldRole, form.role) : [];
+  const lost = oldRole ? lostAccess(oldRole, form.role) : [];
+
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-semibold text-gray-900">User Management</h3>
-        <div className="flex space-x-2">
-          <button
-            onClick={() => setShowPins(!showPins)}
-            className="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-800"
-          >
-            {showPins ? (
-              <EyeSlashIcon className="h-4 w-4" />
-            ) : (
-              <EyeIcon className="h-4 w-4" />
-            )}
-            <span>{showPins ? "Hide" : "Show"} PINs</span>
-          </button>
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="btn-primary inline-flex items-center space-x-2"
-          >
-            <UserPlusIcon className="h-4 w-4" />
-            <span>Add User</span>
-          </button>
-        </div>
+    <div className="space-y-4">
+      <div className="banner banner-info">
+        <p>
+          Accounts added here are saved on this device. Staff sign in on this
+          device with their 6-digit PIN. PINs are stored scrambled and are never
+          shown again after they are set.
+        </p>
       </div>
 
-      {/* Add/Edit Form */}
-      {showAddForm && (
-        <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-          <h4 className="text-md font-medium text-gray-900 mb-4">
-            {editingUser ? "Edit User" : "Add New User"}
-          </h4>
+      {showForm && canManage && (
+        <form
+          onSubmit={handleSubmit}
+          className="panel"
+          aria-labelledby="staff-form-title"
+          noValidate
+        >
+          <div className="panel-header">
+            <h2 id="staff-form-title" className="panel-title">
+              {isEditing ? `Edit ${editingUser?.fullName}` : "Add staff member"}
+            </h2>
+          </div>
+          <div className="panel-body space-y-4">
+            {formError && (
+              <div className="banner banner-danger" role="alert">
+                {formError}
+              </div>
+            )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Full Name *
+                <label htmlFor="staff-fullName" className="field-label">
+                  Full name
                 </label>
                 <input
+                  id="staff-fullName"
                   type="text"
                   required
-                  value={formData.fullName}
-                  onChange={(e) =>
-                    setFormData({ ...formData, fullName: e.target.value })
-                  }
+                  autoComplete="off"
+                  value={form.fullName}
+                  onChange={(e) => setForm({ ...form, fullName: e.target.value })}
                   className="input-field"
-                  placeholder="Enter full name"
+                  {...fieldProps("fullName")}
                 />
+                {fieldError("fullName")}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Role *
+                <label htmlFor="staff-role" className="field-label">
+                  Role
                 </label>
                 <select
-                  value={formData.role}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      role: e.target.value as User["role"],
-                    })
-                  }
+                  id="staff-role"
+                  value={form.role}
+                  onChange={(e) => {
+                    const next = roleOptions.find((r) => r === e.target.value);
+                    if (next) setForm({ ...form, role: next });
+                  }}
                   className="input-field"
+                  aria-describedby="staff-role-hint"
+                  aria-invalid={errors.role ? true : undefined}
                 >
-                  <option value="volunteer">Volunteer</option>
-                  <option value="nurse">Nurse</option>
-                  <option value="doctor">Doctor</option>
-                  <option value="pharmacist">Pharmacist</option>
-                  <option value="admin">Admin</option>
+                  {roleOptions.map((r) => (
+                    <option key={r} value={r}>
+                      {getRoleDisplayName(r)}
+                    </option>
+                  ))}
                 </select>
+                <p id="staff-role-hint" className="field-hint">
+                  {describeRoleAccess(form.role)}
+                </p>
+                {fieldError("role")}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Email
+                <label htmlFor="staff-email" className="field-label">
+                  Email <span className="font-normal text-ink-muted">(optional)</span>
                 </label>
                 <input
+                  id="staff-email"
                   type="email"
-                  value={formData.email}
-                  onChange={(e) =>
-                    setFormData({ ...formData, email: e.target.value })
-                  }
+                  autoComplete="off"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
                   className="input-field"
-                  placeholder="user@example.com"
+                  placeholder="name@example.com"
+                  {...fieldProps("email")}
                 />
+                {fieldError("email")}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Phone
+                <label htmlFor="staff-phone" className="field-label">
+                  Phone <span className="font-normal text-ink-muted">(optional)</span>
                 </label>
                 <input
+                  id="staff-phone"
                   type="tel"
-                  value={formData.phone}
-                  onChange={(e) =>
-                    setFormData({ ...formData, phone: e.target.value })
-                  }
+                  autoComplete="off"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
                   className="input-field"
-                  placeholder="+234..."
+                  placeholder="0803 123 4567"
+                  {...fieldProps("phone")}
                 />
+                {fieldError("phone")}
               </div>
 
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  PIN (6 digits) *
+              <div>
+                <label htmlFor="staff-pin" className="field-label">
+                  {isEditing ? "New PIN (6 digits)" : "PIN (6 digits)"}
                 </label>
                 <input
+                  id="staff-pin"
                   type="password"
-                  required
-                  value={formData.pin}
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  maxLength={6}
+                  required={!isEditing}
+                  value={form.pin}
                   onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      pin: e.target.value.replace(/\D/g, "").slice(0, 6),
+                    setForm({ ...form, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })
+                  }
+                  className="input-field tabular-nums"
+                  {...fieldProps("pin")}
+                  aria-describedby={pinDescribedBy}
+                />
+                <p id="staff-pin-hint" className="field-hint">
+                  {isEditing
+                    ? "Leave blank to keep the current PIN."
+                    : "Give the PIN to the person privately. It cannot be shown again."}
+                </p>
+                {fieldError("pin")}
+              </div>
+
+              <div>
+                <label htmlFor="staff-confirmPin" className="field-label">
+                  {isEditing ? "Confirm new PIN" : "Confirm PIN"}
+                </label>
+                <input
+                  id="staff-confirmPin"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  maxLength={6}
+                  required={!isEditing}
+                  value={form.confirmPin}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      confirmPin: e.target.value.replace(/\D/g, "").slice(0, 6),
                     })
                   }
-                  className="input-field"
-                  placeholder="Enter 6-digit PIN"
+                  className="input-field tabular-nums"
+                  {...fieldProps("confirmPin")}
                 />
+                {fieldError("confirmPin")}
               </div>
 
-              {/* Admin Access Controls */}
+              {/* Admin flags */}
               {currentUser?.role === "admin" && (
-                <div className="md:col-span-2 space-y-4 border-t pt-4">
-                  <h4 className="text-sm font-medium text-gray-900">
-                    Admin Permissions
-                  </h4>
+                <fieldset className="space-y-2 border-t border-line pt-4 md:col-span-2">
+                  <legend className="section-label">Admin flags</legend>
 
-                  <div className="flex items-center space-x-3">
+                  <label
+                    htmlFor="staff-adminAccess"
+                    className="flex min-h-touch-target items-center gap-3 text-body text-ink"
+                  >
                     <input
                       type="checkbox"
-                      id="adminAccess"
-                      checked={formData.adminAccess}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          adminAccess: e.target.checked,
-                        })
-                      }
-                      className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                      id="staff-adminAccess"
+                      checked={form.adminAccess}
+                      onChange={(e) => setForm({ ...form, adminAccess: e.target.checked })}
+                      className="h-5 w-5 rounded border-line-strong text-primary focus:ring-primary"
                     />
-                    <label
-                      htmlFor="adminAccess"
-                      className="text-sm text-gray-700"
-                    >
-                      Grant admin access (can manage users, export data)
-                    </label>
-                  </div>
+                    Admin access
+                  </label>
 
                   {currentUser?.adminPermanent && (
-                    <div className="flex items-center space-x-3">
+                    <label
+                      htmlFor="staff-adminPermanent"
+                      className="flex min-h-touch-target items-center gap-3 text-body text-ink"
+                    >
                       <input
                         type="checkbox"
-                        id="adminPermanent"
-                        checked={formData.adminPermanent}
+                        id="staff-adminPermanent"
+                        checked={form.adminPermanent}
                         onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            adminPermanent: e.target.checked,
-                          })
+                          setForm({ ...form, adminPermanent: e.target.checked })
                         }
-                        className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                        className="h-5 w-5 rounded border-line-strong text-primary focus:ring-primary"
                       />
-                      <label
-                        htmlFor="adminPermanent"
-                        className="text-sm text-gray-700"
-                      >
-                        <span className="font-medium text-red-600">
-                          Permanent admin
-                        </span>{" "}
-                        (cannot be deleted or demoted)
-                      </label>
-                    </div>
+                      Permanent admin
+                    </label>
                   )}
 
-                  <p className="text-xs text-gray-500">
-                    Admin access allows user management and data export.
-                    Permanent admin status prevents deletion/demotion.
+                  <p className="field-hint">
+                    What a person can do is set by their role: choose Admin as the
+                    role to let them manage staff and export data. Permanent admin
+                    accounts cannot be deactivated or deleted, and only another
+                    permanent admin can edit them.
                   </p>
-                </div>
+                </fieldset>
               )}
-            </div>
-
-            <div className="flex space-x-4">
-              <button type="submit" disabled={loading} className="btn-primary">
-                {loading
-                  ? "Saving..."
-                  : editingUser
-                    ? "Update User"
-                    : "Create User"}
-              </button>
-              <button
-                type="button"
-                onClick={resetForm}
-                className="btn-secondary"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Delete confirmation modal */}
-      {pendingDeleteUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <div className="flex items-center space-x-3 mb-4">
-              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-                <TrashIcon className="h-5 w-5 text-red-600" />
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900">
-                Delete User
-              </h3>
-            </div>
-            <p className="text-gray-600 mb-2">
-              Are you sure you want to permanently delete{" "}
-              <strong>{pendingDeleteUser.fullName}</strong>?
-            </p>
-            <p className="text-sm text-red-600 mb-6">
-              This action cannot be undone. The user will lose all access
-              immediately.
-            </p>
-            <div className="flex space-x-3">
-              <button
-                onClick={deleteUser}
-                disabled={deleting}
-                className="flex-1 inline-flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-              >
-                <TrashIcon className="h-4 w-4" />
-                <span>{deleting ? "Deleting..." : "Delete User"}</span>
-              </button>
-              <button
-                onClick={() => setPendingDeleteUser(null)}
-                disabled={deleting}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
             </div>
           </div>
-        </div>
+          <div className="flex flex-col-reverse gap-2 border-t border-line px-4 py-3 sm:flex-row sm:justify-end">
+            <button type="button" onClick={resetForm} className="btn-secondary" disabled={saving}>
+              Cancel
+            </button>
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving ? "Saving…" : isEditing ? "Save changes" : "Add staff member"}
+            </button>
+          </div>
+        </form>
       )}
 
-      {/* Users List */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                User
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Role
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Admin Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Contact
-              </th>
-              {showPins && (
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  PIN
-                </th>
-              )}
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {users.map((user) => (
-              <tr key={user.id} className={user.isActive ? "" : "opacity-50"}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div>
-                    <div className="text-sm font-medium text-gray-900">
-                      {user.fullName}
-                      {user.adminPermanent && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
-                          Permanent
+      <section className="panel" aria-labelledby="staff-list-title">
+        <div className="panel-header">
+          <h2 id="staff-list-title" className="panel-title">
+            Staff{users ? ` (${users.length})` : ""}
+          </h2>
+          {canManage && !showForm && (
+            <button type="button" onClick={openCreate} className="btn-primary">
+              <UserPlusIcon className="h-5 w-5" aria-hidden />
+              Add staff member
+            </button>
+          )}
+        </div>
+
+        {loadError && (
+          <div className="banner banner-danger m-4" role="alert">
+            <span className="flex-1">Staff accounts could not be loaded from this device.</span>
+            <button type="button" onClick={loadUsers} className="btn-secondary">
+              Try again
+            </button>
+          </div>
+        )}
+
+        {users === null ? (
+          <div>
+            <span role="status" className="sr-only">
+              Loading staff accounts
+            </span>
+            <div className="divide-y divide-line" aria-hidden>
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-4 px-4 py-3">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="ml-auto h-4 w-24" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : users.length === 0 ? (
+          !loadError && (
+            <EmptyState
+              icon={UsersIcon}
+              title="No staff accounts on this device"
+              description="Add the people who will sign in here, with a role and a 6-digit PIN."
+            />
+          )
+        ) : (
+          <>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Role</th>
+                    <th scope="col">Admin flags</th>
+                    <th scope="col">Contact</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Added</th>
+                    <th scope="col">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => (
+                    <tr key={u.id}>
+                      <td>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-ink">{u.fullName}</span>
+                          {u.id === currentUser?.id && <StatusBadge tone="info">You</StatusBadge>}
                         </span>
-                      )}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      ID: {user.id.slice(-8).toUpperCase()}
-                    </div>
+                        <span className="block text-caption text-ink-muted tabular-nums">
+                          ID {u.id.slice(-8).toUpperCase()}
+                        </span>
+                      </td>
+                      <td>
+                        <StatusBadge>{getRoleDisplayName(u.role)}</StatusBadge>
+                      </td>
+                      <td>{renderAdminFlags(u)}</td>
+                      <td className="text-caption text-ink-secondary">
+                        {u.email && <span className="block">{u.email}</span>}
+                        {u.phone && <span className="block tabular-nums">{u.phone}</span>}
+                        {!u.email && !u.phone && <span className="text-ink-muted">None</span>}
+                      </td>
+                      <td>{renderStatus(u)}</td>
+                      <td className="text-caption text-ink-muted tabular-nums">
+                        {formatNigerianDate(u.createdAt)}
+                      </td>
+                      <td className="text-right">{renderActions(u)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <ul className="divide-y divide-line md:hidden">
+              {users.map((u) => (
+                <li key={u.id} className="space-y-2 px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-ink">{u.fullName}</span>
+                    {u.id === currentUser?.id && <StatusBadge tone="info">You</StatusBadge>}
+                    <StatusBadge>{getRoleDisplayName(u.role)}</StatusBadge>
+                    {renderStatus(u)}
                   </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleColor(user.role)}`}
-                  >
-                    {getRoleDisplayName(user.role)}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="space-y-1">
-                    {user.adminAccess && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                        Admin Access
-                      </span>
-                    )}
-                    {user.adminPermanent && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                        Permanent
-                      </span>
-                    )}
-                    {!user.adminAccess && !user.adminPermanent && (
-                      <span className="text-xs text-gray-400">
-                        Standard User
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                  <div>{user.email}</div>
-                  <div>{user.phone}</div>
-                </td>
-                {showPins && (
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
-                    {displayPin(user.fullName)}
-                  </td>
-                )}
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      user.isActive === 1
-                        ? "bg-green-100 text-green-800"
-                        : "bg-red-100 text-red-800"
-                    }`}
-                  >
-                    {user.isActive === 1 ? "Active" : "Inactive"}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => startEdit(user)}
-                      disabled={
-                        user.adminPermanent && !currentUser?.adminPermanent
-                      }
-                      className="text-blue-600 hover:text-blue-800"
-                      title={
-                        user.adminPermanent && !currentUser?.adminPermanent
-                          ? "Cannot edit permanent admin"
-                          : "Edit user"
-                      }
-                    >
-                      <PencilIcon className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => toggleUserStatus(user)}
-                      className={`${user.isActive === 1 ? "text-red-600 hover:text-red-800" : "text-green-600 hover:text-green-800"} ${
-                        user.id === currentUser?.id || user.adminPermanent
-                          ? "opacity-50 cursor-not-allowed"
-                          : ""
-                      }`}
-                      disabled={
-                        user.id === currentUser?.id || user.adminPermanent
-                      }
-                      title={
-                        user.id === currentUser?.id
-                          ? "Cannot deactivate your own account"
-                          : user.adminPermanent
-                            ? "Cannot deactivate permanent admin"
-                            : user.isActive === 1
-                              ? "Deactivate user"
-                              : "Activate user"
-                      }
-                    >
-                      {user.isActive === 1 ? "Deactivate" : "Activate"}
-                    </button>
-                    {user.id !== currentUser?.id && !user.adminPermanent && (
-                      <button
-                        onClick={() => setPendingDeleteUser(user)}
-                        className="text-red-600 hover:text-red-800"
-                        title="Delete user"
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  {(u.adminAccess || u.adminPermanent) && renderAdminFlags(u)}
+                  <p className="text-caption text-ink-muted">
+                    {[u.email, u.phone].filter(Boolean).join(" · ") || "No contact details"}
+                    {" · "}Added {formatNigerianDate(u.createdAt)}
+                  </p>
+                  {renderActions(u, true)}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+
+      <ConfirmDialog
+        open={confirmRoleChange && !!editingUser}
+        title={`Change ${editingUser?.fullName ?? "this person"}'s role to ${getRoleDisplayName(form.role)}?`}
+        confirmLabel={`Change role to ${getRoleDisplayName(form.role)}`}
+        busy={saving}
+        busyLabel="Saving…"
+        onConfirm={save}
+        onCancel={() => setConfirmRoleChange(false)}
+      >
+        <p>
+          Their role changes from {oldRole ? getRoleDisplayName(oldRole) : ""} to{" "}
+          {getRoleDisplayName(form.role)}.
+        </p>
+        {gained.length > 0 && <p>They will be able to {gained.join(", ")}.</p>}
+        {lost.length > 0 && <p>They will no longer be able to {lost.join(", ")}.</p>}
+        {editingSelf ? (
+          <p className="font-medium text-warning-fg">
+            This is your own account. Your access changes the next time you sign in
+            {lost.includes("manage staff accounts")
+              ? ", and you will no longer be able to manage staff accounts"
+              : ""}
+            .
+          </p>
+        ) : (
+          <p>The change applies the next time they sign in on this device.</p>
+        )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={!!pendingStatusUser}
+        title={`Deactivate ${pendingStatusUser?.fullName ?? "this account"}?`}
+        confirmLabel="Deactivate account"
+        tone="danger"
+        busy={statusBusy}
+        busyLabel="Deactivating…"
+        onConfirm={() => pendingStatusUser && setActive(pendingStatusUser, false)}
+        onCancel={() => setPendingStatusUser(null)}
+      >
+        <p>
+          They will not be able to sign in on this device until an administrator
+          activates the account again.
+        </p>
+        <p>Records they created are kept.</p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={!!pendingDeleteUser}
+        title={`Delete ${pendingDeleteUser?.fullName ?? "this account"}?`}
+        confirmLabel="Delete account"
+        cancelLabel="Keep account"
+        tone="danger"
+        busy={deleting}
+        busyLabel="Deleting…"
+        onConfirm={deleteUser}
+        onCancel={() => setPendingDeleteUser(null)}
+      >
+        <p>
+          The account is removed from this device and they lose access
+          immediately. Records they created are kept.
+        </p>
+        <p>To stop someone signing in but keep the account, deactivate it instead.</p>
+        <p className="font-medium text-danger-fg">This cannot be undone.</p>
+      </ConfirmDialog>
     </div>
   );
 }
