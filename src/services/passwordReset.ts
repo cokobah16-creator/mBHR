@@ -89,9 +89,13 @@ export function validateNewPassword(password: string, confirm: string): string |
   return null;
 }
 
-export type RequestResetResult =
-  | { ok: true }
-  | { ok: false; reason: "offline" | "rate_limited" | "network" | "invalid_email"; message: string };
+// Flat rather than a discriminated union: tsconfig has strict off, and without
+// strictNullChecks TypeScript does not narrow on a boolean `ok`.
+export interface RequestResetResult {
+  ok: boolean;
+  reason?: "offline" | "rate_limited" | "network" | "invalid_email";
+  message?: string;
+}
 
 /**
  * Asks Supabase to email a reset link.
@@ -146,7 +150,10 @@ export async function requestPasswordReset(
   }
 }
 
-export type CompleteResetResult = { ok: true } | { ok: false; message: string };
+export interface CompleteResetResult {
+  ok: boolean;
+  message?: string;
+}
 
 /** Saves the new password for the current recovery session, then signs out everywhere. */
 export async function completePasswordReset(password: string): Promise<CompleteResetResult> {
