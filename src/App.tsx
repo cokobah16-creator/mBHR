@@ -17,6 +17,10 @@ import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
 import { NigeriaLoaderScreen } from "@/components/NigeriaLoader";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { AuthCallback } from "@/components/AuthCallback";
+// Eager: the reset page must load before supabase-js strips the token from the
+// URL, and services/passwordReset captures that URL when it is first imported.
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 
 // Core pages - loaded eagerly for initial navigation
 const Dashboard = lazy(() =>
@@ -406,10 +410,21 @@ function App() {
           {/* Supabase auth email-confirmation redirect */}
           <Route path="/auth/callback" element={<AuthCallback />} />
 
+          {/* Password recovery (Supabase accounts: online staff + patient portal) */}
+          <Route
+            path="/forgot-password"
+            element={<ForgotPassword audience="staff" />}
+          />
+          <Route path="/reset-password" element={<ResetPassword />} />
+
           {/* Patient Portal Routes */}
           <Route path="/patient" element={<PatientPortalLanding />} />
           <Route path="/patient/login" element={<PatientLogin />} />
           <Route path="/patient/register" element={<PatientRegister />} />
+          <Route
+            path="/patient/forgot-password"
+            element={<ForgotPassword audience="patient" />}
+          />
           <Route
             path="/patient/*"
             element={
