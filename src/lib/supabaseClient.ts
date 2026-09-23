@@ -5,6 +5,12 @@
  * Falls back to null when env vars are missing so offline mode still works.
  */
 import { createClient, SupabaseClient, Session, User } from "@supabase/supabase-js";
+import { relocateRecoveryLanding } from "./recoveryLanding";
+
+// A password-reset link that Supabase sent to the Site URL instead of
+// /reset-password has to be moved there before the client is created:
+// supabase-js reads the token out of the URL as soon as the client exists.
+if (typeof window !== "undefined") relocateRecoveryLanding();
 
 const url  = import.meta.env.VITE_SUPABASE_URL  as string | undefined;
 const key  = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;

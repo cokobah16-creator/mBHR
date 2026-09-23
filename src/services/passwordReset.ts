@@ -4,9 +4,14 @@
  *
  * Flow:
  *   1. /forgot-password or /patient/forgot-password calls requestPasswordReset().
- *      Supabase emails a one-time link pointing at /reset-password?for=<audience>.
+ *      Supabase emails a one-time link that comes back to /reset-password.
+ *      That redirect URL carries nothing else, so it can be put on the
+ *      project's redirect allow list exactly as it is: Supabase drops a
+ *      redirect URL that is not on the list and sends the user to the
+ *      project's Site URL instead (see docs/PASSWORD_RECOVERY.md).
  *   2. The link lands on /reset-password. supabase-js (detectSessionInUrl) turns
- *      the token in the URL into a short-lived recovery session.
+ *      the token in the URL into a short-lived recovery session, and the page
+ *      works out from that session whether the account is staff or patient.
  *   3. The user picks a new password; completePasswordReset() saves it and then
  *      signs out everywhere, so a session opened by whoever had the old password
  *      does not survive the reset.
@@ -27,6 +32,7 @@ export const RESEND_COOLDOWN_SECONDS = 60;
 /** The URL this tab was opened with, captured before supabase-js strips the token from it. */
 const landingUrl = typeof window !== "undefined" ? window.location.href : "";
 
+/** Reads the `?for=` hint that older reset links carried; anything unknown is a patient. */
 export function parseAudience(value: string | null | undefined): ResetAudience {
   return value === "staff" ? "staff" : "patient";
 }
@@ -35,8 +41,38 @@ export function loginPathFor(audience: ResetAudience): string {
   return audience === "staff" ? "/login" : "/patient/login";
 }
 
-export function resetRedirectUrl(origin: string, audience: ResetAudience): string {
-  return `${origin}/reset-password?for=${audience}`;
+/**
+ * Where the email link comes back to. This must match the project's redirect
+ * allow list exactly (no query string, so an exact entry works), which is why
+ * the audience is not encoded here; see resolveResetAudience().
+ */
+export function resetRedirectUrl(origin: string): string {
+  return `${origin}/reset-password`;
+}
+
+/**
+ * Works out which sign-in page the account behind a recovery session belongs
+ * to. Staff accounts have a staff_roles row, which RLS lets the account itself
+ * read; every other account is a patient-portal account. Anything that stops
+ * the lookup (offline, RLS, network) is answered with "patient", which only
+ * affects where the "sign in" links point.
+ */
+export async function resolveResetAudience(userId: string): Promise<ResetAudience> {
+  if (!supabase || !userId) return "patient";
+  try {
+    const { data, error } = await supabase
+      .from("staff_roles")
+      .select("role")
+      .eq("auth_user_id", userId)
+      .maybeSingle();
+    if (error) {
+      console.warn("[passwordReset] staff_roles lookup:", error.message);
+      return "patient";
+    }
+    return data ? "staff" : "patient";
+  } catch {
+    return "patient";
+  }
 }
 
 export interface RecoveryLanding {
@@ -126,7 +162,7 @@ export async function requestPasswordReset(
 
   try {
     const { error } = await supabase.auth.resetPasswordForEmail(address, {
-      redirectTo: resetRedirectUrl(origin, audience),
+      redirectTo: resetRedirectUrl(origin),
     });
     if (error) {
       if (error.status === 429 || /rate limit|only request this after|too many/i.test(error.message)) {

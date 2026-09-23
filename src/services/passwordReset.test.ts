@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const resetPasswordForEmail = vi.fn();
 const updateUser = vi.fn();
 const signOut = vi.fn();
+const maybeSingle = vi.fn();
+const from = vi.fn(() => ({
+  select: () => ({ eq: () => ({ maybeSingle: () => maybeSingle() }) }),
+}));
 
 vi.mock("@/lib/supabaseClient", () => ({
   supabase: {
@@ -11,6 +15,7 @@ vi.mock("@/lib/supabaseClient", () => ({
       updateUser: (...a: unknown[]) => updateUser(...a),
       signOut: (...a: unknown[]) => signOut(...a),
     },
+    from: (...a: unknown[]) => from(...a),
   },
   isSupabaseEnabled: true,
 }));
@@ -22,6 +27,7 @@ import {
   parseRecoveryLanding,
   requestPasswordReset,
   resetRedirectUrl,
+  resolveResetAudience,
   validateNewPassword,
 } from "./passwordReset";
 
@@ -77,10 +83,8 @@ describe("helpers", () => {
     expect(loginPathFor("patient")).toBe("/patient/login");
   });
 
-  it("builds the redirect URL", () => {
-    expect(resetRedirectUrl("https://app.test", "staff")).toBe(
-      "https://app.test/reset-password?for=staff",
-    );
+  it("builds a redirect URL with nothing to trip the allow list", () => {
+    expect(resetRedirectUrl("https://app.test")).toBe("https://app.test/reset-password");
   });
 
   it("validates the new password", () => {
@@ -99,12 +103,17 @@ describe("requestPasswordReset", () => {
     expect(resetPasswordForEmail).not.toHaveBeenCalled();
   });
 
-  it("normalises the address and sends the audience-specific redirect", async () => {
+  it("normalises the address and sends the same redirect for every audience", async () => {
     resetPasswordForEmail.mockResolvedValue({ error: null });
     const r = await requestPasswordReset("  Nurse@Clinic.NG ", "staff", "https://app.test");
     expect(r).toEqual({ ok: true });
     expect(resetPasswordForEmail).toHaveBeenCalledWith("nurse@clinic.ng", {
-      redirectTo: "https://app.test/reset-password?for=staff",
+      redirectTo: "https://app.test/reset-password",
+    });
+
+    await requestPasswordReset("patient@example.com", "patient", "https://app.test");
+    expect(resetPasswordForEmail).toHaveBeenLastCalledWith("patient@example.com", {
+      redirectTo: "https://app.test/reset-password",
     });
   });
 
@@ -135,6 +144,31 @@ describe("requestPasswordReset", () => {
       ok: false,
       reason: "network",
     });
+  });
+});
+
+describe("resolveResetAudience", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("treats an account with a staff_roles row as staff", async () => {
+    maybeSingle.mockResolvedValue({ data: { role: "nurse" }, error: null });
+    expect(await resolveResetAudience("user-1")).toBe("staff");
+    expect(from).toHaveBeenCalledWith("staff_roles");
+  });
+
+  it("treats everyone else as a patient", async () => {
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    expect(await resolveResetAudience("user-2")).toBe("patient");
+  });
+
+  it("falls back to patient when the lookup fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    maybeSingle.mockResolvedValue({ data: null, error: { message: "permission denied" } });
+    expect(await resolveResetAudience("user-3")).toBe("patient");
+    maybeSingle.mockRejectedValue(new TypeError("Failed to fetch"));
+    expect(await resolveResetAudience("user-3")).toBe("patient");
+    expect(await resolveResetAudience("")).toBe("patient");
+    warn.mockRestore();
   });
 });
 

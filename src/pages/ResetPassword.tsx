@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, type Session } from "@/lib/supabaseClient";
 import {
   MIN_PASSWORD_LENGTH,
   completePasswordReset,
   loginPathFor,
   parseAudience,
   parseRecoveryLanding,
+  resolveResetAudience,
   validateNewPassword,
+  type ResetAudience,
 } from "@/services/passwordReset";
 
 type Stage = "checking" | "ready" | "invalid" | "done";
@@ -16,17 +18,22 @@ type Stage = "checking" | "ready" | "invalid" | "done";
 const SESSION_WAIT_MS = 10_000;
 
 /**
- * Landing page for the password-reset email link (/reset-password?for=staff|patient).
+ * Landing page for the password-reset email link (/reset-password).
  *
  * supabase-js exchanges the token in the URL for a recovery session on its own
  * (detectSessionInUrl); this page waits for that session, then lets the user
  * choose a new password. It is imported eagerly in App so that
  * services/passwordReset captures the landing URL before supabase-js strips
  * the token from it.
+ *
+ * Which sign-in page the links point at is worked out from the recovery
+ * session (staff or patient account). Older links carried ?for=staff|patient
+ * instead; that hint is still honoured when present.
  */
 export default function ResetPassword() {
   const [params] = useSearchParams();
-  const audience = parseAudience(params.get("for"));
+  const audienceHint = params.get("for");
+  const [audience, setAudience] = useState<ResetAudience>(() => parseAudience(audienceHint));
   const loginPath = loginPathFor(audience);
   const forgotPath = audience === "staff" ? "/forgot-password" : "/patient/forgot-password";
 
@@ -54,16 +61,22 @@ export default function ResetPassword() {
     }
 
     let settled = false;
-    const ready = () => {
+    let disposed = false;
+    const ready = (session: Session) => {
       if (settled) return;
       settled = true;
       setStage((s) => (s === "checking" ? "ready" : s));
+      if (!audienceHint) {
+        void resolveResetAudience(session.user?.id).then((resolved) => {
+          if (!disposed) setAudience(resolved);
+        });
+      }
     };
 
     // Only a session that came from the email link counts. An ordinary
     // signed-in session must not be able to set a password here without it.
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session && (event === "PASSWORD_RECOVERY" || landing.hasToken)) ready();
+      if (session && (event === "PASSWORD_RECOVERY" || landing.hasToken)) ready(session);
     });
 
     if (!landing.hasToken) {
@@ -76,13 +89,14 @@ export default function ResetPassword() {
         }
       }, 1500);
       return () => {
+        disposed = true;
         listener.subscription.unsubscribe();
         clearTimeout(early);
       };
     }
 
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) ready();
+      if (data.session) ready(data.session);
     });
 
     const timer = setTimeout(() => {
@@ -93,10 +107,11 @@ export default function ResetPassword() {
     }, SESSION_WAIT_MS);
 
     return () => {
+      disposed = true;
       listener.subscription.unsubscribe();
       clearTimeout(timer);
     };
-  }, []);
+  }, [audienceHint]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -36,14 +36,23 @@ port = 54324
 enabled = true
 
 [auth]
-# The URL that Supabase Auth redirects to after email confirmation.
-# Set this to your Vercel deployment URL in production.
+# Where Supabase Auth sends users when an email link's redirect URL is not on
+# the allow list below (and the default for links that name no redirect).
+# This file only configures the local stack (`supabase start`); the hosted
+# project is configured in the dashboard under Authentication -> URL
+# Configuration. Keep the two in step. See docs/PASSWORD_RECOVERY.md.
 site_url = "http://localhost:5173"
+# Every URL the app passes as redirectTo / emailRedirectTo must match an entry
+# here exactly or by wildcard, or Supabase silently falls back to site_url.
+# `*` never crosses `.` or `/`; `**` matches anything, including a query string.
+# Never allow-list `https://*.vercel.app/...`: that would let any Vercel site
+# receive this project's sign-in and recovery tokens.
 additional_redirect_urls = [
   "http://localhost:5173/auth/callback",
-  "https://*.vercel.app/auth/callback",
   "http://localhost:5173/reset-password",
-  "https://*.vercel.app/reset-password",
+  "https://m-bhr.vercel.app/auth/callback",
+  "https://m-bhr.vercel.app/reset-password",
+  "https://*-cokobah16-3045s-projects.vercel.app/**",
 ]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
