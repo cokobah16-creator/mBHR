@@ -1,10 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useOperationsQueue } from "@/stores/operationsQueue";
 
-const { mockFrom } = vi.hoisted(() => ({ mockFrom: vi.fn() }));
+const { mockFrom, mockGetSession, mockRpc } = vi.hoisted(() => ({
+  mockFrom: vi.fn(),
+  mockGetSession: vi.fn(),
+  mockRpc: vi.fn(),
+}));
 
+// The adapter uses the app's shared client (@/lib/supabase), so requests
+// carry the staff member's online sign-in.
 vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({ from: mockFrom }),
+  createClient: () => ({
+    from: mockFrom,
+    rpc: mockRpc,
+    auth: { getSession: mockGetSession },
+  }),
 }));
 
 // Sync refuses to start without an online sign-in; these tests run signed in.
@@ -279,6 +289,328 @@ describe("Sync Adapter - Operations Queue Integration", () => {
         key: "sync_cursor:patients",
         value: "2024-01-02T00:00:00.000Z",
       });
+    });
+  });
+
+  // ── Server-authoritative foundation ───────────────────────────────────────
+
+  type Row = Record<string, unknown>;
+
+  /** In-memory stand-in for a Dexie table (only what the adapter uses). */
+  function fakeTable(rows: Row[] = []) {
+    const store = new Map<string, Row>(rows.map((r) => [String(r.id), { ...r }]));
+    const unsent = () => [...store.values()].filter((r) => r._dirty === 1);
+    return {
+      store,
+      get: vi.fn(async (id: string) => (store.has(id) ? { ...store.get(id)! } : undefined)),
+      put: vi.fn(async (row: Row) => {
+        store.set(String(row.id), { ...row });
+      }),
+      update: vi.fn(async (id: string, changes: Row) => {
+        if (!store.has(id)) return 0;
+        const next: Row = { ...store.get(id)!, ...changes };
+        for (const [k, v] of Object.entries(changes)) if (v === undefined) delete next[k];
+        store.set(id, next);
+        return 1;
+      }),
+      where: () => ({
+        equals: () => ({
+          toArray: async () => unsent().map((r) => ({ ...r })),
+          count: async () => unsent().length,
+          filter: (fn: (r: Row) => boolean) => ({
+            count: async () => unsent().filter(fn).length,
+          }),
+        }),
+      }),
+    };
+  }
+
+  describe("uploads", () => {
+    const saved: Record<string, unknown> = {};
+
+    beforeEach(async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      for (const name of ["users", "patients", "visits", "serverCommands"]) {
+        saved[name] = (db as unknown as Record<string, unknown>)[name];
+      }
+      mockGetSession.mockResolvedValue({
+        data: { session: { user: { id: "cloud-ada", email: "ada@clinic.ng" } } },
+      });
+    });
+
+    afterEach(async () => {
+      const { db } = await import("@/db");
+      Object.assign(db, saved);
+      const { useAuthStore } = await import("@/stores/auth");
+      useAuthStore.setState({ currentUser: null });
+      vi.unstubAllEnvs();
+    });
+
+    function remoteTable(opts: {
+      remote?: Row | null;
+      upsertError?: { code: string } | null;
+      status?: number;
+      version?: number;
+    }) {
+      const maybeSingle = vi.fn().mockResolvedValue({ data: opts.remote ?? null, error: null });
+      const eq = vi.fn().mockReturnValue({ maybeSingle });
+      const result = {
+        data: opts.version !== undefined ? [{ id: "x", row_version: opts.version }] : null,
+        error: opts.upsertError ?? null,
+        status: opts.status ?? 201,
+      };
+      const upsertQuery = Object.assign(Promise.resolve(result), {
+        select: vi.fn().mockResolvedValue(result),
+      });
+      const upsert = vi.fn().mockReturnValue(upsertQuery);
+      return { select: vi.fn().mockReturnValue({ eq }), upsert, upsertQuery };
+    }
+
+    it("keeps a row refused for permission, waiting for an authorised person, without retrying it under the same sign-in", async () => {
+      const { db } = await import("@/db");
+      const visits = fakeTable([{ id: "v1", patientId: "p1", _dirty: 1 }]);
+      Object.assign(db, { visits });
+      const remote = remoteTable({ upsertError: { code: "42501" }, status: 403 });
+      mockFrom.mockImplementation((t: string) => (t === "visits" ? remote : remoteTable({})));
+
+      const { pushChanges, countAwaitingAuthorisedSync } = await import("./adapter");
+      const first = await pushChanges();
+
+      expect(first.awaitingAuthorised).toBe(1);
+      expect(visits.store.get("v1")).toMatchObject({
+        _dirty: 1,
+        _syncBlock: { reason: "permission", refusedFor: "cloud-ada" },
+      });
+      expect(await countAwaitingAuthorisedSync()).toBe(1);
+
+      const second = await pushChanges();
+      expect(second.awaitingAuthorised).toBe(1);
+      expect(remote.upsert).toHaveBeenCalledTimes(1);
+
+      // Someone else signs in online: the row is tried again.
+      mockGetSession.mockResolvedValue({
+        data: { session: { user: { id: "cloud-bayo", email: "bayo@clinic.ng" } } },
+      });
+      await pushChanges();
+      expect(remote.upsert).toHaveBeenCalledTimes(2);
+    });
+
+    it("uploads staff accounts only for someone who may manage them", async () => {
+      const { db } = await import("@/db");
+      Object.assign(db, { users: fakeTable([{ id: "u1", fullName: "Ada", role: "nurse", _dirty: 1 }]) });
+      const remote = remoteTable({});
+      mockFrom.mockImplementation(() => remote);
+      const { useAuthStore } = await import("@/stores/auth");
+      const { pushChanges } = await import("./adapter");
+
+      useAuthStore.setState({ currentUser: { id: "u2", role: "nurse" } as never });
+      await pushChanges();
+      expect(mockFrom).not.toHaveBeenCalledWith("app_users");
+
+      useAuthStore.setState({ currentUser: { id: "u3", role: "admin" } as never });
+      await pushChanges();
+      expect(mockFrom).toHaveBeenCalledWith("app_users");
+    });
+
+    it("keeps the server's row version after an upload and compares versions, not clocks", async () => {
+      const { db } = await import("@/db");
+      const patients = fakeTable([
+        { id: "p1", givenName: "Ada", _dirty: 1, _serverVersion: 3, updatedAt: "2020-01-01T00:00:00Z" },
+      ]);
+      Object.assign(db, { patients });
+      // Same version on the server (its clock is far ahead): no conflict.
+      const remote = remoteTable({
+        remote: { id: "p1", given_name: "Adaeze", row_version: 3, updated_at: "2030-01-01T00:00:00Z" },
+        version: 4,
+      });
+      mockFrom.mockImplementation((t: string) => (t === "patients" ? remote : remoteTable({})));
+      const { pushChanges } = await import("./adapter");
+
+      const result = await pushChanges();
+
+      expect(result.conflicts).toEqual([]);
+      expect(remote.upsertQuery.select).toHaveBeenCalledWith("id,row_version");
+      expect(patients.store.get("p1")).toMatchObject({ _dirty: 0, _serverVersion: 4 });
+    });
+
+    it("reports a conflict when the server changed the record since this device saw it", async () => {
+      const { db } = await import("@/db");
+      Object.assign(db, {
+        patients: fakeTable([{ id: "p1", givenName: "Ada", _dirty: 1, _serverVersion: 3 }]),
+      });
+      const remote = remoteTable({
+        remote: { id: "p1", given_name: "Adaeze", row_version: 5, updated_at: "2020-01-01T00:00:00Z" },
+      });
+      mockFrom.mockImplementation((t: string) => (t === "patients" ? remote : remoteTable({})));
+      const { pushChanges } = await import("./adapter");
+
+      const result = await pushChanges();
+
+      expect(result.conflicts.map((c) => c.entityId)).toEqual(["p1"]);
+      expect(remote.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("downloads of server-owned fields", () => {
+    type MockFn = ReturnType<typeof vi.fn>;
+    const saved: Record<string, unknown> = {};
+
+    function selectChain(rows: unknown[]) {
+      const limit = vi.fn().mockResolvedValue({ data: rows, error: null });
+      const order = vi.fn().mockReturnValue({ limit });
+      const gt = vi.fn().mockReturnValue({ order });
+      return { select: vi.fn().mockReturnValue({ gt, order }) };
+    }
+
+    beforeEach(async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      for (const name of ["patients", "patientMerges"]) {
+        saved[name] = (db as unknown as Record<string, unknown>)[name];
+      }
+    });
+
+    afterEach(async () => {
+      const { db } = await import("@/db");
+      Object.assign(db, saved);
+      vi.unstubAllEnvs();
+    });
+
+    it("applies merge links and portal decisions over unsent edits, and holds pending ones", async () => {
+      const { db } = await import("@/db");
+      const patients = fakeTable([
+        { id: "p1", givenName: "Edited here", _dirty: 1, _serverVersion: 2 },
+        { id: "p2", givenName: "Bola", portalEnabled: 1, _dirty: 0 },
+        { id: "p3", givenName: "Chidi", portalEnabled: 0, portalPending: 1, _dirty: 0 },
+      ]);
+      const patientMerges = fakeTable([]);
+      Object.assign(db, { patients, patientMerges });
+      mockFrom.mockImplementation((table: string) =>
+        selectChain(
+          table === "patients"
+            ? [
+                {
+                  id: "p1",
+                  given_name: "Server",
+                  merged_into: "p0",
+                  merged_at: "2026-09-20T10:00:00Z",
+                  portal_enabled: false,
+                  portal_enabled_changed_at: null,
+                  row_version: 3,
+                  updated_at: "2026-09-20T10:00:00.000001Z",
+                },
+                {
+                  id: "p2",
+                  given_name: "Bola",
+                  portal_enabled: false,
+                  portal_enabled_changed_at: null,
+                  merged_into: null,
+                  row_version: 1,
+                  updated_at: "2026-09-20T10:00:00.000002Z",
+                },
+                {
+                  id: "p3",
+                  given_name: "Chidi",
+                  portal_enabled: true,
+                  portal_enabled_changed_at: "2026-09-19T08:00:00Z",
+                  merged_into: null,
+                  row_version: 4,
+                  updated_at: "2026-09-20T10:00:00.000003Z",
+                },
+              ]
+            : table === "patient_merges"
+              ? [
+                  {
+                    id: "m1",
+                    winner_id: "p0",
+                    loser_id: "p1",
+                    merged_by: "u1",
+                    reason: "duplicate",
+                    created_at: "2026-09-20T10:00:00Z",
+                    updated_at: "2026-09-20T10:00:00Z",
+                  },
+                ]
+              : [],
+        ),
+      );
+
+      const { pullChanges } = await import("./adapter");
+      const summary = await pullChanges();
+
+      // Unsent edits kept; the merge link from the server applied.
+      expect(patients.store.get("p1")).toMatchObject({
+        givenName: "Edited here",
+        _dirty: 1,
+        _serverVersion: 2,
+        mergeInto: "p0",
+        mergedAt: "2026-09-20T10:00:00Z",
+      });
+      // No portal decision recorded on the server yet: this device's value stands.
+      expect(patients.store.get("p2")).toMatchObject({ portalEnabled: 1, _serverVersion: 1 });
+      // A change waiting for its command is not overwritten.
+      expect(patients.store.get("p3")).toMatchObject({ portalEnabled: 0, portalPending: 1 });
+      // The merge history is downloaded.
+      expect(patientMerges.store.get("m1")).toMatchObject({
+        winnerId: "p0",
+        loserId: "p1",
+        status: "applied",
+        createdDay: Math.floor(Date.parse("2026-09-20T10:00:00Z") / 86400000),
+      });
+      expect(summary.keptLocalEdits).toBe(1);
+      expect((patients.put as MockFn).mock.calls.length).toBe(3);
+    });
+
+    it("keeps a queue ticket label when the server row has none", async () => {
+      const { db } = await import("@/db");
+      const queue = fakeTable([{ id: "q1", stage: "vitals", ticketNumber: "Q-014", _dirty: 0 }]);
+      const saved = (db as unknown as Record<string, unknown>).queue;
+      Object.assign(db, { queue });
+      try {
+        mockFrom.mockImplementation((table: string) =>
+          selectChain(
+            table === "queue"
+              ? [{ id: "q1", stage: "consult", ticket_number: null, row_version: 2, updated_at: "2026-09-20T10:00:00Z" }]
+              : [],
+          ),
+        );
+        const { pullChanges } = await import("./adapter");
+        await pullChanges();
+        expect(queue.store.get("q1")).toMatchObject({
+          stage: "consult",
+          ticketNumber: "Q-014",
+          _serverVersion: 2,
+        });
+      } finally {
+        Object.assign(db, { queue: saved });
+      }
+    });
+
+    it("downloads specific rows again on request", async () => {
+      const { db } = await import("@/db");
+      const patients = fakeTable([{ id: "p1", portalEnabled: 1, _dirty: 0 }]);
+      Object.assign(db, { patients });
+      const inFilter = vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "p1",
+            portal_enabled: false,
+            portal_enabled_changed_at: "2026-09-21T09:00:00Z",
+            row_version: 9,
+          },
+        ],
+        error: null,
+      });
+      mockFrom.mockImplementation(() => ({ select: vi.fn().mockReturnValue({ in: inFilter }) }));
+
+      const { refetchRows } = await import("./adapter");
+      const written = await refetchRows("patients", "id", ["p1", "p1"]);
+
+      expect(written).toBe(1);
+      expect(inFilter).toHaveBeenCalledWith("id", ["p1"]);
+      expect(patients.store.get("p1")).toMatchObject({ portalEnabled: 0, _serverVersion: 9 });
     });
   });
 });

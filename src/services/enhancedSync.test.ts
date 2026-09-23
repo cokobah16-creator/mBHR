@@ -80,13 +80,11 @@ function selectChain(result: { data: unknown[] | null; error: unknown }) {
 }
 
 const ALL_LOCAL_TABLES = [
-  "patients",
   "visits",
   "vitals",
   "consultations",
   "dispenses",
   "inventory",
-  "queue",
   "gameSessions",
   "gamificationWallets",
   "stockBatches",
@@ -451,7 +449,7 @@ describe("EnhancedSync", () => {
     it("counts refused uploads without failing the run", async () => {
       sync.initialize(VALID_URL, VALID_KEY);
       ALL_LOCAL_TABLES.forEach((name) => setTable(name, makeTable([])));
-      setTable("patients", makeTable([{ id: "p1", _dirty: 1 }]));
+      setTable("visits", makeTable([{ id: "v1", _dirty: 1 }]));
       mockFrom.mockImplementation(() => ({
         upsert: vi.fn().mockResolvedValue({ error: { code: "42501" } }),
         select: selectChain({ data: [], error: null }).select,
@@ -462,6 +460,35 @@ describe("EnhancedSync", () => {
       expect(result.success).toBe(true);
       expect(result.failedUploads).toBe(1);
       expect(result.conflicts).toBe(1);
+    });
+  });
+
+  // ── table ownership ───────────────────────────────────────────────────────────
+
+  describe("tables left to the shared sync adapter", () => {
+    it("does not upload or download patients or queue", async () => {
+      sync.initialize(VALID_URL, VALID_KEY);
+      ALL_LOCAL_TABLES.forEach((name) => setTable(name, makeTable([])));
+      const patients = makeTable([{ id: "p1", _dirty: 1 }]);
+      const queue = makeTable([{ id: "q1", _dirty: 1 }]);
+      setTable("patients", patients);
+      setTable("queue", queue);
+      const touched: string[] = [];
+      mockFrom.mockImplementation((table: string) => {
+        touched.push(table);
+        return {
+          upsert: vi.fn().mockResolvedValue({ error: null }),
+          select: selectChain({ data: [], error: null }).select,
+        };
+      });
+
+      const result = await sync.syncAll();
+
+      expect(result.success).toBe(true);
+      expect(touched).not.toContain("patients");
+      expect(touched).not.toContain("queue");
+      expect(patients.update).not.toHaveBeenCalled();
+      expect(queue.update).not.toHaveBeenCalled();
     });
   });
 });

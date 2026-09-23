@@ -4,6 +4,7 @@ import { db, User, Session, generateId } from "@/db";
 import { verifyPin } from "@/utils/pin";
 import * as logger from "@/lib/logger";
 import { supabase } from "@/lib/supabase";
+import { rolePermissionMatrix, type Role } from "@/auth/roles";
 import {
   clearStoredSupabaseAuth,
   isSupabaseAuthKey,
@@ -143,6 +144,69 @@ function startCloudSignOut(): void {
   cloudSignOutInFlight = run;
 }
 
+/** Values that mean "switched off" in an app_users flag column. */
+const OFF = new Set(["false", "0", "f", "no"]);
+const ON = new Set(["true", "1", "t", "yes"]);
+const flag = (value: unknown) =>
+  value === null || value === undefined ? null : String(value).toLowerCase();
+
+/**
+ * The access an app_users row (public.app_users, id = online user id) gives,
+ * following the database's own rule (public.app_current_role): an unknown
+ * role, a missing row or a deactivated account gives no access ("guest"),
+ * never a default clinical role.
+ */
+export function accessFromAppUser(row: Record<string, unknown> | null | undefined): {
+  role: Role;
+  fullName?: string;
+} {
+  if (!row) return { role: "guest" };
+  const fullName =
+    typeof row.full_name === "string" && row.full_name.trim() ? row.full_name.trim() : undefined;
+  const deactivated =
+    OFF.has(flag(row.is_active) ?? "") ||
+    OFF.has(flag(row.active) ?? "") ||
+    ON.has(flag(row.disabled) ?? "") ||
+    ON.has(flag(row.deactivated) ?? "") ||
+    (row.deactivated_at !== null && row.deactivated_at !== undefined) ||
+    (row.disabled_at !== null && row.disabled_at !== undefined);
+  const knownRoles = Object.keys(rolePermissionMatrix().roles);
+  const role = typeof row.role === "string" && knownRoles.includes(row.role) ? (row.role as Role) : "guest";
+  return { role: deactivated ? "guest" : role, fullName };
+}
+
+type ServerStaffAccount =
+  | { status: "found"; role: Role; fullName?: string }
+  | { status: "missing" }
+  | { status: "error" };
+
+/**
+ * The signed-in person's staff record on the server (their own app_users
+ * row, which the database uses for every access decision). Never throws.
+ */
+async function readServerStaffAccount(authUserId: string): Promise<ServerStaffAccount> {
+  if (!supabase) return { status: "error" };
+  try {
+    const { data, error } = await supabase
+      .from("app_users")
+      .select("*")
+      .eq("id", authUserId)
+      .maybeSingle();
+    if (error) {
+      logger.error("[Auth] Could not read the staff record:", error.code ?? "unknown");
+      return { status: "error" };
+    }
+    if (!data) return { status: "missing" };
+    return { status: "found", ...accessFromAppUser(data as Record<string, unknown>) };
+  } catch (error) {
+    logger.error(
+      "[Auth] Could not read the staff record:",
+      error instanceof Error ? error.name : typeof error,
+    );
+    return { status: "error" };
+  }
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -254,32 +318,54 @@ export const useAuthStore = create<AuthState>()(
             )
             .first();
 
-          // If not found locally, build a minimal user record from Supabase data
-          if (!user) {
-            const { data: staffRow } = await supabase
-              .from("staff_roles")
-              .select("role, full_name")
-              .eq("auth_user_id", data.user.id)
-              .maybeSingle();
-
-            const newUser: User = {
-              id: data.user.id,
-              fullName:
-                staffRow?.full_name ??
-                data.user.user_metadata?.full_name ??
-                email.split("@")[0],
-              role: (staffRow?.role as User["role"]) ?? "volunteer",
-              email: data.user.email ?? email,
-              pinHash: "",
-              pinSalt: "",
-              adminAccess: staffRow?.role === "admin",
-              adminPermanent: false,
-              isActive: 1,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            };
-            await db.users.put(newUser);
-            user = newUser;
+          // A new device (no local record) builds one from the server's
+          // staff record, app_users, which the database uses for every
+          // access decision. A record created that way earlier (same id as
+          // the online account) follows later role changes. Without a server
+          // record the account gets no access, never a default role.
+          // (User["role"] lists the roles created on devices; auditor and
+          // lead_clinician accounts come from the server.)
+          if (!user || user.id === data.user.id) {
+            const account = await readServerStaffAccount(data.user.id);
+            if (!user) {
+              const access =
+                account.status === "found" ? account : { role: "guest" as Role };
+              const newUser: User = {
+                id: data.user.id,
+                fullName:
+                  (account.status === "found" ? account.fullName : undefined) ??
+                  data.user.user_metadata?.full_name ??
+                  email.split("@")[0],
+                role: access.role as User["role"],
+                email: data.user.email ?? email,
+                pinHash: "",
+                pinSalt: "",
+                adminAccess: access.role === "admin",
+                adminPermanent: false,
+                isActive: 1,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              };
+              await db.users.put(newUser);
+              user = newUser;
+            } else if (account.status !== "error") {
+              // A failed lookup keeps the stored role; a missing or
+              // deactivated server record removes access.
+              const role = (account.status === "found" ? account.role : "guest") as User["role"];
+              const fullName =
+                (account.status === "found" ? account.fullName : undefined) ?? user.fullName;
+              if (role !== user.role || fullName !== user.fullName) {
+                const refreshed: User = {
+                  ...user,
+                  role,
+                  fullName,
+                  adminAccess: role === "admin",
+                  updatedAt: new Date(),
+                };
+                await db.users.put(refreshed);
+                user = refreshed;
+              }
+            }
           }
 
           const session: Session = {

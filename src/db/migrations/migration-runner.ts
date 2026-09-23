@@ -4,8 +4,26 @@ import type { Migration } from "./types";
 import { migration0001 } from "./0001-committed-idx";
 import { migration0002 } from "./0002-vitals-ranges";
 import { migration0003 } from "./0003-retire-demo-users";
+import { migration0004 } from "./0004-portal-access-backfill";
+import { migration0005 } from "./0005-merge-backfill";
 
-const migrations: Migration[] = [migration0001, migration0002, migration0003];
+const migrations: Migration[] = [
+  migration0001,
+  migration0002,
+  migration0003,
+  migration0004,
+  migration0005,
+];
+
+/**
+ * Backfills queue work for the server. If one fails, the app still starts:
+ * it is not marked done, later migrations wait, and it runs again on the
+ * next start.
+ */
+const RETRY_ON_NEXT_START: ReadonlySet<number> = new Set([
+  migration0004.version,
+  migration0005.version,
+]);
 
 export async function runMigrations(): Promise<void> {
   const metaKey = "db_version";
@@ -31,6 +49,13 @@ export async function runMigrations(): Promise<void> {
       });
       log(`Migration ${migration.version} completed`);
     } catch (err) {
+      if (RETRY_ON_NEXT_START.has(migration.version)) {
+        logError(
+          `Migration ${migration.version} failed; it will run again on the next start:`,
+          err instanceof Error ? err.name : "unknown",
+        );
+        return;
+      }
       logError(`Migration ${migration.version} failed:`, err);
       throw err;
     }

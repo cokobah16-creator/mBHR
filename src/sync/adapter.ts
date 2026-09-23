@@ -1,7 +1,11 @@
 // src/sync/adapter.ts
 import { supabase as sharedClient } from "@/lib/supabase";
 import { checkCloudSession } from "@/lib/cloudSession";
+import { can, type Role } from "@/auth/roles";
+import { useAuthStore } from "@/stores/auth";
+import { countBlockedIn } from "@/features/conflicts/syncCounts";
 import { db } from "../db";
+import type { ServerCommand } from "../db";
 import { PendingOperation, processQueue } from "../stores/operationsQueue";
 import { useSyncStore } from "../stores/syncStore";
 import type {
@@ -13,6 +17,16 @@ import { mergePulledRow } from "./pullMerge";
 import { markersAfterUpload } from "./uploadMarkers";
 import { namedSyncError, syncErrorCode } from "./errorCode";
 import { queueSyncConflicts } from "./queueConflicts";
+import {
+  countOpenCommands,
+  countWaitingPermission,
+  drainCommands,
+  PERMISSION_RETRY_MS,
+  type CommandSender,
+  type CommandStore,
+  type DrainDeps,
+  type DrainSummary,
+} from "./commandOutbox";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
@@ -48,7 +62,11 @@ type Tbl =
   | "queue"
   | "patient_allergies"
   | "patient_preferences"
-  | "queue_transitions";
+  | "queue_transitions"
+  | "patient_merges";
+
+/** Server tables this sync engine handles. */
+export type SyncTable = Tbl;
 
 /**
  * Append-only audit tables. Rows are created on a device and never edited,
@@ -58,6 +76,21 @@ type Tbl =
  */
 const APPEND_ONLY: ReadonlySet<Tbl> = new Set<Tbl>(["queue_transitions"]);
 
+/**
+ * Download-only tables: written on the server by command RPCs, never
+ * uploaded from a device (patient_merges: the merge history every device
+ * keeps).
+ */
+const PULL_ONLY: ReadonlySet<Tbl> = new Set<Tbl>(["patient_merges"]);
+
+/**
+ * Tables whose server rows carry row_version (bumped by the server on every
+ * write). Conflicts are detected by comparing it with the version this
+ * device last saw, not by comparing device and server clocks.
+ */
+const VERSIONED: ReadonlySet<Tbl> = new Set<Tbl>(["patients", "queue"]);
+
+/** Uploaded columns (this device's field -> server column). */
 const mapToDB: Record<Tbl, Record<string, string>> = {
   app_users: {
     id: "id",
@@ -150,6 +183,15 @@ const mapToDB: Record<Tbl, Record<string, string>> = {
     priority: "priority",
     queuedAt: "queued_at",
     createdBy: "created_by",
+    // Ticket, site and service day (queue-ticket package) and the staff
+    // member who called the patient, so every device and the waiting-room
+    // display show the same ticket and assignee.
+    ticketId: "ticket_id",
+    ticketNumber: "ticket_number",
+    siteKey: "site_key",
+    serviceDate: "service_date",
+    assignedTo: "assigned_to",
+    assignedName: "assigned_name",
     updatedAt: "updated_at",
   },
   patient_allergies: {
@@ -198,15 +240,139 @@ const mapToDB: Record<Tbl, Record<string, string>> = {
     deviceId: "device_id",
     at: "at",
   },
+  patient_merges: {},
+};
+
+/**
+ * Downloaded but never uploaded (this device's field -> server column):
+ * values only the server sets.
+ */
+const pullOnlyMap: Partial<Record<Tbl, Record<string, string>>> = {
+  patients: {
+    portalEnabled: "portal_enabled",
+    portalEnabledChangedAt: "portal_enabled_changed_at",
+    mergeInto: "merged_into",
+    mergedAt: "merged_at",
+    _serverVersion: "row_version",
+  },
+  queue: {
+    _serverVersion: "row_version",
+  },
+  patient_merges: {
+    id: "id",
+    winnerId: "winner_id",
+    loserId: "loser_id",
+    mergedBy: "merged_by",
+    reason: "reason",
+    commandId: "command_id",
+    fieldChoices: "field_choices",
+    requestedAt: "requested_at",
+    kind: "kind",
+    source: "source",
+    createdAt: "created_at",
+  },
 };
 
 const mapFromDB: Record<Tbl, Record<string, string>> = Object.fromEntries(
-  Object.entries(mapToDB).map(([t, m]) => [
+  (Object.keys(mapToDB) as Tbl[]).map((t) => [
     t,
-    Object.fromEntries(Object.entries(m).map(([app, db]) => [db, app])),
+    Object.fromEntries(
+      Object.entries({ ...mapToDB[t], ...(pullOnlyMap[t] ?? {}) }).map(
+        ([app, column]) => [column, app],
+      ),
+    ),
   ]),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-) as any;
+) as Record<Tbl, Record<string, string>>;
+
+/**
+ * Columns added by the sync foundation migration
+ * (20260925100000_sync_authority_foundation.sql). If the server has not
+ * been migrated yet, uploads are retried without them instead of failing.
+ */
+const FOUNDATION_COLUMNS: Partial<Record<Tbl, string[]>> = {
+  queue: [
+    "ticket_id",
+    "ticket_number",
+    "site_key",
+    "service_date",
+    "assigned_to",
+    "assigned_name",
+  ],
+};
+/** Set when the server reported a missing foundation column this session. */
+let serverLacksFoundation = false;
+
+/**
+ * Fields only the server changes. A download applies them even to a record
+ * with unsent edits on this device (the edits are kept).
+ */
+const SERVER_OWNED: Partial<Record<Tbl, string[]>> = {
+  patients: ["portalEnabled", "portalEnabledChangedAt", "mergeInto", "mergedAt"],
+};
+
+/**
+ * Optimistic local changes waiting for a command: while `marker` is 1 on
+ * the local record, a download leaves `fields` alone.
+ */
+interface HoldRule {
+  marker: string;
+  fields: string[];
+}
+const HOLDS: Partial<Record<Tbl, HoldRule[]>> = {
+  patients: [
+    { marker: "portalPending", fields: ["portalEnabled", "portalEnabledChangedAt"] },
+    { marker: "mergePending", fields: ["mergeInto", "mergedAt"] },
+  ],
+};
+
+type Row = Record<string, unknown>;
+
+const QUEUE_KEEP_WHEN_EMPTY = [
+  "ticketId",
+  "ticketNumber",
+  "siteKey",
+  "serviceDate",
+  "assignedTo",
+  "assignedName",
+];
+
+/** Server row -> this device's shape, including server-only rules. */
+function transformPulled(t: Tbl, raw: Row, mapped: Row): Row {
+  if (t === "patients") {
+    // Portal access counts as a server decision only once the server has
+    // recorded one (portal_enabled_changed_at). Before that the server
+    // value is only the column default, so this device's value stands.
+    if (raw.portal_enabled_changed_at === null || raw.portal_enabled_changed_at === undefined) {
+      delete mapped.portalEnabled;
+      delete mapped.portalEnabledChangedAt;
+    } else if ("portal_enabled" in raw) {
+      mapped.portalEnabled = raw.portal_enabled ? 1 : 0;
+    }
+    // A merge link comes from the server only when it has one; a merge made
+    // on this device is undone by its command handler, not by a download.
+    if (raw.merged_into === null || raw.merged_into === undefined) {
+      delete mapped.mergeInto;
+      delete mapped.mergedAt;
+    }
+  }
+  if (t === "queue") {
+    // Ticket, site, day and assignee are never cleared once set. A server
+    // row without them (uploaded by an older app version) must not wipe the
+    // ticket label this device already announced.
+    for (const field of QUEUE_KEEP_WHEN_EMPTY) {
+      if (mapped[field] === null || mapped[field] === undefined) delete mapped[field];
+    }
+  }
+  if (t === "patient_merges") {
+    const created = typeof raw.created_at === "string" ? new Date(raw.created_at) : null;
+    if (created && !Number.isNaN(created.getTime())) {
+      mapped.createdDay = Math.floor(created.getTime() / 86400000); // epochDay
+    }
+    mapped.status = "applied";
+    if (mapped.reason === null || mapped.reason === undefined) mapped.reason = "";
+  }
+  return mapped;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toDB(obj: any, map: Record<string, string>) {
@@ -237,6 +403,7 @@ const tables: Tbl[] = [
   "patient_allergies",
   "patient_preferences",
   "queue_transitions",
+  "patient_merges",
 ];
 
 // Map remote table names to local Dexie table names
@@ -252,15 +419,221 @@ const localTableMap: Record<Tbl, string> = {
   patient_allergies: "patientAllergies",
   patient_preferences: "patientPreferences",
   queue_transitions: "queueTransitions",
+  patient_merges: "patientMerges",
 };
+
+/** Local tables this engine uploads (every synced table except download-only ones). */
+const uploadLocalTables = (): string[] =>
+  tables.filter((t) => !PULL_ONLY.has(t)).map((t) => localTableMap[t]);
+
+// ---------------------------------------------------------------------------
+// Sync participants (other packages hook in without editing this file)
+// ---------------------------------------------------------------------------
+
+export interface SyncParticipant {
+  /** Short name for logs and results, e.g. "queue-tickets". */
+  name: string;
+  /** Runs after commands are sent, before this engine uploads records. */
+  beforePush?: () => Promise<void>;
+  /** Runs after this engine downloads records. */
+  afterPull?: () => Promise<void>;
+  /** Extra server-owned fields per table (applied over unsent edits). */
+  serverOwned?: Partial<Record<Tbl, string[]>>;
+  /** Extra optimistic-change holds per table. */
+  holds?: Partial<Record<Tbl, HoldRule[]>>;
+}
+
+const participants: SyncParticipant[] = [];
+
+/**
+ * Add a participant to every sync run (Sync now, background and reconnect
+ * syncs). Registering the same name again replaces it. Returns a function
+ * that removes it.
+ */
+export function registerSyncParticipant(participant: SyncParticipant): () => void {
+  const existing = participants.findIndex((p) => p.name === participant.name);
+  if (existing >= 0) participants.splice(existing, 1);
+  participants.push(participant);
+  return () => {
+    const i = participants.indexOf(participant);
+    if (i >= 0) participants.splice(i, 1);
+  };
+}
+
+function serverOwnedFor(t: Tbl): string[] {
+  const fields = new Set(SERVER_OWNED[t] ?? []);
+  for (const p of participants) for (const f of p.serverOwned?.[t] ?? []) fields.add(f);
+  return [...fields];
+}
+
+function heldFor(t: Tbl, localRow: Row | undefined): string[] {
+  if (!localRow) return [];
+  const rules = [...(HOLDS[t] ?? []), ...participants.flatMap((p) => p.holds?.[t] ?? [])];
+  const held: string[] = [];
+  for (const rule of rules) if (localRow[rule.marker] === 1) held.push(...rule.fields);
+  return held;
+}
+
+async function runParticipants(
+  phase: "beforePush" | "afterPull",
+  failures: string[],
+): Promise<void> {
+  for (const participant of [...participants]) {
+    const step = participant[phase];
+    if (!step) continue;
+    try {
+      await step();
+    } catch (error) {
+      console.warn(`[sync] ${participant.name} (${phase}) failed`, syncErrorCode(error));
+      failures.push(participant.name);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Who is syncing
+// ---------------------------------------------------------------------------
+
+/** The online (Supabase) user on this device, or null. Never throws. */
+async function currentCloudUser(): Promise<{ id: string; email: string | null } | null> {
+  try {
+    const auth = sb?.auth;
+    if (!auth || typeof auth.getSession !== "function") return null;
+    const { data } = await auth.getSession();
+    const user = data?.session?.user;
+    return user?.id ? { id: user.id, email: user.email ?? null } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The staff member signed in online on this device: the local account and
+ * the online account must be the same person. null otherwise.
+ */
+export async function currentCommandSender(): Promise<CommandSender | null> {
+  const cloud = await currentCloudUser();
+  if (!cloud) return null;
+  const user = useAuthStore.getState().currentUser;
+  if (!user) return null;
+  const sameAccount =
+    user.id === cloud.id ||
+    (!!user.email && !!cloud.email && user.email.toLowerCase() === cloud.email.toLowerCase());
+  if (!sameAccount) return null;
+  return { localUserId: user.id, cloudUserId: cloud.id, role: user.role };
+}
+
+/** Staff accounts are uploaded only by someone who may manage them. */
+function mayUploadStaffAccounts(): boolean {
+  const role = useAuthStore.getState().currentUser?.role as Role | undefined;
+  return !!role && can(role, "users");
+}
+
+function isPermissionRefusal(error: unknown, status?: number): boolean {
+  const code =
+    error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+  return code === "42501" || status === 403;
+}
+
+function isMissingColumn(error: unknown): boolean {
+  const code =
+    error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+  return code === "PGRST204" || code === "42703";
+}
+
+/** A record the server refused for this online user less than 6 hours ago. */
+function blockedFor(record: Row, cloudUserId: string | null, now: number): boolean {
+  const block = record._syncBlock as
+    | { reason?: string; refusedFor?: string; at?: number }
+    | undefined;
+  if (!block || block.reason !== "permission") return false;
+  if (!cloudUserId || block.refusedFor !== cloudUserId) return false;
+  return now - (block.at ?? 0) < PERMISSION_RETRY_MS;
+}
+
+// ---------------------------------------------------------------------------
+// Command outbox wiring (db.serverCommands)
+// ---------------------------------------------------------------------------
+
+/** A Dexie table used as a command outbox (typed for commandOutbox). */
+export function asCommandStore(table: unknown): CommandStore {
+  return table as CommandStore;
+}
+
+/**
+ * Everything drainCommands needs to send commands as the person signed in
+ * online. Packages with their own outbox table (for example the pharmacy
+ * database) use it with drainCommands(theirTable, commandDeps()).
+ */
+export function commandDeps(): DrainDeps {
+  return {
+    callRpc: async (rpc, args) => {
+      if (!sb) throw namedSyncError("SyncNotConfigured");
+      const response = await sb.rpc(rpc, args);
+      return {
+        data: response.data,
+        error: response.error
+          ? { code: response.error.code, message: response.error.message }
+          : null,
+        status: response.status,
+      };
+    },
+    sender: currentCommandSender,
+    hasPermission: (role, permission) =>
+      can(role as Role, permission as Parameters<typeof can>[1]),
+    onRejected: async (command: ServerCommand) => {
+      const settled = new Date(command.settledAt ?? Date.now()).toISOString();
+      // Records the command touched, by table and id only (never names).
+      const records = (command.entityRefs ?? [])
+        .map((ref) => `${ref.table} ${ref.id}`)
+        .join(", ");
+      const field: ConflictField = {
+        field: "server_command",
+        label: "Change refused by the server",
+        localValue: records ? `${command.rpc} (${records})` : command.rpc,
+        remoteValue: command.rejectReason ?? "rejected_by_server",
+        type: "string",
+      };
+      const user = useAuthStore.getState().currentUser;
+      // Filed under the command, not the patient record: a notice keyed by
+      // the record would hide a real sync conflict on it (one open review
+      // entry per record) and would offer to write "server_command" onto
+      // the record when resolved. This entry can only be reviewed and
+      // dismissed; the command's handler already restored the record.
+      await queueSyncConflicts(
+        [
+          {
+            entityType: "server_command",
+            entityId: command.id,
+            localTimestamp: new Date(command.createdAt).toISOString(),
+            remoteTimestamp: settled,
+            conflicts: [field],
+          },
+        ],
+        user ? { id: user.id, role: user.role } : undefined,
+      );
+    },
+  };
+}
+
+/** Send this device's queued commands (db.serverCommands). */
+export async function drainServerCommands(): Promise<DrainSummary | null> {
+  if (!sb) return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const table = (db as any).serverCommands;
+  if (!table) return null;
+  return drainCommands(asCommandStore(table), commandDeps());
+}
 
 /**
  * Records saved on this device that have not been uploaded yet (rows with
- * _dirty = 1 in every synced table). Safe to call inside a Dexie liveQuery.
+ * _dirty = 1 in every synced table) plus commands the server has not
+ * answered yet. Safe to call inside a Dexie liveQuery.
  */
 export async function countUnsyncedRecords(): Promise<number> {
   let total = 0;
   for (const t of tables) {
+    if (PULL_ONLY.has(t)) continue;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const table = (db as any)[localTableMap[t]];
     if (!table) continue;
@@ -269,6 +642,28 @@ export async function countUnsyncedRecords(): Promise<number> {
       .equals(1)
       .count()
       .catch(() => 0);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const commands = (db as any).serverCommands;
+  if (commands) {
+    total += await countOpenCommands(asCommandStore(commands)).catch(() => 0);
+  }
+  return total;
+}
+
+/**
+ * Records and commands the server refused for the person signed in online
+ * (permission). They stay on this device, unsent, until someone allowed to
+ * send them signs in online and syncs. Show them as "waiting for an
+ * authorised person to sync". Included in countUnsyncedRecords(). Safe
+ * inside a Dexie liveQuery.
+ */
+export async function countAwaitingAuthorisedSync(): Promise<number> {
+  let total = await countBlockedIn(uploadLocalTables());
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const commands = (db as any).serverCommands;
+  if (commands) {
+    total += await countWaitingPermission(asCommandStore(commands)).catch(() => 0);
   }
   return total;
 }
@@ -319,18 +714,31 @@ async function detectConflict(
 
     if (error || !remoteData) return { hasConflict: false };
 
-    const localUpdated = new Date(
-      localData.updatedAt || localData.updated_at,
-    ).getTime();
-    const remoteUpdated = new Date(remoteData.updated_at).getTime();
+    const remoteVersion = Number(remoteData.row_version);
+    const localVersion = localData._serverVersion;
+    if (
+      VERSIONED.has(table) &&
+      Number.isFinite(remoteVersion) &&
+      typeof localVersion === "number"
+    ) {
+      // The server has not changed the record since this device last saw
+      // it: this device's edit is the only change. (Server version numbers,
+      // not device clocks, so clock differences cannot fake a conflict.)
+      if (remoteVersion === localVersion) return { hasConflict: false };
+    } else {
+      const localUpdated = new Date(
+        localData.updatedAt || localData.updated_at,
+      ).getTime();
+      const remoteUpdated = new Date(remoteData.updated_at).getTime();
 
-    // No conflict if local is newer or same timestamp
-    if (localUpdated >= remoteUpdated) return { hasConflict: false };
+      // No conflict if local is newer or same timestamp
+      if (localUpdated >= remoteUpdated) return { hasConflict: false };
 
-    // Check if there's a synced timestamp and data hasn't changed since
-    if (localData._syncedAt) {
-      const syncedAt = new Date(localData._syncedAt).getTime();
-      if (remoteUpdated <= syncedAt) return { hasConflict: false };
+      // Check if there's a synced timestamp and data hasn't changed since
+      if (localData._syncedAt) {
+        const syncedAt = new Date(localData._syncedAt).getTime();
+        if (remoteUpdated <= syncedAt) return { hasConflict: false };
+      }
     }
 
     // Detect field-level conflicts. Values are normalised first (Date vs
@@ -355,15 +763,80 @@ async function detectConflict(
   }
 }
 
-export async function pushChanges() {
-  if (!sb) return { conflicts: [] as ConflictData[] };
+/** Upload one row; retries once without foundation columns on an old server. */
+async function upsertRow(
+  t: Tbl,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  record: any,
+): Promise<{ error: unknown; status?: number; serverVersion?: number }> {
+  if (!sb) return { error: namedSyncError("SyncNotConfigured") };
+  const payload = toDB(record, mapToDB[t]);
+  if (serverLacksFoundation) {
+    for (const column of FOUNDATION_COLUMNS[t] ?? []) delete payload[column];
+  }
+  const options = { onConflict: "id", ignoreDuplicates: APPEND_ONLY.has(t) };
+  const wantVersion = VERSIONED.has(t) && !serverLacksFoundation;
 
-  const detectedConflicts: ConflictData[] = [];
+  const send = async (withVersion: boolean) => {
+    const query = sb!.from(t).upsert(payload, options);
+    if (!withVersion) {
+      const { error, status } = await query;
+      return { error, status, serverVersion: undefined as number | undefined };
+    }
+    const { data, error, status } = await query.select("id,row_version");
+    const row = Array.isArray(data) ? data[0] : data;
+    const version = Number((row as { row_version?: unknown } | null)?.row_version);
+    return { error, status, serverVersion: Number.isFinite(version) ? version : undefined };
+  };
+
+  let result = await send(wantVersion);
+  if (result.error && isMissingColumn(result.error) && !serverLacksFoundation) {
+    // The server has not been migrated yet (row_version or the new queue
+    // columns are missing): upload what it can take, and say so once.
+    serverLacksFoundation = true;
+    console.warn(`[sync] server is missing sync columns; uploading ${t} without them`);
+    for (const column of FOUNDATION_COLUMNS[t] ?? []) delete payload[column];
+    result = await send(false);
+  }
+  return result;
+}
+
+export interface PushSummary {
+  conflicts: ConflictData[];
+  /** Rows the server accepted. */
+  uploaded: number;
+  /**
+   * Rows the server refused for the person signed in online (permission).
+   * Kept on this device, unsent, waiting for an authorised person to sync;
+   * not retried under the same sign-in for a while.
+   */
+  awaitingAuthorised: number;
+  /** Other refusals (retried on the next sync). */
+  failed: number;
+}
+
+export async function pushChanges(): Promise<PushSummary> {
+  const summary: PushSummary = {
+    conflicts: [],
+    uploaded: 0,
+    awaitingAuthorised: 0,
+    failed: 0,
+  };
+  if (!sb) return summary;
+
+  const cloud = await currentCloudUser();
+  const now = Date.now();
 
   for (const t of tables) {
+    if (PULL_ONLY.has(t)) continue;
+    // Staff accounts: only someone who may manage them uploads them (the
+    // server refuses anyone else).
+    if (t === "app_users" && !mayUploadStaffAccounts()) continue;
     const localTable = localTableMap[t];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dirty = await (db as any)[localTable]
+    const table = (db as any)[localTable];
+    if (!table || typeof table.where !== "function") continue;
+    const dirty = await table
       .where("_dirty")
       .equals(1)
       .toArray()
@@ -377,13 +850,19 @@ export async function pushChanges() {
     if (!dirty?.length) continue;
 
     for (const record of dirty) {
+      // Refused for this person recently: leave it for someone authorised.
+      if (blockedFor(record, cloud?.id ?? null, now)) {
+        summary.awaitingAuthorised += 1;
+        continue;
+      }
+
       // Check for conflicts before pushing (append-only rows cannot conflict)
       const conflictCheck = APPEND_ONLY.has(t)
         ? { hasConflict: false as const }
         : await detectConflict(t, record.id, record);
 
       if (conflictCheck.hasConflict && conflictCheck.conflicts) {
-        detectedConflicts.push({
+        summary.conflicts.push({
           entityType: t,
           entityId: record.id,
           localTimestamp: record.updatedAt || new Date().toISOString(),
@@ -393,36 +872,44 @@ export async function pushChanges() {
         continue; // Skip this record, needs manual resolution
       }
 
-      // No conflict, proceed with push
-      const payload = toDB(record, mapToDB[t]);
-      // Append-only rows: insert if absent, so a retry after a lost reply
-      // succeeds without needing (or getting) update rights on the server.
-      const { error } = await sb.from(t).upsert(payload, {
-        onConflict: "id",
-        ignoreDuplicates: APPEND_ONLY.has(t),
-      });
+      // No conflict, proceed with push. Append-only rows: insert if absent,
+      // so a retry after a lost reply succeeds without needing (or getting)
+      // update rights on the server.
+      const { error, status, serverVersion } = await upsertRow(t, record);
 
       if (!error) {
         // Mark it clean only if it was not edited during the upload; a
         // newer edit stays marked unsent (and safe from the download).
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const table = (db as any)[localTable];
         const syncedAt = new Date().toISOString();
         await db.transaction("rw", table, async () => {
           const current = await table.get(record.id);
-          await table.update(
-            record.id,
-            markersAfterUpload(record, current, syncedAt),
-          );
+          await table.update(record.id, {
+            ...markersAfterUpload(record, current, syncedAt),
+            _syncBlock: undefined,
+            ...(serverVersion !== undefined ? { _serverVersion: serverVersion } : {}),
+          });
         });
+        summary.uploaded += 1;
+      } else if (isPermissionRefusal(error, status)) {
+        // Not this person's to upload (e.g. a nurse's vitals on a tablet
+        // now signed in by a pharmacist). Keep it, unsent, for someone
+        // authorised; do not retry it under this sign-in in a loop.
+        await table
+          .update(record.id, {
+            _syncBlock: { reason: "permission", refusedFor: cloud?.id ?? "", at: now },
+          })
+          .catch(() => undefined);
+        summary.awaitingAuthorised += 1;
+        console.warn(`[sync] upload refused for ${t} (permission)`, syncErrorCode(error));
       } else {
         // The row stays marked unsent and is retried on the next sync.
+        summary.failed += 1;
         console.warn(`[sync] upload refused for ${t}`, syncErrorCode(error));
       }
     }
   }
 
-  return { conflicts: detectedConflicts };
+  return summary;
 }
 
 export interface PullSummary {
@@ -431,11 +918,51 @@ export interface PullSummary {
   /**
    * Downloaded rows not written because this device has changes to them
    * that are not uploaded yet. The upload step compares those rows with the
-   * server copy and raises a conflict when both sides changed.
+   * server copy and raises a conflict when both sides changed. (Server-owned
+   * fields of those rows, such as a merge link, are still updated.)
    */
   keptLocalEdits: number;
   /** Server tables whose download failed in this run. */
   failedTables: string[];
+}
+
+/** Write downloaded server rows for table `t` into `table` (one transaction). */
+async function applyPulledRows(
+  t: Tbl,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  table: any,
+  rows: Row[],
+  summary: { applied: number; keptLocalEdits: number },
+  onRow?: (row: Row) => void,
+): Promise<void> {
+  const syncedAt = new Date().toISOString();
+  const serverOwned = serverOwnedFor(t);
+  // Read and write each row in one transaction so an edit saved on this
+  // device between the read and the write cannot be overwritten.
+  await db.transaction("rw", table, async () => {
+    for (const row of rows) {
+      onRow?.(row);
+      const mapped = transformPulled(t, row, fromDB(row, mapFromDB[t]));
+      const localRow = await table.get(mapped.id);
+      // Rows with unsent changes are kept (only their server-owned fields
+      // are updated); others get the server row laid over the local one,
+      // so device-only fields survive (patient search keys, staff PIN
+      // hashes).
+      const decision = mergePulledRow(
+        localRow,
+        mapped,
+        { _dirty: 0, _syncedAt: syncedAt },
+        { serverOwned, held: heldFor(t, localRow) },
+      );
+      if (decision.kind === "kept-local") {
+        summary.keptLocalEdits += 1;
+        continue;
+      }
+      await table.put(decision.row);
+      if (decision.kind === "server-owned") summary.keptLocalEdits += 1;
+      else summary.applied += 1;
+    }
+  });
 }
 
 export async function pullChanges(): Promise<PullSummary> {
@@ -467,38 +994,58 @@ export async function pullChanges(): Promise<PullSummary> {
       continue;
     }
 
-    const rows = data ?? [];
+    const rows = (data ?? []) as Row[];
     let maxTs = since;
-    const syncedAt = new Date().toISOString();
-    // Read and write each row in one transaction so an edit saved on this
-    // device between the read and the write cannot be overwritten.
     if (rows.length > 0) {
-      await db.transaction("rw", table, async () => {
-        for (const row of rows) {
-          // The cursor advances past every row, applied or kept local.
-          if (row.updated_at && row.updated_at > maxTs) maxTs = row.updated_at;
-          const mapped = fromDB(row, mapFromDB[t]);
-          const localRow = await table.get(mapped.id);
-          // Rows with unsent changes are kept; others get the server row
-          // laid over the local one, so device-only fields survive (queue
-          // assignee and ticket number, patient search keys and merge
-          // links, staff PIN hashes).
-          const decision = mergePulledRow(localRow, mapped, {
-            _dirty: 0,
-            _syncedAt: syncedAt,
-          });
-          if (decision.kind === "kept-local") {
-            summary.keptLocalEdits += 1;
-            continue;
-          }
-          await table.put(decision.row);
-          summary.applied += 1;
-        }
+      await applyPulledRows(t, table, rows, summary, (row) => {
+        // The cursor advances past every row, applied or kept local.
+        const ts = row.updated_at;
+        if (typeof ts === "string" && ts > maxTs) maxTs = ts;
       });
     }
     await setCursor(t, maxTs);
   }
   return summary;
+}
+
+/**
+ * Download specific server rows again and write them on this device, for
+ * example to restore the server's values after a command was rejected.
+ * `column` is this device's field name ("id", "patientId", ...). Rows with
+ * unsent edits keep them; their server-owned fields are updated. Resolves to
+ * the number of rows written. Throws an error carrying only a name when
+ * sync is not set up, the device is offline or the request fails.
+ */
+export async function refetchRows(
+  t: SyncTable,
+  column: string,
+  values: string[],
+): Promise<number> {
+  if (!sb) throw namedSyncError("SyncNotConfigured");
+  if (!(tables as string[]).includes(t) || APPEND_ONLY.has(t)) {
+    throw namedSyncError("UnknownRecordType");
+  }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    throw namedSyncError("Offline");
+  }
+  const dbColumn = mapToDB[t][column] ?? pullOnlyMap[t]?.[column] ?? column;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const table = (db as any)[localTableMap[t]];
+  if (!table) throw namedSyncError("UnknownRecordType");
+
+  const unique = [...new Set(values.filter((v) => typeof v === "string" && v))];
+  const summary = { applied: 0, keptLocalEdits: 0 };
+  for (let i = 0; i < unique.length; i += 100) {
+    const chunk = unique.slice(i, i + 100);
+    const { data, error } = await sb.from(t).select("*").in(dbColumn, chunk);
+    if (error) {
+      console.warn(`[sync] could not download ${t} again`, syncErrorCode(error));
+      throw namedSyncError("RemoteReadFailed");
+    }
+    const rows = (data ?? []) as Row[];
+    if (rows.length > 0) await applyPulledRows(t, table, rows, summary);
+  }
+  return summary.applied + summary.keptLocalEdits;
 }
 
 // Process operations queue and sync with conflict detection
@@ -588,6 +1135,18 @@ export interface SyncNowResult {
    * them (kept until they upload or their conflict is resolved).
    */
   keptLocalEdits?: number;
+  /**
+   * Records the server refused for the person signed in online, kept on
+   * this device for an authorised person to sync (see
+   * countAwaitingAuthorisedSync for the running total, commands included).
+   */
+  awaitingAuthorised?: number;
+  /** Uploads refused for other reasons (retried next sync). */
+  uploadFailed?: number;
+  /** What happened to queued server commands (null: none were sent). */
+  commands?: DrainSummary | null;
+  /** Sync participants that failed in this run (names). */
+  participantFailures?: string[];
 }
 
 export async function syncNow(): Promise<SyncNowResult> {
@@ -604,18 +1163,32 @@ export async function syncNow(): Promise<SyncNowResult> {
   syncInProgress = true;
   const syncStore = useSyncStore.getState();
   syncStore.setStatus("syncing");
+  const participantFailures: string[] = [];
 
   try {
-    // Process operations queue first
+    // Server-authoritative commands first (portal access, merges, ...), so
+    // the download below already reflects their outcome.
+    let commands: DrainSummary | null = null;
+    try {
+      commands = await drainServerCommands();
+    } catch (error) {
+      console.warn("[sync] sending queued commands failed", syncErrorCode(error));
+    }
+
+    // Process operations queue
     const queueConflicts = await processOperationsQueue();
 
+    await runParticipants("beforePush", participantFailures);
+
     // Then push remaining dirty records
-    const { conflicts: pushConflicts } = await pushChanges();
+    const pushed = await pushChanges();
 
     // Pull remote changes
     const pulled = await pullChanges();
 
-    const allConflicts = [...queueConflicts, ...pushConflicts];
+    await runParticipants("afterPull", participantFailures);
+
+    const allConflicts = [...queueConflicts, ...pushed.conflicts];
 
     syncStore.setLastSuccessAt(Date.now());
     syncStore.setStatus("ok");
@@ -625,6 +1198,10 @@ export async function syncNow(): Promise<SyncNowResult> {
       conflicts: allConflicts,
       downloadFailedTables: pulled.failedTables,
       keptLocalEdits: pulled.keptLocalEdits,
+      awaitingAuthorised: pushed.awaitingAuthorised,
+      uploadFailed: pushed.failed,
+      commands,
+      participantFailures,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Sync failed";

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
-import { ArrowPathIcon, LockClosedIcon, SignalSlashIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, ExclamationTriangleIcon, LockClosedIcon, SignalSlashIcon } from "@heroicons/react/24/outline";
 import { enhancedSync } from "@/services/enhancedSync";
-import { countUnsyncedRecords } from "@/sync/adapter";
+import { countAwaitingAuthorisedSync, countUnsyncedRecords, syncNow } from "@/sync/adapter";
+import { queueSyncConflicts } from "@/sync/queueConflicts";
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
 import { useAuthStore } from "@/stores/auth";
@@ -97,6 +98,7 @@ export function SyncDashboard() {
   const noSession = configured && cloudSession === "signed_out";
 
   const coreWaiting = useLiveQuery(() => countUnsyncedRecords(), []);
+  const awaitingAuthorised = useLiveQuery(() => countAwaitingAuthorisedSync(), [], 0) ?? 0;
   const extraWaiting = useLiveQuery(() => countDirtyIn(ENHANCED_ONLY_TABLES), []);
   const queuedOps = operations.filter(
     (op) => op.status === "pending" || op.status === "processing",
@@ -153,16 +155,23 @@ export function SyncDashboard() {
     if (!(await checkCloudSession())) return;
     setRunning(true);
     try {
+      // Patients and the queue sync through the adapter only; the other
+      // tables through enhanced sync. Run both.
+      const core = await syncNow();
+      if (core.conflicts.length > 0) await queueSyncConflicts(core.conflicts);
       const result = await enhancedSync.syncAll();
       setRun({
         at: new Date(),
-        success: result.success,
+        success: result.success && core.success,
         pushed: result.pushed,
         pulled: result.pulled,
         failedUploads: result.failedUploads,
         keptLocalEdits: result.keptLocalEdits,
-        failedTables: (result.failedTables ?? []).map((f) => f.table),
-        error: result.error,
+        failedTables: [
+          ...(core.downloadFailedTables ?? []),
+          ...(result.failedTables ?? []).map((f) => f.table),
+        ],
+        error: result.error ?? core.error,
       });
     } catch (error) {
       console.error("Sync run failed:", error instanceof Error ? error.name : "unknown");
@@ -350,6 +359,15 @@ export function SyncDashboard() {
               )}
             </div>
           </div>
+        )}
+
+        {awaitingAuthorised > 0 && (
+          <p className="flex items-start gap-2 text-body text-warning-fg" role="status">
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            {awaitingAuthorised} record{awaitingAuthorised === 1 ? "" : "s"} waiting for an authorised
+            person to sync. The server does not accept them from the account signed in online; they stay
+            on this device until someone with the right role signs in online and syncs.
+          </p>
         )}
 
         <dl className="grid gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">

@@ -66,7 +66,7 @@ describe("validateStaffForm", () => {
 describe("role access descriptions", () => {
   it("describes what a role can do from the RBAC matrix", () => {
     expect(describeRoleAccess("volunteer")).toBe(
-      "Volunteer: can register patients and record vital signs.",
+      "Volunteer: can register patients, record vital signs, move patients through the queue and manage patient portal access.",
     );
     expect(describeRoleAccess("guest")).toBe("Guest: no clinical or admin actions.");
     expect(describeRoleAccess("admin")).toContain("manage staff accounts");
@@ -81,7 +81,11 @@ describe("role access descriptions", () => {
   });
 
   it("lists what a promotion adds", () => {
-    expect(gainedAccess("nurse", "doctor")).toEqual(["document consultations"]);
+    expect(gainedAccess("nurse", "doctor")).toEqual([
+      "document consultations",
+      "mark lab results reviewed",
+      "release lab results to patients",
+    ]);
     expect(lostAccess("nurse", "doctor")).toEqual([]);
   });
 });

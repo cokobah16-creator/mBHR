@@ -1,17 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { useAuthStore } from "./auth";
+import { accessFromAppUser, useAuthStore } from "./auth";
 
-const { mockDbUsers, mockDbSessions } = vi.hoisted(() => ({
-  mockDbUsers: {
-    filter: vi.fn().mockReturnValue({
-      toArray: vi.fn().mockResolvedValue([]),
-    }),
-  },
-  mockDbSessions: {
-    add: vi.fn().mockResolvedValue(undefined),
-    delete: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+const { mockDbUsers, mockDbSessions, mockSupabase, mockFrom } = vi.hoisted(() => {
+  const mockFrom = vi.fn();
+  return {
+    mockDbUsers: {
+      filter: vi.fn().mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([]),
+        first: vi.fn().mockResolvedValue(undefined),
+      }),
+      put: vi.fn().mockResolvedValue(undefined),
+    },
+    mockDbSessions: {
+      add: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    },
+    mockFrom,
+    mockSupabase: {
+      auth: {
+        signInWithPassword: vi.fn(),
+        signOut: vi.fn().mockResolvedValue({ error: null }),
+      },
+      from: mockFrom,
+    },
+  };
+});
+
+vi.mock("@/lib/supabase", () => ({ supabase: mockSupabase }));
 
 vi.mock("@/db", () => ({
   db: {
@@ -28,7 +43,19 @@ vi.mock("@/utils/pin", () => ({
 vi.mock("@/lib/logger", () => ({
   error: vi.fn(),
   info: vi.fn(),
+  warn: vi.fn(),
 }));
+
+/** from("app_users").select().eq().maybeSingle() resolving to `result`. */
+function appUsersLookup(result: { data: unknown; error: unknown }) {
+  const maybeSingle = vi.fn().mockResolvedValue(result);
+  const eq = vi.fn().mockReturnValue({ maybeSingle });
+  const select = vi.fn().mockReturnValue({ eq });
+  mockFrom.mockReturnValue({ select });
+  return { select, eq };
+}
+
+const AUTH_USER = { id: "auth-uid-1", email: "ngozi@clinic.ng", user_metadata: {} };
 
 describe("useAuthStore", () => {
   beforeEach(() => {
@@ -270,6 +297,132 @@ describe("useAuthStore", () => {
       const result = useAuthStore.getState().checkSessionExpiry();
 
       expect(result).toBe(true);
+    });
+  });
+
+  describe("accessFromAppUser", () => {
+    it("uses the role on the server staff record", () => {
+      expect(accessFromAppUser({ role: "nurse", full_name: " Ngozi Eze " })).toEqual({
+        role: "nurse",
+        fullName: "Ngozi Eze",
+      });
+      expect(accessFromAppUser({ role: "lead_clinician" }).role).toBe("lead_clinician");
+    });
+
+    it("gives no access without a record, with an unknown role or when deactivated", () => {
+      expect(accessFromAppUser(null).role).toBe("guest");
+      expect(accessFromAppUser({ role: "chw" }).role).toBe("guest");
+      expect(accessFromAppUser({ role: "doctor", is_active: false }).role).toBe("guest");
+      expect(accessFromAppUser({ role: "doctor", is_active: 0 }).role).toBe("guest");
+      expect(accessFromAppUser({ role: "doctor", disabled: true }).role).toBe("guest");
+      expect(accessFromAppUser({ role: "doctor", deactivated_at: "2026-01-01" }).role).toBe("guest");
+      expect(accessFromAppUser({ role: "doctor", is_active: true }).role).toBe("doctor");
+    });
+  });
+
+  describe("loginOnline on a new device", () => {
+    beforeEach(() => {
+      mockSupabase.auth.signInWithPassword.mockResolvedValue({
+        data: { user: AUTH_USER },
+        error: null,
+      });
+      mockDbUsers.filter.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([]),
+        first: vi.fn().mockResolvedValue(undefined),
+      });
+    });
+
+    it("takes the role from app_users (id = online user id), not staff_roles", async () => {
+      const lookup = appUsersLookup({
+        data: { id: AUTH_USER.id, role: "pharmacist", full_name: "Ngozi Eze" },
+        error: null,
+      });
+
+      const ok = await useAuthStore.getState().loginOnline("Ngozi@clinic.ng", "secret");
+
+      expect(ok).toBe(true);
+      expect(mockFrom).toHaveBeenCalledWith("app_users");
+      expect(mockFrom).not.toHaveBeenCalledWith("staff_roles");
+      expect(lookup.eq).toHaveBeenCalledWith("id", AUTH_USER.id);
+      const user = useAuthStore.getState().currentUser;
+      expect(user).toMatchObject({ id: AUTH_USER.id, role: "pharmacist", fullName: "Ngozi Eze" });
+      expect(mockDbUsers.put).toHaveBeenCalledWith(
+        expect.objectContaining({ id: AUTH_USER.id, role: "pharmacist", adminAccess: false }),
+      );
+    });
+
+    it("gives no access (not volunteer) when there is no server staff record", async () => {
+      appUsersLookup({ data: null, error: null });
+
+      await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
+
+      expect(useAuthStore.getState().currentUser?.role).toBe("guest");
+    });
+
+    it("gives no access when the staff record cannot be read", async () => {
+      appUsersLookup({ data: null, error: { code: "42501" } });
+
+      await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
+
+      expect(useAuthStore.getState().currentUser?.role).toBe("guest");
+    });
+
+    it("follows a role change for an account created by an earlier online sign-in", async () => {
+      const stored = {
+        id: AUTH_USER.id,
+        fullName: "Ngozi Eze",
+        role: "volunteer",
+        email: AUTH_USER.email,
+        isActive: 1,
+      };
+      mockDbUsers.filter.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([stored]),
+        first: vi.fn().mockResolvedValue(stored),
+      });
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "nurse", full_name: "Ngozi Eze" }, error: null });
+
+      await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
+
+      expect(useAuthStore.getState().currentUser?.role).toBe("nurse");
+    });
+
+    it("keeps the stored role when the lookup fails for an existing account", async () => {
+      const stored = {
+        id: AUTH_USER.id,
+        fullName: "Ngozi Eze",
+        role: "nurse",
+        email: AUTH_USER.email,
+        isActive: 1,
+      };
+      mockDbUsers.filter.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([stored]),
+        first: vi.fn().mockResolvedValue(stored),
+      });
+      appUsersLookup({ data: null, error: { code: "PGRST000" } });
+
+      await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
+
+      expect(useAuthStore.getState().currentUser?.role).toBe("nurse");
+      expect(mockDbUsers.put).not.toHaveBeenCalled();
+    });
+
+    it("leaves a device-created account's role alone", async () => {
+      const stored = {
+        id: "local-ulid",
+        fullName: "Ngozi Eze",
+        role: "doctor",
+        email: AUTH_USER.email,
+        isActive: 1,
+      };
+      mockDbUsers.filter.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([stored]),
+        first: vi.fn().mockResolvedValue(stored),
+      });
+
+      await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
+
+      expect(mockFrom).not.toHaveBeenCalled();
+      expect(useAuthStore.getState().currentUser?.role).toBe("doctor");
     });
   });
 });
