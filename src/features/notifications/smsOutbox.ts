@@ -14,6 +14,7 @@
  */
 import type { Tone } from "@/components/ui/StatusBadge";
 import type { SmsTemplateKey } from "@/services/messageTemplates";
+import { REMINDER_SKIP_MESSAGE, type ReminderKind } from "@/services/reminderEligibility";
 import { formatNigerianDateTime } from "@/utils/dateFormat";
 
 export type DeliveryState =
@@ -89,6 +90,61 @@ export const WORKER_TEMPLATE_KEYS = [
   "medication_reminder",
   "appointment.reminder",
 ];
+
+/**
+ * Transactional messages: one-time sign-in codes ("otp") and televisit links
+ * ("televisit_scheduled"). The patient needs them to finish something they
+ * asked for, so turning reminders off never holds them back. This is the one
+ * place mBHR marks a message as transactional; the send-time opt-out check
+ * in services/notificationWorker relies on it through
+ * reminderKindForTemplateKey.
+ */
+export const TRANSACTIONAL_TEMPLATE_KEYS: readonly string[] = [
+  "otp",
+  "televisit_scheduled",
+];
+
+export function isTransactionalTemplateKey(
+  templateKey: string | null | undefined,
+): boolean {
+  return !!templateKey && TRANSACTIONAL_TEMPLATE_KEYS.includes(templateKey);
+}
+
+/**
+ * Which reminder setting in the patient's preferences covers a message, from
+ * its template key. These are the keys services/messaging queues and
+ * outboxTemplateFor composes. Returns null for transactional messages, which
+ * are never suppressed, and for keys that are not a reminder type the
+ * patient can turn off (for example "custom" text).
+ */
+export function reminderKindForTemplateKey(
+  templateKey: string | null | undefined,
+): ReminderKind | null {
+  if (!templateKey || isTransactionalTemplateKey(templateKey)) return null;
+  switch (templateKey) {
+    case "followup.medication": // device outbox (services/messaging)
+    case "medication_reminder": // device queue (schedule form), SMS template
+      return "medication";
+    case "appointment.reminder": // device outbox (services/messaging)
+    case "follow_up_reminder": // SMS template used for appointment reminders
+      return "appointment";
+    default:
+      return null;
+  }
+}
+
+/** Every row of medication_reminders on the server is a medication reminder. */
+export const SERVER_REMINDER_KIND: ReminderKind = "medication";
+
+/**
+ * Whether a stored error says the message was not sent because the patient
+ * turned this type of reminder off (set by the notification worker).
+ */
+export function isOptOutSkip(error: string | undefined): boolean {
+  return (error || "")
+    .toLowerCase()
+    .includes(REMINDER_SKIP_MESSAGE.opted_out.toLowerCase());
+}
 
 /**
  * Stored in error_message when staff record that a server reminder reached
@@ -505,6 +561,9 @@ export function describeFailure(error: string | undefined): string {
     const reason = (error || "").slice(STAFF_FAILURE_PREFIX.length).trim();
     return reason ? `Marked as failed by staff: ${reason}` : "Marked as failed by staff.";
   }
+  if (isOptOutSkip(error)) return `${REMINDER_SKIP_MESSAGE.opted_out} It was not sent.`;
+  if (/preference_check_failed/.test(e))
+    return "The patient's reminder settings could not be read on this device, so it was not sent. Try again.";
   if (/demo/.test(e))
     return "SMS demo mode is on. The server logged the message but did not send it to the patient.";
   if (/mock/.test(e))
@@ -539,7 +598,11 @@ export function explainState(item: OutboxItem, ctx: SendingContext): string {
 
   if (item.state === "failed") return describeFailure(item.errorMessage);
 
-  if (item.state === "cancelled") return "Cancelled. It will not be sent.";
+  if (item.state === "cancelled") {
+    return isOptOutSkip(item.errorMessage)
+      ? `Cancelled before sending. ${REMINDER_SKIP_MESSAGE.opted_out}`
+      : "Cancelled. It will not be sent.";
+  }
 
   if (item.state === "sent") {
     const on = item.sentAt ? ` on ${formatWhen(item.sentAt)}` : "";
