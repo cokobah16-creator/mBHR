@@ -116,15 +116,29 @@ describe("pullStaffRoster", () => {
     rows.set("gone", { id: "gone", fullName: "Left", isActive: 1, _syncedAt: "2026-09-01" });
     rows.set("local", { id: "local", fullName: "Local admin", isActive: 1 });
     mockSelect.mockResolvedValue({
-      data: [{ id: "u1", full_name: "Ada Okafor", role: "doctor" }],
+      data: [
+        { id: "u1", full_name: "Ada Okafor", role: "doctor" },
+        { id: "u2", full_name: "Chidi Eze", role: "pharmacist" },
+      ],
       error: null,
     });
 
     const result = await pullStaffRoster();
 
-    expect(result).toEqual({ ok: true, staff: 1, deactivated: 1 });
+    expect(result).toEqual({ ok: true, staff: 2, deactivated: 1 });
     expect(rows.get("gone")?.isActive).toBe(0);
     expect(rows.get("local")?.isActive).toBe(1);
+  });
+
+  it("switches nobody off when the server shows only the signed-in person", async () => {
+    rows.set("other", { id: "other", fullName: "Chidi", isActive: 1, _syncedAt: "2026-09-01" });
+    mockSelect.mockResolvedValue({
+      data: [{ id: "me", full_name: "Ada Okafor", role: "doctor" }],
+      error: null,
+    });
+
+    expect(await pullStaffRoster()).toEqual({ ok: true, staff: 1, deactivated: 0 });
+    expect(rows.get("other")?.isActive).toBe(1);
   });
 
   it("changes nothing when the server returns no rows", async () => {

@@ -87,6 +87,10 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
   // An empty answer usually means the server hid the directory (for example
   // row-level security for a deactivated account), not that everyone left.
   if (rows.length === 0) return { ok: true, staff: 0, deactivated: 0 };
+  // A single row is usually just the signed-in person's own record (a
+  // server whose row-level security shows staff only themselves). That is
+  // not the directory, so nobody is switched off for being missing from it.
+  const fullDirectory = rows.length > 1;
 
   const syncedAt = new Date().toISOString();
   const serverIds = new Set<string>();
@@ -116,6 +120,7 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
         });
       }
 
+      if (!fullDirectory) return;
       const gone = await db.users
         .filter(
           (u) =>
