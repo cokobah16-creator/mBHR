@@ -8,9 +8,10 @@ import {
 } from "@heroicons/react/24/outline";
 import { generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
-import { can } from "@/auth/roles";
+import { can, type Role } from "@/auth/roles";
 import { useToast } from "@/stores/toast";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { useCloudSession } from "@/lib/cloudSession";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { isNotificationWorkerRunning, processNow } from "@/services/notificationWorker";
 import { SendingReadiness } from "@/features/notifications/OutboxBadges";
@@ -31,29 +32,77 @@ import {
 } from "@/features/notifications/smsOutbox";
 
 /**
+ * Roles the server lets send SMS to patients: the same list as
+ * SMS_SENDER_ROLES in supabase/functions/_shared/security/staffAuth.ts, which
+ * decides (it checks the role of the account signed in online). There is no
+ * SMS permission in src/auth/roles.ts, so the list is repeated here; change
+ * both together.
+ */
+const SMS_SENDER_ROLES: readonly Role[] = [
+  "pharmacist",
+  "doctor",
+  "nurse",
+  "lead_clinician",
+  "admin",
+];
+
+function canSendSms(role: Role | undefined): boolean {
+  return !!role && SMS_SENDER_ROLES.includes(role);
+}
+
+/** Why "Send due messages now" cannot run, under the button. */
+function blockedHint(blocker: SendingBlocker): string {
+  switch (blocker) {
+    case "offline":
+      return "Sending needs an internet connection.";
+    case "not_configured":
+      return "Sending needs the mBHR server, which is not set up on this device.";
+    case "signed_out":
+      return "Sending needs a staff member signed in online. A PIN unlock is not enough.";
+    // Nurses and doctors may send SMS on the server but have no Send due
+    // messages button in the app (this panel or SMS reminders), so they are
+    // not named here.
+    case "not_permitted":
+      return "Your role cannot send SMS to patients. A pharmacist, lead clinician or administrator can send due messages.";
+    default:
+      return "Sending is not available on this device right now.";
+  }
+}
+
+/**
  * Dashboard summary of SMS stored on this device, by real delivery state.
  * "Sent to provider" is not "delivered"; delivered needs a stored receipt.
  */
 export function MessageOutbox() {
   const currentUser = useAuthStore((s) => s.currentUser);
-  // Messaging management follows the existing gate on this widget.
+  // Who sees this widget is unchanged (the existing export gate). Sending
+  // from it follows the server's SMS rule instead (SMS_SENDER_ROLES).
   const canView = !!currentUser && can(currentUser.role, "export");
+  const canSend = canSendSms(currentUser?.role);
   // Same roles as the /pharmacy/sms-reminders route.
   const canOpenReminders =
     !!currentUser && (currentUser.role === "pharmacist" || currentUser.role === "admin");
   const { push } = useToast();
   const online = useOnlineStatus();
   const now = useNow();
+  // "unknown" (not read yet) is not treated as signed out.
+  const signedOut = useCloudSession() === "signed_out";
   const items = useDeviceOutbox({ enabled: canView });
   const [processing, setProcessing] = useState(false);
   const [lastRun, setLastRun] = useState<{ at: Date; text: string } | null>(null);
   const [autoSending, setAutoSending] = useState(() => isNotificationWorkerRunning());
 
+  // Same order the send run checks in. A role the server does not let send
+  // SMS is shown as not permitted before anyone presses Send.
   const blocker: SendingBlocker | null = !isSupabaseEnabled
     ? "not_configured"
     : !online
       ? "offline"
-      : null;
+      : signedOut
+        ? "signed_out"
+        : !canSend
+          ? "not_permitted"
+          : null;
 
   const counts = useMemo(() => countByState(items ?? []), [items]);
   const dueCount = useMemo(
@@ -70,12 +119,12 @@ export function MessageOutbox() {
   );
 
   const handleSend = async () => {
-    if (!currentUser || !can(currentUser.role, "export")) {
+    if (!currentUser || !canSendSms(currentUser.role)) {
       push({
         id: generateId(),
         tone: "error",
         title: "Not allowed",
-        body: "Your role cannot send messages from the outbox.",
+        body: blockedHint("not_permitted"),
       });
       return;
     }
@@ -92,7 +141,7 @@ export function MessageOutbox() {
         body: text,
       });
     } catch (error) {
-      console.error("Outbox send run failed:", error instanceof Error ? error.name : error);
+      console.error("Outbox send run failed:", error instanceof Error ? error.name : typeof error);
       push({
         id: generateId(),
         tone: "error",
@@ -106,16 +155,15 @@ export function MessageOutbox() {
 
   if (!canView) return null;
 
-  const sendHint =
-    blocker === "offline"
-      ? "Sending needs an internet connection."
-      : blocker === "not_configured"
-        ? "Sending needs the mBHR server, which is not set up on this device."
-        : dueCount === 0 && counts.queued > 0
-          ? "Queued messages are scheduled for later; none are due yet."
-          : dueCount === 0
-            ? "Nothing is waiting to be sent."
-            : `${dueCount} ${dueCount === 1 ? "message is" : "messages are"} due.`;
+  const sendHint = !canSend
+    ? blockedHint("not_permitted")
+    : blocker
+      ? blockedHint(blocker)
+      : dueCount === 0 && counts.queued > 0
+        ? "Queued messages are scheduled for later; none are due yet."
+        : dueCount === 0
+          ? "Nothing is waiting to be sent."
+          : `${dueCount} ${dueCount === 1 ? "message is" : "messages are"} due.`;
 
   return (
     <section className="panel" aria-labelledby="message-outbox-title">

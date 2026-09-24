@@ -25,10 +25,15 @@ export function DeliveryStateBadge({
   );
 }
 
-const READINESS: Record<
-  "not_configured" | "offline" | "auto" | "manual",
-  { tone: Tone; label: string; text: string }
-> = {
+interface Readiness {
+  tone: Tone;
+  label: string;
+  text: string;
+}
+
+// One entry per SendingBlocker (the Record type makes a new blocker a type
+// error here until it has its own wording), plus the two unblocked states.
+const READINESS: Record<SendingBlocker | "auto" | "manual", Readiness> = {
   not_configured: {
     tone: "warning",
     label: "Sending not set up",
@@ -38,6 +43,16 @@ const READINESS: Record<
     tone: "warning",
     label: "Offline",
     text: "This device is offline. Queued reminders are kept here and tried when the device is back online and sending runs.",
+  },
+  signed_out: {
+    tone: "warning",
+    label: "Not signed in online",
+    text: "Sending needs a staff member signed in online. A PIN unlock is not enough. Queued reminders are kept here and nothing is sent until someone signs in online and sending runs.",
+  },
+  not_permitted: {
+    tone: "warning",
+    label: "Role cannot send SMS",
+    text: "The signed-in staff member's role cannot send SMS to patients. Queued reminders are kept here and nothing is sent until a pharmacist, nurse, doctor, lead clinician or administrator signs in online and sending runs.",
   },
   auto: {
     tone: "info",
@@ -51,6 +66,13 @@ const READINESS: Record<
   },
 };
 
+// Shown if a blocker this component does not know reaches it at run time.
+const UNKNOWN_BLOCKER: Readiness = {
+  tone: "warning",
+  label: "Sending not available",
+  text: "This device cannot send SMS right now. Queued reminders are kept here and nothing is sent until sending is available again.",
+};
+
 /** Whether this device can send SMS now, and when queued messages are tried. */
 export function SendingReadiness({
   blocker,
@@ -59,7 +81,7 @@ export function SendingReadiness({
   blocker: SendingBlocker | null;
   autoSending: boolean;
 }) {
-  const r = READINESS[blocker ?? (autoSending ? "auto" : "manual")];
+  const r = READINESS[blocker ?? (autoSending ? "auto" : "manual")] ?? UNKNOWN_BLOCKER;
   return (
     <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-3">
       <StatusBadge tone={r.tone} icon className="self-start">

@@ -699,6 +699,21 @@ export async function loadPatientNames(
   return map;
 }
 
+/**
+ * Access token of the staff member signed in online, or null. A PIN unlock
+ * of an offline workspace has no online session, so it cannot send SMS.
+ */
+async function staffAccessToken(): Promise<string | null> {
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token ?? null;
+  } catch (error) {
+    logger.warn("[televisits] Could not read the online session:", errorTag(error));
+    return null;
+  }
+}
+
 // Reads the edge function's error without echoing the phone number into
 // logs; the caller turns it into plain language for staff.
 async function readSmsError(response: Response): Promise<string> {
@@ -710,10 +725,13 @@ async function readSmsError(response: Response): Promise<string> {
     // Body unreadable; fall back to the status code.
   }
   try {
-    const parsed = JSON.parse(text) as { error?: unknown };
-    if (typeof parsed.error === "string" && parsed.error.trim()) {
-      return parsed.error.trim();
-    }
+    const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
+    const code = typeof parsed.error === "string" ? parsed.error.trim() : "";
+    // The server's `message` is fixed plain text (never the number), e.g.
+    // "not_permitted: Your role cannot send SMS to patients."
+    const detail = typeof parsed.message === "string" ? parsed.message.trim() : "";
+    if (code && detail) return `${code}: ${detail}`;
+    if (code || detail) return code || detail;
   } catch {
     // Not JSON; use the raw text below.
   }
@@ -723,8 +741,12 @@ async function readSmsError(response: Response): Promise<string> {
 /**
  * Sends the meeting link by SMS. `sent` is true only when the SMS service
  * accepted the message for delivery; demo mode (logged, not sent), missing
- * configuration, an offline device and provider errors all return
- * `sent: false` with an `error` describing why.
+ * configuration, an offline device, no staff member signed in online and
+ * provider errors all return `sent: false` with an `error` describing why.
+ *
+ * The request carries the signed-in staff member's access token and only
+ * `{ patientId, message }`: the server checks the staff role and sends to
+ * the phone number on the patient's record, never to a number from here.
  */
 export async function notifyPatientTelevisitScheduled(
   visit: Televisit,
@@ -739,6 +761,13 @@ export async function notifyPatientTelevisitScheduled(
   }
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return { sent: false, error: "Device is offline" };
+  }
+
+  // The server only sends for a signed-in staff account: it checks the
+  // role and looks up the number on the patient's record itself.
+  const accessToken = await staffAccessToken();
+  if (!accessToken) {
+    return { sent: false, error: "Sign in online to send SMS" };
   }
 
   try {
@@ -759,10 +788,13 @@ export async function notifyPatientTelevisitScheduled(
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${env.VITE_SUPABASE_ANON_KEY}`,
+          Authorization: `Bearer ${accessToken}`,
+          apikey: env.VITE_SUPABASE_ANON_KEY,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ to: patient.phone, message }),
+        // No phone number: the server sends to the number on the patient's
+        // record (patient.phone above is only used to skip a pointless call).
+        body: JSON.stringify({ patientId: visit.patientId, message }),
       },
     );
 

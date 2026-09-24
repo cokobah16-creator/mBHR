@@ -8,14 +8,19 @@ import {
   SignalSlashIcon,
   ServerIcon,
   LockClosedIcon,
+  UserGroupIcon,
 } from "@heroicons/react/20/solid";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   syncNow,
   isOnlineSyncEnabled,
   countUnsyncedRecords,
+  countAwaitingAuthorisedSync,
   fetchRemoteRecord,
 } from "@/sync/adapter";
+// The pharmacy sync participant and its database only, not the pharmacy
+// screens (src/test/startupChunks.test.ts keeps those out of startup).
+import { countPharmacyAwaitingAuthorised, countPharmacyUnsynced } from "@/sync/pharmacySync";
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
 import { useAuthStore } from "@/stores/auth";
@@ -238,7 +243,25 @@ export function SyncStatusControl() {
     await loadConflicts();
   };
 
-  const unsynced = useLiveQuery(() => countUnsyncedRecords(), [], 0) ?? 0;
+  // The main outbox counts db.serverCommands only; pharmacy changes wait in
+  // their own outbox (queued stock commands and prescriptions not uploaded).
+  const unsynced =
+    useLiveQuery(
+      async () => (await countUnsyncedRecords()) + (await countPharmacyUnsynced()),
+      [],
+      0,
+    ) ?? 0;
+  // Records (and commands) the server refused for the account signed in
+  // online: they stay on this device until someone allowed to send them
+  // signs in online and syncs. Already included in `unsynced`.
+  const awaitingAuthorised =
+    useLiveQuery(
+      async () =>
+        (await countAwaitingAuthorisedSync().catch(() => 0)) +
+        (await countPharmacyAwaitingAuthorised()),
+      [],
+      0,
+    ) ?? 0;
   const pending = unsynced + queueStore.getPendingCount();
   const failed = queueStore.getFailedCount();
   const syncing = syncStore.status === "syncing";
@@ -350,6 +373,23 @@ export function SyncStatusControl() {
             <p className="mx-3 mb-2 banner banner-danger text-caption">
               {syncStore.errorMessage}
             </p>
+          )}
+          {syncEnabled && awaitingAuthorised > 0 && (
+            <div className="mx-3 mb-2 banner banner-warning text-caption" role="status">
+              <UserGroupIcon className="h-4 w-4 shrink-0" aria-hidden />
+              <div className="min-w-0 space-y-1">
+                <p className="font-medium">
+                  {awaitingAuthorised} waiting for an authorised person to sync
+                </p>
+                <p>
+                  The server did not accept {awaitingAuthorised === 1 ? "this change" : "these changes"} from
+                  the account signed in online, because that role is not allowed to make{" "}
+                  {awaitingAuthorised === 1 ? "it" : "them"}. {awaitingAuthorised === 1 ? "It stays" : "They stay"} on
+                  this device, not uploaded, until someone with permission signs in online on this
+                  device and runs Sync now.
+                </p>
+              </div>
+            </div>
           )}
           {noSession && (
             <div className="mx-3 mb-2 banner banner-warning text-caption" role="status">

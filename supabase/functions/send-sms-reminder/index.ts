@@ -39,6 +39,22 @@ import {
 // - Rate limits: 30/min per staff user, 5/hour per recipient number
 //   (429 + Retry-After). If the limit cannot be checked, nothing is sent.
 // - Logs and error bodies never carry the full number or the message text.
+// - Stored reminders ({ reminderId }): a reminder already marked sent gets
+//   409 already_sent and no second text. This function records the outcome
+//   on medication_reminders with the service role (RLS lets only 'dispense'
+//   holders update that table, and nurses/doctors may send too): after the
+//   provider accepts it, status 'sent' + sent_at + the provider-accepted
+//   marker; when the provider rejects it, demo mode only logged it, or the
+//   stored number or text cannot be used, status 'failed' + the error code.
+//   The response's `reminderRecorded` says whether that write worked.
+
+/**
+ * Stored in medication_reminders.error_message when the SMS provider
+ * accepted a reminder. Must match PROVIDER_ACCEPTED_MARKER in
+ * src/features/notifications/smsOutbox.ts (the outbox shows 'sent' rows
+ * without it as "not confirmed").
+ */
+const PROVIDER_ACCEPTED_MARKER = "accepted by sms provider";
 
 interface SMSRequest {
   message?: unknown;
@@ -48,6 +64,53 @@ interface SMSRequest {
 
 function errorName(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
+}
+
+type ServiceClient = ReturnType<typeof getServiceClient>;
+
+/**
+ * Records a stored reminder's outcome with the service role. Never throws;
+ * returns false when the row could not be updated. A reminder already marked
+ * sent is never changed back to failed.
+ */
+async function recordReminderOutcome(
+  service: ServiceClient,
+  reminderId: string,
+  outcome:
+    | { status: "sent"; messageId?: string | null }
+    | { status: "failed"; error: string },
+): Promise<boolean> {
+  try {
+    const update =
+      outcome.status === "sent"
+        ? {
+            status: "sent",
+            sent_at: new Date().toISOString(),
+            error_message: outcome.messageId
+              ? `${PROVIDER_ACCEPTED_MARKER} (${outcome.messageId})`
+              : PROVIDER_ACCEPTED_MARKER,
+          }
+        : { status: "failed", error_message: outcome.error };
+    const { error } = await service
+      .from("medication_reminders")
+      .update(update)
+      .eq("id", reminderId)
+      .neq("status", "sent");
+    if (error) {
+      console.error(
+        "send-sms-reminder: could not record the reminder outcome:",
+        error.code ?? "error",
+      );
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error(
+      "send-sms-reminder: could not record the reminder outcome:",
+      errorName(error),
+    );
+    return false;
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -149,7 +212,7 @@ Deno.serve(async (req: Request) => {
     if (reminderId) {
       const { data: reminder, error } = await service
         .from("medication_reminders")
-        .select("id, patient_id, phone_number, message")
+        .select("id, patient_id, phone_number, message, status")
         .eq("id", reminderId)
         .maybeSingle();
       if (error) {
@@ -165,6 +228,14 @@ Deno.serve(async (req: Request) => {
       }
       if (patientId && reminder.patient_id !== patientId) {
         return reply(400, { success: false, error: "reminder_patient_mismatch" });
+      }
+      // Never text the patient twice for the same reminder.
+      if (reminder.status === "sent") {
+        return reply(409, {
+          success: false,
+          error: "already_sent",
+          message: "This reminder is already recorded as sent. It was not sent again.",
+        });
       }
       rawPhone = reminder.phone_number;
       // The stored text is what was scheduled; it wins over the client copy.
@@ -190,27 +261,50 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!message) {
+      // A stored reminder whose text cannot be sent never will be: record it
+      // as failed so it is not retried by every send run.
+      const reminderRecorded = reminderId
+        ? await recordReminderOutcome(service, reminderId, {
+            status: "failed",
+            error: "invalid_message: the message is empty or too long",
+          })
+        : undefined;
       return reply(400, {
         success: false,
         error: "invalid_message",
         message: "The message is empty or too long.",
+        ...(reminderId ? { reminderRecorded } : {}),
       });
     }
 
     if (!rawPhone) {
+      const reminderRecorded = reminderId
+        ? await recordReminderOutcome(service, reminderId, {
+            status: "failed",
+            error: "no_phone: the reminder has no phone number",
+          })
+        : undefined;
       return reply(422, {
         success: false,
         error: "no_phone",
         message: "The patient has no phone number on the server.",
+        ...(reminderId ? { reminderRecorded } : {}),
       });
     }
 
     const msisdn = normalizeNigerianMsisdn(rawPhone);
     if (!msisdn) {
+      const reminderRecorded = reminderId
+        ? await recordReminderOutcome(service, reminderId, {
+            status: "failed",
+            error: "invalid_recipient: not a valid Nigerian mobile number",
+          })
+        : undefined;
       return reply(422, {
         success: false,
         error: "invalid_recipient",
         message: "The stored phone number is not a valid Nigerian mobile number.",
+        ...(reminderId ? { reminderRecorded } : {}),
       });
     }
 
@@ -259,9 +353,18 @@ Deno.serve(async (req: Request) => {
         console.log(
           `SMS demo mode: not sent - To: ${maskMsisdn(msisdn)}, Length: ${message.length} chars, ReminderId: ${reminderId || "N/A"}, By: ${auth.userId}`,
         );
+        // Not sent, so a stored reminder is recorded as failed (not left
+        // pending to be "sent" again by every run, and never marked sent).
+        const reminderRecorded = reminderId
+          ? await recordReminderOutcome(service, reminderId, {
+              status: "failed",
+              error: "sms_demo_mode: the server logged this message but did not send it",
+            })
+          : undefined;
         return reply(200, {
           success: true,
           demo: true,
+          ...(reminderId ? { reminderRecorded } : {}),
           provider: "demo",
           message:
             "SMS_DEMO_MODE is on: message not sent (logged without the number or text)",
@@ -287,10 +390,17 @@ Deno.serve(async (req: Request) => {
     if (!result.ok) {
       const safeError = redactNumbers(result.error || "Failed to send SMS");
       console.error(`${result.provider} send failed:`, safeError);
+      const reminderRecorded = reminderId
+        ? await recordReminderOutcome(service, reminderId, {
+            status: "failed",
+            error: `provider_rejected: ${safeError}`.slice(0, 500),
+          })
+        : undefined;
       return reply(502, {
         success: false,
         provider: result.provider,
         error: safeError,
+        ...(reminderId ? { reminderRecorded } : {}),
       });
     }
 
@@ -298,10 +408,19 @@ Deno.serve(async (req: Request) => {
       `SMS accepted by ${result.provider} - To: ${maskMsisdn(msisdn)}, ID: ${result.messageId ?? "n/a"}, ReminderId: ${reminderId || "N/A"}, By: ${auth.userId} (${auth.role})`,
     );
 
+    // Record it only after the provider accepted it.
+    const reminderRecorded = reminderId
+      ? await recordReminderOutcome(service, reminderId, {
+          status: "sent",
+          messageId: result.messageId,
+        })
+      : undefined;
+
     return reply(200, {
       success: true,
       provider: result.provider,
       messageId: result.messageId,
+      ...(reminderId ? { reminderRecorded } : {}),
     });
   } catch (error) {
     console.error("Error in send-sms-reminder:", errorName(error));

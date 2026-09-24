@@ -970,12 +970,70 @@ describe("televisits service", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("does not send without an online staff session", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await notifyPatientTelevisitScheduled(visit, patient);
+
+      expect(result).toEqual({
+        sent: false,
+        error: "Sign in online to send SMS",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("does not send when reading the session throws", async () => {
+      h.getSession.mockRejectedValue(new Error("no auth"));
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await notifyPatientTelevisitScheduled(visit, patient);
+
+      expect(result).toEqual({
+        sent: false,
+        error: "Sign in online to send SMS",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("passes on the server's reason when it refuses the send", async () => {
+      h.getSession.mockResolvedValue({
+        data: { session: { access_token: "user-token" } },
+        error: null,
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 403,
+          text: async () =>
+            JSON.stringify({
+              success: false,
+              error: "not_permitted",
+              message: "Your role cannot send SMS to patients.",
+            }),
+        }),
+      );
+
+      const result = await notifyPatientTelevisitScheduled(visit, patient);
+
+      expect(result).toEqual({
+        sent: false,
+        error: "not_permitted: Your role cannot send SMS to patients.",
+      });
+    });
+
     it("posts to the send-sms-reminder edge function", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({ success: true }),
       });
       vi.stubGlobal("fetch", fetchMock);
+      h.getSession.mockResolvedValue({
+        data: { session: { access_token: "user-token" } },
+        error: null,
+      });
 
       const result = await notifyPatientTelevisitScheduled(
         visit,
@@ -991,19 +1049,24 @@ describe("televisits service", () => {
       );
       expect(init.method).toBe("POST");
       expect(init.headers).toMatchObject({
-        Authorization: "Bearer anon-key",
+        Authorization: "Bearer user-token",
+        apikey: "anon-key",
         "Content-Type": "application/json",
       });
-      const body = JSON.parse(String(init.body)) as {
-        to: string;
-        message: string;
-      };
-      expect(body.to).toBe("+2348012345678");
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      // The server looks up the number on the patient's record.
+      expect(body).not.toHaveProperty("to");
+      expect(Object.keys(body).sort()).toEqual(["message", "patientId"]);
+      expect(body.patientId).toBe("p1");
       expect(body.message).toContain("https://meet.jit.si/mbhr-room");
       expect(body.message).toContain("Dr. Bello");
     });
 
     it("returns sent:false when the request fails", async () => {
+      h.getSession.mockResolvedValue({
+        data: { session: { access_token: "user-token" } },
+        error: null,
+      });
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("boom")));
 
       const result = await notifyPatientTelevisitScheduled(visit, patient);
@@ -1012,6 +1075,10 @@ describe("televisits service", () => {
     });
 
     it("returns sent:false when the edge function reports failure", async () => {
+      h.getSession.mockResolvedValue({
+        data: { session: { access_token: "user-token" } },
+        error: null,
+      });
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue({

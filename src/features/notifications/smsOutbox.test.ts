@@ -273,6 +273,7 @@ describe("wording", () => {
     expect(describeFailure("sms_demo_mode")).toMatch(/demo mode/);
     expect(describeFailure("Mock delivery failure")).toMatch(/test gateway/);
     expect(describeFailure(undefined)).toBe("No reason was recorded.");
+    expect(describeFailure("Invalid JWT")).toMatch(/Sign in online/);
     expect(describeFailure("weird provider thing")).toBe(
       "The SMS service did not accept the message.",
     );
@@ -407,6 +408,11 @@ describe("tone and run summaries", () => {
       /not set up/,
     );
     expect(describeRun({ reminders: 0, messages: 0, failed: 0 })).toBe("Nothing was due.");
+    // A blocker added later must never read as "Nothing was due".
+    const unknown = { reminders: 0, messages: 0, skipped: "future_blocker" } as unknown as Parameters<
+      typeof describeRun
+    >[0];
+    expect(describeRun(unknown)).toMatch(/Nothing was sent/);
     expect(describeRun({ reminders: 1, messages: 2, failed: 1 })).toBe(
       "3 messages accepted by the SMS provider, 1 not sent.",
     );
@@ -529,5 +535,66 @@ describe("phone numbers typed into the scheduling form", () => {
     expect(normalizeMsisdn("447911123456")).toBe("447911123456");
     expect(normalizeReminderPhone("447911123456")).toBeNull();
     expect(normalizeReminderPhone("12345")).toBeNull();
+  });
+});
+
+describe("sign-in and role blockers", () => {
+  it("explains a queued message when nobody is signed in online", () => {
+    const item = fromDeviceMessage(deviceMsg(), "outbox");
+    const text = explainState(item, ctx({ blocker: "signed_out" }));
+    expect(text).toMatch(/signed in online/);
+    expect(text).toMatch(/Saved on this device only/);
+  });
+
+  it("explains a queued message when the role cannot send SMS", () => {
+    const item = fromDeviceMessage(deviceMsg(), "queue");
+    expect(explainState(item, ctx({ blocker: "not_permitted" }))).toMatch(/role cannot send SMS/);
+  });
+
+  it("summarises runs that were skipped for sign-in or role", () => {
+    expect(describeRun({ reminders: 0, messages: 0, skipped: "signed_out" })).toMatch(
+      /Nothing was sent: nobody is signed in online/,
+    );
+    expect(describeRun({ reminders: 0, messages: 0, skipped: "not_permitted" })).toMatch(
+      /Nothing was sent: .*role cannot send SMS/,
+    );
+  });
+});
+
+describe("server function error codes", () => {
+  it.each([
+    ["not_authenticated: Sign in online with a staff account to send SMS.", /signed in online/],
+    ["not_permitted: Your role cannot send SMS to patients.", /role cannot send SMS/],
+    ["patient_not_found: This patient is not on the server yet.", /not on the server yet/],
+    ["no_phone: The patient has no phone number on the server.", /has no phone number/],
+    ["invalid_recipient", /not a valid Nigerian mobile number/],
+    ["rate_limit_unavailable: paused", /could not check the send limit/],
+    ["staff_lookup_failed", /could not check your staff account/],
+    ["lookup_failed", /could not look up the patient or reminder/],
+    ["already_sent: This reminder was already sent.", /already records this reminder as sent/],
+  ])("describes %s", (code, expected) => {
+    expect(describeFailure(code)).toMatch(expected);
+  });
+
+  it("does not treat an unavailable rate limit as 'too many messages'", () => {
+    expect(describeFailure("rate_limit_unavailable")).not.toMatch(/Too many/);
+  });
+
+  it("keeps the staff lookup failure separate from the record lookup failure", () => {
+    expect(describeFailure("staff_lookup_failed")).not.toMatch(/patient or reminder/);
+  });
+
+  it("does not claim the server recorded a send it could not record", () => {
+    const text = describeFailure(
+      "accepted_not_recorded: the SMS provider accepted this reminder from this device, but the server record could not be updated",
+    );
+    expect(text).toMatch(/server could not record it/);
+    expect(text).not.toMatch(/already records/);
+  });
+
+  it("describes a message the server refused as empty or too long", () => {
+    expect(describeFailure("invalid_message: The message is empty or too long.")).toMatch(
+      /empty or too long/,
+    );
   });
 });

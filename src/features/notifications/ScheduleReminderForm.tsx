@@ -96,7 +96,6 @@ export function ScheduleReminderForm({
   const reviewRef = useRef<HTMLHeadingElement>(null);
 
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [phone, setPhone] = useState("");
   const [medicationName, setMedicationName] = useState("");
   const [dosage, setDosage] = useState("");
   const [locale, setLocale] = useState<SmsLocale>("en");
@@ -118,6 +117,15 @@ export function ScheduleReminderForm({
   );
   const patient: Patient | null = fixedPatient ?? selectedPatient;
   const currentPatientId = patient?.id;
+  // The server always sends to the number on the patient's record (it never
+  // takes a number from this device), so the form only shows that number.
+  const phone = patient?.phone?.trim() || "";
+  const recordMsisdn = phone ? normalizeReminderPhone(phone) : null;
+  const noPhoneOnRecord = !!patient && !phone;
+  // The server only sends to Nigerian mobile numbers.
+  const notNigerianNumber = !!recordMsisdn && !recordMsisdn.startsWith("234");
+  // A number is on the record but cannot be sent to.
+  const unusableNumber = !!patient && !!phone && (!recordMsisdn || notNigerianNumber);
 
   // null = no preferences recorded; undefined = still loading.
   const preference = useLiveQuery(
@@ -157,11 +165,6 @@ export function ScheduleReminderForm({
   useEffect(() => {
     if (step === "review") reviewRef.current?.focus();
   }, [step]);
-
-  // Phone from the fixed patient's record, once it has loaded.
-  useEffect(() => {
-    if (fixedPatient) setPhone((current) => current || fixedPatient.phone || "");
-  }, [fixedPatient]);
 
   // Medicine and dose from the dispense this reminder is for.
   useEffect(() => {
@@ -210,7 +213,6 @@ export function ScheduleReminderForm({
 
   const choosePatient = (p: Patient) => {
     setSelectedPatient(p);
-    setPhone(p.phone || "");
     setErrors((e) => ({ ...e, patientId: undefined, phone: undefined }));
   };
 
@@ -231,6 +233,13 @@ export function ScheduleReminderForm({
   const handleReview = (e: FormEvent) => {
     e.preventDefault();
     setFormError("");
+    if (noPhoneOnRecord || unusableNumber) {
+      setFormError(
+        "The patient's record needs a Nigerian mobile number before a reminder can be scheduled.",
+      );
+      document.getElementById(FIELD_IDS.phone)?.focus();
+      return;
+    }
     const found = validateReminderDraft(draft, new Date());
     setErrors(found);
     const first = FIELD_ORDER.find((f) => found[f]);
@@ -251,6 +260,13 @@ export function ScheduleReminderForm({
     }
     if (optedOut) {
       setFormError("This patient has asked not to receive medication reminders.");
+      return;
+    }
+    if (noPhoneOnRecord || unusableNumber) {
+      setStep("edit");
+      setFormError(
+        "The patient's record needs a Nigerian mobile number before a reminder can be scheduled.",
+      );
       return;
     }
     const found = validateReminderDraft(draft, new Date());
@@ -371,10 +387,7 @@ export function ScheduleReminderForm({
                     <button
                       type="button"
                       className="btn-ghost"
-                      onClick={() => {
-                        setSelectedPatient(null);
-                        setPhone("");
-                      }}
+                      onClick={() => setSelectedPatient(null)}
                     >
                       Change
                     </button>
@@ -421,36 +434,57 @@ export function ScheduleReminderForm({
               noValidate
               className="space-y-4"
             >
-              <div>
-                <label htmlFor={FIELD_IDS.phone} className="field-label">
-                  Phone number
-                </label>
-                <input
-                  id={FIELD_IDS.phone}
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="off"
-                  className="input-field tabular-nums sm:max-w-xs"
-                  value={phone}
-                  onChange={(e) => {
-                    setPhone(e.target.value);
-                    clearError("phone");
-                  }}
-                  placeholder="e.g. 0803 123 4567"
-                  {...fieldProps("phone", "schedule-phone-hint")}
-                />
-                {errors.phone ? (
-                  <p id={`${FIELD_IDS.phone}-error`} className="field-error">
-                    {errors.phone}
+              {patient && (
+                <div>
+                  <p className="field-label">Sends to</p>
+                  <p
+                    id={FIELD_IDS.phone}
+                    tabIndex={-1}
+                    className="rounded-md border border-line bg-surface-sunken px-3 py-2.5 text-body tabular-nums text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    aria-describedby="schedule-phone-hint"
+                  >
+                    {phone
+                      ? recordMsisdn
+                        ? formatPhone(`+${recordMsisdn}`)
+                        : phone
+                      : "No phone number on the patient's record"}
                   </p>
-                ) : (
-                  <p id="schedule-phone-hint" className="field-hint">
-                    {patient && !patient.phone
-                      ? "No phone number on the patient record. Enter the number the patient gave you."
-                      : "Taken from the patient record. Change it here if the patient gave a different number."}
-                  </p>
-                )}
-              </div>
+                  {noPhoneOnRecord ? (
+                    <div
+                      id="schedule-phone-hint"
+                      className="banner banner-warning mt-2"
+                      role="status"
+                    >
+                      <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                      <p>
+                        {patient.givenName || "This patient"} has no phone number on their
+                        record. Add the number to the patient's record first (and let it sync);
+                        reminders are only sent to the number on the record.
+                      </p>
+                    </div>
+                  ) : errors.phone || unusableNumber ? (
+                    <div
+                      id="schedule-phone-hint"
+                      className="banner banner-warning mt-2"
+                      role="status"
+                    >
+                      <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                      <p>
+                        The number on the patient's record is not a Nigerian mobile number
+                        (for example 0803 123 4567). Correct it on the patient's record first;
+                        reminders are only sent to the number on the record.
+                      </p>
+                    </div>
+                  ) : (
+                    <p id="schedule-phone-hint" className="field-hint">
+                      The number on the patient's record. The mBHR server sends to the number
+                      on its copy of the record, so if the number was changed on this device,
+                      sync before the send time. To use a different number, update the
+                      patient's record.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {recentDispenses && recentDispenses.length > 0 && (
                 <div>
@@ -655,8 +689,14 @@ export function ScheduleReminderForm({
               <dt className="text-ink-muted">Patient</dt>
               <dd className="text-ink">{patientName}</dd>
               <dt className="text-ink-muted">To</dt>
-              <dd className="tabular-nums text-ink">
-                {formatPhone(`+${normalizeReminderPhone(phone) ?? ""}`)}
+              <dd className="text-ink">
+                <span className="tabular-nums">
+                  {formatPhone(`+${recordMsisdn ?? ""}`)}
+                </span>
+                <span className="block text-caption text-ink-muted">
+                  The number on the patient&apos;s record on this device. The server sends to
+                  the number on its copy of the record, so sync any change before the send time.
+                </span>
               </dd>
               <dt className="text-ink-muted">Send from</dt>
               <dd className="text-ink">{sendAt ? longWhen(sendAt) : ""}</dd>
@@ -675,9 +715,9 @@ export function ScheduleReminderForm({
               </p>
             </div>
             <div
-              className={`banner ${blocker === "not_configured" ? "banner-warning" : "banner-info"}`}
+              className={`banner ${blocker === "not_configured" || blocker === "not_permitted" ? "banner-warning" : "banner-info"}`}
             >
-              {blocker === "not_configured" ? (
+              {blocker === "not_configured" || blocker === "not_permitted" ? (
                 <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
               ) : (
                 <InformationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
@@ -687,7 +727,11 @@ export function ScheduleReminderForm({
                   ? "This device is not connected to the mBHR server. The reminder is saved here but will not be sent until the server connection is set up."
                   : blocker === "offline"
                     ? `This device is offline. The reminder is saved on this device only and can only be sent from it, after ${sendAt ? formatWhen(sendAt) : "that time"}, once it is back online and sending runs.`
-                    : `The reminder is saved on this device only. From ${sendAt ? formatWhen(sendAt) : "that time"} this device sends it through the mBHR server when it is online and sending runs: automatic sending on with the app open, or someone pressing Send due messages now.`}
+                    : blocker === "signed_out"
+                      ? `The reminder is saved on this device only. Sending needs a staff member signed in online (a PIN unlock is not enough), so it waits here until someone signs in online after ${sendAt ? formatWhen(sendAt) : "that time"} and sending runs.`
+                      : blocker === "not_permitted"
+                        ? "The reminder is saved on this device only. The signed-in account's role cannot send SMS, so it waits here until a pharmacist, nurse, doctor, lead clinician or administrator signs in online and sending runs."
+                        : `The reminder is saved on this device only. From ${sendAt ? formatWhen(sendAt) : "that time"} this device sends it through the mBHR server when it is online, a staff member is signed in online and sending runs: automatic sending on with the app open, or someone pressing Send due messages now. The server sends it to the number on the patient's record.`}
               </p>
             </div>
           </div>
@@ -704,7 +748,7 @@ export function ScheduleReminderForm({
               type="submit"
               form="schedule-reminder-form"
               className="btn-primary"
-              disabled={optedOut}
+              disabled={optedOut || noPhoneOnRecord || unusableNumber}
             >
               Review reminder
             </button>

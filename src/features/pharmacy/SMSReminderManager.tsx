@@ -13,6 +13,7 @@ import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
 import { useToast } from "@/stores/toast";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { useCloudSession } from "@/lib/cloudSession";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PharmacySkeleton } from "@/components/ui/Skeleton";
 import {
@@ -68,7 +69,13 @@ interface SMSReminderManagerProps {
 }
 
 type Filter = "all" | DeliveryState;
-type ServerStatus = "loading" | "ready" | "error" | "not_configured" | "offline";
+type ServerStatus =
+  | "loading"
+  | "ready"
+  | "error"
+  | "not_configured"
+  | "offline"
+  | "signed_out";
 
 const SERVER_LIST_LIMIT = 200;
 const AUTO_INTERVAL_MS = 30_000;
@@ -83,6 +90,61 @@ function auditEntity(item: OutboxItem): string {
   return item.store === "outbox" ? "deviceOutbox" : "outboundMessages";
 }
 
+/** Why "Send now" did not try to send a server reminder. */
+function sendNowSkippedText(skipped: SendingBlocker | "busy"): string {
+  switch (skipped) {
+    case "offline":
+      return "This device is offline. Try again when it is back online.";
+    case "busy":
+      return "A send run is in progress and may be sending this reminder. Check its state in a moment before sending it again.";
+    case "not_configured":
+      return "SMS sending is not set up on this device.";
+    case "signed_out":
+      return "Nobody is signed in online on this device. Sign in online with a staff account, then send again. A PIN unlock is not enough.";
+    case "not_permitted":
+      return "The signed-in account's role cannot send SMS to patients. Nothing was sent.";
+    default:
+      // A reason this screen does not know yet: say only what is certain.
+      return "This device could not send it right now. Nothing was sent.";
+  }
+}
+
+/** What happens next to a device message queued again (after Retry). */
+function waitNote(blocker: SendingBlocker | null, autoSending: boolean): string {
+  switch (blocker) {
+    case null:
+      return autoSending
+        ? "Automatic sending will try it shortly."
+        : "Press Send due messages now to send it.";
+    case "not_configured":
+      return "It stays on this device: sending is not set up here.";
+    case "offline":
+      return "It waits on this device until it is back online and sending runs.";
+    case "signed_out":
+      return "It waits on this device until a staff member signs in online and sending runs.";
+    case "not_permitted":
+      return "It waits on this device until a pharmacist, nurse, doctor, lead clinician or administrator signs in online and sending runs.";
+    default:
+      return "It waits on this device until sending is available.";
+  }
+}
+
+/** Why the send buttons are off, under the Sending panel's buttons. */
+function sendingBlockedText(blocker: SendingBlocker): string {
+  switch (blocker) {
+    case "offline":
+      return "Sending needs an internet connection. Reminders you schedule are still saved on this device.";
+    case "not_configured":
+      return "Sending needs the mBHR server. Reminders you schedule are still saved on this device.";
+    case "signed_out":
+      return "Sending needs a staff member signed in online. A PIN unlock is not enough. Reminders you schedule are still saved on this device.";
+    case "not_permitted":
+      return "The signed-in staff member's role cannot send SMS. Reminders you schedule are still saved on this device.";
+    default:
+      return "Sending is not available on this device right now. Reminders you schedule are still saved on this device.";
+  }
+}
+
 /**
  * The SMS reminder outbox: every reminder on this device and on the server,
  * with its real delivery state, plus scheduling, sending, retry and cancel.
@@ -93,12 +155,18 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
   const { push } = useToast();
   const online = useOnlineStatus();
   const now = useNow();
+  // The server only sends, and only lists reminders, for a staff member
+  // signed in online; a PIN unlock of an offline workspace has no session.
+  // "unknown" (not read yet) is not treated as signed out.
+  const signedOut = useCloudSession() === "signed_out";
 
   const blocker: SendingBlocker | null = !isSupabaseEnabled
     ? "not_configured"
     : !online
       ? "offline"
-      : null;
+      : signedOut
+        ? "signed_out"
+        : null;
 
   const [filter, setFilter] = useState<Filter>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -116,6 +184,9 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
   const [serverCounts, setServerCounts] = useState<ReminderStatusCounts | null>(null);
   const [recentCount, setRecentCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  // Counts server loads, so a slow load that finishes after a newer one (for
+  // example after signing out or going offline) does not overwrite it.
+  const serverLoadRef = useRef(0);
 
   // When the scheduling form closes without opening a message, put focus
   // back on the button that opened it (it is disabled while the form is open).
@@ -131,16 +202,25 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
   const deviceItems = useDeviceOutbox({ patientId });
 
   const loadServer = useCallback(async () => {
-    if (!isSupabaseEnabled) {
-      setServerStatus("not_configured");
+    const load = ++serverLoadRef.current;
+    const notLoaded = (status: ServerStatus) => {
+      setServerStatus(status);
       setServerReminders([]);
       setServerCounts(null);
+      setRefreshing(false);
+    };
+    if (!isSupabaseEnabled) {
+      notLoaded("not_configured");
       return;
     }
     if (!online) {
-      setServerStatus("offline");
-      setServerReminders([]);
-      setServerCounts(null);
+      notLoaded("offline");
+      return;
+    }
+    // Without an online sign-in the server returns no reminders, which
+    // would read as "none on the server".
+    if (signedOut) {
+      notLoaded("signed_out");
       return;
     }
     setRefreshing(true);
@@ -152,6 +232,7 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
         patientId ? Promise.resolve([] as SMSReminder[]) : getPendingReminders(),
         patientId ? Promise.resolve(null) : getReminderStatusCounts(),
       ]);
+      if (load !== serverLoadRef.current) return;
       const byId = new Map<string, SMSReminder>();
       [...recent, ...due].forEach((r) => byId.set(r.id ?? `${r.patientId}:${r.scheduledAt}`, r));
       setServerReminders(Array.from(byId.values()));
@@ -161,15 +242,16 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
     } catch (error) {
       console.error(
         "Server reminders not loaded:",
-        error instanceof Error ? error.name : error,
+        error instanceof Error ? error.name : typeof error,
       );
+      if (load !== serverLoadRef.current) return;
       setServerReminders([]);
       setServerCounts(null);
       setServerStatus("error");
     } finally {
-      setRefreshing(false);
+      if (load === serverLoadRef.current) setRefreshing(false);
     }
-  }, [patientId, online]);
+  }, [patientId, online, signedOut]);
 
   useEffect(() => {
     loadServer();
@@ -232,18 +314,9 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
   const audit = (action: string, entity: string, id: string) => {
     if (!currentUser) return;
     createAuditLog(currentUser.role, action, entity, id).catch((error) =>
-      console.warn("Audit log not written:", error instanceof Error ? error.name : error),
+      console.warn("Audit log not written:", error instanceof Error ? error.name : typeof error),
     );
   };
-
-  const waitNote = (): string =>
-    blocker === "not_configured"
-      ? "It stays on this device: sending is not set up here."
-      : blocker === "offline"
-        ? "It waits on this device until it is back online and sending runs."
-        : autoSending
-          ? "Automatic sending will try it shortly."
-          : "Press Send due messages now to send it.";
 
   const handleRetry = async (item: OutboxItem) => {
     if (item.store === "server" || !allowed()) return;
@@ -260,9 +333,14 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
         return;
       }
       audit("sms_reminder_retry", auditEntity(item), item.id);
-      push({ id: generateId(), tone: "info", title: "Reminder queued again", body: waitNote() });
+      push({
+        id: generateId(),
+        tone: "info",
+        title: "Reminder queued again",
+        body: waitNote(blocker, autoSending),
+      });
     } catch (error) {
-      console.error("Retry not saved:", error instanceof Error ? error.name : error);
+      console.error("Retry not saved:", error instanceof Error ? error.name : typeof error);
       push({
         id: generateId(),
         tone: "error",
@@ -296,7 +374,7 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
         body: "It will not be sent. The record stays in the outbox.",
       });
     } catch (error) {
-      console.error("Cancel not saved:", error instanceof Error ? error.name : error);
+      console.error("Cancel not saved:", error instanceof Error ? error.name : typeof error);
       push({
         id: generateId(),
         tone: "error",
@@ -320,12 +398,7 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
           id: generateId(),
           tone: "warning",
           title: "Not sent",
-          body:
-            result.skipped === "offline"
-              ? "This device is offline. Try again when it is back online."
-              : result.skipped === "busy"
-                ? "A send run is in progress and may be sending this reminder. Check its state in a moment before sending it again."
-                : "SMS sending is not set up on this device.",
+          body: sendNowSkippedText(result.skipped),
         });
         return;
       }
@@ -350,7 +423,7 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
       }
       await loadServer();
     } catch (error) {
-      console.error("Send now failed:", error instanceof Error ? error.name : error);
+      console.error("Send now failed:", error instanceof Error ? error.name : typeof error);
       push({
         id: generateId(),
         tone: "error",
@@ -378,7 +451,7 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
       });
       await loadServer();
     } catch (error) {
-      console.error("Mark sent failed:", error instanceof Error ? error.name : error);
+      console.error("Mark sent failed:", error instanceof Error ? error.name : typeof error);
       push({
         id: generateId(),
         tone: "error",
@@ -404,7 +477,7 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
       });
       await loadServer();
     } catch (error) {
-      console.error("Mark failed failed:", error instanceof Error ? error.name : error);
+      console.error("Mark failed failed:", error instanceof Error ? error.name : typeof error);
       push({
         id: generateId(),
         tone: "error",
@@ -424,7 +497,7 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
       setLastRun({ at: new Date(), text: describeRun(result) });
       await loadServer();
     } catch (error) {
-      console.error("Send run failed:", error instanceof Error ? error.name : error);
+      console.error("Send run failed:", error instanceof Error ? error.name : typeof error);
       setLastRun({
         at: new Date(),
         text: "The send run stopped with an error. Queued reminders are still on this device.",
@@ -465,6 +538,11 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
         return {
           tone: "banner-info",
           text: "Server reminders are not available offline. Reminders saved on this device are listed.",
+        };
+      case "signed_out":
+        return {
+          tone: "banner-info",
+          text: "Server reminders are not shown: nobody is signed in online on this device. Reminders saved on this device are listed. Sign in online with a staff account to see server reminders.",
         };
       case "error":
         return {
@@ -554,9 +632,7 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
             </button>
             {blocker && (
               <p id="sms-sending-blocked" className="w-full text-caption text-ink-muted">
-                {blocker === "offline"
-                  ? "Sending needs an internet connection. Reminders you schedule are still saved on this device."
-                  : "Sending needs the mBHR server. Reminders you schedule are still saved on this device."}
+                {sendingBlockedText(blocker)}
               </p>
             )}
           </div>
