@@ -11,6 +11,7 @@ import { normalizePhone } from "@/utils/phone";
 import * as logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
 import { safeErrorLabel } from "./logSafe";
+import { staffAuthRefusal, type StaffAuthRefusal } from "./edgeFunctionErrors";
 
 const RATE_LIMIT_MS = Number(import.meta.env.VITE_INVITE_RATE_MS || 60000); // Default 60 seconds
 
@@ -154,13 +155,25 @@ export async function disablePortalAccess(
 }
 
 /**
- * Send portal invitation to a patient
+ * Send portal invitation to a patient.
+ *
+ * The email and SMS functions accept only a staff member signed in online:
+ * supabase.functions.invoke sends that person's access token, or the public
+ * anon key when nobody is signed in online (after a PIN unlock), which the
+ * server refuses. When no message is sent, the registration link is returned
+ * for staff to share by hand.
  */
 export async function sendPortalInvitation(patientId: string): Promise<{
   success: boolean;
   error?: string;
   demoOTP?: string;
   registrationUrl?: string;
+  /**
+   * Why the server refused to send the invitation, when it said so:
+   * "not_signed_in" (no online sign-in, HTTP 401) or "not_permitted" (the
+   * server does not accept this staff account, HTTP 403).
+   */
+  notSentReason?: StaffAuthRefusal;
 }> {
   try {
     const patient = await db.patients.get(patientId);
@@ -212,6 +225,8 @@ export async function sendPortalInvitation(patientId: string): Promise<{
         : `${window.location.origin}/patient/register`;
     const loginUrl = `${window.location.origin}/patient/login`;
 
+    let notSentReason: StaffAuthRefusal | null = null;
+
     // --- Send via Supabase edge function (email preferred, SMS fallback) ---
     if (supabase) {
       try {
@@ -243,6 +258,7 @@ export async function sendPortalInvitation(patientId: string): Promise<{
             return { success: true, registrationUrl };
           }
           logger.warn("Edge function email failed:", safeErrorLabel(fnError));
+          notSentReason = staffAuthRefusal(fnError);
         } else if (patient.phone) {
           const { error: fnError } = await supabase.functions.invoke(
             "send-otp-sms",
@@ -265,6 +281,7 @@ export async function sendPortalInvitation(patientId: string): Promise<{
             return { success: true, registrationUrl };
           }
           logger.warn("Edge function SMS failed:", safeErrorLabel(fnError));
+          notSentReason = staffAuthRefusal(fnError);
         }
       } catch (edgeFnError) {
         logger.warn(
@@ -284,13 +301,14 @@ export async function sendPortalInvitation(patientId: string): Promise<{
 
     // No name, contact or link here: the link carries the email or phone.
     logger.info(
-      `[Portal Invitation] No email/SMS service reached; registration link returned for staff to share (${contactMethod})`,
+      `[Portal Invitation] No email/SMS was sent${notSentReason ? ` (${notSentReason})` : ""}; registration link returned for staff to share (${contactMethod})`,
     );
 
     return {
       success: true,
       registrationUrl,
       demoOTP: `No email or SMS was sent. Share this registration link with the patient: ${registrationUrl}`,
+      ...(notSentReason ? { notSentReason } : {}),
     };
      
   } catch (error: unknown) {

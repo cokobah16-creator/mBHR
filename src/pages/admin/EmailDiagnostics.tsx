@@ -4,6 +4,11 @@
  * Shows whether this device can reach the email Edge Function, and sends a
  * test email so an administrator can see what actually happens. Nothing on
  * this page is assumed: every status comes from configuration or a test.
+ *
+ * send-otp-email sends a sign-in code email only for an administrator
+ * signed in online. supabase.functions.invoke sends that person's access
+ * token; after a PIN unlock it sends the public anon key, which the server
+ * refuses with 401.
  */
 
 import { useState, type FormEvent } from "react";
@@ -20,6 +25,13 @@ import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import { useServerStatus } from "@/features/admin/useServerStatus";
 import { canUseSystemTools } from "@/features/admin/adminSections";
 import type { ServerState } from "@/features/admin/serverStatus";
+import { ONLINE_SIGN_IN_HINT, useCloudSession } from "@/lib/cloudSession";
+import {
+  edgeFunctionErrorBody,
+  edgeFunctionStatus,
+  staffAuthRefusal,
+  type StaffAuthRefusal,
+} from "@/services/edgeFunctionErrors";
 
 interface TestResult {
   success: boolean;
@@ -44,6 +56,15 @@ const BREADCRUMBS = [
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TEST_CODE = "123456";
+
+const NOT_SIGNED_IN_ONLINE = `Sending a test email needs an administrator signed in online. A PIN unlock is not enough. ${ONLINE_SIGN_IN_HINT}`;
+
+// Why the server refused to send, in place of the generic invoke() message.
+const REFUSAL_MESSAGE: Record<StaffAuthRefusal, string> = {
+  not_signed_in: `The server refused the request: your online sign-in is missing or has expired. A PIN unlock is not enough. ${ONLINE_SIGN_IN_HINT}`,
+  not_permitted:
+    "The server refused the request: it did not accept your account as an active administrator. Only an administrator signed in online can send a test email.",
+};
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -81,7 +102,7 @@ function providerStatus(result: TestResult | null): {
       tone: "warning",
       label: "Demo mode: no email sent",
       detail:
-        "The Edge Function has no RESEND_API_KEY, so it writes codes to its logs instead of sending email.",
+        "The Edge Function has no RESEND_API_KEY, so it sends no email. It does not log the address or the code.",
     };
   }
   return {
@@ -99,6 +120,7 @@ export default function EmailDiagnostics() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const canTest = canUseSystemTools(currentUser?.role);
   const server = useServerStatus();
+  const notSignedInOnline = useCloudSession() === "signed_out";
   const { push: pushToast } = useToast();
 
   const [testing, setTesting] = useState(false);
@@ -128,6 +150,8 @@ export default function EmailDiagnostics() {
     }
     setEmailError("");
     if (!supabase || !server.available) return;
+    // The hint above the button says why; the server would answer 401.
+    if (notSignedInOnline) return;
 
     setTesting(true);
     setTestResult(null);
@@ -142,16 +166,26 @@ export default function EmailDiagnostics() {
       );
 
       if (error) {
+        const refusal = staffAuthRefusal(error);
+        const reply = await edgeFunctionErrorBody(error);
+        const message = refusal
+          ? REFUSAL_MESSAGE[refusal]
+          : reply?.message || error.message;
         setTestResult({
           success: false,
-          error: error.message,
-          details: error,
+          error: message,
+          details: {
+            name: error.name,
+            status: edgeFunctionStatus(error),
+            error: reply?.error,
+            message: reply?.message ?? error.message,
+          },
         });
         pushToast({
           id: generateId(),
           tone: "error",
           title: "Test failed",
-          body: error.message,
+          body: message,
         });
       } else {
         const result: TestResult = {
@@ -168,7 +202,7 @@ export default function EmailDiagnostics() {
             id: generateId(),
             tone: "warning",
             title: "Demo mode: no email sent",
-            body: "The Edge Function is running without an email key. The code is in its logs.",
+            body: "The Edge Function has no email key, so no email was sent.",
           });
         } else if (result.success) {
           pushToast({
@@ -348,10 +382,21 @@ export default function EmailDiagnostics() {
               Only an administrator can send test emails.
             </p>
           )}
+          {canTest && server.available && notSignedInOnline && (
+            <p className="text-caption text-warning-fg">
+              {NOT_SIGNED_IN_ONLINE}
+            </p>
+          )}
 
           <button
             type="submit"
-            disabled={testing || !testEmail.trim() || !server.available || !canTest}
+            disabled={
+              testing ||
+              !testEmail.trim() ||
+              !server.available ||
+              !canTest ||
+              notSignedInOnline
+            }
             className="btn-primary"
           >
             <EnvelopeIcon className="h-5 w-5" aria-hidden />
@@ -381,8 +426,11 @@ export default function EmailDiagnostics() {
                 {testResult.demo && (
                   <ul className="list-disc space-y-0.5 pl-5 text-caption">
                     <li>No RESEND_API_KEY is set in the Edge Function secrets.</li>
-                    <li>The code is written to the Edge Function logs instead.</li>
-                    <li>Check Supabase Dashboard → Edge Functions → Logs.</li>
+                    <li>
+                      The function logs only that it ran in demo mode. It does
+                      not log the address or the code.
+                    </li>
+                    <li>Add the key as shown below, then test again.</li>
                   </ul>
                 )}
                 {testResult.messageId && (

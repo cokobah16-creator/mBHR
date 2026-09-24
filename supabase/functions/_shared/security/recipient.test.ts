@@ -4,9 +4,11 @@ import {
   normalizeNigerianMsisdn,
   redactNumbers,
   toE164,
+  validEmailAddress,
   validId,
   validMessageText,
   validOtp,
+  MAX_EMAIL_CHARS,
   MAX_SMS_CHARS,
 } from "./recipient";
 
@@ -109,5 +111,43 @@ describe("input validation", () => {
     expect(validId("a,b")).toBeNull();
     expect(validId("x".repeat(65))).toBeNull();
     expect(validId(12)).toBeNull();
+  });
+});
+
+describe("validEmailAddress", () => {
+  it("accepts one plain address and trims it", () => {
+    expect(validEmailAddress("ada@example.com")).toBe("ada@example.com");
+    expect(validEmailAddress("  ada.obi+portal@mail.example.ng  ")).toBe(
+      "ada.obi+portal@mail.example.ng",
+    );
+    expect(validEmailAddress("o'neill@example.com")).toBe("o'neill@example.com");
+  });
+
+  it("rejects lists, display names and malformed addresses", () => {
+    for (const raw of [
+      "",
+      "   ",
+      "ada",
+      "ada@example",
+      "@example.com",
+      "ada@.com",
+      "ada@example.com,eve@example.com",
+      "ada@example.com; eve@example.com",
+      "Ada <ada@example.com>",
+      '"Ada"@example.com',
+      "ada @example.com",
+      "ada@exa mple.com",
+      "ada@example.com\nBcc: eve@example.com",
+    ]) {
+      expect(validEmailAddress(raw)).toBeNull();
+    }
+  });
+
+  it("rejects non-text and over-long input", () => {
+    expect(validEmailAddress(undefined)).toBeNull();
+    expect(validEmailAddress(null)).toBeNull();
+    expect(validEmailAddress(42)).toBeNull();
+    const local = "a".repeat(MAX_EMAIL_CHARS);
+    expect(validEmailAddress(`${local}@example.com`)).toBeNull();
   });
 });

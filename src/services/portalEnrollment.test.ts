@@ -217,6 +217,53 @@ describe("sendPortalInvitation", () => {
 
     expect(result.success).toBe(true);
     expect(result.registrationUrl).toBeDefined();
+    expect(result.demoOTP).toBeDefined();
+    expect(result.notSentReason).toBeUndefined();
+  });
+
+  it("says why when the server refuses a caller who is not signed in online", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
+    // What invoke returns when the anon key gets 401 from send-otp-email.
+    mockFunctionsInvoke.mockResolvedValue({
+      data: null,
+      error: {
+        name: "FunctionsHttpError",
+        message: "Edge Function returned a non-2xx status code",
+        context: { status: 401 },
+      },
+    });
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.success).toBe(true);
+    expect(result.notSentReason).toBe("not_signed_in");
+    expect(result.demoOTP).toBeDefined();
+    expect(result.registrationUrl).toContain("/patient/register");
+  });
+
+  it("says why when the server does not accept the staff account", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
+    mockFunctionsInvoke.mockResolvedValue({
+      data: null,
+      error: { name: "FunctionsHttpError", context: { status: 403 } },
+    });
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.notSentReason).toBe("not_permitted");
+    expect(result.demoOTP).toBeDefined();
+  });
+
+  it("sends the invitation text as subject and message, never as HTML", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
+
+    await sendPortalInvitation("p1");
+
+    const [, options] = mockFunctionsInvoke.mock.calls[0];
+    expect(options.body.subject).toBe("Your mBHR Patient Portal is Ready");
+    expect(options.body.message).toContain("Hi Ada,");
+    expect(options.body.message).not.toMatch(/<[a-z]/i);
+    expect(options.body).not.toHaveProperty("otp");
   });
 
   it("enforces rate limit when invite was sent recently", async () => {

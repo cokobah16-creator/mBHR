@@ -1,8 +1,8 @@
-// Server-side recipient rules for SMS edge functions.
+// Server-side recipient rules for SMS and email edge functions.
 //
 // Pure functions (no Deno APIs) so they can be unit tested with vitest/bun.
 //
-// Only Nigerian mobile numbers are accepted. Every Nigerian mobile number is
+// SMS: only Nigerian mobile numbers are accepted. Every Nigerian mobile number is
 // 234 + a 10-digit national number whose first digit is 7, 8 or 9 and whose
 // second digit is 0 or 1 (070x, 080x, 081x, 090x, 091x ...). Anything else
 // (landlines, foreign numbers, short codes, free text) is rejected so the
@@ -85,4 +85,25 @@ export function validId(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const id = raw.trim();
   return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
+}
+
+/** Upper bound on an email address (the SMTP path limit). */
+export const MAX_EMAIL_CHARS = 254;
+
+// Loose on purpose: it does not try to decide which addresses exist. It only
+// refuses text that names more than one recipient (commas, semicolons) or
+// carries display-name or header syntax (<, >, quotes, brackets, spaces).
+const EMAIL_ADDRESS =
+  /^[^\s@,;<>"()[\]\\]+@[^\s@,;<>"()[\]\\]+\.[^\s@,;<>"()[\]\\]+$/;
+
+/**
+ * One plain email address such as "name@example.com", trimmed. Returns null
+ * for anything else: not text, empty, too long, a list of addresses, or a
+ * display name ("Name <name@example.com>").
+ */
+export function validEmailAddress(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const email = raw.trim();
+  if (!email || email.length > MAX_EMAIL_CHARS) return null;
+  return EMAIL_ADDRESS.test(email) ? email : null;
 }

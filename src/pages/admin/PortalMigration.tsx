@@ -340,7 +340,7 @@ export function PortalMigration() {
         </StatusBadge>
         <span className="text-caption text-ink-muted">
           {server.available
-            ? "Invitations are sent by email, or by SMS when a patient has no email."
+            ? "Invitations are sent by email, or by SMS when a patient has no email. Sending needs an online sign-in: a PIN unlock is not enough."
             : "Invitations need the server and an internet connection. You can still enable access now and send invitations later from each patient's record."}
         </span>
       </div>
@@ -417,7 +417,7 @@ export function PortalMigration() {
               {run.sendInvitations && (
                 <p className="text-body text-ink-secondary">
                   {run.serverAvailable
-                    ? "An invitation was requested for each enabled patient. Where the email or SMS service did not respond, no message went out; open that patient's record to send it again or share a registration link."
+                    ? "An invitation was requested for each enabled patient. Where the email or SMS service did not send it, no message went out. That happens for every patient if you are not signed in online. Open that patient's record to send it again or share a registration link."
                     : "The server could not be reached when this ran, so no email or SMS was sent. Send invitations from each patient's record when the device is online."}
                 </p>
               )}
