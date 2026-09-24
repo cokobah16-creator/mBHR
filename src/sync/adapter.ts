@@ -14,7 +14,7 @@ import type {
 } from "../components/ConflictResolutionModal";
 import { findFieldConflicts } from "./fieldCompare";
 import { mergePulledRow } from "./pullMerge";
-import { staffFromServerRow } from "./staffRoster";
+import { keepLocalRevocation, staffFromServerRow } from "./staffRoster";
 import { markersAfterUpload } from "./uploadMarkers";
 import { namedSyncError, syncErrorCode } from "./errorCode";
 import { queueSyncConflicts } from "./queueConflicts";
@@ -966,7 +966,9 @@ async function applyPulledRows(
         summary.keptLocalEdits += 1;
         continue;
       }
-      await table.put(decision.row);
+      await table.put(
+        t === "app_users" ? keepLocalRevocation(localRow, decision.row) : decision.row,
+      );
       if (decision.kind === "server-owned") summary.keptLocalEdits += 1;
       else summary.applied += 1;
     }

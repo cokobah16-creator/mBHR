@@ -38,7 +38,7 @@ vi.mock("@/lib/logger", () => ({
   warn: vi.fn(),
 }));
 
-import { pullStaffRoster, staffFromServerRow } from "./staffRoster";
+import { keepLocalRevocation, pullStaffRoster, staffFromServerRow } from "./staffRoster";
 
 beforeEach(() => {
   rows.clear();
@@ -141,6 +141,29 @@ describe("pullStaffRoster", () => {
     expect(rows.get("other")?.isActive).toBe(1);
   });
 
+  it("never reactivates someone deactivated on this device; flags them for review", async () => {
+    rows.set("u1", {
+      id: "u1",
+      fullName: "Ada",
+      role: "doctor",
+      isActive: 0,
+      disabledLocallyAt: new Date("2026-09-20"),
+      pinHash: "h",
+      pinSalt: "s",
+    });
+    mockSelect.mockResolvedValue({
+      data: [
+        { id: "u1", full_name: "Ada Okafor", role: "doctor" },
+        { id: "u2", full_name: "Chidi Eze", role: "pharmacist" },
+      ],
+      error: null,
+    });
+
+    await pullStaffRoster();
+
+    expect(rows.get("u1")).toMatchObject({ isActive: 0, accessConflict: 1, fullName: "Ada Okafor" });
+  });
+
   it("changes nothing when the server returns no rows", async () => {
     rows.set("u1", { id: "u1", fullName: "Ada", isActive: 1, _syncedAt: "2026-09-01" });
     mockSelect.mockResolvedValue({ data: [], error: null });
@@ -152,5 +175,17 @@ describe("pullStaffRoster", () => {
   it("reports a failed download without throwing", async () => {
     mockSelect.mockResolvedValue({ data: null, error: { code: "42501" } });
     expect(await pullStaffRoster()).toEqual({ ok: false, reason: "error" });
+  });
+});
+
+describe("keepLocalRevocation", () => {
+  it("leaves a server change alone when nothing was deactivated here", () => {
+    expect(keepLocalRevocation({ isActive: 0 }, { isActive: 1 })).toEqual({ isActive: 1 });
+  });
+
+  it("keeps a server deactivation", () => {
+    expect(
+      keepLocalRevocation({ isActive: 0, disabledLocallyAt: new Date() }, { isActive: 0 }),
+    ).toEqual({ isActive: 0 });
   });
 });

@@ -47,6 +47,21 @@ export function staffFromServerRow(raw: Row): Partial<User> & { id: string } {
   return out;
 }
 
+/**
+ * An administrator's offline "Deactivate" on this device is only undone by
+ * an authorised person, never by a download. When the server still lists a
+ * person as active after they were switched off here, the device keeps them
+ * off and marks the record for review (Users shows it). Revocation stays
+ * monotonic while devices are out of step, instead of newest-wins.
+ */
+export function keepLocalRevocation(
+  localRow: Row | null | undefined,
+  merged: Row,
+): Row {
+  if (!localRow?.disabledLocallyAt || merged.isActive !== 1) return merged;
+  return { ...merged, isActive: 0, accessConflict: 1 };
+}
+
 export type RosterPullResult =
   | { ok: true; staff: number; deactivated: number }
   | { ok: false; reason: "not-configured" | "error" };
@@ -108,7 +123,7 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
           _syncedAt: syncedAt,
         });
         if (decision.kind === "kept-local") continue;
-        const row = decision.row as unknown as User;
+        const row = keepLocalRevocation(local, decision.row) as unknown as User;
         await db.users.put({
           // A person new to this device: known, but no offline access yet.
           fullName: row.fullName ?? String(raw.email ?? "Staff member"),
