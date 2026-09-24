@@ -57,11 +57,22 @@ const INVITE_STATUS: Record<
 };
 
 // Why no email or SMS went out, when the server refused the caller.
-const NOT_SENT_REASON: Record<StaffAuthRefusal, string> = {
-  not_signed_in: `The server sends email and SMS only for staff signed in online. A PIN unlock is not enough. ${ONLINE_SIGN_IN_HINT}`,
-  not_permitted:
-    "The server did not accept your staff account for sending invitations. Ask an administrator to check your account.",
-};
+// 403 differs by channel: every role that sees the button may send email, so
+// there it means the server does not accept the account (inactive, or a
+// different role on the server); for SMS it is most often a volunteer, since
+// send-otp-sms does not accept volunteers (SMS_SENDER_ROLES in
+// supabase/functions/_shared/security/staffAuth.ts).
+function notSentReasonText(
+  reason: StaffAuthRefusal,
+  contactMethod: PortalStatusInfo["contactMethod"],
+): string {
+  if (reason === "not_signed_in") {
+    return `The server sends email and SMS only for staff signed in online. A PIN unlock is not enough. ${ONLINE_SIGN_IN_HINT}`;
+  }
+  return contactMethod === "phone"
+    ? "The server does not let your role send SMS (volunteers cannot), or your staff account is not active."
+    : "The server does not let your staff account send email. It may not be active, or its role on the server may not allow it. Ask an administrator to check your account.";
+}
 
 const formatCountdown = (seconds: number): string => {
   const mins = Math.floor(seconds / 60);
@@ -440,7 +451,10 @@ export function PortalStatusCard({
                 </p>
                 {!inviteLink.delivered && inviteLink.notSentReason && (
                   <p className="text-caption">
-                    {NOT_SENT_REASON[inviteLink.notSentReason]}
+                    {notSentReasonText(
+                      inviteLink.notSentReason,
+                      status.contactMethod,
+                    )}
                   </p>
                 )}
                 <p className="text-caption">
