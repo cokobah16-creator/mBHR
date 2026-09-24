@@ -1,10 +1,13 @@
 // Writes a confirmed conflict plan on this device. The caller checks
 // permissions first; this module only performs the write it was shown.
+// Patient merges also check merge_patients (services/patientMerge) and are
+// sent to the server, which applies them for every device.
 
 import { db, createAuditLog } from "@/db";
 import logger from "@/lib/logger";
-import { patientDeduplication } from "@/services/patientDeduplication";
-import { buildLocalPatch, type DevicePlan } from "./devicePlan";
+import type { Role } from "@/auth/roles";
+import { requestMerge } from "@/services/patientMerge";
+import { buildLocalPatch, mergeFieldChoicesFor, type DevicePlan } from "./devicePlan";
 import { localTable } from "./localContext";
 
 export interface DeviceActor {
@@ -20,8 +23,22 @@ function namedError(name: string): Error {
 }
 
 export type ApplyResult =
-  | { applied: true; fieldsChanged: number }
-  | { applied: false };
+  | {
+      applied: true;
+      fieldsChanged: number;
+      /** Merges only: how the merge reaches the server. */
+      merge?: {
+        /** False when cloud sync is not set up on this device. */
+        willSync: boolean;
+        /** Chosen fields the merge cannot copy (for example an empty name). */
+        skippedFields: string[];
+      };
+    }
+  | {
+      applied: false;
+      /** Plain-English reason nothing was written (merges refused on this device). */
+      message?: string;
+    };
 
 /**
  * The record write has already succeeded at this point; a failed local audit
@@ -65,36 +82,41 @@ export async function applyPlanOnDevice(
     return { applied: true, fieldsChanged: Object.keys(patch).length };
   }
 
-  // Duplicate patients: optionally copy chosen values into the kept record,
-  // then use the standard patient merge so history moves with the record.
-  const patch = buildLocalPatch(plan.copied);
-  await db.transaction(
-    "rw",
-    [
-      db.patients,
-      db.vitals,
-      db.consultations,
-      db.dispenses,
-      db.visits,
-      db.queue,
-      db.patientMerges,
-      db.patientAllergies,
-      db.patientPreferences,
-      db.careTasks,
-    ],
-    async () => {
-      if (Object.keys(patch).length > 0) {
-        await db.patients.update(plan.winnerId, {
-          ...patch,
-          updatedAt: new Date(),
-          _dirty: 1,
-        });
-      }
-      if (!plan.alreadyMerged) {
-        await patientDeduplication.mergePatients(plan.winnerId, plan.loserId, actor.id);
-      }
-    },
-  );
-  await auditOnDevice(actor, "conflict_merge_patients", "patients", plan.winnerId);
-  return { applied: true, fieldsChanged: Object.keys(patch).length };
+  // Duplicate patients, already merged here: only copy the chosen values
+  // onto the kept record (an ordinary edit, uploaded at the next sync).
+  if (plan.alreadyMerged) {
+    const patch = buildLocalPatch(plan.copied);
+    if (Object.keys(patch).length > 0) {
+      const updated = await db.patients.update(plan.winnerId, {
+        ...patch,
+        updatedAt: new Date(),
+        _dirty: 1,
+      });
+      if (!updated) throw namedError("LocalRecordMissing");
+    }
+    await auditOnDevice(actor, "conflict_merge_patients", "patients", plan.winnerId);
+    return { applied: true, fieldsChanged: Object.keys(patch).length };
+  }
+
+  // Duplicate patients: merge on this device now and queue the merge for the
+  // server, which moves the history and tells every device. The chosen
+  // values travel with the merge (the server applies them to the kept record).
+  const { choices, skipped } = mergeFieldChoicesFor(plan);
+  const result = await requestMerge({
+    winnerId: plan.winnerId,
+    loserId: plan.loserId,
+    fieldChoices: choices,
+    source: "conflict_review",
+    actor: { id: actor.id, role: actor.role as Role },
+  });
+  if (result.ok === false) {
+    if (result.reason === "not_saved") throw namedError("LocalMergeNotSaved");
+    return { applied: false, message: result.message };
+  }
+  await auditOnDevice(actor, "conflict_merge_patients", "patients", result.winnerId);
+  return {
+    applied: true,
+    fieldsChanged: result.fieldsChanged,
+    merge: { willSync: result.willSync, skippedFields: skipped },
+  };
 }

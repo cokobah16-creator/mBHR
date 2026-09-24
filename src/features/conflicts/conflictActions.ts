@@ -49,29 +49,59 @@ function errorName(error: unknown): string {
   return error instanceof Error ? error.name : "unknown";
 }
 
+interface DeviceApply {
+  outcome: DeviceOutcome;
+  /** Why nothing was written, when this device refused (merges). */
+  message?: string;
+  merge?: { willSync: boolean; skippedFields: string[] };
+}
+
 async function applyPlan(
   plan: DevicePlan,
   actor: ConflictActor,
   entityType: string,
-): Promise<DeviceOutcome> {
-  if (plan.kind === "none") return "not_applied";
+): Promise<DeviceApply> {
+  if (plan.kind === "none") return { outcome: "not_applied" };
   try {
     const result = await applyPlanOnDevice(plan, actor, entityType);
-    return result.applied ? "applied" : "not_applied";
+    return result.applied === true
+      ? { outcome: "applied", merge: result.merge }
+      : { outcome: "not_applied", message: result.message };
   } catch (error) {
     logger.error("Could not apply conflict decision on this device", errorName(error));
-    return "failed";
+    return { outcome: "failed" };
   }
 }
 
-function deviceBody(plan: DevicePlan, device: DeviceOutcome): string {
-  if (device === "failed") {
+function mergeAppliedBody(merge: DeviceApply["merge"]): string {
+  const lines = [
+    merge && !merge.willSync
+      ? "The records were merged on this device. Cloud sync is not set up here, so other devices and the server do not get this merge."
+      : "The records were merged on this device. The merge is waiting to sync: the server then moves the history to the kept record and every device shows the same result after its next sync. If the server refuses the merge, it is undone here and listed for review.",
+  ];
+  const skipped = merge?.skippedFields.length ?? 0;
+  if (skipped > 0) {
+    lines.push(
+      `${skipped} chosen ${skipped === 1 ? "value was" : "values were"} not copied: a name, sex or date of birth cannot be left empty.`,
+    );
+  }
+  return lines.join(" ");
+}
+
+function deviceBody(plan: DevicePlan, device: DeviceApply): string {
+  if (device.outcome === "failed") {
     return "The decision is saved on the server, but this device's copy could not be updated. Open it under Resolved and choose Apply on this device.";
   }
-  if (device === "applied") {
-    return plan.kind === "merge_patients"
-      ? "The records were merged on this device. Their visits and other history upload at the next sync, but the merge link itself stays on this device: other devices still list the duplicate until it is merged there."
-      : "This device's copy was updated and will upload at the next sync.";
+  if (device.outcome === "applied") {
+    if (plan.kind === "merge_patients") {
+      return plan.alreadyMerged
+        ? "The records were already merged on this device. Any chosen values were copied to the kept record and upload at the next sync."
+        : mergeAppliedBody(device.merge);
+    }
+    return "This device's copy was updated and will upload at the next sync.";
+  }
+  if (device.message) {
+    return `Nothing changed on this device. ${device.message}`;
   }
   if (plan.kind === "none") {
     switch (plan.reason) {
@@ -146,14 +176,14 @@ export async function resolveWithPlan(input: {
 
   // The plan was confirmed assuming the decision would wait for approval;
   // it resolved straight away, so apply it later from the Resolved list.
-  const device =
+  const device: DeviceApply =
     plan.kind === "none" && plan.reason === "awaiting_approval"
-      ? "not_applied"
+      ? { outcome: "not_applied" }
       : await applyPlan(plan, actor, conflict.entityType);
   return {
     ok: true,
     status: "resolved",
-    device,
+    device: device.outcome,
     title: strategy === "ignore" ? "Conflict dismissed" : "Conflict resolved",
     body: deviceBody(plan, device),
   };
@@ -205,7 +235,7 @@ export async function approveWithPlan(input: {
   return {
     ok: true,
     status: "resolved",
-    device,
+    device: device.outcome,
     title: "Decision approved",
     body: deviceBody(plan, device),
   };
@@ -260,19 +290,19 @@ export async function applyRecordedDecision(input: {
     return { ok: false, device: "not_applied", title: "Not applied", body: "Only resolved decisions can be applied." };
   }
   const device = await applyPlan(plan, actor, conflict.entityType);
-  if (device === "failed") {
+  if (device.outcome === "failed") {
     return {
       ok: false,
-      device,
+      device: device.outcome,
       title: "Not applied",
       body: "This device's copy could not be updated. Try again; if it keeps failing, check the device storage.",
     };
   }
   return {
-    ok: device === "applied",
+    ok: device.outcome === "applied",
     status: "resolved",
-    device,
-    title: device === "applied" ? "Applied on this device" : "Nothing to apply",
+    device: device.outcome,
+    title: device.outcome === "applied" ? "Applied on this device" : "Nothing to apply",
     body: deviceBody(plan, device),
   };
 }

@@ -231,6 +231,17 @@ export interface QueueItem {
   serviceDate?: string;
   /** 1 while ticketNumber is a device-issued provisional label. */
   ticketProvisional?: 0 | 1;
+  // Device-only ticket markers (src/services/queueTickets.ts,
+  // src/sync/queueSync.ts). Never uploaded; a download never clears them.
+  /** 1 while the server has not confirmed this row's ticket yet. */
+  ticketPending?: 0 | 1;
+  /**
+   * 1 while a status change or priority downgrade made on this device has
+   * not reached the server's transition log yet.
+   */
+  transitionPending?: 0 | 1;
+  /** The number the patient was given before the server changed it. */
+  ticketRelabelledFrom?: string;
   updatedAt: Date;
   _dirty?: number;
   _syncedAt?: string;
@@ -331,6 +342,23 @@ export interface PatientMerge {
   kind?: "merge" | "unmerge";
   source?: string;
   createdAt?: string;
+  /**
+   * Device-only undo data for a merge still waiting for the server; cleared
+   * (null) once the server answers. Never uploaded. Same shape as MergeUndo
+   * in src/services/patientMergeCore.ts.
+   */
+  localUndo?: {
+    /** Child table name -> ids moved from the merged record to the kept record. */
+    moved: Record<string, string[]>;
+    /** Child table name -> moved ids that were not uploaded yet. */
+    unsent?: Record<string, string[]>;
+    /** Kept record's values before the chosen values were applied. */
+    winnerBefore: Record<string, unknown>;
+    /** Values applied to the kept record. */
+    winnerApplied: Record<string, unknown>;
+    /** The kept record had unsent edits when the merge was asked for. */
+    winnerUnsent?: boolean;
+  } | null;
 }
 
 /**
@@ -1564,48 +1592,6 @@ export const createPatientDraft = async (p: {
     .toArray();
 
   return { rec, candidates };
-};
-
-/**
- * Merge patients on this device only (marks the loser, records the merge).
- * Child records are not moved and nothing is sent to the server.
- *
- * @deprecated Use requestMerge from services/patientMerge (patient-merge
- * package), which moves child records and sends the merge to the server as
- * a command. Kept until PatientDedupeModal has moved over.
- */
-export const mergePatients = async (
-  winnerId: string,
-  loserId: string,
-  mergedBy: string,
-) => {
-  await db.transaction("rw", db.patients, db.patientMerges, async () => {
-    const now = new Date();
-    const day = epochDay(now);
-
-    // Mark loser as merged
-    await db.patients.update(loserId, {
-      mergeInto: winnerId,
-      updatedAt: now,
-      _dirty: 1,
-    });
-
-    // Record merge
-    await db.patientMerges.add({
-      id: generateId(),
-      winnerId,
-      loserId,
-      mergedBy,
-      createdDay: day,
-      reason: "duplicate_resolution",
-    });
-
-    // Update winner's updatedAt
-    await db.patients.update(winnerId, {
-      updatedAt: now,
-      _dirty: 1,
-    });
-  });
 };
 
 // Daily count helpers

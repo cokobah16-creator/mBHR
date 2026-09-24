@@ -3,6 +3,7 @@ import {
   buildLocalPatch,
   coerceToLocalShape,
   deviceMatchesDecision,
+  mergeFieldChoicesFor,
   planDeviceWrite,
   planHasWork,
   type DevicePlan,
@@ -197,6 +198,40 @@ describe("planDeviceWrite: duplicates", () => {
       snapshot: merged,
     });
     expect(same).toEqual({ kind: "merge_patients", winnerId: "A", loserId: "B", copied: [], alreadyMerged: true });
+  });
+
+  it("carries the chosen B values to the server as field choices for the merge", () => {
+    const p = planDeviceWrite({
+      conflict: dup,
+      strategy: "manual",
+      selections: { phone: "remote", address: "local" },
+      awaitingApproval: false,
+      snapshot,
+    });
+    if (p.kind !== "merge_patients") throw new Error("expected merge");
+    expect(mergeFieldChoicesFor(p)).toEqual({
+      choices: { phone: { source: "loser", value: "0805" } },
+      skipped: [],
+    });
+  });
+
+  it("sends no field choices when a whole record is kept", () => {
+    const p = planDeviceWrite({ conflict: dup, strategy: "keep_remote", selections: {}, awaitingApproval: false, snapshot });
+    if (p.kind !== "merge_patients") throw new Error("expected merge");
+    expect(mergeFieldChoicesFor(p)).toEqual({ choices: {}, skipped: [] });
+  });
+
+  it("never sends an empty name as a field choice", () => {
+    const names = { ...dup, conflictDetails: { fields: [f("givenName", "Ada", "")] } };
+    const p = planDeviceWrite({
+      conflict: names,
+      strategy: "manual",
+      selections: { givenName: "remote" },
+      awaitingApproval: false,
+      snapshot: { ...snapshot, record: { id: "A", givenName: "Ada" }, partner: { id: "B", givenName: "" } },
+    });
+    if (p.kind !== "merge_patients") throw new Error("expected merge");
+    expect(mergeFieldChoicesFor(p)).toEqual({ choices: {}, skipped: ["givenName"] });
   });
 
   it("cannot merge when either record is missing here", () => {
