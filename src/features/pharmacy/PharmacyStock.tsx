@@ -1,5 +1,11 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { db as mbhrDb, ulid } from "@/db/mbhr";
+import React, { useEffect, useMemo, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import {
+  db as mbhrDb,
+  type PharmacyBatch,
+  type PharmacyItem,
+  type StockDiscrepancy,
+} from "@/db/mbhr";
 import { createAuditLog, generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
@@ -9,6 +15,27 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import { PharmacySkeleton } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
+import {
+  addMedicine,
+  adjustStock,
+  deleteLocalMedicine,
+  discardLocalStock,
+  ledgerEnabled,
+  readSiteClaim,
+  receiveStock,
+  resolveDiscrepancy,
+  setMedicineActive,
+  uploadOpeningStock,
+  type SiteClaim,
+} from "@/services/pharmacyCommands";
+import { receiveProblem } from "@/services/pharmacyCommandsModel";
+import {
+  countPharmacyAwaitingAuthorised,
+  countPharmacyUnsynced,
+  pharmacyServerReachable,
+  syncPharmacyNow,
+} from "@/sync/pharmacySync";
 import {
   BeakerIcon,
   ExclamationTriangleIcon,
@@ -18,29 +45,13 @@ import {
   TrashIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ArchiveBoxXMarkIcon,
+  ArrowPathIcon,
+  ArrowUturnLeftIcon,
+  ClipboardDocumentCheckIcon,
+  CloudArrowUpIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
-
-interface PharmacyItem {
-  id: string;
-  medName: string;
-  form: string;
-  strength: string;
-  unit: string;
-  onHandQty: number;
-  reorderThreshold: number;
-  isControlled?: boolean;
-  updatedAt: string;
-}
-
-interface PharmacyBatch {
-  id: string;
-  itemId: string;
-  lotNumber: string;
-  expiryDate: string;
-  qtyOnHand: number;
-  receivedAt: string;
-  supplier?: string;
-}
 
 interface ItemWithBatches extends PharmacyItem {
   batches: PharmacyBatch[];
@@ -75,12 +86,42 @@ const EMPTY_BATCH_FORM = {
   supplier: "",
 };
 
+const EMPTY_COUNT_FORM = {
+  counted: 0,
+  reason: "adjust" as "adjust" | "expire",
+  note: "",
+};
+
+interface StockSnapshot {
+  items: ItemWithBatches[];
+  discrepancies: StockDiscrepancy[];
+  localOnlyItems: number;
+  localOnlyLots: number;
+  unsynced: number;
+  awaitingAuthorised: number;
+  error?: string;
+}
+
+function isActiveItem(item: PharmacyItem): boolean {
+  return item.isActive !== false;
+}
+
 function getStockStatus(item: ItemWithBatches): { label: string; tone: Tone } {
+  if (!isActiveItem(item)) return { label: "Deactivated", tone: "neutral" };
+  if (item.onHandQty < 0) return { label: "Count needed", tone: "danger" };
   if (item.onHandQty === 0) return { label: "Out of stock", tone: "danger" };
   if (item.onHandQty <= item.reorderThreshold) {
     return { label: "Low stock", tone: "warning" };
   }
   return { label: "In stock", tone: "success" };
+}
+
+/** Where this medicine's record stands with the server. */
+function getSyncStatus(item: PharmacyItem): { label: string; tone: Tone } | null {
+  if (item.localOnly === 1) return { label: "This device only", tone: "neutral" };
+  if (item.registerRejected) return { label: "Refused by the server", tone: "danger" };
+  if (item.pendingRegister === 1) return { label: "Waiting to sync", tone: "warning" };
+  return null;
 }
 
 function getExpiryStatus(expiryDate: string): { label: string; tone: Tone } {
@@ -97,22 +138,120 @@ function getExpiryStatus(expiryDate: string): { label: string; tone: Tone } {
   return { label: "In date", tone: "success" };
 }
 
+async function loadStock(): Promise<StockSnapshot> {
+  try {
+    const [itemsData, batchesData, discrepancies, unsynced, awaitingAuthorised] =
+      await Promise.all([
+        mbhrDb.pharmacy_items.orderBy("medName").toArray(),
+        mbhrDb.pharmacy_batches.toArray(),
+        mbhrDb.stock_discrepancies.where("status").equals("open").toArray(),
+        countPharmacyUnsynced(),
+        countPharmacyAwaitingAuthorised(),
+      ]);
+
+    const now = new Date();
+    const sixMonthsFromNow = new Date(
+      now.getTime() + 6 * 30 * 24 * 60 * 60 * 1000,
+    );
+    const items: ItemWithBatches[] = itemsData.map((item) => {
+      const itemBatches = batchesData.filter((batch) => batch.itemId === item.id);
+      const expiredBatches = itemBatches.filter(
+        (batch) => new Date(batch.expiryDate) < now,
+      ).length;
+      const expiringSoonBatches = itemBatches.filter((batch) => {
+        const expiryDate = new Date(batch.expiryDate);
+        return expiryDate >= now && expiryDate <= sixMonthsFromNow;
+      }).length;
+      const earliestExpiry = itemBatches
+        .filter((batch) => batch.qtyOnHand > 0)
+        .sort(
+          (a, b) =>
+            new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime(),
+        )[0]?.expiryDate;
+      return {
+        ...item,
+        batches: itemBatches.sort(
+          (a, b) =>
+            new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime(),
+        ),
+        totalBatches: itemBatches.length,
+        earliestExpiry,
+        expiredBatches,
+        expiringSoonBatches,
+      };
+    });
+
+    return {
+      items,
+      discrepancies,
+      localOnlyItems: itemsData.filter((i) => i.localOnly === 1).length,
+      localOnlyLots: batchesData.filter((b) => b.localOnly === 1).length,
+      unsynced,
+      awaitingAuthorised,
+    };
+  } catch (error) {
+    console.error(
+      "Error loading pharmacy data:",
+      error instanceof Error ? error.name : "unknown",
+    );
+    return {
+      items: [],
+      discrepancies: [],
+      localOnlyItems: 0,
+      localOnlyLots: 0,
+      unsynced: 0,
+      awaitingAuthorised: 0,
+      error: "Stock could not be read from this device. Reload the page and try again.",
+    };
+  }
+}
+
+function actionErrorText(error: unknown, fallback: string): string {
+  const name = error instanceof Error ? error.name : "";
+  switch (name) {
+    case "NotAllowed":
+      return "Only pharmacists and administrators can change stock.";
+    case "Offline":
+      return "This needs a connection to the server. Try again when online.";
+    case "NoOnlineSignIn":
+      return "Sign in online with your own account first, then try again.";
+    case "ClaimedElsewhere":
+      return "Opening stock for this site was already uploaded from another device. Use the server's stock instead.";
+    case "RemoteReadFailed":
+    case "RemoteWriteFailed":
+    case "RemoteRejected":
+      return "The server could not be reached or refused the request. Nothing was changed; try again.";
+    case "InvalidLot":
+      return error instanceof Error ? error.message : fallback;
+    default:
+      return fallback;
+  }
+}
+
 export default function PharmacyStock() {
   const { currentUser } = useAuthStore();
   const { push: pushToast } = useToast();
-  const [items, setItems] = useState<ItemWithBatches[]>([]);
+  const snapshot = useLiveQuery(loadStock, []);
   const [filteredItems, setFilteredItems] = useState<ItemWithBatches[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
   const [showAddItem, setShowAddItem] = useState(false);
   const [showAddBatch, setShowAddBatch] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [, setEditingItem] = useState<PharmacyItem | null>(null);
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [formError, setFormError] = useState("");
+  const [online, setOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  const [syncing, setSyncing] = useState(false);
+  const [onboarding, setOnboarding] = useState<"" | "upload" | "discard">("");
+  const [onboardingBusy, setOnboardingBusy] = useState(false);
+  const [siteClaim, setSiteClaim] = useState<SiteClaim | null>(null);
+  const [countTarget, setCountTarget] = useState<PharmacyBatch | null>(null);
+  const [countForm, setCountForm] = useState(EMPTY_COUNT_FORM);
+  const [isSubmittingCount, setIsSubmittingCount] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   // Form states
   const [itemForm, setItemForm] = useState(EMPTY_ITEM_FORM);
@@ -121,72 +260,20 @@ export default function PharmacyStock() {
   const [batchForm, setBatchForm] = useState(EMPTY_BATCH_FORM);
 
   const canManageStock = !!currentUser && can(currentUser.role, "inventory");
-
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setLoadError("");
-    try {
-      const [itemsData, batchesData] = await Promise.all([
-        mbhrDb.pharmacy_items.orderBy("medName").toArray(),
-        mbhrDb.pharmacy_batches.toArray(),
-      ]);
-
-      const itemsWithBatches: ItemWithBatches[] = itemsData.map((item) => {
-        const itemBatches = batchesData.filter(
-          (batch) => batch.itemId === item.id,
-        );
-        const now = new Date();
-        const sixMonthsFromNow = new Date(
-          now.getTime() + 6 * 30 * 24 * 60 * 60 * 1000,
-        );
-
-        const expiredBatches = itemBatches.filter(
-          (batch) => new Date(batch.expiryDate) < now,
-        ).length;
-        const expiringSoonBatches = itemBatches.filter((batch) => {
-          const expiryDate = new Date(batch.expiryDate);
-          return expiryDate >= now && expiryDate <= sixMonthsFromNow;
-        }).length;
-
-        const earliestExpiry = itemBatches
-          .filter((batch) => batch.qtyOnHand > 0)
-          .sort(
-            (a, b) =>
-              new Date(a.expiryDate).getTime() -
-              new Date(b.expiryDate).getTime(),
-          )[0]?.expiryDate;
-
-        return {
-          ...item,
-          batches: itemBatches.sort(
-            (a, b) =>
-              new Date(a.expiryDate).getTime() -
-              new Date(b.expiryDate).getTime(),
-          ),
-          totalBatches: itemBatches.length,
-          earliestExpiry,
-          expiredBatches,
-          expiringSoonBatches,
-        };
-      });
-
-      setItems(itemsWithBatches);
-    } catch (error) {
-      console.error(
-        "Error loading pharmacy data:",
-        error instanceof Error ? error.name : error,
-      );
-      setLoadError(
-        "Stock could not be read from this device. Reload the page and try again.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const actor = currentUser ? { id: currentUser.id, role: currentUser.role } : null;
+  const items = useMemo(() => snapshot?.items ?? [], [snapshot]);
+  const loadError = snapshot?.error ?? "";
+  const serverReachable = ledgerEnabled && online;
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
 
   useEffect(() => {
     let filtered = items;
@@ -206,7 +293,7 @@ export default function PharmacyStock() {
     switch (filterType) {
       case "low_stock":
         filtered = filtered.filter(
-          (item) => item.onHandQty <= item.reorderThreshold,
+          (item) => isActiveItem(item) && item.onHandQty <= item.reorderThreshold,
         );
         break;
       case "expired":
@@ -222,7 +309,6 @@ export default function PharmacyStock() {
 
   const resetItemForm = () => {
     setItemForm(EMPTY_ITEM_FORM);
-    setEditingItem(null);
     setFormError("");
   };
 
@@ -240,6 +326,21 @@ export default function PharmacyStock() {
     setShowAddBatch(null);
     resetBatchForm();
   };
+
+  const closeCount = () => {
+    setCountTarget(null);
+    setCountForm(EMPTY_COUNT_FORM);
+    setFormError("");
+  };
+
+  // Queued changes are sent in the background (and only while someone is
+  // signed in online), so never claim they were sent.
+  const whereSaved = (queued: boolean) =>
+    queued
+      ? serverReachable
+        ? "Saved on this device, waiting for the server to confirm it."
+        : "Saved on this device. The server confirms it at the next sync."
+      : "Saved on this device.";
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -259,34 +360,31 @@ export default function PharmacyStock() {
     setIsSubmittingItem(true);
 
     try {
-      const newItem = {
-        id: ulid(),
-        medName: itemForm.medName.trim(),
-        form: itemForm.form,
-        strength: itemForm.strength.trim(),
-        unit: itemForm.unit,
-        onHandQty: 0,
-        reorderThreshold: itemForm.reorderThreshold,
-        isControlled: itemForm.isControlled,
-        updatedAt: new Date().toISOString(),
-      };
-
-      await mbhrDb.pharmacy_items.add(newItem);
-      await loadData();
+      const newItem = await addMedicine(
+        {
+          medName: itemForm.medName.trim(),
+          form: itemForm.form,
+          strength: itemForm.strength.trim(),
+          unit: itemForm.unit,
+          reorderThreshold: itemForm.reorderThreshold,
+          isControlled: itemForm.isControlled,
+        },
+        actor,
+      );
       pushToast({
         id: generateId(),
         tone: "success",
         title: "Medicine added",
-        body: `${newItem.medName} ${newItem.strength} saved on this device. Add a lot to record stock.`,
+        body: `${newItem.medName} ${newItem.strength}. ${whereSaved(newItem.localOnly !== 1)} Add a lot to record stock.`,
       });
       setShowAddItem(false);
       resetItemForm();
     } catch (error) {
       console.error(
         "Error adding item:",
-        error instanceof Error ? error.name : error,
+        error instanceof Error ? error.name : "unknown",
       );
-      setFormError("The medicine was not added. Try again.");
+      setFormError(actionErrorText(error, "The medicine was not added. Try again."));
     } finally {
       setIsSubmittingItem(false);
     }
@@ -301,122 +399,294 @@ export default function PharmacyStock() {
       return;
     }
 
-    if (
-      !showAddBatch ||
-      !batchForm.lotNumber.trim() ||
-      !batchForm.expiryDate ||
-      batchForm.qtyOnHand <= 0
-    ) {
-      setFormError(
-        "Enter the lot number, a quantity of at least 1 and the expiry date.",
-      );
+    const problem = showAddBatch
+      ? receiveProblem({
+          lotNumber: batchForm.lotNumber,
+          qty: batchForm.qtyOnHand,
+          expiryDate: batchForm.expiryDate,
+        })
+      : "Choose a medicine first.";
+    if (problem) {
+      setFormError(problem);
       return;
     }
 
-    if (isSubmittingBatch) return;
+    if (isSubmittingBatch || !showAddBatch) return;
     setIsSubmittingBatch(true);
 
     try {
-      await mbhrDb.transaction(
-        "rw",
-        mbhrDb.pharmacy_batches,
-        mbhrDb.pharmacy_items,
-        async () => {
-          // Add batch
-          await mbhrDb.pharmacy_batches.add({
-            id: ulid(),
-            itemId: showAddBatch,
-            lotNumber: batchForm.lotNumber.trim(),
-            expiryDate: batchForm.expiryDate,
-            qtyOnHand: batchForm.qtyOnHand,
-            receivedAt: new Date().toISOString(),
-            supplier: batchForm.supplier.trim() || undefined,
-          });
-
-          // Update item total quantity
-          const item = await mbhrDb.pharmacy_items.get(showAddBatch);
-          if (item) {
-            await mbhrDb.pharmacy_items.update(showAddBatch, {
-              onHandQty: item.onHandQty + batchForm.qtyOnHand,
-              updatedAt: new Date().toISOString(),
-            });
-          }
+      const result = await receiveStock(
+        {
+          itemId: showAddBatch,
+          lotNumber: batchForm.lotNumber,
+          qty: batchForm.qtyOnHand,
+          expiryDate: batchForm.expiryDate,
+          supplier: batchForm.supplier,
         },
+        actor,
       );
-
       const medName = items.find((i) => i.id === showAddBatch)?.medName ?? "";
-      await loadData();
       pushToast({
         id: generateId(),
         tone: "success",
         title: "Lot added",
-        body: `${batchForm.qtyOnHand} added to ${medName} (lot ${batchForm.lotNumber.trim()}). Saved on this device.`,
+        body: `${batchForm.qtyOnHand} added to ${medName} (lot ${batchForm.lotNumber.trim()}). ${whereSaved(result.kind === "queued")}`,
       });
       setShowAddBatch(null);
       resetBatchForm();
     } catch (error) {
       console.error(
         "Error adding batch:",
-        error instanceof Error ? error.name : error,
+        error instanceof Error ? error.name : "unknown",
       );
-      setFormError("The lot was not added and stock is unchanged. Try again.");
+      setFormError(
+        actionErrorText(error, "The lot was not added and stock is unchanged. Try again."),
+      );
     } finally {
       setIsSubmittingBatch(false);
     }
   };
 
-  const handleDeleteItem = async (itemId: string) => {
+  const handleCount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError("");
+    if (!currentUser || !can(currentUser.role, "inventory")) {
+      setFormError("Only pharmacists and administrators can record a count.");
+      return;
+    }
+    if (!countTarget || !Number.isInteger(countForm.counted) || countForm.counted < 0) {
+      setFormError("Enter the counted quantity: a whole number, 0 or more.");
+      return;
+    }
+    if (isSubmittingCount) return;
+    setIsSubmittingCount(true);
+    try {
+      const result = await adjustStock(
+        {
+          batchId: countTarget.id,
+          counted: countForm.counted,
+          reason: countForm.reason,
+          note: countForm.note.trim() || undefined,
+        },
+        actor,
+      );
+      if (result.kind === "unchanged") {
+        pushToast({
+          id: generateId(),
+          tone: "info",
+          title: "No change",
+          body: `Lot ${countTarget.lotNumber} already shows ${countForm.counted}.`,
+        });
+      } else {
+        await createAuditLog(
+          currentUser.role,
+          countForm.reason === "expire" ? "pharmacy_lot_write_off" : "pharmacy_lot_count",
+          "pharmacy_batch",
+          countTarget.id,
+        ).catch(() => undefined);
+        pushToast({
+          id: generateId(),
+          tone: "success",
+          title: countForm.reason === "expire" ? "Expired stock written off" : "Count recorded",
+          body: `Lot ${countTarget.lotNumber} now ${countForm.counted}. ${whereSaved(result.kind === "queued")}`,
+        });
+      }
+      closeCount();
+    } catch (error) {
+      console.error("Error recording count:", error instanceof Error ? error.name : "unknown");
+      setFormError(actionErrorText(error, "The count was not recorded and stock is unchanged. Try again."));
+    } finally {
+      setIsSubmittingCount(false);
+    }
+  };
+
+  const handleRemoveItem = async (itemId: string) => {
+    const target = items.find((i) => i.id === itemId);
+    const medName = target?.medName ?? "";
     if (!currentUser || !can(currentUser.role, "inventory")) {
       setConfirmDeleteId(null);
       pushToast({
         id: generateId(),
         tone: "error",
-        title: "Not deleted",
-        body: "Only pharmacists and administrators can delete medicines.",
+        title: "Not changed",
+        body: "Only pharmacists and administrators can remove medicines.",
       });
       return;
     }
 
-    const medName = items.find((i) => i.id === itemId)?.medName ?? "";
     setDeleting(true);
     try {
-      await mbhrDb.transaction(
-        "rw",
-        mbhrDb.pharmacy_items,
-        mbhrDb.pharmacy_batches,
-        async () => {
-          await mbhrDb.pharmacy_batches.where("itemId").equals(itemId).delete();
-          await mbhrDb.pharmacy_items.delete(itemId);
-        },
-      );
-      await createAuditLog(
-        currentUser.role,
-        "pharmacy_item_delete",
-        "pharmacy_item",
-        itemId,
-      ).catch(() => undefined);
-      if (selectedItem === itemId) setSelectedItem(null);
-      await loadData();
-      pushToast({
-        id: generateId(),
-        tone: "success",
-        title: "Medicine deleted",
-        body: `${medName} and its lots were removed from this device.`,
-      });
+      if (target?.localOnly === 1) {
+        await deleteLocalMedicine(itemId, actor);
+        await createAuditLog(currentUser.role, "pharmacy_item_delete", "pharmacy_item", itemId).catch(
+          () => undefined,
+        );
+        if (selectedItem === itemId) setSelectedItem(null);
+        pushToast({
+          id: generateId(),
+          tone: "success",
+          title: "Medicine deleted",
+          body: `${medName} and its lots were removed from this device.`,
+        });
+      } else {
+        const active = !(target && isActiveItem(target));
+        const mode = await setMedicineActive(itemId, active, actor);
+        await createAuditLog(
+          currentUser.role,
+          active ? "pharmacy_item_reactivate" : "pharmacy_item_deactivate",
+          "pharmacy_item",
+          itemId,
+        ).catch(() => undefined);
+        pushToast({
+          id: generateId(),
+          tone: "success",
+          title: active ? "Medicine reactivated" : "Medicine deactivated",
+          body: `${medName}. ${whereSaved(mode === "queued")}`,
+        });
+      }
     } catch (error) {
       console.error(
-        "Error deleting item:",
-        error instanceof Error ? error.name : error,
+        "Error removing item:",
+        error instanceof Error ? error.name : "unknown",
       );
       pushToast({
         id: generateId(),
         tone: "error",
-        title: "Not deleted",
-        body: `${medName} is still in stock records. Try again.`,
+        title: "Not changed",
+        body: `${medName} is unchanged. ${actionErrorText(error, "Try again.")}`,
       });
     } finally {
       setDeleting(false);
       setConfirmDeleteId(null);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    if (!pharmacyServerReachable()) return;
+    setSyncing(true);
+    try {
+      const result = await syncPharmacyNow();
+      if (!result.ran) {
+        pushToast({
+          id: generateId(),
+          tone: "warning",
+          title: "Not synced",
+          body: "Sign in online with your own account to sync pharmacy stock.",
+        });
+      } else if (result.failedTables.length > 0) {
+        pushToast({
+          id: generateId(),
+          tone: "warning",
+          title: "Sync incomplete",
+          body: "Some stock could not be downloaded. Changes on this device are kept; try again.",
+        });
+      } else {
+        const c = result.commands;
+        const refused = c?.rejected ?? 0;
+        const waiting = c
+          ? c.retrying + c.unavailable + c.waitingPermission + c.notSender + c.deferred
+          : 0;
+        if (refused > 0) {
+          pushToast({
+            id: generateId(),
+            tone: "warning",
+            title: "Stock downloaded; some changes refused",
+            body: `${refused} change${refused === 1 ? " was" : "s were"} refused by the server and undone on this device. ${
+              refused === 1 ? "It is" : "They are"
+            } listed under conflicts to review.`,
+          });
+        } else if (waiting > 0 || c?.skipped) {
+          pushToast({
+            id: generateId(),
+            tone: "info",
+            title: "Stock downloaded",
+            body: "Some changes made on this device are still waiting to sync; the banner on this page shows how many.",
+          });
+        } else {
+          pushToast({ id: generateId(), tone: "success", title: "Pharmacy stock synced" });
+        }
+      }
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const openOnboarding = async (kind: "upload" | "discard") => {
+    setOnboarding(kind);
+    setSiteClaim(null);
+    try {
+      setSiteClaim(await readSiteClaim());
+    } catch {
+      setSiteClaim(null);
+    }
+  };
+
+  const handleOnboarding = async () => {
+    if (!currentUser || !can(currentUser.role, "inventory") || !onboarding) {
+      setOnboarding("");
+      return;
+    }
+    setOnboardingBusy(true);
+    try {
+      if (onboarding === "upload") {
+        const s = await uploadOpeningStock(actor);
+        await createAuditLog(currentUser.role, "pharmacy_opening_stock_upload", "pharmacy_site", siteClaim?.siteKey ?? "").catch(
+          () => undefined,
+        );
+        pushToast({
+          id: generateId(),
+          tone: "success",
+          title: "Opening stock queued",
+          body: `${s.medicines} medicines and ${s.lots} lots queued for the server${
+            s.emptyLotsRemoved ? ` (${s.emptyLotsRemoved} empty lots removed)` : ""
+          }. Check the "Waiting to sync" count reaches 0, then do a physical count.`,
+        });
+      } else {
+        const s = await discardLocalStock(actor);
+        await createAuditLog(currentUser.role, "pharmacy_local_stock_discard", "pharmacy_site", siteClaim?.siteKey ?? "").catch(
+          () => undefined,
+        );
+        pushToast({
+          id: generateId(),
+          tone: "success",
+          title: "Using the server's stock",
+          body: `${s.medicines} medicines and ${s.lots} lots removed from this device.${
+            s.unmatchedLines
+              ? ` ${s.unmatchedLines} prescription line(s) name a medicine the server does not have; they cannot be dispensed until it is added.`
+              : ""
+          }`,
+        });
+      }
+      setOnboarding("");
+    } catch (error) {
+      console.error("Error in opening stock:", error instanceof Error ? error.name : "unknown");
+      pushToast({
+        id: generateId(),
+        tone: "error",
+        title: "Nothing changed",
+        body: actionErrorText(error, "The stock on this device is unchanged. Try again."),
+      });
+      setOnboarding("");
+    } finally {
+      setOnboardingBusy(false);
+    }
+  };
+
+  const handleResolve = async (id: string) => {
+    if (!currentUser || !can(currentUser.role, "inventory")) return;
+    setResolvingId(id);
+    try {
+      await resolveDiscrepancy(id, actor);
+      pushToast({ id: generateId(), tone: "success", title: "Discrepancy marked reconciled" });
+    } catch (error) {
+      pushToast({
+        id: generateId(),
+        tone: "error",
+        title: "Not changed",
+        body: actionErrorText(error, "Try again."),
+      });
+    } finally {
+      setResolvingId(null);
     }
   };
 
@@ -433,7 +703,7 @@ export default function PharmacyStock() {
     );
   }
 
-  if (loading) {
+  if (!snapshot) {
     return (
       <div>
         <PageHeader
@@ -445,7 +715,8 @@ export default function PharmacyStock() {
     );
   }
 
-  const lowStockCount = items.filter(
+  const activeItems = items.filter(isActiveItem);
+  const lowStockCount = activeItems.filter(
     (item) => item.onHandQty <= item.reorderThreshold,
   ).length;
   const expiredCount = items.reduce((sum, item) => sum + item.expiredBatches, 0);
@@ -456,13 +727,18 @@ export default function PharmacyStock() {
   const selected = items.find((i) => i.id === selectedItem);
   const batchTarget = items.find((i) => i.id === showAddBatch);
   const deleteTarget = items.find((i) => i.id === confirmDeleteId);
+  const itemName = (id: string) => {
+    const i = items.find((x) => x.id === id);
+    return i ? `${i.medName} ${i.strength}`.trim() : "Unknown medicine";
+  };
+  const localOnlyStock = snapshot.localOnlyItems + snapshot.localOnlyLots;
 
   const stats: Array<{
     label: string;
     value: number;
     tone: Tone | null;
   }> = [
-    { label: "Medicines", value: items.length, tone: null },
+    { label: "Medicines", value: activeItems.length, tone: null },
     {
       label: "Low stock",
       value: lowStockCount,
@@ -483,9 +759,10 @@ export default function PharmacyStock() {
   const rowActions = (item: ItemWithBatches) => {
     const name = `${item.medName} ${item.strength}`.trim();
     const expanded = selectedItem === item.id;
+    const active = isActiveItem(item);
     return (
       <div className="flex justify-end gap-1">
-        {canManageStock && (
+        {canManageStock && active && (
           <button
             type="button"
             onClick={() => {
@@ -514,17 +791,38 @@ export default function PharmacyStock() {
             <ChevronDownIcon className="h-5 w-5" aria-hidden />
           )}
         </button>
-        {canManageStock && (
-          <button
-            type="button"
-            onClick={() => setConfirmDeleteId(item.id)}
-            className="btn-ghost px-2 text-danger-fg hover:bg-danger-soft hover:text-danger-fg"
-            aria-label={`Delete ${name}`}
-            title="Delete medicine"
-          >
-            <TrashIcon className="h-5 w-5" aria-hidden />
-          </button>
-        )}
+        {canManageStock &&
+          (item.localOnly === 1 ? (
+            <button
+              type="button"
+              onClick={() => setConfirmDeleteId(item.id)}
+              className="btn-ghost px-2 text-danger-fg hover:bg-danger-soft hover:text-danger-fg"
+              aria-label={`Delete ${name} from this device`}
+              title="Delete medicine"
+            >
+              <TrashIcon className="h-5 w-5" aria-hidden />
+            </button>
+          ) : active ? (
+            <button
+              type="button"
+              onClick={() => setConfirmDeleteId(item.id)}
+              className="btn-ghost px-2 text-danger-fg hover:bg-danger-soft hover:text-danger-fg"
+              aria-label={`Deactivate ${name}`}
+              title="Deactivate medicine"
+            >
+              <ArchiveBoxXMarkIcon className="h-5 w-5" aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmDeleteId(item.id)}
+              className="btn-ghost px-2"
+              aria-label={`Reactivate ${name}`}
+              title="Reactivate medicine"
+            >
+              <ArrowUturnLeftIcon className="h-5 w-5" aria-hidden />
+            </button>
+          ))}
       </div>
     );
   };
@@ -533,9 +831,25 @@ export default function PharmacyStock() {
     <div className="space-y-4">
       <PageHeader
         title="Pharmacy stock"
-        description="Medicines by lot and expiry date, stored on this device."
+        description={
+          ledgerEnabled
+            ? "Medicines by lot and expiry date. The server keeps the stock balance; changes made here count once the server confirms them."
+            : "Medicines by lot and expiry date, stored on this device only (no server is set up)."
+        }
         actions={
-          canManageStock && (
+          <div className="flex flex-wrap gap-2">
+            {ledgerEnabled && (
+              <button
+                type="button"
+                onClick={handleSyncNow}
+                disabled={!online || syncing}
+                className="btn-secondary"
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                {syncing ? "Syncing…" : online ? "Sync stock now" : "Offline"}
+              </button>
+            )}
+            {canManageStock && (
             <button
               type="button"
               onClick={() => {
@@ -547,7 +861,8 @@ export default function PharmacyStock() {
               <PlusIcon className="h-5 w-5" aria-hidden />
               Add medicine
             </button>
-          )
+            )}
+          </div>
         }
       />
 
@@ -556,6 +871,106 @@ export default function PharmacyStock() {
           <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
           <span>{loadError}</span>
         </div>
+      )}
+
+      {ledgerEnabled && (snapshot.unsynced > 0 || snapshot.awaitingAuthorised > 0 || !online) && (
+        <div className="banner banner-warning" role="status" aria-live="polite">
+          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <span>
+            {!online && "Offline: stock changes are saved on this device and confirmed by the server when it syncs. "}
+            {snapshot.unsynced > 0 &&
+              `${snapshot.unsynced} pharmacy change${snapshot.unsynced === 1 ? "" : "s"} waiting to sync. `}
+            {snapshot.awaitingAuthorised > 0 &&
+              `${snapshot.awaitingAuthorised} waiting for an authorised person to sync.`}
+          </span>
+        </div>
+      )}
+
+      {canManageStock && localOnlyStock > 0 && (
+        <section className="panel" aria-labelledby="opening-stock-title">
+          <div className="panel-header">
+            <h2 id="opening-stock-title" className="panel-title">
+              Stock kept only on this device
+            </h2>
+          </div>
+          <div className="panel-body space-y-3 text-body text-ink-secondary">
+            <p>
+              {snapshot.localOnlyItems} medicine{snapshot.localOnlyItems === 1 ? "" : "s"} and{" "}
+              {snapshot.localOnlyLots} lot{snapshot.localOnlyLots === 1 ? "" : "s"} were recorded before the server
+              kept the stock (or with no server set up). They are not on the server and other devices cannot see them.
+            </p>
+            {ledgerEnabled ? (
+              <>
+                <p>
+                  On <strong className="text-ink">one device per site</strong>, upload them as the site's opening
+                  stock. On every other device, use the server's stock instead so nothing is counted twice. Then do a
+                  physical count of each lot.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={!online}
+                    onClick={() => openOnboarding("upload")}
+                  >
+                    <CloudArrowUpIcon className="h-5 w-5" aria-hidden />
+                    Upload as opening stock
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={!online}
+                    onClick={() => openOnboarding("discard")}
+                  >
+                    Use the server's stock instead
+                  </button>
+                </div>
+                {!online && (
+                  <p className="field-hint">Both need a connection to the server.</p>
+                )}
+              </>
+            ) : (
+              <p>No server is set up, so this stock stays on this device.</p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {snapshot.discrepancies.length > 0 && (
+        <section className="panel" aria-labelledby="discrepancies-title">
+          <div className="panel-header">
+            <h2 id="discrepancies-title" className="panel-title">
+              Stock discrepancies ({snapshot.discrepancies.length})
+            </h2>
+          </div>
+          <p className="border-b border-line px-4 py-3 text-body text-ink-secondary">
+            Medicine was handed over offline beyond what the server held. Count the lots, record the count, then mark
+            each one reconciled.
+            {canManageStock && !online && " Marking one reconciled needs a connection to the server."}
+          </p>
+          <ul className="divide-y divide-line">
+            {snapshot.discrepancies.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                <span className="text-body text-ink">
+                  <StatusBadge tone="warning">Not covered</StatusBadge>{" "}
+                  {d.qtyUncovered} × {itemName(d.itemId)}
+                  {d.createdAt ? ` · ${formatNigerianDate(d.createdAt)}` : ""}
+                </span>
+                {canManageStock && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={!online || resolvingId === d.id}
+                    onClick={() => handleResolve(d.id)}
+                  >
+                    <ClipboardDocumentCheckIcon className="h-5 w-5" aria-hidden />
+                    {resolvingId === d.id ? "Saving…" : "Mark reconciled"}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {/* Summary (hidden when stock could not be read, so no false zeros) */}
@@ -696,9 +1111,16 @@ export default function PharmacyStock() {
                           </div>
                         </td>
                         <td>
-                          <StatusBadge tone={status.tone} icon>
-                            {status.label}
-                          </StatusBadge>
+                          <div className="flex flex-wrap gap-1">
+                            <StatusBadge tone={status.tone} icon>
+                              {status.label}
+                            </StatusBadge>
+                            {getSyncStatus(item) && (
+                              <StatusBadge tone={getSyncStatus(item)!.tone} icon>
+                                {getSyncStatus(item)!.label}
+                              </StatusBadge>
+                            )}
+                          </div>
                         </td>
                         <td className="text-right tabular-nums">
                           <div className="text-ink">{item.totalBatches}</div>
@@ -759,6 +1181,11 @@ export default function PharmacyStock() {
                         <StatusBadge tone={status.tone} icon>
                           {status.label}
                         </StatusBadge>
+                        {getSyncStatus(item) && (
+                          <StatusBadge tone={getSyncStatus(item)!.tone} icon>
+                            {getSyncStatus(item)!.label}
+                          </StatusBadge>
+                        )}
                         {item.isControlled && (
                           <StatusBadge tone="warning">Controlled</StatusBadge>
                         )}
@@ -829,6 +1256,11 @@ export default function PharmacyStock() {
                     <th scope="col">Expiry date</th>
                     <th scope="col">Status</th>
                     <th scope="col">Supplier</th>
+                    {canManageStock && (
+                      <th scope="col">
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -846,13 +1278,44 @@ export default function PharmacyStock() {
                           {formatNigerianDate(batch.expiryDate)}
                         </td>
                         <td>
-                          <StatusBadge tone={expiryStatus.tone} icon>
-                            {expiryStatus.label}
-                          </StatusBadge>
+                          <div className="flex flex-wrap gap-1">
+                            <StatusBadge tone={expiryStatus.tone} icon>
+                              {expiryStatus.label}
+                            </StatusBadge>
+                            {batch.localOnly === 1 ? (
+                              <StatusBadge tone="neutral">This device only</StatusBadge>
+                            ) : batch.serverQtyOnHand === undefined ? (
+                              <StatusBadge tone="warning">Waiting to sync</StatusBadge>
+                            ) : batch.qtyOnHand !== batch.serverQtyOnHand ? (
+                              <StatusBadge tone="warning">
+                                Changes waiting to sync (server: {batch.serverQtyOnHand})
+                              </StatusBadge>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="text-ink-secondary">
                           {batch.supplier || "—"}
                         </td>
+                        {canManageStock && (
+                          <td className="text-right">
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() => {
+                                setFormError("");
+                                setCountForm({
+                                  ...EMPTY_COUNT_FORM,
+                                  counted: Math.max(0, batch.qtyOnHand),
+                                  reason: expiryStatus.label === "Expired" ? "expire" : "adjust",
+                                });
+                                setCountTarget(batch);
+                              }}
+                              aria-label={`Record a count for lot ${batch.lotNumber}`}
+                            >
+                              Count
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -1159,7 +1622,7 @@ export default function PharmacyStock() {
         </div>
       )}
 
-      {/* Delete confirmation */}
+      {/* Delete / deactivate / reactivate confirmation */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
           <div
@@ -1172,23 +1635,56 @@ export default function PharmacyStock() {
               if (e.key === "Escape" && !deleting) setConfirmDeleteId(null);
             }}
           >
-            <h2 id="delete-medicine-title" className="text-h2 text-ink">
-              Delete {deleteTarget.medName} {deleteTarget.strength}?
-            </h2>
-            <div
-              id="delete-medicine-desc"
-              className="mt-2 space-y-2 text-body text-ink-secondary"
-            >
-              <p>
-                This removes the medicine and its {deleteTarget.totalBatches}{" "}
-                lot{deleteTarget.totalBatches === 1 ? "" : "s"} (
-                {deleteTarget.onHandQty} {deleteTarget.unit} on hand) from
-                stock on this device.
-              </p>
-              <p className="font-medium text-danger-fg">
-                This cannot be undone.
-              </p>
-            </div>
+            {deleteTarget.localOnly === 1 ? (
+              <>
+                <h2 id="delete-medicine-title" className="text-h2 text-ink">
+                  Delete {deleteTarget.medName} {deleteTarget.strength}?
+                </h2>
+                <div
+                  id="delete-medicine-desc"
+                  className="mt-2 space-y-2 text-body text-ink-secondary"
+                >
+                  <p>
+                    This removes the medicine and its {deleteTarget.totalBatches}{" "}
+                    lot{deleteTarget.totalBatches === 1 ? "" : "s"} (
+                    {deleteTarget.onHandQty} {deleteTarget.unit} on hand) from
+                    stock on this device. It is not on the server.
+                  </p>
+                  <p className="font-medium text-danger-fg">
+                    This cannot be undone.
+                  </p>
+                </div>
+              </>
+            ) : isActiveItem(deleteTarget) ? (
+              <>
+                <h2 id="delete-medicine-title" className="text-h2 text-ink">
+                  Deactivate {deleteTarget.medName} {deleteTarget.strength}?
+                </h2>
+                <div
+                  id="delete-medicine-desc"
+                  className="mt-2 space-y-2 text-body text-ink-secondary"
+                >
+                  <p>
+                    It will no longer be offered when prescribing. Its lots and
+                    stock history are kept ({deleteTarget.onHandQty}{" "}
+                    {deleteTarget.unit} on hand), and open prescriptions for it
+                    can still be dispensed. You can reactivate it later.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 id="delete-medicine-title" className="text-h2 text-ink">
+                  Reactivate {deleteTarget.medName} {deleteTarget.strength}?
+                </h2>
+                <p
+                  id="delete-medicine-desc"
+                  className="mt-2 text-body text-ink-secondary"
+                >
+                  It will be offered when prescribing again.
+                </p>
+              </>
+            )}
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
                 type="button"
@@ -1197,21 +1693,180 @@ export default function PharmacyStock() {
                 disabled={deleting}
                 className="btn-secondary"
               >
-                Keep medicine
+                Keep as it is
               </button>
               <button
                 type="button"
-                onClick={() => handleDeleteItem(deleteTarget.id)}
+                onClick={() => handleRemoveItem(deleteTarget.id)}
                 disabled={deleting}
-                className="btn-danger"
+                className={
+                  deleteTarget.localOnly !== 1 && !isActiveItem(deleteTarget)
+                    ? "btn-primary"
+                    : "btn-danger"
+                }
               >
-                <TrashIcon className="h-4 w-4" aria-hidden />
-                {deleting ? "Deleting…" : "Delete medicine"}
+                {deleteTarget.localOnly === 1 ? (
+                  <>
+                    <TrashIcon className="h-4 w-4" aria-hidden />
+                    {deleting ? "Deleting…" : "Delete medicine"}
+                  </>
+                ) : isActiveItem(deleteTarget) ? (
+                  deleting ? "Deactivating…" : "Deactivate medicine"
+                ) : deleting ? (
+                  "Reactivating…"
+                ) : (
+                  "Reactivate medicine"
+                )}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Count / write-off dialog */}
+      {countTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="count-lot-title"
+            className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg border border-line bg-surface shadow-xl"
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && !isSubmittingCount) closeCount();
+            }}
+          >
+            <div className="panel-header">
+              <h2 id="count-lot-title" className="panel-title">
+                Count lot {countTarget.lotNumber} · {itemName(countTarget.itemId)}
+              </h2>
+            </div>
+            <form onSubmit={handleCount} className="panel-body space-y-4" noValidate>
+              {formError && (
+                <div className="banner banner-danger" role="alert">
+                  <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <span>{formError}</span>
+                </div>
+              )}
+              <p className="text-body text-ink-secondary">
+                This device shows {countTarget.qtyOnHand}. Enter what is physically on the shelf; the
+                difference is recorded in the stock ledger.
+              </p>
+              <div>
+                <label htmlFor="ps-counted" className="field-label">
+                  Counted quantity *
+                </label>
+                <input
+                  id="ps-counted"
+                  type="number"
+                  min="0"
+                  inputMode="numeric"
+                  required
+                  autoFocus
+                  value={countForm.counted}
+                  onChange={(e) =>
+                    setCountForm({ ...countForm, counted: parseInt(e.target.value, 10) || 0 })
+                  }
+                  className="input-field tabular-nums"
+                />
+              </div>
+              <div>
+                <label htmlFor="ps-count-reason" className="field-label">
+                  Reason
+                </label>
+                <select
+                  id="ps-count-reason"
+                  value={countForm.reason}
+                  onChange={(e) =>
+                    setCountForm({
+                      ...countForm,
+                      reason: e.target.value === "expire" ? "expire" : "adjust",
+                    })
+                  }
+                  className="input-field"
+                >
+                  <option value="adjust">Physical count</option>
+                  <option value="expire">Expired stock written off</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="ps-count-note" className="field-label">
+                  Note
+                </label>
+                <input
+                  id="ps-count-note"
+                  type="text"
+                  maxLength={200}
+                  value={countForm.note}
+                  onChange={(e) => setCountForm({ ...countForm, note: e.target.value })}
+                  className="input-field"
+                  placeholder="Optional, e.g. damaged packs"
+                  aria-describedby="ps-count-note-hint"
+                />
+                <p id="ps-count-note-hint" className="field-hint">
+                  About the stock only. Do not enter patient details.
+                </p>
+              </div>
+              <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeCount}
+                  disabled={isSubmittingCount}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button type="submit" disabled={isSubmittingCount} className="btn-primary">
+                  {isSubmittingCount ? "Saving…" : "Record count"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={onboarding !== ""}
+        title={
+          onboarding === "upload"
+            ? "Upload this device's stock as the site's opening stock?"
+            : "Use the server's stock instead of this device's?"
+        }
+        confirmLabel={onboarding === "upload" ? "Upload opening stock" : "Remove this device's stock"}
+        tone={onboarding === "upload" ? "primary" : "danger"}
+        busy={onboardingBusy}
+        busyLabel={onboarding === "upload" ? "Uploading…" : "Removing…"}
+        onConfirm={handleOnboarding}
+        onCancel={() => setOnboarding("")}
+      >
+        {onboarding === "upload" ? (
+          <div className="space-y-2">
+            <p>
+              {snapshot.localOnlyItems} medicines and {snapshot.localOnlyLots} lots on this device become the
+              opening stock{siteClaim ? ` for site "${siteClaim.siteKey}"` : ""}. Only one device per site may do
+              this; the server refuses a second one.
+            </p>
+            {siteClaim?.claimedElsewhereAt && (
+              <p className="flex items-start gap-2 font-medium text-danger-fg">
+                <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                Another device already uploaded this site's opening stock on{" "}
+                {formatNigerianDate(siteClaim.claimedElsewhereAt)}. Use the server's stock instead.
+              </p>
+            )}
+            <p>Open prescriptions on this device are uploaded too; dispensed ones are uploaded as history.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p>
+              {snapshot.localOnlyItems} medicines and {snapshot.localOnlyLots} lots kept only on this device are
+              removed, and the server's stock is used. Prescriptions are kept and uploaded.
+            </p>
+            <p className="flex items-start gap-2">
+              <InformationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              Do this only if another device uploaded this site's opening stock, or the stock here is not real.
+            </p>
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   );
 }
