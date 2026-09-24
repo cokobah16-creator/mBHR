@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { accessFromAppUser, useAuthStore } from "./auth";
+import { accessFromAppUser, isDeactivatedAppUser, useAuthStore } from "./auth";
+import { verifyPin } from "@/utils/pin";
 
 const { mockDbUsers, mockDbSessions, mockSupabase, mockFrom } = vi.hoisted(() => {
   const mockFrom = vi.fn();
@@ -10,6 +11,7 @@ const { mockDbUsers, mockDbSessions, mockSupabase, mockFrom } = vi.hoisted(() =>
         first: vi.fn().mockResolvedValue(undefined),
       }),
       put: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(undefined),
     },
     mockDbSessions: {
       add: vi.fn().mockResolvedValue(undefined),
@@ -89,20 +91,83 @@ describe("useAuthStore", () => {
 
   describe("login validation", () => {
     it("should reject invalid PIN format", async () => {
-      const result = await useAuthStore.getState().login("12345");
+      const result = await useAuthStore.getState().login("u1", "12345");
       expect(result).toBe(false);
       expect(useAuthStore.getState().failedAttempts).toBe(1);
     });
 
     it("should reject non-numeric PIN", async () => {
-      const result = await useAuthStore.getState().login("abcdef");
+      const result = await useAuthStore.getState().login("u1", "abcdef");
       expect(result).toBe(false);
       expect(useAuthStore.getState().failedAttempts).toBe(1);
     });
 
     it("should reject PIN with spaces", async () => {
-      const result = await useAuthStore.getState().login("123 45");
+      const result = await useAuthStore.getState().login("u1", "123 45");
       expect(result).toBe(false);
+    });
+  });
+
+  describe("name-first PIN sign-in", () => {
+    const ada = {
+      id: "u-ada",
+      fullName: "Ada Okafor",
+      role: "doctor",
+      pinHash: "hash-ada",
+      pinSalt: "salt-ada",
+      isActive: 1,
+    };
+
+    it("checks only the chosen account's PIN", async () => {
+      mockDbUsers.get.mockResolvedValue(ada);
+      vi.mocked(verifyPin).mockResolvedValue(true);
+
+      const ok = await useAuthStore.getState().login("u-ada", "482913");
+
+      expect(ok).toBe(true);
+      expect(mockDbUsers.get).toHaveBeenCalledWith("u-ada");
+      expect(verifyPin).toHaveBeenCalledTimes(1);
+      expect(verifyPin).toHaveBeenCalledWith("482913", "hash-ada", "salt-ada");
+      expect(useAuthStore.getState().currentUser).toEqual(ada);
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
+    });
+
+    it("refuses a wrong PIN and counts the attempt", async () => {
+      mockDbUsers.get.mockResolvedValue(ada);
+      vi.mocked(verifyPin).mockResolvedValue(false);
+
+      const ok = await useAuthStore.getState().login("u-ada", "111111");
+
+      expect(ok).toBe(false);
+      expect(useAuthStore.getState().failedAttempts).toBe(1);
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    });
+
+    it("refuses an account without a PIN on this device", async () => {
+      mockDbUsers.get.mockResolvedValue({ ...ada, pinHash: "", pinSalt: "" });
+
+      const ok = await useAuthStore.getState().login("u-ada", "482913");
+
+      expect(ok).toBe(false);
+      expect(verifyPin).not.toHaveBeenCalled();
+    });
+
+    it("refuses a deactivated account", async () => {
+      mockDbUsers.get.mockResolvedValue({ ...ada, isActive: 0 });
+      vi.mocked(verifyPin).mockResolvedValue(true);
+
+      const ok = await useAuthStore.getState().login("u-ada", "482913");
+
+      expect(ok).toBe(false);
+    });
+  });
+
+  describe("isDeactivatedAppUser", () => {
+    it("reads the server's switched-off flags", () => {
+      expect(isDeactivatedAppUser({ is_active: false })).toBe(true);
+      expect(isDeactivatedAppUser({ deactivated_at: "2026-09-01T00:00:00Z" })).toBe(true);
+      expect(isDeactivatedAppUser({ is_active: true })).toBe(false);
+      expect(isDeactivatedAppUser({ role: "nurse" })).toBe(false);
     });
   });
 

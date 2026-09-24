@@ -182,6 +182,12 @@ export default defineConfig(({ command, mode }) => {
           short_name: "MBHR",
           description: "Offline-first medical outreach platform",
           theme_color: "#0A7A3B",
+          // Relative on purpose: a manifest may only point at its own
+          // address. The installed app is tied to mbhr.app because the other
+          // production hostnames redirect there (vercel.json).
+          id: "/",
+          start_url: "/",
+          scope: "/",
           icons: [
             { src: "pwa-192x192.png", sizes: "192x192", type: "image/png" },
             { src: "pwa-512x512.png", sizes: "512x512", type: "image/png" },

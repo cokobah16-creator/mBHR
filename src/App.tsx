@@ -8,6 +8,7 @@ import RequirePermission from "@/components/RequirePermission";
 import Login from "@/pages/Login";
 import FirstRunSetup from "@/pages/FirstRunSetup";
 import { useAuthStore } from "@/stores/auth";
+import { hasDevicePin } from "@/db/offlineAccess";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { Home } from "@/pages/Home";
 import {
@@ -288,10 +289,17 @@ const DoctorDashboard = lazy(() =>
 );
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, currentUser } = useAuthStore();
 
   if (!isAuthenticated) {
     return <Navigate to="/" replace />;
+  }
+
+  // Signed in online but no PIN on this device yet: enrollment comes first
+  // (the login page shows it), so the device always works offline for
+  // whoever is using it.
+  if (currentUser && !hasDevicePin(currentUser)) {
+    return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;
