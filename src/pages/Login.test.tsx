@@ -19,6 +19,7 @@ const { authState, mocks } = vi.hoisted(() => {
     loginOnline: vi.fn(),
     logout: vi.fn(),
     setCurrentUser: vi.fn(),
+    signInRefusal: null as null | string,
   };
   return { authState, mocks };
 });
@@ -70,7 +71,7 @@ function renderLogin() {
 
 const NOT_SET_UP = "This device hasn't been set up for mBHR yet.";
 const NO_PINS =
-  "Offline sign-in hasn't been set up on this device yet. Connect to the internet and sign in once to enable it.";
+  "Offline sign-in hasn't been set up on this device yet. Sign in online once to create your offline PIN.";
 
 const ada = {
   id: "u-ada",
@@ -105,6 +106,7 @@ beforeEach(() => {
   authState.isAuthenticated = false;
   authState.failedAttempts = 0;
   authState.lockoutUntil = null;
+  authState.signInRefusal = null;
   mocks.isOnlineSyncEnabled.mockReturnValue(true);
   mocks.pullStaffRoster.mockResolvedValue({ ok: true, staff: 3, deactivated: 0 });
   mocks.deviceAccount.mockResolvedValue(undefined);
@@ -262,5 +264,70 @@ describe("Login on a device with enrolled staff", () => {
     expect(
       await screen.findByRole("heading", { name: "Choose a PIN for this device" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Login explains refusals and replaces a forgotten PIN", () => {
+  beforeEach(() => {
+    mocks.offlineSignInState.mockResolvedValue({ kind: "ready", accounts: [ada, chidi] });
+  });
+
+  it("says the account was switched off on this device, not that the password is wrong", async () => {
+    authState.loginOnline.mockImplementation(async () => {
+      authState.signInRefusal = "deactivated_on_device";
+      return false;
+    });
+    renderLogin();
+    await screen.findByText("Who's signing in?");
+    fireEvent.click(screen.getByRole("button", { name: "Online" }));
+    signInOnline();
+
+    expect(
+      await screen.findByText("This account is switched off on this device"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Invalid email or password")).not.toBeInTheDocument();
+  });
+
+  it("says a server-deactivated account cannot sign in", async () => {
+    authState.loginOnline.mockImplementation(async () => {
+      authState.signInRefusal = "deactivated";
+      return false;
+    });
+    renderLogin();
+    await screen.findByText("Who's signing in?");
+    fireEvent.click(screen.getByRole("button", { name: "Online" }));
+    signInOnline();
+
+    expect(await screen.findByText("This account has been deactivated")).toBeInTheDocument();
+  });
+
+  it("Forgot PIN: signs in online, then asks for a new PIN even though one exists", async () => {
+    authState.loginOnline.mockImplementation(async () => {
+      authState.currentUser = ada;
+      authState.isAuthenticated = true;
+      return true;
+    });
+    mocks.deviceAccount.mockResolvedValue(ada);
+    renderLogin();
+    await screen.findByText("Who's signing in?");
+    fireEvent.click(screen.getByRole("button", { name: /Ada Okafor/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Forgot PIN?" }));
+    signInOnline();
+
+    expect(
+      await screen.findByRole("heading", { name: "Choose a new PIN for this device" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows when the chosen person was last verified online", async () => {
+    mocks.offlineSignInState.mockResolvedValue({
+      kind: "ready",
+      accounts: [{ ...ada, lastOnlineVerifiedAt: new Date("2026-09-23T10:00:00Z") }],
+    });
+    renderLogin();
+    await screen.findByText("Who's signing in?");
+    fireEvent.click(screen.getByRole("button", { name: /Ada Okafor/ }));
+
+    expect(screen.getByText(/Last verified online: 23 Sep 2026/)).toBeInTheDocument();
   });
 });

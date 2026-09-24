@@ -21,6 +21,12 @@ export interface User {
   pinHash: string;
   pinSalt: string;
   pinEnrolledAt?: Date;
+  // Device-local, never uploaded: when this person last signed in online on
+  // this device (the server confirmed who they are and that they are
+  // active), and when their role on this device was last read from the
+  // server. Offline sign-in works from that cached role.
+  lastOnlineVerifiedAt?: Date;
+  permissionsCachedAt?: Date;
   // Set when an administrator deactivates the account on this device. A
   // download never reactivates it; if the server still lists the person as
   // active, accessConflict is set for an administrator to resolve.
@@ -33,12 +39,23 @@ export interface User {
   isActive: 0 | 1;
 }
 
+/**
+ * How a staff session was opened. "online": email and password checked by
+ * the server, which allows sync. "offline": a device PIN, which opens this
+ * device's records only and never allows sync.
+ */
+export type AuthMode = "online" | "offline";
+
 export interface Session {
   id: string;
   userId: string;
   createdAt: Date;
   deviceKey: string;
   lastSeenAt: Date;
+  /** Missing on sessions opened before this was recorded: treated as offline. */
+  authMode?: AuthMode;
+  /** This device's id (src/db/deviceIdentity.ts). */
+  deviceId?: string;
 }
 
 export interface Setting {
@@ -330,7 +347,16 @@ export interface AuditLog {
   action: string;
   entity: string;
   entityId: string;
+  /** When the staff member did it, on this device's clock. */
   at: Date;
+  /**
+   * Who did it, on which device, and how they were signed in. Filled in
+   * automatically from the current sign-in (src/stores/auth.ts) when the
+   * writer does not set them. Missing on rows written before this existed.
+   */
+  userId?: string | null;
+  deviceId?: string | null;
+  sessionType?: AuthMode | "none";
 }
 
 export interface PatientMerge {

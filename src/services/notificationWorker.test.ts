@@ -53,7 +53,14 @@ vi.mock("@/db", () => ({
 }));
 
 // Online session on this device (null: nobody signed in online).
-const mockSession: { current: { access_token: string } | null } = { current: null };
+const mockSession: { current: { access_token: string; user?: { id: string } } | null } = {
+  current: null,
+};
+// The staff member signed in online in this session (src/lib/cloudSession.ts).
+const STAFF_CLOUD_ID = "staff-1";
+vi.mock("@/lib/cloudSession", () => ({
+  isSignedInStaffAccount: (id: string | null | undefined) => id === "staff-1",
+}));
 // Every update the worker tries on a server table.
 const mockTableUpdates: { table: string; values: unknown }[] = [];
 
@@ -195,8 +202,19 @@ describe("notificationWorker", () => {
       expect(mockTableUpdates).toEqual([]);
     });
 
+    it("does not send under another account's online sign-in left in this browser", async () => {
+      mockSession.current = { access_token: "portal-token", user: { id: "portal-patient-1" } };
+      mockMedicationReminders.push(reminder);
+      const { processNow } = await import("./notificationWorker");
+
+      const result = await processNow();
+
+      expect(result.skipped).toBe("signed_out");
+      expect(fetchMock()).not.toHaveBeenCalled();
+    });
+
     it("sends with the staff token and leaves the status to the server", async () => {
-      mockSession.current = { access_token: "staff-token" };
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
       mockMedicationReminders.push(reminder);
       fetchMock().mockResolvedValue({
         ok: true,
@@ -222,7 +240,7 @@ describe("notificationWorker", () => {
     });
 
     it("does not count a reminder the server already records as sent", async () => {
-      mockSession.current = { access_token: "staff-token" };
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
       mockMedicationReminders.push(reminder);
       fetchMock().mockResolvedValue({
         ok: false,
@@ -241,7 +259,7 @@ describe("notificationWorker", () => {
     });
 
     it("reports a role the server refuses instead of a failure", async () => {
-      mockSession.current = { access_token: "staff-token" };
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
       mockMedicationReminders.push(reminder);
       fetchMock().mockResolvedValue({
         ok: false,
@@ -265,7 +283,7 @@ describe("notificationWorker", () => {
     });
 
     it("Send now reports whether the server recorded the outcome", async () => {
-      mockSession.current = { access_token: "staff-token" };
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
       fetchMock().mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ success: true, reminderRecorded: false }),
@@ -284,7 +302,7 @@ describe("notificationWorker", () => {
     });
 
     it("Send now keeps the server's record flag when it refuses the send", async () => {
-      mockSession.current = { access_token: "staff-token" };
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
       fetchMock().mockResolvedValue({
         ok: false,
         status: 422,
@@ -313,7 +331,7 @@ describe("notificationWorker", () => {
     });
 
     it("does not send again a reminder accepted but not recorded by the server", async () => {
-      mockSession.current = { access_token: "staff-token" };
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
       fetchMock().mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ success: true, reminderRecorded: false }),

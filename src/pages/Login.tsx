@@ -7,7 +7,8 @@ import {
   InformationCircleIcon,
   SignalSlashIcon,
 } from "@heroicons/react/20/solid";
-import { useAuthStore } from "@/stores/auth";
+import { useAuthStore, type SignInRefusal } from "@/stores/auth";
+import { useToast } from "@/stores/toast";
 import { useSyncStore } from "@/stores/syncStore";
 import { isOnlineSyncEnabled } from "@/sync/adapter";
 import { pullStaffRoster } from "@/sync/staffRoster";
@@ -52,6 +53,34 @@ function activeLockout(): number | null {
   return until && until > Date.now() ? until : null;
 }
 
+/** Why an online sign-in with the right password was still refused. */
+function refusalError(reason: SignInRefusal): LoginError {
+  return reason === "deactivated_on_device"
+    ? {
+        title: "This account is switched off on this device",
+        detail:
+          "An administrator deactivated it here. Signing in online does not switch it back on: ask an administrator to review it under Users.",
+      }
+    : {
+        title: "This account has been deactivated",
+        detail:
+          "Your organisation has switched off this staff account, so it cannot sign in on this device. Ask an administrator if you think this is wrong.",
+      };
+}
+
+// Spelled out rather than Intl: "en-GB" gives "Sept" in newer ICU data.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "23 Sep 2026", or null when the person has never signed in online here. */
+function lastVerifiedLabel(value: Date | string | undefined): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+const firstName = (fullName: string) => fullName.trim().split(/\s+/)[0] || fullName;
+
 const onlyDigits = (value: string) => value.replace(/\D/g, "").slice(0, 6);
 
 const roleLabel = (role: string) => getRoleDisplayName(role as Role);
@@ -89,6 +118,9 @@ export default function Login() {
   // Set once an online sign-in put a person on this device without a PIN:
   // they choose one before entering the app.
   const [pinSetupFor, setPinSetupFor] = useState<User | null>(null);
+  // "Forgot PIN?": after the online sign-in, choose a new PIN even though
+  // one exists on this device.
+  const [resettingPin, setResettingPin] = useState(false);
 
   const onlineAvailable = isOnlineSyncEnabled();
   const deviceOnline = useSyncStore((s) => s.isOnline);
@@ -98,6 +130,7 @@ export default function Login() {
   const logout = useAuthStore((s) => s.logout);
   const setCurrentUser = useAuthStore((s) => s.setCurrentUser);
   const failedAttempts = useAuthStore((s) => s.failedAttempts);
+  const pushToast = useToast((s) => s.push);
   const offCanonical = isOffCanonicalOrigin();
 
   // main.tsx finishes seeding before React mounts, so the staff list read
@@ -137,6 +170,16 @@ export default function Login() {
 
   const switchMode = (next: "offline" | "online") => {
     setMode(next);
+    setErr(null);
+    if (next === "offline") setResettingPin(false);
+  };
+
+  /** Forgot PIN: a PIN can only be replaced, after an online sign-in. */
+  const startPinReset = () => {
+    setResettingPin(true);
+    setSelected(null);
+    setPin("");
+    setMode("online");
     setErr(null);
   };
 
@@ -185,6 +228,15 @@ export default function Login() {
         const success = await login(selected.id, pin);
 
         if (success) {
+          const verified = lastVerifiedLabel(selected.lastOnlineVerifiedAt);
+          pushToast({
+            id: `offline-welcome-${Date.now()}`,
+            tone: "info",
+            title: `Welcome, ${firstName(selected.fullName)}`,
+            body: `Offline mode. ${
+              verified ? `Last verified online: ${verified}. ` : ""
+            }Changes stay on this device until you sign in online and sync.`,
+          });
           finishSignIn();
         } else {
           const until = activeLockout();
@@ -209,17 +261,20 @@ export default function Login() {
           const record = signedIn
             ? ((await deviceAccount(signedIn.id).catch(() => undefined)) ?? signedIn)
             : null;
-          if (record && !hasDevicePin(record)) {
+          if (record && (resettingPin || !hasDevicePin(record))) {
             setPinSetupFor(record);
           } else {
             finishSignIn();
           }
         } else {
           const until = activeLockout();
+          const refusal = useAuthStore.getState().signInRefusal;
           setErr(
             until
               ? lockoutError(until)
-              : {
+              : refusal
+                ? refusalError(refusal)
+                : {
                   title: "Invalid email or password",
                   detail:
                     "Check both and try again. If you have forgotten your password, reset it below.",
@@ -270,6 +325,7 @@ export default function Login() {
       <LoginShell subtitle="Staff sign-in" offCanonical={offCanonical}>
         <DevicePinSetup
           user={pinSetupFor}
+          replacing={resettingPin && hasDevicePin(pinSetupFor)}
           onDone={(updated) => {
             setCurrentUser(updated);
             finishSignIn();
@@ -277,6 +333,7 @@ export default function Login() {
           onCancel={async () => {
             await logout();
             setPinSetupFor(null);
+            setResettingPin(false);
             setPassword("");
           }}
         />
@@ -370,11 +427,31 @@ export default function Login() {
                 {!offlineReady && (
                   <p id="login-pin-unavailable" className="field-hint">
                     {offline.kind === "no-pins"
-                      ? "Offline sign-in hasn't been set up on this device yet. Connect to the internet and sign in once to enable it."
+                      ? "Offline sign-in hasn't been set up on this device yet. Sign in online once to create your offline PIN."
                       : "Offline sign-in becomes available here after you sign in online once and choose a PIN."}
                   </p>
                 )}
+                {offlineReady || onlineAvailable ? (
+                  <p className="field-hint">
+                    {mode === "online"
+                      ? "Use online sign-in when internet access is available. This also enables synchronization."
+                      : "Use this when internet access is unavailable. Changes remain on this device until you sign in online and sync."}
+                  </p>
+                ) : null}
               </div>
+
+              {mode === "online" && resettingPin && (
+                <div className="banner banner-info" role="status">
+                  <InformationCircleIcon
+                    className="h-5 w-5 shrink-0 mt-0.5"
+                    aria-hidden
+                  />
+                  <p>
+                    A forgotten PIN cannot be recovered, only replaced. Sign in
+                    online and you'll choose a new PIN for this device.
+                  </p>
+                </div>
+              )}
 
               {mode === "online" && !deviceOnline && (
                 <div className="banner banner-warning" role="status">
@@ -399,6 +476,7 @@ export default function Login() {
                   search={search}
                   onSearch={setSearch}
                   onChoose={chooseAccount}
+                  onForgotPin={onlineAvailable ? startPinReset : undefined}
                 />
               )}
 
@@ -418,6 +496,12 @@ export default function Login() {
                               · {roleLabel(selected.role)}
                             </span>
                           </p>
+                          {lastVerifiedLabel(selected.lastOnlineVerifiedAt) && (
+                            <p className="text-caption text-ink-muted">
+                              Last verified online:{" "}
+                              {lastVerifiedLabel(selected.lastOnlineVerifiedAt)}
+                            </p>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -448,9 +532,18 @@ export default function Login() {
                           required
                         />
                         <p id="login-pin-hint" className="field-hint">
-                          Forgot your PIN? Sign in online on this device to
-                          choose a new one, or ask an administrator to reset
-                          it under Users.
+                          A forgotten PIN can't be recovered, only replaced.{" "}
+                          {onlineAvailable ? (
+                            <button
+                              type="button"
+                              onClick={startPinReset}
+                              className="underline text-primary hover:text-primary-hover"
+                            >
+                              Forgot PIN?
+                            </button>
+                          ) : null}{" "}
+                          Sign in online on this device to choose a new one,
+                          or ask an administrator to reset it under Users.
                         </p>
                       </div>
                     </>
@@ -565,12 +658,14 @@ function AccountPicker({
   search,
   onSearch,
   onChoose,
+  onForgotPin,
 }: {
   accounts: User[];
   total: number;
   search: string;
   onSearch: (value: string) => void;
   onChoose: (user: User) => void;
+  onForgotPin?: () => void;
 }) {
   return (
     <div className="space-y-3">
@@ -617,6 +712,22 @@ function AccountPicker({
           PIN on this device.
         </p>
       )}
+      <p className="text-caption text-ink-muted">
+        Not listed? Offline access isn't set up for your account on this
+        device. Sign in online to create your PIN.
+        {onForgotPin && (
+          <>
+            {" "}
+            <button
+              type="button"
+              onClick={onForgotPin}
+              className="underline text-primary hover:text-primary-hover"
+            >
+              Forgot your PIN?
+            </button>
+          </>
+        )}
+      </p>
     </div>
   );
 }
@@ -688,10 +799,13 @@ function LoginShell({
  */
 function DevicePinSetup({
   user,
+  replacing = false,
   onDone,
   onCancel,
 }: {
   user: User;
+  /** Forgot PIN: the new PIN replaces the one already on this device. */
+  replacing?: boolean;
   onDone: (updated: User) => void;
   onCancel: () => void | Promise<void>;
 }) {
@@ -724,10 +838,13 @@ function DevicePinSetup({
   return (
     <div className="panel">
       <div className="panel-header flex-col items-start gap-0.5">
-        <h2 className="panel-title">Choose a PIN for this device</h2>
+        <h2 className="panel-title">
+          {replacing ? "Choose a new PIN for this device" : "Choose a PIN for this device"}
+        </h2>
         <p className="text-caption text-ink-muted">
-          You are signed in as {user.fullName}. Choose a PIN to finish setting
-          up this device. You'll use it to sign in here without internet.
+          {replacing
+            ? `You are signed in as ${user.fullName}. Your old PIN stops working on this device once you save a new one.`
+            : `You are signed in as ${user.fullName}. Choose a PIN to finish setting up this device. You'll use it to sign in here without internet.`}
         </p>
       </div>
 

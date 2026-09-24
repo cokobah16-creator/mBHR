@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { accessFromAppUser, isDeactivatedAppUser, useAuthStore } from "./auth";
+import {
+  PIN_ON_DEVICE,
+  accessFromAppUser,
+  endSessionIfRevoked,
+  isDeactivatedAppUser,
+  useAuthStore,
+} from "./auth";
 import { verifyPin } from "@/utils/pin";
 
 const { mockDbUsers, mockDbSessions, mockSupabase, mockFrom } = vi.hoisted(() => {
@@ -71,6 +77,9 @@ describe("useAuthStore", () => {
       lockoutUntil: null,
       sessionExpiresAt: null,
       lastActivityAt: null,
+      authMode: null,
+      cloudUserId: null,
+      signInRefusal: null,
     });
   });
 
@@ -128,8 +137,20 @@ describe("useAuthStore", () => {
       expect(mockDbUsers.get).toHaveBeenCalledWith("u-ada");
       expect(verifyPin).toHaveBeenCalledTimes(1);
       expect(verifyPin).toHaveBeenCalledWith("482913", "hash-ada", "salt-ada");
-      expect(useAuthStore.getState().currentUser).toEqual(ada);
+      // The PIN hash and salt stay in the device database only.
+      expect(useAuthStore.getState().currentUser).toEqual({
+        ...ada,
+        pinHash: PIN_ON_DEVICE,
+        pinSalt: PIN_ON_DEVICE,
+      });
       expect(useAuthStore.getState().isAuthenticated).toBe(true);
+      expect(useAuthStore.getState().authMode).toBe("offline");
+      expect(useAuthStore.getState().cloudUserId).toBeNull();
+      expect(mockDbSessions.add).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "u-ada", authMode: "offline" }),
+      );
+      expect(localStorage.getItem("mbhr-auth")).not.toContain("hash-ada");
+      expect(localStorage.getItem("mbhr-auth")).not.toContain("salt-ada");
     });
 
     it("refuses a wrong PIN and counts the attempt", async () => {
@@ -272,7 +293,7 @@ describe("useAuthStore", () => {
 
       useAuthStore.getState().setCurrentUser(user);
 
-      expect(useAuthStore.getState().currentUser).toEqual(user);
+      expect(useAuthStore.getState().currentUser).toMatchObject(user);
     });
 
     it("should clear current user when set to null", () => {
@@ -391,6 +412,7 @@ describe("useAuthStore", () => {
         data: { user: AUTH_USER },
         error: null,
       });
+      mockDbUsers.get.mockResolvedValue(undefined);
       mockDbUsers.filter.mockReturnValue({
         toArray: vi.fn().mockResolvedValue([]),
         first: vi.fn().mockResolvedValue(undefined),
@@ -484,10 +506,137 @@ describe("useAuthStore", () => {
         first: vi.fn().mockResolvedValue(stored),
       });
 
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "nurse" }, error: null });
+
       await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
 
-      expect(mockFrom).not.toHaveBeenCalled();
       expect(useAuthStore.getState().currentUser?.role).toBe("doctor");
+    });
+  });
+  describe("online and offline sessions are different", () => {
+    beforeEach(() => {
+      mockSupabase.auth.signInWithPassword.mockResolvedValue({
+        data: { user: AUTH_USER },
+        error: null,
+      });
+      mockDbUsers.get.mockResolvedValue(undefined);
+      mockDbUsers.filter.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([]),
+        first: vi.fn().mockResolvedValue(undefined),
+      });
+    });
+
+    it("an online sign-in records the online session and its account", async () => {
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "nurse", is_active: true }, error: null });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(true);
+
+      const state = useAuthStore.getState();
+      expect(state.authMode).toBe("online");
+      expect(state.cloudUserId).toBe(AUTH_USER.id);
+      expect(state.signInRefusal).toBeNull();
+      expect(mockDbSessions.add).toHaveBeenCalledWith(
+        expect.objectContaining({ authMode: "online" }),
+      );
+    });
+
+    it("logout clears the session type", async () => {
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "nurse" }, error: null });
+      await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
+
+      await useAuthStore.getState().logout();
+
+      expect(useAuthStore.getState().authMode).toBeNull();
+      expect(useAuthStore.getState().cloudUserId).toBeNull();
+    });
+
+    it("refuses an account an administrator switched off on this device, and keeps it off", async () => {
+      const disabled = {
+        id: AUTH_USER.id,
+        fullName: "Ngozi Eze",
+        role: "nurse",
+        email: AUTH_USER.email,
+        isActive: 0,
+        disabledLocallyAt: new Date("2026-09-24T08:00:00Z"),
+        accessConflict: 1,
+      };
+      mockDbUsers.get.mockResolvedValue(disabled);
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "nurse", is_active: true }, error: null });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
+
+      expect(useAuthStore.getState().signInRefusal).toBe("deactivated_on_device");
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      // Not written over with a fresh active record.
+      expect(mockDbUsers.put).not.toHaveBeenCalled();
+      expect(mockDbSessions.add).not.toHaveBeenCalled();
+    });
+
+    it("refuses an account the server has deactivated", async () => {
+      appUsersLookup({
+        data: { id: AUTH_USER.id, role: "nurse", is_active: false },
+        error: null,
+      });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
+
+      expect(useAuthStore.getState().signInRefusal).toBe("deactivated");
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      expect(mockDbSessions.add).not.toHaveBeenCalled();
+    });
+
+    it("keeps an account the staff directory switched off when the server cannot confirm it", async () => {
+      mockDbUsers.get.mockResolvedValue({
+        id: AUTH_USER.id,
+        fullName: "Ngozi Eze",
+        role: "nurse",
+        email: AUTH_USER.email,
+        isActive: 0,
+      });
+      appUsersLookup({ data: null, error: { code: "PGRST000" } });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
+      expect(useAuthStore.getState().signInRefusal).toBe("deactivated");
+    });
+  });
+
+  describe("endSessionIfRevoked", () => {
+    const signedIn = {
+      id: "u-ada",
+      fullName: "Ada Okafor",
+      role: "doctor",
+      pinHash: PIN_ON_DEVICE,
+      pinSalt: PIN_ON_DEVICE,
+      isActive: 1,
+    };
+
+    it("ends the session when the signed-in person was switched off on this device", async () => {
+      useAuthStore.setState({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        currentUser: signedIn as any,
+        isAuthenticated: true,
+        authMode: "offline",
+      });
+      mockDbUsers.get.mockResolvedValue({ ...signedIn, isActive: 0 });
+
+      expect(await endSessionIfRevoked()).toBe(true);
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    });
+
+    it("keeps the session and picks up a role change", async () => {
+      useAuthStore.setState({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        currentUser: signedIn as any,
+        isAuthenticated: true,
+        authMode: "offline",
+      });
+      mockDbUsers.get.mockResolvedValue({ ...signedIn, role: "nurse", pinHash: "h", pinSalt: "s" });
+
+      expect(await endSessionIfRevoked()).toBe(false);
+      expect(useAuthStore.getState().currentUser).toMatchObject({
+        role: "nurse",
+        pinHash: PIN_ON_DEVICE,
+      });
     });
   });
 });

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { db, User, Session, generateId } from "@/db";
+import { db, User, Session, generateId, type AuditLog, type AuthMode } from "@/db";
+import { getDeviceId, knownDeviceId } from "@/db/deviceIdentity";
 import { verifyPin } from "@/utils/pin";
 import * as logger from "@/lib/logger";
 import { supabase } from "@/lib/supabase";
@@ -11,10 +12,36 @@ import {
 } from "@/lib/supabaseAuthStorage";
 import { useSyncStore } from "@/stores/syncStore";
 
+/**
+ * Why the last online sign-in was refused although the email and password
+ * were right. null when it was not refused for one of these reasons.
+ */
+export type SignInRefusal =
+  /** An administrator deactivated the account on this device; only an
+   * administrator can resolve it (Users), never a sign-in. */
+  | "deactivated_on_device"
+  /** The server has switched the account off. */
+  | "deactivated";
+
 interface AuthState {
+  /**
+   * The signed-in staff member. Their PIN hash and salt are never kept here
+   * (this state is saved in localStorage): see sessionUser().
+   */
   currentUser: User | null;
   currentSession: Session | null;
   isAuthenticated: boolean;
+  /**
+   * How this session was opened. Only "online" allows sync, and only while
+   * the device's online sign-in is cloudUserId (src/lib/cloudSession.ts).
+   * null when signed out, and for sessions saved before this was recorded
+   * (they count as offline until the person signs in online again).
+   */
+  authMode: AuthMode | null;
+  /** The online (Supabase) account this session signed in with. */
+  cloudUserId: string | null;
+  /** Set when the last online sign-in was refused (not saved). */
+  signInRefusal: SignInRefusal | null;
   failedAttempts: number;
   lockoutUntil: number | null;
   sessionExpiresAt: number | null;
@@ -31,6 +58,26 @@ interface AuthState {
   checkLockout: () => boolean;
   updateActivity: () => void;
   checkSessionExpiry: () => boolean;
+}
+
+/**
+ * Stands in for a PIN hash and salt in the signed-in user kept in app state.
+ * It only says "this person has a PIN on this device" (hasDevicePin); the
+ * real values stay in the device database, which is the only place a PIN
+ * is ever checked (login below reads the record fresh).
+ */
+export const PIN_ON_DEVICE = "on-device";
+
+/**
+ * The signed-in user as app state keeps it: the device record without its
+ * PIN hash and salt, so they are never copied into localStorage.
+ */
+export function sessionUser(user: User): User {
+  return {
+    ...user,
+    pinHash: user.pinHash ? PIN_ON_DEVICE : "",
+    pinSalt: user.pinSalt ? PIN_ON_DEVICE : "",
+  };
 }
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -207,7 +254,7 @@ export function accessFromAppUser(row: Record<string, unknown> | null | undefine
 }
 
 type ServerStaffAccount =
-  | { status: "found"; role: Role; fullName?: string }
+  | { status: "found"; role: Role; fullName?: string; deactivated: boolean }
   | { status: "missing" }
   | { status: "error" };
 
@@ -228,7 +275,8 @@ async function readServerStaffAccount(authUserId: string): Promise<ServerStaffAc
       return { status: "error" };
     }
     if (!data) return { status: "missing" };
-    return { status: "found", ...accessFromAppUser(data as Record<string, unknown>) };
+    const row = data as Record<string, unknown>;
+    return { status: "found", ...accessFromAppUser(row), deactivated: isDeactivatedAppUser(row) };
   } catch (error) {
     logger.error(
       "[Auth] Could not read the staff record:",
@@ -238,12 +286,67 @@ async function readServerStaffAccount(authUserId: string): Promise<ServerStaffAc
   }
 }
 
+/**
+ * Records a sign-in event in this device's audit log. Never records a PIN or
+ * password. Best effort: never throws.
+ */
+async function auditSignIn(
+  action: string,
+  userId: string,
+  actorRole: string,
+): Promise<void> {
+  try {
+    await db.auditLogs.add({
+      id: generateId(),
+      actorRole,
+      action,
+      entity: "user",
+      entityId: userId,
+      at: new Date(),
+    });
+  } catch {
+    // Audit storage unavailable: the sign-in itself is unaffected.
+  }
+}
+
+/** This device's id for a new session; never throws. */
+async function deviceIdForSession(): Promise<string | undefined> {
+  try {
+    return await getDeviceId();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Records that the server has just confirmed this person (an online
+ * sign-in): shown as "Last verified online" when they later sign in offline.
+ * Device-local fields, never uploaded. Best effort: never throws.
+ */
+async function markVerifiedOnline(user: User, roleFromServer: boolean): Promise<User> {
+  const now = new Date();
+  const fields: Partial<User> = { lastOnlineVerifiedAt: now };
+  if (roleFromServer) fields.permissionsCachedAt = now;
+  try {
+    await db.users.update(user.id, fields);
+  } catch (error) {
+    logger.warn(
+      "[Auth] Could not record the online verification:",
+      error instanceof Error ? error.name : typeof error,
+    );
+  }
+  return { ...user, ...fields };
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       currentUser: null,
       currentSession: null,
       isAuthenticated: false,
+      authMode: null,
+      cloudUserId: null,
+      signInRefusal: null,
       failedAttempts: 0,
       lockoutUntil: null,
       sessionExpiresAt: null,
@@ -284,6 +387,8 @@ export const useAuthStore = create<AuthState>()(
               createdAt: new Date(),
               deviceKey: generateId(),
               lastSeenAt: new Date(),
+              authMode: "offline",
+              deviceId: await deviceIdForSession(),
             };
 
             await db.sessions.add(session);
@@ -292,19 +397,29 @@ export const useAuthStore = create<AuthState>()(
             const expiresAt = now + STAFF_SESSION_DURATION;
 
             set({
-              currentUser: user,
+              currentUser: sessionUser(user),
               currentSession: session,
               isAuthenticated: true,
+              authMode: "offline",
+              cloudUserId: null,
+              signInRefusal: null,
               failedAttempts: 0,
               lockoutUntil: null,
               sessionExpiresAt: expiresAt,
               lastActivityAt: now,
             });
 
+            await auditSignIn("sign_in_offline", user.id, user.role);
             return true;
           }
 
           state.incrementFailedAttempts();
+          // Each failed attempt, and a lockout, is recorded against the
+          // account that was chosen. The PIN typed is never recorded.
+          await auditSignIn("offline_pin_failed", userId, user?.role ?? "unknown");
+          if (get().lockoutUntil) {
+            await auditSignIn("offline_pin_lockout", userId, user?.role ?? "unknown");
+          }
           return false;
         } catch (error) {
           logger.error(
@@ -319,6 +434,7 @@ export const useAuthStore = create<AuthState>()(
       loginOnline: async (email: string, password: string) => {
         const state = get();
 
+        set({ signInRefusal: null });
         if (state.checkLockout()) return false;
         if (!supabase) {
           logger.error("Supabase not configured");
@@ -341,64 +457,121 @@ export const useAuthStore = create<AuthState>()(
             return false;
           }
 
-          // Find the matching staff user record by email (case-insensitive)
+          const cloudUserId = data.user.id;
+
+          // This device's record for the person: the one with the online
+          // account's id (synced from the server directory or created by an
+          // earlier online sign-in), else an active one with the same email.
           const normalizedEmail = email.toLowerCase();
-          let user = await db.users
-            .filter(
-              (u) =>
-                u.isActive === 1 && u.email?.toLowerCase() === normalizedEmail,
-            )
-            .first();
+          let user =
+            (await db.users.get(cloudUserId)) ??
+            (await db.users
+              .filter(
+                (u) =>
+                  u.isActive === 1 && u.email?.toLowerCase() === normalizedEmail,
+              )
+              .first());
+
+          const refuse = async (reason: SignInRefusal): Promise<false> => {
+            // The password was right, but this account may not work here:
+            // end the online sign-in it just created.
+            startCloudSignOut();
+            await cloudSignOutInFlight;
+            set({ signInRefusal: reason });
+            await auditSignIn(
+              reason === "deactivated" ? "sign_in_refused_deactivated" : "sign_in_refused_deactivated_on_device",
+              user?.id ?? cloudUserId,
+              user?.role ?? "unknown",
+            );
+            return false;
+          };
+
+          // Switched off on this device by an administrator: an online
+          // sign-in does not switch it back on. Only an administrator can,
+          // under Users (an offline disable beats an online re-enable).
+          if (user && user.isActive !== 1 && (user.disabledLocallyAt || user.accessConflict === 1)) {
+            return await refuse("deactivated_on_device");
+          }
+
+          // The server's staff record decides who the person is, whether
+          // they are active and what they may do.
+          const account = await readServerStaffAccount(cloudUserId);
+
+          // Switched off on the server: no session, and no offline sign-in
+          // on this device either (offlineSignInState lists active staff only).
+          if (account.status === "found" && account.deactivated) {
+            if (user) {
+              try {
+                await db.users.update(user.id, { isActive: 0, updatedAt: new Date() });
+              } catch {
+                // The roster pull switches it off at the next sync too.
+              }
+            }
+            return await refuse("deactivated");
+          }
+
+          // Switched off here by a staff directory download (the server
+          // stopped listing them) and the server cannot confirm them now:
+          // stay off. A server record that lists them as active switches
+          // them back on below.
+          if (user && user.isActive !== 1 && account.status !== "found") {
+            return await refuse("deactivated");
+          }
 
           // A new device (no local record) builds one from the server's
-          // staff record, app_users, which the database uses for every
-          // access decision. A record created that way earlier (same id as
+          // staff record. A record created that way earlier (same id as
           // the online account) follows later role changes. Without a server
           // record the account gets no access, never a default role.
           // (User["role"] lists the roles created on devices; auditor and
           // lead_clinician accounts come from the server.)
-          if (!user || user.id === data.user.id) {
-            const account = await readServerStaffAccount(data.user.id);
-            if (!user) {
-              const access =
-                account.status === "found" ? account : { role: "guest" as Role };
-              const newUser: User = {
-                id: data.user.id,
-                fullName:
-                  (account.status === "found" ? account.fullName : undefined) ??
-                  data.user.user_metadata?.full_name ??
-                  email.split("@")[0],
-                role: access.role as User["role"],
-                email: data.user.email ?? email,
-                pinHash: "",
-                pinSalt: "",
-                adminAccess: access.role === "admin",
-                adminPermanent: false,
-                isActive: 1,
-                createdAt: new Date(),
+          if (!user) {
+            const access =
+              account.status === "found" ? account : { role: "guest" as Role };
+            const newUser: User = {
+              id: cloudUserId,
+              fullName:
+                (account.status === "found" ? account.fullName : undefined) ??
+                data.user.user_metadata?.full_name ??
+                email.split("@")[0],
+              role: access.role as User["role"],
+              email: data.user.email ?? email,
+              pinHash: "",
+              pinSalt: "",
+              adminAccess: access.role === "admin",
+              adminPermanent: false,
+              isActive: 1,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            };
+            await db.users.put(newUser);
+            user = newUser;
+          } else if (user.id === cloudUserId && account.status !== "error") {
+            // A failed lookup keeps the stored role; a missing server
+            // record removes access.
+            const role = (account.status === "found" ? account.role : "guest") as User["role"];
+            const fullName =
+              (account.status === "found" ? account.fullName : undefined) ?? user.fullName;
+            if (role !== user.role || fullName !== user.fullName || user.isActive !== 1) {
+              const refreshed: User = {
+                ...user,
+                role,
+                fullName,
+                adminAccess: role === "admin",
+                // The server lists them as active (checked above), and this
+                // device did not switch them off: a record the roster pull
+                // switched off comes back on.
+                isActive: account.status === "found" ? 1 : user.isActive,
                 updatedAt: new Date(),
               };
-              await db.users.put(newUser);
-              user = newUser;
-            } else if (account.status !== "error") {
-              // A failed lookup keeps the stored role; a missing or
-              // deactivated server record removes access.
-              const role = (account.status === "found" ? account.role : "guest") as User["role"];
-              const fullName =
-                (account.status === "found" ? account.fullName : undefined) ?? user.fullName;
-              if (role !== user.role || fullName !== user.fullName) {
-                const refreshed: User = {
-                  ...user,
-                  role,
-                  fullName,
-                  adminAccess: role === "admin",
-                  updatedAt: new Date(),
-                };
-                await db.users.put(refreshed);
-                user = refreshed;
-              }
+              await db.users.put(refreshed);
+              user = refreshed;
             }
           }
+
+          user = await markVerifiedOnline(
+            user,
+            account.status === "found" && user.id === cloudUserId,
+          );
 
           const session: Session = {
             id: generateId(),
@@ -406,20 +579,29 @@ export const useAuthStore = create<AuthState>()(
             createdAt: new Date(),
             deviceKey: generateId(),
             lastSeenAt: new Date(),
+            authMode: "online",
+            deviceId: await deviceIdForSession(),
           };
           await db.sessions.add(session);
 
           const now = Date.now();
           set({
-            currentUser: user,
+            currentUser: sessionUser(user),
             currentSession: session,
             isAuthenticated: true,
+            authMode: "online",
+            cloudUserId,
+            signInRefusal: null,
             failedAttempts: 0,
             lockoutUntil: null,
             sessionExpiresAt: now + STAFF_SESSION_DURATION,
             lastActivityAt: now,
           });
+          // The sign-in event fired before this session existed, so it was
+          // not yet counted as this staff member's: it is now.
+          useSyncStore.getState().setCloudSession("signed_in");
 
+          await auditSignIn("sign_in_online", user.id, user.role);
           return true;
         } catch (error) {
           logger.error(
@@ -450,6 +632,8 @@ export const useAuthStore = create<AuthState>()(
           currentUser: null,
           currentSession: null,
           isAuthenticated: false,
+          authMode: null,
+          cloudUserId: null,
           sessionExpiresAt: null,
           lastActivityAt: null,
         });
@@ -460,7 +644,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       setCurrentUser: (user: User | null) => {
-        set({ currentUser: user });
+        set({ currentUser: user ? sessionUser(user) : null });
       },
 
       incrementFailedAttempts: () => {
@@ -552,11 +736,20 @@ export const useAuthStore = create<AuthState>()(
         currentUser: state.currentUser,
         currentSession: state.currentSession,
         isAuthenticated: state.isAuthenticated,
+        authMode: state.authMode,
+        cloudUserId: state.cloudUserId,
         sessionExpiresAt: state.sessionExpiresAt,
         lastActivityAt: state.lastActivityAt,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
+
+        // Saved before PIN material was kept out of app state: drop it.
+        if (state.currentUser) state.currentUser = sessionUser(state.currentUser);
+        // Saved before the session type was recorded: offline until the
+        // person signs in online again.
+        state.authMode = state.authMode ?? null;
+        state.cloudUserId = state.cloudUserId ?? null;
 
         // Check if session is expired on rehydration
         if (state.sessionExpiresAt && state.isAuthenticated) {
@@ -573,8 +766,13 @@ export const useAuthStore = create<AuthState>()(
             state.currentUser = null;
             state.currentSession = null;
             state.isAuthenticated = false;
+            state.authMode = null;
+            state.cloudUserId = null;
             state.sessionExpiresAt = null;
             state.lastActivityAt = null;
+            // Its online sign-in ends too, as a logout would: the next
+            // person on this device must not sync under it.
+            startCloudSignOut();
           } else if (timeRemaining < 0) {
             // Slightly expired but within grace period - renew it
             logger.info("[Auth] Session within grace period, extending");
@@ -593,3 +791,57 @@ export const useAuthStore = create<AuthState>()(
     },
   ),
 );
+
+/**
+ * Ends the current session when the server or an administrator has
+ * switched the signed-in person off on this device (for example after a
+ * staff directory download), and picks up a role change from the server.
+ * Returns true when the session was ended. Never throws.
+ */
+export async function endSessionIfRevoked(): Promise<boolean> {
+  const { isAuthenticated, currentUser } = useAuthStore.getState();
+  if (!isAuthenticated || !currentUser) return false;
+  let record: User | undefined;
+  try {
+    record = await db.users.get(currentUser.id);
+  } catch {
+    return false;
+  }
+  if (record && record.isActive === 1) {
+    if (record.role !== currentUser.role || record.fullName !== currentUser.fullName) {
+      useAuthStore.getState().setCurrentUser(record);
+    }
+    return false;
+  }
+  logger.info("[Auth] Signed-in account was switched off; ending the session");
+  await auditSignIn("session_ended_deactivated", currentUser.id, currentUser.role);
+  await useAuthStore.getState().logout();
+  return true;
+}
+
+/**
+ * Every audit row records who did it, on which device and how they were
+ * signed in, unless the writer set those itself. Installed on the audit
+ * table once; test doubles of the database without hooks are skipped.
+ */
+function stampAuditRow(row: AuditLog): void {
+  const { isAuthenticated, currentUser, authMode } = useAuthStore.getState();
+  const signedIn = isAuthenticated && currentUser ? currentUser : null;
+  if (row.userId === undefined) row.userId = signedIn ? signedIn.id : null;
+  if (row.sessionType === undefined) {
+    row.sessionType = signedIn ? (authMode ?? "offline") : "none";
+  }
+  if (row.deviceId === undefined) row.deviceId = knownDeviceId();
+}
+
+try {
+  const auditTable = (db as unknown as { auditLogs?: { hook?: unknown } } | undefined)?.auditLogs;
+  if (auditTable && typeof auditTable.hook === "function") {
+    (auditTable.hook as (event: "creating", fn: (key: unknown, row: AuditLog) => void) => void)(
+      "creating",
+      (_key, row) => stampAuditRow(row),
+    );
+  }
+} catch {
+  // A database double without hooks (tests): rows are written unstamped.
+}
