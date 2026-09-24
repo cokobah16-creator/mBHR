@@ -3,6 +3,13 @@ import { persist } from 'zustand/middleware';
 
 export type SyncStatus = 'idle' | 'syncing' | 'error' | 'ok';
 
+/**
+ * Whether this device holds an online (Supabase) sign-in. A PIN unlock only
+ * opens the local workspace: it never creates one, so sync needs a separate
+ * online sign-in. 'unknown' until the first check (src/lib/cloudSession.ts).
+ */
+export type CloudSessionState = 'unknown' | 'signed_in' | 'signed_out';
+
 interface SyncState {
   status: SyncStatus;
   pendingCount: number;
@@ -11,6 +18,7 @@ interface SyncState {
   retries: number;
   errorMessage: string | null;
   isOnline: boolean;
+  cloudSession: CloudSessionState;
 }
 
 interface SyncActions {
@@ -21,6 +29,7 @@ interface SyncActions {
   incrementRetries: () => void;
   resetRetries: () => void;
   setOnline: (online: boolean) => void;
+  setCloudSession: (state: CloudSessionState) => void;
   reset: () => void;
 }
 
@@ -32,6 +41,7 @@ const initialState: SyncState = {
   retries: 0,
   errorMessage: null,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+  cloudSession: 'unknown',
 };
 
 export const useSyncStore = create<SyncState & SyncActions>()(
@@ -64,6 +74,9 @@ export const useSyncStore = create<SyncState & SyncActions>()(
       resetRetries: () => set({ retries: 0 }),
 
       setOnline: (online) => set({ isOnline: online }),
+
+      // Not persisted: re-read from the auth client on every app start.
+      setCloudSession: (cloudSession) => set({ cloudSession }),
 
       reset: () => set(initialState),
     }),

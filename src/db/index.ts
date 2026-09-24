@@ -63,16 +63,59 @@ export interface Patient {
   dobDay?: number;
   createdDay?: number;
   updatedDay?: number;
+  /**
+   * Record this one was merged into. Set on this device when a merge is
+   * requested here; otherwise downloaded from the server (merged_into),
+   * which owns it.
+   */
   mergeInto?: string;
+  /** When the server applied the merge (merged_at). */
+  mergedAt?: string | null;
+  /**
+   * 1 while a merge requested on this device is waiting for the server to
+   * confirm it. A download does not overwrite mergeInto/mergedAt meanwhile.
+   */
+  mergePending?: 0 | 1;
   authUid?: string | null;
   contactVerified?: 0 | 1;
+  /**
+   * Portal access. The server owns it (patients.portal_enabled, changed only
+   * through the set_patient_portal_access command); this is the device's
+   * copy, or the value requested here while portalPending is 1.
+   */
   portalEnabled?: 0 | 1;
+  /** When the server last recorded a portal access decision. */
+  portalEnabledChangedAt?: string | null;
+  /**
+   * 1 while a portal access change made on this device is waiting for the
+   * server to confirm it. A download does not overwrite portalEnabled
+   * meanwhile, and invitations must wait for the confirmed value.
+   */
+  portalPending?: 0 | 1;
   portalInvitation?: PortalInvitation | null;
   lastPortalActivity?: string | null;
   createdAt: Date;
   updatedAt: Date;
   _dirty?: number;
   _syncedAt?: string;
+  /** Server row_version this device last saw (conflict detection). */
+  _serverVersion?: number;
+  /** Set when the server refused the upload for permission; see SyncBlock. */
+  _syncBlock?: SyncBlock;
+}
+
+/**
+ * A record the server refused to accept from the person signed in online
+ * (row-level security, 42501 / 403). It stays on this device, unsent, and
+ * is shown as "waiting for an authorised person to sync". It is retried
+ * when someone else signs in online, or after a pause, never in a loop.
+ */
+export interface SyncBlock {
+  reason: "permission";
+  /** Online (Supabase) user id the server refused. */
+  refusedFor: string;
+  /** When (ms since epoch). */
+  at: number;
 }
 
 export interface Vital {
@@ -174,12 +217,83 @@ export interface QueueItem {
   ticketNumber?: string;
   queuedAt?: Date;
   /**
-   * Staff member who called the patient for the current stage. Local to the
-   * device (not in the sync column map), so other devices show no assignee.
+   * Staff member who called the patient for the current stage. Synced
+   * (queue.assigned_to / assigned_name) so every device shows the same
+   * assignee; a download never clears it.
    */
   assignedTo?: string;
   assignedName?: string;
+  /** Server ticket this row belongs to (queue_tickets.id). */
+  ticketId?: string;
+  /** Site the ticket was issued at (active site id or normalised site name). */
+  siteKey?: string;
+  /** Africa/Lagos service day, "YYYY-MM-DD". */
+  serviceDate?: string;
+  /** 1 while ticketNumber is a device-issued provisional label. */
+  ticketProvisional?: 0 | 1;
   updatedAt: Date;
+  _dirty?: number;
+  _syncedAt?: string;
+  /** Server row_version this device last saw (conflict detection). */
+  _serverVersion?: number;
+  _syncBlock?: SyncBlock;
+}
+
+/**
+ * Kinds of queue change recorded in the queue transition audit trail.
+ * - enqueue / requeue: a ticket was added (requeue: the patient already had
+ *   a ticket earlier today and is back in the queue).
+ * - call: the ticket was called (waiting -> in service).
+ * - send_on: finished at this stage and sent to the next one (or, after
+ *   pharmacy, the visit finished).
+ * - end_here: finished at this stage without being sent on.
+ * - prioritise: moved to the front of the waiting line (manual, or the
+ *   automatic long-wait escalation recorded with user "system").
+ * - remove: taken out of every queue.
+ * - priority_escalate / priority_downgrade: triage priority raised or
+ *   lowered. A downgrade always carries a reason.
+ */
+export type QueueTransitionKind =
+  | "enqueue"
+  | "requeue"
+  | "call"
+  | "send_on"
+  | "end_here"
+  | "prioritise"
+  | "remove"
+  | "priority_escalate"
+  | "priority_downgrade";
+
+/**
+ * One row per queue change. Append-only: app code adds rows and never edits
+ * or deletes them (the sync layer only sets the _dirty/_syncedAt markers).
+ * Written in the same Dexie transaction as the queue change it describes.
+ * Priority downgrades (kind "priority_downgrade") are the triage-downgrade
+ * record: who, when, from, to and why.
+ */
+export interface QueueTransition {
+  id: string;
+  /** Queue row the change was made on. */
+  queueItemId: string;
+  /** For send_on: the queue row created at the next stage. */
+  toQueueItemId?: string;
+  patientId: string;
+  kind: QueueTransitionKind;
+  /** null for a new ticket. */
+  fromStage: QueueItem["stage"] | null;
+  /** Stage after the change; "done" when the ticket or visit finished, "removed" when taken out. */
+  toStage: QueueItem["stage"] | "done" | "removed";
+  fromStatus?: QueueItem["status"] | null;
+  toStatus?: QueueItem["status"];
+  fromPriority?: "urgent" | "normal" | "low";
+  toPriority?: "urgent" | "normal" | "low";
+  reason?: string;
+  /** Staff user id, or "system" for automatic changes. */
+  userId: string;
+  userRole: string;
+  /** Stable id of this device (see services/queueAudit getDeviceId). */
+  deviceId: string;
+  at: Date;
   _dirty?: number;
   _syncedAt?: string;
 }
@@ -200,6 +314,85 @@ export interface PatientMerge {
   mergedBy: string;
   createdDay: number;
   reason: string;
+  /** serverCommands id of the merge_patients command for this merge. */
+  commandId?: string;
+  /** Field chosen for the surviving record: { field: { source, value } }. */
+  fieldChoices?: Record<string, unknown>;
+  /**
+   * pending: requested on this device, not yet confirmed; applied: the
+   * server applied it (downloaded rows are always applied); rejected: the
+   * server refused it (rejectReason says why).
+   */
+  status?: "pending" | "applied" | "rejected";
+  /** When the merge was requested (ISO). */
+  requestedAt?: string;
+  rejectReason?: string;
+  /** Server columns (downloaded). */
+  kind?: "merge" | "unmerge";
+  source?: string;
+  createdAt?: string;
+}
+
+/**
+ * A server-authoritative action waiting on this device to be sent as an RPC
+ * (portal access change, patient merge, ...). See src/sync/commandOutbox.ts.
+ */
+export type ServerCommandStatus =
+  | "pending"
+  | "waiting_permission"
+  | "applied"
+  | "rejected";
+
+export interface ServerCommand {
+  /** Client UUID; the RPC's p_command_id and its idempotency key. */
+  id: string;
+  /** Postgres function name, e.g. "set_patient_portal_access". */
+  rpc: string;
+  /** RPC arguments (p_* names) without p_command_id, which is added when sent. */
+  args: Record<string, unknown>;
+  /**
+   * Local staff user id who made the decision. Sent only while that person
+   * is signed in online. null for automatic backfills, which any signed-in
+   * holder of requiredPermission may send.
+   */
+  authorId: string | null;
+  /** Permission (src/auth/roles.ts) the sender needs; required when authorId is null. */
+  requiredPermission?: string;
+  /** Records the command changes, e.g. [{ table: "patients", id }]. */
+  entityRefs: { table: string; id: string }[];
+  status: ServerCommandStatus;
+  /** ms since epoch; commands are sent oldest first. */
+  createdAt: number;
+  attempts: number;
+  /** ms since epoch; not sent again before this. */
+  nextAttemptAt?: number;
+  /** Short error code of the last failed attempt (never a message). */
+  lastErrorCode?: string;
+  /** Server result (applied or rejected). */
+  result?: unknown;
+  /** Short reason code when rejected. */
+  rejectReason?: string;
+  /** Online user id the server refused (waiting_permission). */
+  refusedFor?: string;
+  /** When the server answered (ms). */
+  settledAt?: number;
+  /** When the registered handler finished processing the answer (ms). */
+  handledAt?: number;
+  handlerAttempts?: number;
+}
+
+/** A block of queue ticket numbers the server leased to this device. */
+export interface TicketLease {
+  id: string;
+  siteKey: string;
+  /** Africa/Lagos service day, "YYYY-MM-DD". */
+  serviceDate: string;
+  deviceId: string;
+  startSeq: number;
+  endSeq: number;
+  /** Next number to use from this block; > endSeq when used up. */
+  nextSeq: number;
+  createdAt: number;
 }
 
 export interface DailyCount {
@@ -535,6 +728,9 @@ export class MBHRDatabase extends Dexie {
   inventory!: Table<InventoryItem>;
   visits!: Table<Visit>;
   queue!: Table<QueueItem>;
+  queueTransitions!: Table<QueueTransition>;
+  serverCommands!: Table<ServerCommand>;
+  ticketLeases!: Table<TicketLease>;
   auditLogs!: Table<AuditLog>;
   gameSessions!: Table<GameSession>;
   gamificationWallets!: Table<GamificationWallet>;
@@ -1296,6 +1492,23 @@ export class MBHRDatabase extends Dexie {
         // "active" after the soak period.
         await tx.table("settings").put({ key: "encryption_v1", value: "off" });
       });
+
+    // v17 — queue transition audit trail (append-only). Dexie 3 carries every
+    // other table forward from v16 unchanged.
+    this.version(17).stores({
+      queueTransitions: "id, patientId, queueItemId, kind, at, _dirty, _syncedAt",
+    });
+
+    // v18 — server-authoritative sync foundation: the command outbox
+    // (serverCommands), queue ticket indexes and leased number blocks, and
+    // merge status. Indexes only; no data changes.
+    this.version(18).stores({
+      serverCommands: "id, status, rpc, authorId, createdAt",
+      ticketLeases: "id, siteKey, serviceDate, deviceId",
+      queue:
+        "id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt, ticketId, serviceDate, siteKey",
+      patientMerges: "id, winnerId, loserId, createdDay, status, commandId",
+    });
   }
 }
 
@@ -1353,7 +1566,14 @@ export const createPatientDraft = async (p: {
   return { rec, candidates };
 };
 
-// Merge patients (winner absorbs loser's data)
+/**
+ * Merge patients on this device only (marks the loser, records the merge).
+ * Child records are not moved and nothing is sent to the server.
+ *
+ * @deprecated Use requestMerge from services/patientMerge (patient-merge
+ * package), which moves child records and sends the merge to the server as
+ * a command. Kept until PatientDedupeModal has moved over.
+ */
 export const mergePatients = async (
   winnerId: string,
   loserId: string,

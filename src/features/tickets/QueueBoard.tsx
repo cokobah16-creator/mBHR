@@ -2,11 +2,16 @@ import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, generateId, type Patient, type QueueItem, type User } from "@/db";
-import { queueManagement } from "@/services/queueManagement";
+import {
+  queueManagement,
+  QueuePermissionError,
+  QueueValidationError,
+} from "@/services/queueManagement";
 import { useAuthStore } from "@/stores/auth";
 import { useToast, type ToastTone } from "@/stores/toast";
 import { recordStageEvent } from "@/services/stageEvents";
 import { patientStatusFromQueue } from "@/services/patientStatus";
+import { normalisePriority } from "@/services/queuePriority";
 import {
   FLOW_STAGES,
   FLOW_STAGE_LABELS,
@@ -50,8 +55,9 @@ const LONG_WAIT_MINUTES = 30;
 const TABS_ID = "queue-board";
 
 function PriorityBadge({ priority }: { priority?: QueueItem["priority"] }) {
-  if (priority === "urgent") return <StatusBadge tone="danger">Urgent</StatusBadge>;
-  if (priority === "low") return <StatusBadge tone="neutral">Low priority</StatusBadge>;
+  const p = normalisePriority(priority);
+  if (p === "urgent") return <StatusBadge tone="danger">Urgent</StatusBadge>;
+  if (p === "low") return <StatusBadge tone="neutral">Low priority</StatusBadge>;
   return null;
 }
 
@@ -71,6 +77,26 @@ export default function QueueBoard() {
   // from the lists.
   const allQueue = useLiveQuery(() => db.queue.toArray(), []);
   const counts = useMemo(() => countByStage(allQueue ?? [], now), [allQueue, now]);
+  // Urgent tickets still waiting, per stage. Priority is carried from stage
+  // to stage, so urgent status stays visible after vitals and consultation.
+  const urgentWaitingByStage = useMemo(() => {
+    const map: Record<FlowStage, number> = {
+      registration: 0,
+      vitals: 0,
+      consult: 0,
+      pharmacy: 0,
+    };
+    for (const q of allQueue ?? []) {
+      if (
+        q.status === "waiting" &&
+        isFlowStage(q.stage) &&
+        normalisePriority(q.priority) === "urgent"
+      ) {
+        map[q.stage] += 1;
+      }
+    }
+    return map;
+  }, [allQueue]);
   const { waiting, inService } = useMemo(
     () => splitStage<QueueItem>(allQueue ?? [], selectedStage),
     [allQueue, selectedStage],
@@ -137,7 +163,9 @@ export default function QueueBoard() {
         err instanceof Error ? err.name : err,
       );
       setActionError(
-        "That change may not have been saved. Check the queue below before trying again.",
+        err instanceof QueuePermissionError || err instanceof QueueValidationError
+          ? `${err.message} Nothing was changed.`
+          : "That change may not have been saved. Check the queue below before trying again.",
       );
     } finally {
       busyRef.current = false;
@@ -245,6 +273,12 @@ export default function QueueBoard() {
                 aria-hidden
               />
               {FLOW_STAGE_LABELS[s]}
+              {urgentWaitingByStage[s] > 0 && (
+                <span className="inline-flex items-center gap-0.5 text-caption font-semibold text-danger-fg">
+                  <ExclamationTriangleIcon className="h-3.5 w-3.5" aria-hidden />
+                  {urgentWaitingByStage[s]} urgent
+                </span>
+              )}
             </span>
           ),
           badge: counts[s].waiting + counts[s].inService,
@@ -412,11 +446,18 @@ export default function QueueBoard() {
         <div className="panel">
           <div className="panel-header">
             <h2 className="panel-title">Waiting ({waiting.length})</h2>
-            {waiting.length > 0 && (
-              <span className="text-caption text-ink-muted">
-                Longest wait {formatWait(longest)}
-              </span>
-            )}
+            <span className="flex flex-wrap items-center gap-2">
+              {urgentWaitingByStage[selectedStage] > 0 && (
+                <StatusBadge tone="danger">
+                  {urgentWaitingByStage[selectedStage]} urgent
+                </StatusBadge>
+              )}
+              {waiting.length > 0 && (
+                <span className="text-caption text-ink-muted">
+                  Longest wait {formatWait(longest)}
+                </span>
+              )}
+            </span>
           </div>
 
           {waiting.length === 0 ? (
@@ -466,7 +507,7 @@ export default function QueueBoard() {
                           <span className={`badge ${status.classes}`}>{status.label}</span>
                         </td>
                         <td>
-                          {item.priority === "urgent" || item.priority === "low" ? (
+                          {normalisePriority(item.priority) !== "normal" ? (
                             <PriorityBadge priority={item.priority} />
                           ) : (
                             <span className="text-ink-muted">Normal</span>

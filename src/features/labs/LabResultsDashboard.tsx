@@ -40,6 +40,7 @@ import {
   deriveLabStage,
   describeLabError,
   formatResultValue,
+  isInterpretation,
   isLabFilter,
   matchesFilter,
   matchesSearch,
@@ -173,9 +174,11 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
 
   const role = currentUser?.role;
   // Specimen and result recording follow the "vitals" permission (clinical
-  // measurements); marking a result reviewed is a clinician decision.
+  // measurements). Marking a result reviewed needs "lab_review", which is
+  // granted by DIOF clinical policy (see src/auth/roles.ts) and enforced
+  // again by the database.
   const canRecord = !!role && can(role, "vitals");
-  const canReview = !!role && can(role, "consult");
+  const canReview = !!role && can(role, "lab_review");
 
   const load = useCallback(async () => {
     if (!isSupabaseEnabled) return;
@@ -335,8 +338,8 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
   const review = async (row: WorklistRow) => {
     if (
       !allowWrite(
-        "consult",
-        "Marking results as reviewed needs a clinician role. Ask a doctor to review this result.",
+        "lab_review",
+        "Your role cannot mark lab results reviewed. Ask a staff member authorised to review lab results.",
       )
     )
       return;
@@ -408,6 +411,14 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
     const blocked = writeBlockedReason("vitals", "Your role cannot record lab results.");
     if (blocked) {
       setEntryError(blocked);
+      return;
+    }
+    // The interpretation must be a deliberate choice. An empty or unknown
+    // value is never sent: the server would file it as "normal".
+    if (!isInterpretation(values.interpretation)) {
+      setEntryError(
+        "Nothing was saved. Choose Normal, Abnormal or Critical for this result.",
+      );
       return;
     }
     const { order } = row;
@@ -768,8 +779,8 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
             </p>
             {!canReview && (
               <p>
-                Your role can see results but cannot mark them reviewed; a
-                clinician does that.
+                Your role can see results but cannot mark them reviewed. Staff
+                authorised to review lab results do that.
               </p>
             )}
           </div>
@@ -885,9 +896,11 @@ function ResultCell({
   return (
     <ul className="space-y-2">
       {results.map((r, i) => {
+        // A missing or unknown interpretation is shown as needing a check,
+        // never as normal.
         const meta = INTERPRETATION_META[r.interpretation] ?? {
-          label: "Not interpreted",
-          tone: "neutral" as const,
+          label: "Interpretation missing, check result",
+          tone: "warning" as const,
         };
         const flagged = r.interpretation === "abnormal" || r.interpretation === "critical";
         return (

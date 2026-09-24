@@ -79,6 +79,11 @@ const ACCESS_LABELS: [Permission, string][] = [
   ["export", "export data"],
   ["users", "manage staff accounts"],
   ["resolve_conflicts", "resolve sync conflicts"],
+  ["queue", "move patients through the queue"],
+  ["portal_manage", "manage patient portal access"],
+  ["merge_patients", "merge patient records"],
+  ["lab_review", "mark lab results reviewed"],
+  ["lab_release", "release lab results to patients"],
 ];
 
 /** What a role can do, in words, from the RBAC matrix in src/auth/roles.ts. */

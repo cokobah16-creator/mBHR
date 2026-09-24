@@ -1,12 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, Patient, QueueItem } from "@/db";
-import { queueManagement, QueueStage } from "@/services/queueManagement";
+import { db, generateId, Patient, QueueItem } from "@/db";
+import {
+  queueManagement,
+  QueuePermissionError,
+  QueueStage,
+  QueueValidationError,
+} from "@/services/queueManagement";
+import {
+  downgradeOptions,
+  MAX_REASON_LENGTH,
+  mayDowngradePriority,
+  normalisePriority,
+  normaliseReason,
+  PRIORITY_LABELS,
+  type QueuePriority,
+} from "@/services/queuePriority";
 import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
 import { useAuthStore } from "@/stores/auth";
 import { recordStageEvent } from "@/services/stageEvents";
 import { canManageQueue } from "@/features/tickets/queueBoardModel";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { useToast } from "@/stores/toast";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -15,6 +31,8 @@ import {
   PlayIcon,
   CheckIcon,
   ArrowUpIcon,
+  ArrowDownIcon,
+  ExclamationTriangleIcon,
   TicketIcon,
 } from "@heroicons/react/20/solid";
 import { QueueListIcon } from "@heroicons/react/24/outline";
@@ -30,11 +48,40 @@ const STAGE_MARKER: Record<QueueStage, string> = {
   pharmacy: "bg-stage-pharmacy",
 };
 
+const DOWNGRADE_HINT_ID = "queue-downgrade-hint";
+const DOWNGRADE_ERROR_ID = "queue-downgrade-error";
+
 /** Waits longer than this are highlighted for the stage lead. */
 const LONG_WAIT_MINUTES = 30;
 
 interface QueueWithPatient extends QueueItem {
   patient?: Patient;
+}
+
+interface DowngradeDraft {
+  item: QueueWithPatient;
+  newPriority: QueuePriority;
+  reason: string;
+  error: string;
+}
+
+function isQueuePriority(value: string): value is QueuePriority {
+  return value === "urgent" || value === "normal" || value === "low";
+}
+
+/**
+ * What a priority change toast may honestly say. The change is saved on this
+ * device and its audit record joins the upload queue; the queue sync does
+ * not carry priority yet, so other devices are not promised the change.
+ */
+function priorityNote(syncEnabled: boolean): string {
+  return syncEnabled
+    ? "Saved on this device. The audit record is waiting to sync; other devices may not show this change yet."
+    : "Saved on this device.";
+}
+
+function ticketOf(item: Pick<QueueItem, "ticketNumber" | "position">) {
+  return item.ticketNumber ?? `#${item.position}`;
 }
 
 function minutesSince(d: Date | string | undefined, now: number) {
@@ -73,7 +120,18 @@ export function Queue() {
   const [selectedStage, setSelectedStage] = useState<QueueStage>("vitals");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
+  const [downgrade, setDowngrade] = useState<DowngradeDraft | null>(null);
+  const [savingDowngrade, setSavingDowngrade] = useState(false);
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  // Where focus returns when the downgrade form closes.
+  const downgradeTriggerRef = useRef<HTMLElement | null>(null);
+  const { push } = useToast();
   const now = useNow();
+  const downgradeOpenFor = downgrade?.item.id;
+
+  useEffect(() => {
+    if (downgradeOpenFor) reasonRef.current?.focus();
+  }, [downgradeOpenFor]);
 
   // One live query drives every number on the page, so counts never drift
   // from the list.
@@ -101,6 +159,9 @@ export function Queue() {
           stage,
           waiting: items.filter((i) => i.status === "waiting").length,
           inProgress: items.filter((i) => i.status === "in_progress").length,
+          urgentWaiting: items.filter(
+            (i) => i.status === "waiting" && normalisePriority(i.priority) === "urgent",
+          ).length,
           doneToday: items.filter(
             (i) => i.status === "done" && isToday(i.updatedAt),
           ).length,
@@ -145,8 +206,22 @@ export function Queue() {
     0,
   );
   const canIssueTickets = canManageQueue(role);
+  const canDowngrade = mayDowngradePriority(role);
+  const urgentWaiting = allWaiting.filter(
+    (i) => normalisePriority(i.priority) === "urgent",
+  ).length;
 
-  const run = async (id: string, fn: () => Promise<unknown>) => {
+  /** Staff-facing text for a failed queue write. Never includes patient data. */
+  const failureMessage = (err: unknown) =>
+    err instanceof QueuePermissionError || err instanceof QueueValidationError
+      ? `${err.message} Nothing was changed.`
+      : "That change was not saved. Try again.";
+
+  const run = async (
+    id: string,
+    fn: () => Promise<unknown>,
+    done?: { title: string },
+  ) => {
     // Checked here, not only by hiding buttons: these write the queue.
     if (!canManageQueue(role)) {
       setActionError("Your role can view the queue but cannot call or move patients.");
@@ -156,9 +231,17 @@ export function Queue() {
     setActionError("");
     try {
       await fn();
+      if (done) {
+        push({
+          id: generateId(),
+          tone: "success",
+          title: done.title,
+          body: priorityNote(isSupabaseEnabled),
+        });
+      }
     } catch (err) {
       console.error("Queue action failed:", err instanceof Error ? err.name : "unknown");
-      setActionError("That change was not saved. Try again.");
+      setActionError(failureMessage(err));
     } finally {
       setBusyId(null);
     }
@@ -183,11 +266,124 @@ export function Queue() {
     run(item.id, () =>
       queueManagement.skipQueue(item.patientId, "Manual priority"),
     );
+  const escalate = (item: QueueItem) =>
+    run(
+      item.id,
+      () =>
+        queueManagement.escalatePriority(item.patientId, {
+          user: currentUser
+            ? { id: currentUser.id, role: currentUser.role, name: currentUser.fullName }
+            : undefined,
+        }),
+      { title: `${ticketOf(item)} marked urgent` },
+    );
 
   const patientName = (item: QueueWithPatient) =>
     item.patient
       ? `${item.patient.givenName} ${item.patient.familyName}`
       : "Unknown patient";
+
+  const openDowngrade = (item: QueueWithPatient, trigger: HTMLElement) => {
+    const options = downgradeOptions(normalisePriority(item.priority));
+    if (!canDowngrade || options.length === 0) return;
+    downgradeTriggerRef.current = trigger;
+    setActionError("");
+    setDowngrade({ item, newPriority: options[0], reason: "", error: "" });
+  };
+
+  const closeDowngrade = () => {
+    setDowngrade(null);
+    const trigger = downgradeTriggerRef.current;
+    downgradeTriggerRef.current = null;
+    // The trigger may have gone (the row re-rendered); focus is best effort.
+    if (trigger && document.contains(trigger)) trigger.focus();
+  };
+
+  const submitDowngrade = async () => {
+    if (!downgrade || savingDowngrade) return;
+    // Checked here as well as by hiding the button.
+    if (!currentUser || !mayDowngradePriority(currentUser.role)) {
+      setDowngrade({
+        ...downgrade,
+        error: "Only a clinician with consultation access can lower triage priority.",
+      });
+      return;
+    }
+    const reason = normaliseReason(downgrade.reason);
+    if (!reason) {
+      setDowngrade({ ...downgrade, error: "Give a reason for lowering the priority." });
+      reasonRef.current?.focus();
+      return;
+    }
+    setSavingDowngrade(true);
+    try {
+      await queueManagement.downgradePriority(downgrade.item.patientId, {
+        newPriority: downgrade.newPriority,
+        reason,
+        user: { id: currentUser.id, role: currentUser.role, name: currentUser.fullName },
+      });
+      push({
+        id: generateId(),
+        tone: "success",
+        title: `${ticketOf(downgrade.item)}: priority lowered to ${PRIORITY_LABELS[downgrade.newPriority].toLowerCase()}`,
+        body: `Your name, the time and the reason were recorded. ${priorityNote(isSupabaseEnabled)}`,
+      });
+      closeDowngrade();
+    } catch (err) {
+      console.error(
+        "Priority downgrade failed:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      setDowngrade({ ...downgrade, error: failureMessage(err) });
+    } finally {
+      setSavingDowngrade(false);
+    }
+  };
+
+  const downgradeDescribedBy = [
+    DOWNGRADE_HINT_ID,
+    downgrade?.error ? DOWNGRADE_ERROR_ID : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  /** Priority actions this role may take on a ticket. */
+  const priorityControls = (item: QueueWithPatient, compact = false) => {
+    const priority = normalisePriority(item.priority);
+    const name = patientName(item);
+    return (
+      <>
+        {priority !== "urgent" && canIssueTickets && (
+          <button
+            type="button"
+            onClick={() => escalate(item)}
+            disabled={busyId !== null}
+            className={`btn-ghost ${compact ? "px-2 min-w-touch-target" : ""}`}
+            aria-label={`Mark urgent: ${name}`}
+          >
+            <ExclamationTriangleIcon className="h-4 w-4" aria-hidden />
+            {!compact && "Mark urgent"}
+          </button>
+        )}
+        {priority === "urgent" && canDowngrade && (
+          <button
+            type="button"
+            onClick={(e) => openDowngrade(item, e.currentTarget)}
+            disabled={busyId !== null || savingDowngrade}
+            aria-expanded={downgrade?.item.id === item.id}
+            aria-controls={
+              downgrade?.item.id === item.id ? "queue-downgrade-form" : undefined
+            }
+            className={`btn-ghost ${compact ? "px-2 min-w-touch-target" : ""}`}
+            aria-label={`Lower priority: ${name}`}
+          >
+            <ArrowDownIcon className="h-4 w-4" aria-hidden />
+            {!compact && "Lower priority"}
+          </button>
+        )}
+      </>
+    );
+  };
 
   return (
     <div>
@@ -240,6 +436,11 @@ export function Queue() {
               <span className="block text-caption text-ink-muted">
                 {s.inProgress} in service · {s.doneToday} done today
               </span>
+              {s.urgentWaiting > 0 && (
+                <StatusBadge tone="danger" className="mt-1">
+                  {s.urgentWaiting} urgent waiting
+                </StatusBadge>
+              )}
             </button>
           );
         })}
@@ -287,6 +488,105 @@ export function Queue() {
           </div>
         )}
 
+        {downgrade && (
+          <form
+            id="queue-downgrade-form"
+            aria-labelledby="queue-downgrade-title"
+            className="panel border-warning-line"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitDowngrade();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && !savingDowngrade) {
+                e.stopPropagation();
+                closeDowngrade();
+              }
+            }}
+          >
+            <div className="panel-header">
+              <h2 id="queue-downgrade-title" className="panel-title">
+                Lower triage priority · {ticketOf(downgrade.item)}
+              </h2>
+              <StatusBadge tone="danger">Urgent now</StatusBadge>
+            </div>
+            <div className="panel-body space-y-4">
+              <p className="text-body text-ink-secondary">
+                {patientName(downgrade.item)} is marked urgent. Lower this only
+                after you have reassessed the patient. Your name, the time and
+                the reason are recorded, and the patient keeps their place in line.
+              </p>
+              <div>
+                <label htmlFor="queue-downgrade-priority" className="field-label">
+                  New priority
+                </label>
+                <select
+                  id="queue-downgrade-priority"
+                  className="input-field"
+                  value={downgrade.newPriority}
+                  disabled={savingDowngrade}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (isQueuePriority(value)) {
+                      setDowngrade({ ...downgrade, newPriority: value, error: "" });
+                    }
+                  }}
+                >
+                  {downgradeOptions(normalisePriority(downgrade.item.priority)).map((p) => (
+                    <option key={p} value={p}>
+                      {PRIORITY_LABELS[p]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="queue-downgrade-reason" className="field-label">
+                  Reason (required)
+                </label>
+                <textarea
+                  id="queue-downgrade-reason"
+                  ref={reasonRef}
+                  className="input-field"
+                  rows={3}
+                  maxLength={MAX_REASON_LENGTH}
+                  value={downgrade.reason}
+                  disabled={savingDowngrade}
+                  aria-invalid={downgrade.error ? true : undefined}
+                  aria-describedby={downgradeDescribedBy}
+                  onChange={(e) =>
+                    setDowngrade({ ...downgrade, reason: e.target.value, error: "" })
+                  }
+                />
+                <p id={DOWNGRADE_HINT_ID} className="field-hint">
+                  For example, what you reassessed and found. Up to{" "}
+                  {MAX_REASON_LENGTH} characters.
+                </p>
+                {downgrade.error && (
+                  <p id={DOWNGRADE_ERROR_ID} className="field-error" role="alert">
+                    {downgrade.error}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="submit" className="btn-primary" disabled={savingDowngrade}>
+                  <ArrowDownIcon className="h-4 w-4" aria-hidden />
+                  {savingDowngrade
+                    ? "Saving…"
+                    : `Lower to ${PRIORITY_LABELS[downgrade.newPriority].toLowerCase()}`}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={closeDowngrade}
+                  disabled={savingDowngrade}
+                >
+                  Keep urgent
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
+
         {/* In service */}
         <div className="panel">
           <div className="panel-header">
@@ -321,18 +621,24 @@ export function Queue() {
                     {item.ticketNumber ?? `#${item.position}`}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <Link
-                      to={`/patients/${item.patientId}`}
-                      className="block truncate text-h3 text-ink hover:underline"
-                    >
-                      {patientName(item)}
-                    </Link>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Link
+                        to={`/patients/${item.patientId}`}
+                        className="block truncate text-h3 text-ink hover:underline"
+                      >
+                        {patientName(item)}
+                      </Link>
+                      {normalisePriority(item.priority) === "urgent" && (
+                        <StatusBadge tone="danger">Urgent</StatusBadge>
+                      )}
+                    </span>
                     <span className="text-caption text-ink-muted">
                       In service for{" "}
                       {formatMinutes(minutesSince(item.updatedAt, now))}
                       {item.assignedName ? ` · with ${item.assignedName}` : ""}
                     </span>
                   </span>
+                  {priorityControls(item)}
                   <button
                     onClick={() => complete(item)}
                     disabled={busyId === item.id}
@@ -356,6 +662,9 @@ export function Queue() {
               Waiting ({waiting.length}
               {filter !== "all" && filter !== "mine" ? ` of ${allWaiting.length}` : ""})
             </h2>
+            {urgentWaiting > 0 && (
+              <StatusBadge tone="danger">{urgentWaiting} urgent</StatusBadge>
+            )}
             {waiting.length > 0 && (
               <span
                 className={`text-caption ${
@@ -426,10 +735,12 @@ export function Queue() {
                           </span>
                         </td>
                         <td>
-                          {item.priority === "urgent" ? (
+                          {normalisePriority(item.priority) === "urgent" ? (
                             <StatusBadge tone="danger">Urgent</StatusBadge>
                           ) : (
-                            <span className="text-ink-muted">Normal</span>
+                            <span className="text-ink-muted">
+                              {PRIORITY_LABELS[normalisePriority(item.priority)]}
+                            </span>
                           )}
                         </td>
                         <td className="text-right">
@@ -455,6 +766,7 @@ export function Queue() {
                                 Move to front
                               </button>
                             ) : null}
+                            {priorityControls(item)}
                           </div>
                         </td>
                       </tr>
@@ -487,7 +799,7 @@ export function Queue() {
                           >
                             Waiting {formatMinutes(mins)}
                           </span>
-                          {item.priority === "urgent" && (
+                          {normalisePriority(item.priority) === "urgent" && (
                             <StatusBadge tone="danger">Urgent</StatusBadge>
                           )}
                         </span>
@@ -510,6 +822,7 @@ export function Queue() {
                           <ArrowUpIcon className="h-5 w-5" aria-hidden />
                         </button>
                       ) : null}
+                      {priorityControls(item, true)}
                     </li>
                   );
                 })}
