@@ -24,6 +24,7 @@ import { runMigrations } from "@/db/migrations/migration-runner";
 import "@/services/portalAccess"; // set_patient_portal_access answers
 import "@/sync/queueSync"; // queue tickets (also needed on a /display-only device)
 import "@/sync/pharmacySync"; // "pharmacy" participant and rx_* commands
+import "@/sync/staffRosterSync"; // staff directory on every sync
 
 // URLs can carry secrets: a query string (a sign-in code) or a fragment
 // (Supabase puts password-recovery access and refresh tokens in the hash).

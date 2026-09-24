@@ -522,8 +522,10 @@ async function currentCloudUser(): Promise<{ id: string; email: string | null } 
 export async function currentCommandSender(): Promise<CommandSender | null> {
   const cloud = await currentCloudUser();
   if (!cloud) return null;
-  const user = useAuthStore.getState().currentUser;
+  const { currentUser: user, authMode } = useAuthStore.getState();
   if (!user) return null;
+  // A PIN session never sends to the server, whatever sign-in is stored.
+  if (authMode !== "online") return null;
   const sameAccount =
     user.id === cloud.id ||
     (!!user.email && !!cloud.email && user.email.toLowerCase() === cloud.email.toLowerCase());

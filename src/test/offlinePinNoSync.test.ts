@@ -589,6 +589,9 @@ beforeEach(() => {
     lockoutUntil: null,
     sessionExpiresAt: null,
     lastActivityAt: null,
+    authMode: null,
+    cloudUserId: null,
+    signInRefusal: null,
   });
   app.syncStore.useSyncStore.setState({
     status: "idle",
@@ -656,40 +659,6 @@ describe("offline PIN sign-in never gives a cloud sync session", () => {
   describe("an online sign-in left on this device is ended, not carried over", () => {
     const leftovers = [
       {
-        name: "the previous person's, after their local session expired while the app was closed",
-        setUp: async () => {
-          const longAgo = Date.now() - 24 * 60 * 60 * 1000;
-          localStorage.setItem(
-            "mbhr-auth",
-            JSON.stringify({
-              state: {
-                failedAttempts: 0,
-                lockoutUntil: null,
-                currentUser: ADA,
-                currentSession: {
-                  id: "old-session",
-                  userId: ADA.id,
-                  createdAt: new Date(longAgo),
-                  deviceKey: "old-device-key",
-                  lastSeenAt: new Date(longAgo),
-                },
-                isAuthenticated: true,
-                sessionExpiresAt: longAgo,
-                lastActivityAt: longAgo,
-              },
-              version: 0,
-            }),
-          );
-          seedStoredSignIn(ADA.id, ADA.email);
-          await app.auth.useAuthStore.persist.rehydrate();
-          // The expired local session is gone; no logout ran, so the online
-          // sign-in is still stored.
-          expect(app.auth.useAuthStore.getState().isAuthenticated).toBe(false);
-          expect(storedSignInKeys()).toEqual([h.AUTH_KEY]);
-          return { user: BAYO, pin: PIN_BAYO };
-        },
-      },
-      {
         name: "one whose logout could not finish (app closed straight after)",
         setUp: async () => {
           seedStoredSignIn(ADA.id, ADA.email);
@@ -719,6 +688,55 @@ describe("offline PIN sign-in never gives a cloud sync session", () => {
         await expectSyncBlocked();
       });
     }
+
+    it("the previous person's, when their local session expired while the app was closed", async () => {
+      const longAgo = Date.now() - 24 * 60 * 60 * 1000;
+      localStorage.setItem(
+        "mbhr-auth",
+        JSON.stringify({
+          state: {
+            failedAttempts: 0,
+            lockoutUntil: null,
+            currentUser: ADA,
+            currentSession: {
+              id: "old-session",
+              userId: ADA.id,
+              createdAt: new Date(longAgo),
+              deviceKey: "old-device-key",
+              lastSeenAt: new Date(longAgo),
+            },
+            isAuthenticated: true,
+            authMode: "online",
+            cloudUserId: ADA.id,
+            sessionExpiresAt: longAgo,
+            lastActivityAt: longAgo,
+          },
+          version: 0,
+        }),
+      );
+      seedStoredSignIn(ADA.id, ADA.email);
+      seedUnsentWork();
+      forgetCalls();
+
+      await app.auth.useAuthStore.persist.rehydrate();
+      await settle();
+
+      // The expired local session is gone, and its online sign-in was ended
+      // on this device with it.
+      expect(app.auth.useAuthStore.getState()).toMatchObject({
+        isAuthenticated: false,
+        authMode: null,
+        cloudUserId: null,
+      });
+      expect(h.signOut).toHaveBeenCalledWith({ scope: "local" });
+      expect(storedSignInKeys()).toEqual([]);
+      forgetCalls();
+
+      expect(await pinSignIn(BAYO, PIN_BAYO)).toBe(true);
+
+      expectNoOnlineSessionCreated();
+      await expectSyncBlocked();
+    });
 
     it("waits for the last logout's online sign-out before opening the workspace", async () => {
       expect(await onlineSignIn(ADA)).toBe(true);
@@ -827,3 +845,82 @@ describe("online sign-in gives a cloud session and sync runs", () => {
     expect(indicatorKind(false)).toBe("no_session");
   });
 });
+
+describe("sync needs the signed-in staff member's own online sign-in", () => {
+  it("records the session type: offline for a PIN, online for email and password", async () => {
+    expect(await pinSignIn(ADA, PIN_ADA)).toBe(true);
+    expect(app.auth.useAuthStore.getState()).toMatchObject({ authMode: "offline", cloudUserId: null });
+    await app.auth.useAuthStore.getState().logout();
+    await settle();
+
+    expect(await onlineSignIn(BAYO)).toBe(true);
+    expect(app.auth.useAuthStore.getState()).toMatchObject({ authMode: "online", cloudUserId: BAYO.id });
+  });
+
+  it("a PIN session stays blocked even if an online sign-in appears in this browser afterwards", async () => {
+    seedUnsentWork();
+    expect(await pinSignIn(ADA, PIN_ADA)).toBe(true);
+    // For example restored by another tab, or the same person's account
+    // signed in by the patient portal: still not an online staff session.
+    seedStoredSignIn(ADA.id, ADA.email);
+    forgetCalls();
+
+    await expectSyncBlocked();
+  });
+
+  it("an online staff session stops syncing when another account's sign-in replaces it", async () => {
+    expect(await onlineSignIn(ADA)).toBe(true);
+    expect(await app.cloud.checkCloudSession()).toBe(true);
+
+    // The patient portal signs a patient in, in the same browser.
+    seedStoredSignIn("portal-patient-1", "patient@example.com");
+    seedUnsentWork();
+    forgetCalls();
+
+    await expectSyncBlocked();
+  });
+
+  it("never syncs as the previous person after a new person's PIN sign-in", async () => {
+    expect(await onlineSignIn(ADA)).toBe(true);
+    // The tablet changes hands without a logout: Bayo unlocks with his PIN.
+    expect(await pinSignIn(BAYO, PIN_BAYO)).toBe(true);
+    seedStoredSignIn(ADA.id, ADA.email);
+    seedUnsentWork();
+    forgetCalls();
+
+    await expectSyncBlocked();
+  });
+
+  it("an account deactivated on this device cannot come back on through an online sign-in", async () => {
+    h.main.table("users").rows.set(ADA.id, {
+      ...ADA,
+      isActive: 0,
+      disabledLocallyAt: new Date("2026-09-24T08:00:00Z"),
+      accessConflict: 1,
+    });
+
+    expect(await onlineSignIn(ADA)).toBe(false);
+
+    expect(app.auth.useAuthStore.getState()).toMatchObject({
+      isAuthenticated: false,
+      signInRefusal: "deactivated_on_device",
+    });
+    expect(h.main.table("users").rows.get(ADA.id)).toMatchObject({ isActive: 0, accessConflict: 1 });
+    await settle();
+    expect(storedSignInKeys()).toEqual([]);
+    expect(await pinSignIn(ADA, PIN_ADA)).toBe(false);
+  });
+
+  it("an account the server deactivated loses online and offline sign-in on this device", async () => {
+    h.serverStaff.set(ADA.id, { id: ADA.id, role: "nurse", full_name: ADA.fullName, is_active: false });
+
+    expect(await onlineSignIn(ADA)).toBe(false);
+
+    expect(app.auth.useAuthStore.getState().signInRefusal).toBe("deactivated");
+    expect(h.main.table("users").rows.get(ADA.id)).toMatchObject({ isActive: 0 });
+    await settle();
+    expect(storedSignInKeys()).toEqual([]);
+    expect(await pinSignIn(ADA, PIN_ADA)).toBe(false);
+  });
+});
+

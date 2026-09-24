@@ -371,23 +371,31 @@ review").
 
 ### Found in the offline-PIN review (fix before release)
 
-- [ ] **Expired session on app start keeps the online sign-in.** In
+- [x] **Expired session on app start keeps the online sign-in.** *Fixed in
+      the staff session model PR: the expired branch now also ends the
+      online sign-in.* In
       `src/stores/auth.ts`, the `onRehydrateStorage` branch for a session
       past its grace period clears the local session but leaves the stored
       online (Supabase) sign-in in place. It should end that online sign-in
       too, as a PIN sign-in does. *Who: release owner.*
-- [ ] **Record sync must run as the signed-in staff member.** Record sync
+- [x] **Record sync must run as the signed-in staff member.** *Fixed in the
+      staff session model PR: `checkCloudSession()` counts a stored sign-in
+      only when it is the signed-in staff member's own, from an online
+      sign-in in this session (`authMode === "online"`).* Record sync
       (`syncNow` in `src/sync/adapter.ts`, and `enhancedSync`) should
       require the online account to be the signed-in staff member
       (`currentCommandSender()`, as the command outbox does), not any
       online sign-in stored on the device. *Who: release owner.*
-- [ ] **Online sign-in can reactivate a staff record deactivated on this
-      device (decision 4 gap, for the owner of PR #126).** Online sign-in in
+- [x] **Online sign-in can reactivate a staff record deactivated on this
+      device (decision 4 gap, for the owner of PR #126).** *Fixed in the
+      staff session model PR: online sign-in is refused for such a record
+      and leaves it for the administrator's review.* Online sign-in in
       `src/stores/auth.ts` looks up the local record with
       `isActive === 1`, so a deactivated record is not found; it then writes
       a fresh, active user record with the same id (`db.users.put`) over the
       deactivated one, bypassing the admin review. *Who: owner of PR #126.*
-- [ ] **Delete the dead `src/services/supabaseSync.ts`.** Nothing imports
+- [x] **Delete the dead `src/services/supabaseSync.ts`.** *Deleted in the
+      staff session model PR.* Nothing imports
       it, and its `syncAll` is not gated on the signed-in staff member.
       *Who: release owner.*
 

@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { isSignedInStaffAccount } from "@/lib/cloudSession";
 import { db, OutboundMessage } from "../db";
 import { outboxDb } from "../db/outbox";
 import { composeSms } from "./messageTemplates";
@@ -147,6 +148,9 @@ async function staffAccessToken(): Promise<string | null> {
   if (!supabase) return null;
   try {
     const { data } = await supabase.auth.getSession();
+    // Only the signed-in staff member's own online sign-in, never another
+    // account's left in this browser.
+    if (!isSignedInStaffAccount(data?.session?.user?.id)) return null;
     return data?.session?.access_token ?? null;
   } catch (error) {
     console.warn("Could not read the online session:", errorName(error));

@@ -10,13 +10,19 @@
 
 import { supabase } from "@/lib/supabase";
 import { db, type User } from "@/db";
-import { accessFromAppUser, isDeactivatedAppUser } from "@/stores/auth";
+import { accessFromAppUser, endSessionIfRevoked, isDeactivatedAppUser } from "@/stores/auth";
 import { mergePulledRow } from "./pullMerge";
 
 type Row = Record<string, unknown>;
 
 /** Fields of a staff record that exist only on this device. */
-export const DEVICE_ONLY_STAFF_FIELDS = ["pinHash", "pinSalt", "pinEnrolledAt"] as const;
+export const DEVICE_ONLY_STAFF_FIELDS = [
+  "pinHash",
+  "pinSalt",
+  "pinEnrolledAt",
+  "lastOnlineVerifiedAt",
+  "permissionsCachedAt",
+] as const;
 
 /**
  * A server staff row in this device's shape. Never includes the device-only
@@ -132,6 +138,9 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
           createdAt: new Date(),
           updatedAt: new Date(),
           ...row,
+          // The role now on this device is the server's as of this download:
+          // offline sign-in uses it until the next one.
+          permissionsCachedAt: new Date(syncedAt),
         });
       }
 
@@ -157,6 +166,10 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
     );
     return { ok: false, reason: "error" };
   }
+
+  // The signed-in person may be among those just switched off, or their
+  // role may have changed: end or update their session now.
+  await endSessionIfRevoked();
 
   return { ok: true, staff: serverIds.size, deactivated };
 }
