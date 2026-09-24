@@ -126,6 +126,83 @@ async function endCloudSignIn(): Promise<void> {
   }
 }
 
+const STAFF_ROLES: ReadonlyArray<User["role"]> = [
+  "admin",
+  "doctor",
+  "nurse",
+  "pharmacist",
+  "volunteer",
+  "guest",
+];
+
+function asStaffRole(value: unknown): User["role"] | undefined {
+  return STAFF_ROLES.find((role) => role === value);
+}
+
+interface StaffProfile {
+  fullName?: string;
+  role?: User["role"];
+  adminAccess?: boolean;
+  adminPermanent?: boolean;
+}
+
+/**
+ * What the server knows about a staff member, for a device that has no local
+ * record of them yet. `app_users` is the staff directory (its id is the
+ * Supabase auth user id and every staff member can read it); `staff_roles`
+ * only holds the role and is kept as a fallback for accounts that predate
+ * the directory. Best effort: a failed read just leaves the field unset.
+ */
+async function readStaffProfile(
+  client: NonNullable<typeof supabase>,
+  authUserId: string,
+): Promise<StaffProfile> {
+  const profile: StaffProfile = {};
+
+  try {
+    const { data } = await client
+      .from("app_users")
+      .select("full_name, role, admin_access, admin_permanent")
+      .eq("id", authUserId)
+      .maybeSingle();
+    if (data) {
+      if (typeof data.full_name === "string" && data.full_name.trim()) {
+        profile.fullName = data.full_name.trim();
+      }
+      profile.role = asStaffRole(data.role);
+      if (typeof data.admin_access === "boolean") {
+        profile.adminAccess = data.admin_access;
+      }
+      if (typeof data.admin_permanent === "boolean") {
+        profile.adminPermanent = data.admin_permanent;
+      }
+    }
+  } catch (error) {
+    logger.warn(
+      "[Auth] Could not read the staff directory:",
+      error instanceof Error ? error.name : typeof error,
+    );
+  }
+
+  if (!profile.role) {
+    try {
+      const { data } = await client
+        .from("staff_roles")
+        .select("role")
+        .eq("auth_user_id", authUserId)
+        .maybeSingle();
+      profile.role = asStaffRole(data?.role);
+    } catch (error) {
+      logger.warn(
+        "[Auth] Could not read the staff role:",
+        error instanceof Error ? error.name : typeof error,
+      );
+    }
+  }
+
+  return profile;
+}
+
 /** The online sign-out started by the last logout, while it is still running. */
 let cloudSignOutInFlight: Promise<void> | null = null;
 
@@ -318,54 +395,32 @@ export const useAuthStore = create<AuthState>()(
             )
             .first();
 
-          // A new device (no local record) builds one from the server's
-          // staff record, app_users, which the database uses for every
-          // access decision. A record created that way earlier (same id as
-          // the online account) follows later role changes. Without a server
-          // record the account gets no access, never a default role.
-          // (User["role"] lists the roles created on devices; auditor and
-          // lead_clinician accounts come from the server.)
-          if (!user || user.id === data.user.id) {
-            const account = await readServerStaffAccount(data.user.id);
-            if (!user) {
-              const access =
-                account.status === "found" ? account : { role: "guest" as Role };
-              const newUser: User = {
-                id: data.user.id,
-                fullName:
-                  (account.status === "found" ? account.fullName : undefined) ??
-                  data.user.user_metadata?.full_name ??
-                  email.split("@")[0],
-                role: access.role as User["role"],
-                email: data.user.email ?? email,
-                pinHash: "",
-                pinSalt: "",
-                adminAccess: access.role === "admin",
-                adminPermanent: false,
-                isActive: 1,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              };
-              await db.users.put(newUser);
-              user = newUser;
-            } else if (account.status !== "error") {
-              // A failed lookup keeps the stored role; a missing or
-              // deactivated server record removes access.
-              const role = (account.status === "found" ? account.role : "guest") as User["role"];
-              const fullName =
-                (account.status === "found" ? account.fullName : undefined) ?? user.fullName;
-              if (role !== user.role || fullName !== user.fullName) {
-                const refreshed: User = {
-                  ...user,
-                  role,
-                  fullName,
-                  adminAccess: role === "admin",
-                  updatedAt: new Date(),
-                };
-                await db.users.put(refreshed);
-                user = refreshed;
-              }
-            }
+          // Not on this device yet (a new device, or a colleague's tablet):
+          // create the local record from the staff directory so the person
+          // can work here. They have no PIN on this device until they choose
+          // one (the login page offers that right after this sign-in).
+          if (!user) {
+            const profile = await readStaffProfile(supabase, data.user.id);
+            const role = profile.role ?? "volunteer";
+
+            const newUser: User = {
+              id: data.user.id,
+              fullName:
+                profile.fullName ??
+                data.user.user_metadata?.full_name ??
+                email.split("@")[0],
+              role,
+              email: data.user.email ?? email,
+              pinHash: "",
+              pinSalt: "",
+              adminAccess: profile.adminAccess ?? role === "admin",
+              adminPermanent: profile.adminPermanent ?? false,
+              isActive: 1,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            };
+            await db.users.put(newUser);
+            user = newUser;
           }
 
           const session: Session = {

@@ -36,14 +36,32 @@ port = 54324
 enabled = true
 
 [auth]
-# The URL that Supabase Auth redirects to after email confirmation.
-# Set this to your Vercel deployment URL in production.
+# Where Supabase Auth sends users when an email link's redirect URL is not on
+# the allow list below (and the default for links that name no redirect).
+# This file only configures the local stack (`supabase start`); the hosted
+# project is configured in the dashboard under Authentication -> URL
+# Configuration. Keep the two in step. See docs/PASSWORD_RECOVERY.md.
 site_url = "http://localhost:5173"
+# Every URL the app passes as redirectTo / emailRedirectTo must match an entry
+# here exactly or by wildcard, or Supabase silently falls back to site_url.
+# The reset link carries ?for=staff|patient, so its entry ends in `**`, which
+# matches a query string (`*` never crosses `.` or `/`). URLs on site_url's own
+# host are always accepted.
+# No wildcard hosts: Vercel hands out *.vercel.app project names and team slugs
+# first come, first served, so even "https://*-<team>.vercel.app/**" can be
+# claimed by a stranger and would receive this project's recovery tokens. A
+# reset link opened from a preview deployment falls back to site_url, where
+# the production app completes the reset.
+# Production is https://mbhr.app; m-bhr.vercel.app is the old Vercel alias,
+# which now redirects there (browsers keep the URL fragment, so the token
+# survives), and stays listed for links that were sent before the move.
 additional_redirect_urls = [
   "http://localhost:5173/auth/callback",
-  "https://*.vercel.app/auth/callback",
-  "http://localhost:5173/reset-password",
-  "https://*.vercel.app/reset-password",
+  "http://localhost:5173/reset-password**",
+  "https://mbhr.app/auth/callback",
+  "https://mbhr.app/reset-password**",
+  "https://m-bhr.vercel.app/auth/callback",
+  "https://m-bhr.vercel.app/reset-password**",
 ]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true

@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { mbhrDb } from "@/db/mbhr";
 import type { QueueItem, Patient } from "@/db";
+import { isAllergyActive } from "@/utils/allergyActive";
 
 export interface QueuePrediction {
   stage: string;
@@ -298,7 +299,7 @@ class PredictiveQueueSystem {
     const allergies = await db.patientAllergies
       .where("patientId")
       .equals(patient.id)
-      .and((a) => a.isActive === 1)
+      .and((a) => isAllergyActive(a))
       .toArray();
 
     if (allergies.some((a) => a.severity === "life-threatening")) score += 15;

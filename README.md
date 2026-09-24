@@ -35,19 +35,29 @@ npm run lint
 ## First Run Setup
 
 Production builds ship with no staff accounts, so the first time the app opens
-on a device it sends you to `/setup` to create the administrator:
+on a device the staff sign-in page (`/login`) explains that no account is
+stored there yet and offers two ways in:
 
-1. Open the app in your browser
-2. Enter the administrator's full name
-3. Choose and confirm a 6-digit PIN — it is stored only on this device and
+**Already have a staff account** (created on another device, with an online
+email/password login): choose **Online**, sign in with your email and
+password, and the sign-in adds you to this device. You are then offered a
+6-digit PIN for this device so later sign-ins work without internet; you can
+skip it and keep signing in online.
+
+**Setting up a new outreach**: choose **Set up this device** (`/setup`) to
+create the administrator:
+
+1. Enter the administrator's full name
+2. Choose and confirm a 6-digit PIN — it is stored only on this device and
    cannot be recovered, so write it down somewhere safe
-4. You are signed in automatically; add the rest of the staff from **Users**
-5. Add the outreach site(s) in **Outreach reports → Manage outreach sites**, then pick
+3. You are signed in automatically; add the rest of the staff from **Users**
+4. Add the outreach site(s) in **Outreach reports → Manage outreach sites**, then pick
    the active site from the selector at the top of the screen. Every new
    visit on the device is recorded against that site.
 
-The setup screen refuses to run once any active staff account exists, so it
-cannot be used to mint an admin on a device that is already provisioned. The
+The setup screen links back to sign-in, and it refuses to run once any active
+staff account exists, so it cannot be used to mint an admin on a device that
+is already provisioned. The
 first administrator is created as a *permanent* admin, and user management
 refuses any edit — a role change, a deactivation, a deletion — that would leave
 the device with no active administrator.
@@ -151,7 +161,8 @@ This migration creates all necessary tables, indexes, and Row Level Security pol
 
 ### A1: First Run Setup
 
-- A device with no staff account is redirected from `/login` to `/setup`
+- A device with no staff account shows both options on `/login`: online sign-in
+  with an existing account, and **Set up this device** (which links to `/setup`)
 - Create the admin with a confirmed 6-digit PIN
 - Create additional users
 - Login with offline PIN

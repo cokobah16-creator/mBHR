@@ -215,6 +215,19 @@ export default function FirstRunSetup() {
             >
               {saving ? "Creating account…" : "Create administrator"}
             </button>
+
+            <div className="border-t border-line pt-4 space-y-2">
+              <p className="text-caption text-ink-muted">
+                Already have a staff account? Sign in online with your email and
+                password to add yourself to this device.
+              </p>
+              <Link
+                to="/login"
+                className="btn-secondary w-full h-12 inline-flex items-center justify-center"
+              >
+                Sign in instead
+              </Link>
+            </div>
           </form>
         </div>
       </div>

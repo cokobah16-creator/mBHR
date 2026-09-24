@@ -17,6 +17,11 @@ import { safeOpenDb } from "./db/safeOpen";
 import { log, error } from "@/lib/logger";
 import { runMigrations } from "@/db/migrations/migration-runner";
 
+// URLs can carry secrets: a query string (a sign-in code) or a fragment
+// (Supabase puts password-recovery access and refresh tokens in the hash).
+// Error reports keep only the path.
+const stripUrlSecrets = (url: string) => url.split(/[?#]/)[0];
+
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
@@ -52,8 +57,12 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       }
       return breadcrumb;
     },
+    beforeSendTransaction(event) {
+      if (event.request?.url) event.request.url = stripUrlSecrets(event.request.url);
+      return event;
+    },
     beforeSend(event, _hint) {
-      if (event.request?.url) event.request.url = event.request.url.split("?")[0];
+      if (event.request?.url) event.request.url = stripUrlSecrets(event.request.url);
       if (event.request) {
         delete event.request.query_string;
         delete event.request.data;
