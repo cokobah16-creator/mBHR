@@ -52,8 +52,12 @@ if (import.meta.env.VITE_SENTRY_DSN) {
         }
         if (breadcrumb.data) delete breadcrumb.data["ui.component_name"];
       }
-      if (breadcrumb.data && typeof breadcrumb.data.url === "string") {
-        breadcrumb.data.url = breadcrumb.data.url.split("?")[0];
+      if (breadcrumb.data) {
+        for (const key of ["url", "from", "to"]) {
+          if (typeof breadcrumb.data[key] === "string") {
+            breadcrumb.data[key] = stripUrlSecrets(breadcrumb.data[key]);
+          }
+        }
       }
       return breadcrumb;
     },
