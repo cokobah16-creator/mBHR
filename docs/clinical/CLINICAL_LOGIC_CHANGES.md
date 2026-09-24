@@ -52,3 +52,97 @@ was changed.** `flagVitals` thresholds, `vitalsRanges` and the rules in
 - **Patient-editable clinical fields**: the portal's Update health record lets patients edit blood type and medical notes on the clinical patient row (these columns do not exist in the current schema, so saves fail and say so). Decide whether they should be staff-only.
 - **Lab result interpretation default in the database**: `lab_results.interpretation` is `NOT NULL DEFAULT 'normal'` in the migrations, so any writer that omits the field files the result as normal. The staff app always sends a chosen value (row 15); the default should be dropped so the database rejects an omitted interpretation.
 - **Urgent status after vitals** (see "Queue priority" above): owner decision is that triage escalation must persist until an authorised clinician deliberately downgrades it, with reason, time and user recorded. A separate change (`services/queuePriority.ts`, `services/queueManagement.ts`) carries priority between stages; it is not described in the table above yet. Keep this item open until that change is documented here and reviewed by a clinician.
+
+## Wave B: questions for clinical review
+
+Wave B (September 2026) moved portal access, queue tickets and queue
+status, patient merges, pharmacy stock and lab result release to the server
+(`supabase/migrations/20260925100100` to `20260925100500`). The package
+authors report that no reference range, alert threshold, dosing rule,
+triage rule or interpretation rule was changed. The items below are
+behaviours that need a clinician's decision or confirmation. Tick an item
+only when a clinician has decided it, and write the decision next to it.
+
+- [ ] **Who may lower a patient's queue priority.** The server applies a
+      priority downgrade only when the role recorded on the device holds
+      `consult` (doctor, lead clinician, admin), and the uploading account
+      also holds `consult` or the recorded user is a clinician on the
+      server. Raising priority is open to every queue role. Confirm that
+      downgrading urgent status is clinician-only. (`services/queuePriority.ts`;
+      server: `tg_queue_transition_apply` in `20260925100200`)
+- [ ] **Long-wait escalation clock.** `checkStaleQueues` measures the wait
+      from `updatedAt` (the last change to the queue row), not from
+      `queuedAt`. A patient who was called and re-queued, or whose priority
+      changed, starts the 60-minute clock again. Decide whether escalation
+      should count from `queuedAt`. (`services/queueManagement.ts`
+      `checkStaleQueues`)
+- [ ] **Urgent patients stay ahead in the queue.** "Move to front" and the
+      long-wait escalation could place a normal or low priority ticket
+      ahead of waiting urgent patients; they no longer do. Urgent tickets
+      are still placed ahead of every waiting non-urgent ticket. Confirm.
+      (`services/queueManagement.ts`)
+- [ ] **Unknown lab interpretation in the review worklist.** A result with a
+      missing or unknown interpretation is ranked with abnormal (above
+      normal, below critical), and the worklist banner counts these results.
+      Decide whether it should rank with critical.
+      (`features/labs/labWorklist.ts`)
+- [ ] **Portal wording for lab results.** Patients see "In the usual range"
+      (normal), "Outside the usual range" (abnormal), "Needs prompt
+      attention" (critical) and "Ask the clinic about this result" (missing
+      or unknown). Display only: the interpretation is still chosen by the
+      person who records the result. Approve or change the wording.
+      (`features/patient-portal/portalStatus.ts` `portalLabInterpretationInfo`)
+- [ ] **Advice shown with a lab result.** New patient-facing copy, for
+      example for a critical result: "This result needs prompt attention.
+      Contact the clinic or the outreach team as soon as you can. If you
+      feel very unwell, go to the nearest hospital." Approve or replace the
+      advice for each interpretation. (`features/patient-portal/portalStatus.ts`
+      `portalLabAdvice`)
+- [ ] **Results reviewed before release existed.** Results already reviewed
+      when `20260925100500` is applied are not released to the portal
+      automatically. Releasing them in bulk is a clinical decision (one
+      `lab_release_result` call per result). Old results with no recorded
+      interpretation cannot be released at all until a new result is
+      entered (the server refuses with `no_interpretation`). Decide how to
+      handle both.
+- [ ] **Releasing a withheld result.** A clinician with `lab_release` may
+      release a result that was withheld earlier. The dashboard offers it
+      only when nothing else on the order is waiting and warns first; the
+      server allows it at any time. Confirm.
+- [ ] **No database default of "normal".** `20260925100500` drops the
+      `lab_results.interpretation` default, so a writer that leaves the
+      interpretation out is refused instead of filing the result as normal
+      (see "Lab result interpretation default in the database" above).
+      Confirm.
+- [ ] **Nurse prescribing.** The app lets nurses write prescriptions
+      (`/rx/new`, `canPrescribe` in `services/pharmacyCommands.ts`), but the
+      server accepts a new prescription only from `consult` holders. A
+      nurse's prescription reaches the server only when a prescriber syncs
+      on the same device, or with the dispense that carries it. Decide
+      whether nurses may prescribe (then the server rule changes) or not
+      (then the app should stop offering it).
+- [ ] **Offline dispensing that stock does not cover.** When medicine was
+      handed over offline and the server's in-date stock cannot cover it,
+      the server records the full handover, takes what stock it can and
+      files the rest in `stock_discrepancies`. It never refuses medicine
+      already given. The pharmacist must count the lots and mark each
+      discrepancy reconciled, which needs a connection. Confirm this
+      process and who reconciles.
+- [ ] **Offline handover the server refuses for another reason.** If the
+      prescription was already dispensed or voided, or its lines differ,
+      the device removes its dispense rows; the handover (possibly a
+      duplicate) is kept only in Conflicts and a "Refused by the server"
+      badge. The allergy-override audit entry is kept even when the server
+      refuses. Decide whether the server should record an offline handover
+      in these cases too.
+- [ ] **Lot expiry near midnight.** The device treats a lot as expired from
+      the start of its expiry day in the device's time zone; the server uses
+      the Africa/Lagos date. They agree on devices set to Nigerian time.
+      Confirm that devices must be set to West Africa Time (otherwise the
+      server may refuse a lot the device showed as usable near midnight; the
+      pharmacist sees the reason).
+- [ ] **Allergies and preferences when records are merged.** Allergies from
+      both records end up on the kept record. A patient's preferences (and
+      data-sharing preferences) move only when the kept record has none;
+      otherwise the merged-away record keeps its own and they are not
+      combined field by field. Decide whether that is acceptable.
