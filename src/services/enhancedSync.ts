@@ -581,7 +581,7 @@ export class EnhancedSync {
           severity: r.severity,
           onsetDate: r.onset_date ? new Date(r.onset_date) : undefined,
           notes: r.notes,
-          isActive: r.is_active,
+          isActive: toAllergyActiveFlag(r.is_active),
           createdBy: r.created_by,
           createdAt: new Date(r.created_at),
           updatedAt: new Date(r.updated_at),

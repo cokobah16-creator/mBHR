@@ -1,5 +1,6 @@
 import { db, generateId, type PatientAllergy } from "../db";
 import { matchMedicationToAllergen } from "@/utils/allergyMatch";
+import { isAllergyActive } from "@/utils/allergyActive";
 
 export interface CreateAllergyInput {
   patientId: string;
@@ -85,7 +86,7 @@ export const getPatientAllergies = async (
   const query = db.patientAllergies.where("patientId").equals(patientId);
 
   if (activeOnly) {
-    return query.filter((a) => a.isActive === 1).toArray();
+    return query.filter((a) => isAllergyActive(a)).toArray();
   }
 
   return query.toArray();
@@ -97,7 +98,7 @@ export const getActiveAllergies = async (
   return db.patientAllergies
     .where("patientId")
     .equals(patientId)
-    .filter((a) => a.isActive === 1)
+    .filter((a) => isAllergyActive(a))
     .toArray();
 };
 
@@ -113,7 +114,7 @@ export const getMedicationAllergies = async (
   return db.patientAllergies
     .where("patientId")
     .equals(patientId)
-    .filter((a) => a.isActive === 1 && a.allergyType === "medication")
+    .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
     .toArray();
 };
 
@@ -125,7 +126,7 @@ export const getSevereAllergies = async (
     .equals(patientId)
     .filter(
       (a) =>
-        a.isActive === 1 &&
+        isAllergyActive(a) &&
         (a.severity === "severe" || a.severity === "life-threatening"),
     )
     .toArray();
@@ -151,7 +152,7 @@ export const hasActiveAllergies = async (
   const count = await db.patientAllergies
     .where("patientId")
     .equals(patientId)
-    .filter((a) => a.isActive === 1)
+    .filter((a) => isAllergyActive(a))
     .count();
 
   return count > 0;
@@ -162,33 +163,33 @@ export const getAllergyStats = async (patientId: string) => {
 
   return {
     total: allergies.length,
-    active: allergies.filter((a) => a.isActive === 1).length,
-    inactive: allergies.filter((a) => a.isActive === 0).length,
+    active: allergies.filter((a) => isAllergyActive(a)).length,
+    inactive: allergies.filter((a) => !isAllergyActive(a)).length,
     byType: {
       medication: allergies.filter(
-        (a) => a.allergyType === "medication" && a.isActive === 1,
+        (a) => a.allergyType === "medication" && isAllergyActive(a),
       ).length,
       food: allergies.filter(
-        (a) => a.allergyType === "food" && a.isActive === 1,
+        (a) => a.allergyType === "food" && isAllergyActive(a),
       ).length,
       environmental: allergies.filter(
-        (a) => a.allergyType === "environmental" && a.isActive === 1,
+        (a) => a.allergyType === "environmental" && isAllergyActive(a),
       ).length,
       other: allergies.filter(
-        (a) => a.allergyType === "other" && a.isActive === 1,
+        (a) => a.allergyType === "other" && isAllergyActive(a),
       ).length,
     },
     bySeverity: {
-      mild: allergies.filter((a) => a.severity === "mild" && a.isActive === 1)
+      mild: allergies.filter((a) => a.severity === "mild" && isAllergyActive(a))
         .length,
       moderate: allergies.filter(
-        (a) => a.severity === "moderate" && a.isActive === 1,
+        (a) => a.severity === "moderate" && isAllergyActive(a),
       ).length,
       severe: allergies.filter(
-        (a) => a.severity === "severe" && a.isActive === 1,
+        (a) => a.severity === "severe" && isAllergyActive(a),
       ).length,
       lifeThreatening: allergies.filter(
-        (a) => a.severity === "life-threatening" && a.isActive === 1,
+        (a) => a.severity === "life-threatening" && isAllergyActive(a),
       ).length,
     },
   };

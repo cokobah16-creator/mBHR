@@ -7,6 +7,7 @@ import { PatientFlowStepper } from "@/components/patient/PatientFlowStepper";
 import { derivePatientFlow, FLOW_STAGE_LABELS, currentFlowStage } from "@/services/patientFlow";
 import { formatPatientId, patientAge } from "@/utils/patient";
 import { classifyBloodPressure, classifySpO2, classifyTemperature } from "@/utils/vitals";
+import { isAllergyActive } from "@/utils/allergyActive";
 
 const SEX_LABEL: Record<string, string> = {
   male: "Male",
@@ -47,7 +48,7 @@ export function PatientContextHeader({
         db.patientAllergies
           .where("patientId")
           .equals(patientId)
-          .filter((a) => a.isActive === 1)
+          .filter((a) => isAllergyActive(a))
           .toArray()
           .catch(() => []),
         db.vitals.where("patientId").equals(patientId).toArray(),
