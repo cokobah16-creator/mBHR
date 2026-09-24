@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { db } from "../db";
 import { PendingOperation, processQueue } from "../stores/operationsQueue";
 import { useSyncStore } from "../stores/syncStore";
+import { toAllergyActiveFlag } from "../utils/allergyActive";
 import {
   ConflictData,
   ConflictField,
@@ -401,6 +402,10 @@ export async function pullChanges() {
     let maxTs = since;
     for (const row of data ?? []) {
       const mapped = fromDB(row, mapFromDB[t]);
+      // The server column is boolean; the app expects the 0/1 flag.
+      if (t === "patient_allergies") {
+        mapped.isActive = toAllergyActiveFlag(mapped.isActive);
+      }
       // Queue rows carry device-local fields the column map does not sync
       // (assignee, ticket number, priority); lay the remote row over the
       // local one instead of replacing it, so those survive a pull.
