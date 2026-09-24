@@ -85,6 +85,16 @@ export default function PrivacyPolicy() {
         <p>We do not sell your information or use it for advertising.</p>
       </LegalSection>
 
+      <LegalSection title="Children">
+        <p>
+          We hold records for children seen at our clinics. You must be 18 or
+          older to create your own portal account, and we check the date of
+          birth you enter. When you sign up or log in, we do not link your
+          account to a clinic record whose date of birth shows the person is
+          under 18.
+        </p>
+      </LegalSection>
+
       <LegalSection title="Cookies and device storage">
         <p>
           mBHR does not use advertising or analytics cookies. It stores data

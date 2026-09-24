@@ -15,9 +15,11 @@ import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
 import {
   ACCEPTANCE_REQUIRED_MESSAGE,
+  UNDER_18_SIGN_UP_MESSAGE,
   currentPolicyAcceptance,
   type PolicyAcceptance,
 } from "@/pages/legal/policyMeta";
+import { isMinor } from "@/utils/patient";
 import { AuthShell } from "./account/AuthShell";
 
 // Three separate, required boxes. Each starts unticked and is asked for on
@@ -37,6 +39,23 @@ const consentFields = {
 
 type ConsentField = keyof typeof consentFields;
 
+const INVALID_DOB_MESSAGE =
+  "Please enter a real date of birth. It cannot be in the future.";
+
+// Required in both modes. People under 18 cannot create their own account:
+// a parent or guardian adds them from their own account instead.
+const dateOfBirthField = z.string().superRefine((value, ctx) => {
+  const fail = (message: string) =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+  if (!value) return fail("Date of birth is required");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return fail("Please enter your date of birth as YYYY-MM-DD");
+  }
+  const minor = isMinor(value);
+  if (minor === null) return fail(INVALID_DOB_MESSAGE);
+  if (minor) fail(UNDER_18_SIGN_UP_MESSAGE);
+});
+
 // Online: password-based auth via Supabase
 const onlineSchema = z
   .object({
@@ -47,11 +66,7 @@ const onlineSchema = z
       .regex(/^\+?[\d\s-]{7,}$/, "Invalid phone number")
       .optional()
       .or(z.literal("")),
-    dateOfBirth: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
-      .optional()
-      .or(z.literal("")),
+    dateOfBirth: dateOfBirthField,
     password: z.string().min(8, "Password must be at least 8 characters"),
     confirmPassword: z.string(),
     ...consentFields,
@@ -71,12 +86,7 @@ const offlineSchema = z
       .regex(/^\+?[\d\s-]{7,}$/, "Invalid phone number")
       .optional()
       .or(z.literal("")),
-    dateOfBirth: z
-      .string()
-      .regex(
-        /^\d{4}-\d{2}-\d{2}$/,
-        "Please enter your date of birth as YYYY-MM-DD",
-      ),
+    dateOfBirth: dateOfBirthField,
     pin: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
     confirmPin: z.string(),
     ...consentFields,
@@ -142,7 +152,7 @@ export function PatientRegister() {
       givenName,
       familyName,
       phone: data.phone || undefined,
-      dob: data.dateOfBirth || undefined,
+      dob: data.dateOfBirth,
       acceptance,
     });
     if (authError) {
@@ -199,12 +209,12 @@ export function PatientRegister() {
     const givenName = parts[0] ?? data.fullName;
     const familyName = parts.slice(1).join(" ") || "";
 
-    // dateOfBirth and pin are required in offline mode (enforced by offlineSchema)
+    // pin is required in offline mode (enforced by offlineSchema)
     const offlineData = data as z.infer<typeof offlineSchema>;
     const result = await registerPatientPortalAccount(
       data.phone || undefined,
       data.email,
-      data.dateOfBirth!,
+      data.dateOfBirth,
       givenName,
       familyName,
       offlineData.pin,
@@ -228,6 +238,13 @@ export function PatientRegister() {
     // this is where the acceptance that gets saved with the account is made.
     if (!data.acceptTerms || !data.acceptPrivacy || !data.consentRecordsAccess) {
       setError(ACCEPTANCE_REQUIRED_MESSAGE);
+      return;
+    }
+    // The schema already refuses people under 18 and unusable dates. Check
+    // again here too, right before an account is made.
+    const minor = isMinor(data.dateOfBirth);
+    if (minor !== false) {
+      setError(minor ? UNDER_18_SIGN_UP_MESSAGE : INVALID_DOB_MESSAGE);
       return;
     }
     const acceptance = currentPolicyAcceptance();
@@ -402,7 +419,7 @@ export function PatientRegister() {
               {isSupabaseEnabled && (
                 <div>
                   <label htmlFor="dateOfBirth" className="field-label">
-                    Date of Birth (optional)
+                    Date of Birth *
                   </label>
                   <input
                     {...form.register("dateOfBirth")}
@@ -410,11 +427,17 @@ export function PatientRegister() {
                     id="dateOfBirth"
                     className="input-field"
                     disabled={loading}
+                    autoComplete="bday"
+                    aria-required="true"
                     aria-invalid={invalid("dateOfBirth")}
                     aria-describedby={describe(
+                      "dateOfBirth-hint",
                       !!errorText("dateOfBirth") && "dateOfBirth-error",
                     )}
                   />
+                  <p id="dateOfBirth-hint" className="field-hint">
+                    You must be 18 or older to create your own account.
+                  </p>
                   {fieldError("dateOfBirth")}
                 </div>
               )}
@@ -442,7 +465,8 @@ export function PatientRegister() {
                     )}
                   />
                   <p id="dateOfBirth-hint" className="field-hint">
-                    Used to match you to your clinic record.
+                    Used to match you to your clinic record. You must be 18
+                    or older to create your own account.
                   </p>
                   {fieldError("dateOfBirth")}
                 </div>

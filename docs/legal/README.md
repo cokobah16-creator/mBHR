@@ -11,6 +11,18 @@ two versions they accepted and the time. Online this is stored with the
 sign-in account (Supabase user metadata); offline it is stored with the
 account on the device. Nothing is written to `patient_consent_records` yet.
 
+Portal accounts are for adults. Sign-up asks for a date of birth, online
+and offline, and refuses anyone under 18 (`isMinor` in
+`src/utils/patient.ts`). Sign-up and login never link an account to a
+clinic record whose date of birth shows the person is under 18: the online
+sign-up and email lookup (`src/hooks/useAuth.ts`,
+`src/services/patientService.ts`) and the offline registration and
+date-of-birth login (`src/services/patientPortalAuth.ts`) all refuse. A
+record with no date of birth still links, and accounts already linked to a
+child's record are not changed. Staff can still turn on portal access for a
+child's record, and there is no guardian record or guardian consent yet
+(checklist item 17).
+
 Both were written to describe what the code actually does. **Neither has
 been reviewed by a lawyer.** Before relying on them, have a qualified
 Nigerian lawyer review them against at least:

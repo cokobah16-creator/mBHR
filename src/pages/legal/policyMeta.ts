@@ -27,6 +27,20 @@ export interface PolicyAcceptance {
 export const ACCEPTANCE_REQUIRED_MESSAGE =
   "Please tick all three boxes to create your account.";
 
+// Portal accounts are for adults (isMinor in src/utils/patient.ts). The
+// privacy notice says so; change it in the same commit as these rules.
+
+/** Shown when someone under 18 tries to create their own portal account. */
+export const UNDER_18_SIGN_UP_MESSAGE =
+  "You must be 18 or older to create your own account. Ask a parent or guardian to add you from their own account. They can find out how under People you care for.";
+
+/**
+ * Shown instead of linking a new portal account, or a sign-in, to a clinic
+ * record that belongs to someone under 18.
+ */
+export const MINOR_RECORD_LINK_MESSAGE =
+  "This email or phone number is on a clinic record for someone under 18. We cannot link a child's record to an account this way. A parent or guardian can find out how to add a child under People you care for in their own account. For help, ask clinic staff.";
+
 /** The acceptance to record for a patient who ticks the boxes now. */
 export function currentPolicyAcceptance(now: Date = new Date()): PolicyAcceptance {
   return {

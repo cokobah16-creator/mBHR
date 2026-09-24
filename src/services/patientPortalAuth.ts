@@ -3,6 +3,9 @@
  *
  * Offline-first patient portal auth backed by Dexie + localStorage.
  * Supports login via contact+DOB or contact+PIN (6-digit, SHA-256 hashed).
+ * Accounts are for adults: registration refuses anyone under 18, and neither
+ * registration nor the date-of-birth login fallback links an account to a
+ * clinic record for someone under 18.
  */
 
 import { db } from "@/db";
@@ -10,9 +13,12 @@ import { supabase } from "@/lib/supabase";
 import { normalizePhone } from "@/utils/phone";
 import * as logger from "@/lib/logger";
 import { derivePinHash, newSaltB64, verifyPin } from "@/utils/pin";
+import { isMinor } from "@/utils/patient";
 import type { PatientPortalAuthResponse } from "@/types/patientPortal";
 import {
   ACCEPTANCE_REQUIRED_MESSAGE,
+  MINOR_RECORD_LINK_MESSAGE,
+  UNDER_18_SIGN_UP_MESSAGE,
   isCompleteAcceptance,
   type PolicyAcceptance,
 } from "@/pages/legal/policyMeta";
@@ -121,6 +127,8 @@ function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
  * `acceptance` is what the patient ticked on the sign-up form (terms of use,
  * privacy notice and portal access to records). It is stored with the
  * account, and registration is refused without it.
+ * Registration is also refused for anyone under 18, and when the matching
+ * clinic record belongs to someone under 18.
  */
 export async function registerPatientPortalAccount(
   phone: string | undefined,
@@ -140,6 +148,13 @@ export async function registerPatientPortalAccount(
     }
     if (!dob) {
       return { success: false, error: "Date of birth is required." };
+    }
+    const registrantIsMinor = isMinor(dob);
+    if (registrantIsMinor === null) {
+      return { success: false, error: "Please enter a real date of birth." };
+    }
+    if (registrantIsMinor) {
+      return { success: false, error: UNDER_18_SIGN_UP_MESSAGE };
     }
     if (!pin || !/^\d{6}$/.test(pin)) {
       return { success: false, error: "A 6-digit PIN is required." };
@@ -188,6 +203,11 @@ export async function registerPatientPortalAccount(
           .maybeSingle();
 
         if (match) {
+          // Checked first, so a parent whose contact is on their child's
+          // record is told why, instead of being asked to recheck a date.
+          if (isMinor(match.dob) === true) {
+            return { success: false, error: MINOR_RECORD_LINK_MESSAGE };
+          }
           if (!match.portal_enabled) {
             return {
               success: false,
@@ -236,6 +256,9 @@ export async function registerPatientPortalAccount(
       );
 
       if (localMatch) {
+        if (isMinor(localMatch.dob) === true) {
+          return { success: false, error: MINOR_RECORD_LINK_MESSAGE };
+        }
         if (!localMatch.portalEnabled) {
           return {
             success: false,
@@ -406,6 +429,10 @@ export async function loginPatientPortal(
         }
 
         if (localPatient) {
+          // Never create a portal account for a child's record at login.
+          if (isMinor(localPatient.dob) === true) {
+            return { success: false, error: MINOR_RECORD_LINK_MESSAGE };
+          }
           if (method === "pin") {
             return {
               success: false,

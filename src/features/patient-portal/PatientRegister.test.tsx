@@ -39,7 +39,11 @@ vi.mock("@/services/patientService", () => ({
 
 import { PatientRegister } from "./PatientRegister";
 import { registerPatientPortalAccount } from "@/services/patientPortalAuth";
-import { PRIVACY_VERSION, TERMS_VERSION } from "@/pages/legal/policyMeta";
+import {
+  PRIVACY_VERSION,
+  TERMS_VERSION,
+  UNDER_18_SIGN_UP_MESSAGE,
+} from "@/pages/legal/policyMeta";
 
 let sessionStore: Record<string, string> = {};
 vi.stubGlobal("sessionStorage", {
@@ -85,6 +89,11 @@ function consentBox(id: string) {
 
 function tickConsents(ids: string[] = CONSENT_BOX_IDS) {
   for (const id of ids) fireEvent.click(consentBox(id));
+}
+
+/** 1 January, ten years ago: someone under 18 whatever today's date is. */
+function childDob(): string {
+  return `${new Date().getFullYear() - 10}-01-01`;
 }
 
 function fillValidForm() {
@@ -304,5 +313,55 @@ describe("PatientRegister (offline mode)", () => {
     expect(acceptance.termsVersion).toBe(TERMS_VERSION);
     expect(acceptance.privacyVersion).toBe(PRIVACY_VERSION);
     expect(Date.parse(acceptance.acceptedAt)).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it("requires a date of birth", async () => {
+    renderRegister();
+    fillValidForm();
+    fireEvent.change(screen.getByLabelText(/date of birth/i), {
+      target: { value: "" },
+    });
+    tickConsents();
+    fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Date of birth is required")).toBeTruthy();
+    });
+    expect(registerPatientPortalAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not create an account for someone under 18", async () => {
+    renderRegister();
+    fillValidForm();
+    fireEvent.change(screen.getByLabelText(/date of birth/i), {
+      target: { value: childDob() },
+    });
+    tickConsents();
+    fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(UNDER_18_SIGN_UP_MESSAGE)).toBeTruthy();
+    });
+    // The message points to the caregiver option in a parent's account.
+    expect(UNDER_18_SIGN_UP_MESSAGE).toMatch(/people you care for/i);
+    expect(
+      screen.getByLabelText(/date of birth/i).getAttribute("aria-invalid"),
+    ).toBe("true");
+    expect(registerPatientPortalAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a date of birth in the future", async () => {
+    renderRegister();
+    fillValidForm();
+    fireEvent.change(screen.getByLabelText(/date of birth/i), {
+      target: { value: `${new Date().getFullYear() + 1}-01-01` },
+    });
+    tickConsents();
+    fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/real date of birth/i)).toBeTruthy();
+    });
+    expect(registerPatientPortalAccount).not.toHaveBeenCalled();
   });
 });
