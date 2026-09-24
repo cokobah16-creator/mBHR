@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
-import * as logger from "@/lib/logger";
 import {
   ArrowLeftIcon,
   ArrowPathIcon,
@@ -11,33 +10,30 @@ import {
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
-import { formatPortalDate, labHasResult, labStatusInfo } from "./portalStatus";
-import { readPortalUser } from "./portalSession";
+import {
+  formatPortalDate,
+  labStatusInfo,
+  portalLabAdvice,
+  portalLabInterpretationInfo,
+  portalLabLoadNotice,
+} from "./portalStatus";
+import { readActiveProfile, readPortalUser, resolveActivePatientId } from "./portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-
-interface LabResult {
-  id: string;
-  test_name: string;
-  test_type: string;
-  result_value: string;
-  unit: string;
-  reference_range: string;
-  status: "pending" | "completed" | "reviewed";
-  ordered_date: string;
-  result_date?: string;
-  notes?: string;
-  abnormal: boolean;
-}
+import { fetchMyReleasedLabResults } from "@/services/portalLabResults";
+import type { PortalLabResult, PortalLabResultsStatus } from "@/types/patientPortal";
 
 const PAGE_TITLE = "Lab results";
 const PAGE_DESCRIPTION =
-  "Tests the clinic has added to your portal, newest first. A result shows once the clinic enters it.";
+  "Test results the clinic has checked and shared with you, newest first. A result shows here only after a clinician has reviewed it and released it to your portal.";
 
-/** Shown only when the record itself marks the result as abnormal. */
-function OutsideRangeBadge() {
+// Every result the portal receives has been reviewed and released.
+const RELEASED = labStatusInfo("released");
+
+function InterpretationBadge({ interpretation }: { interpretation: string }) {
+  const info = portalLabInterpretationInfo(interpretation);
   return (
-    <StatusBadge tone="warning" icon>
-      Outside the usual range
+    <StatusBadge tone={info.tone} icon>
+      {info.label}
     </StatusBadge>
   );
 }
@@ -45,67 +41,54 @@ function OutsideRangeBadge() {
 export function LabResults() {
   const navigate = useNavigate();
   const online = useOnlineStatus();
-  const [results, setResults] = useState<LabResult[]>([]);
+  const [results, setResults] = useState<PortalLabResult[]>([]);
+  const [status, setStatus] = useState<PortalLabResultsStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState("");
-  const [selectedResult, setSelectedResult] = useState<LabResult | null>(null);
+  const [selectedResult, setSelectedResult] = useState<PortalLabResult | null>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const lastOpenedId = useRef<string | null>(null);
+  const requestRef = useRef(0);
+  const loadedRef = useRef(false);
 
   const loadLabResults = useCallback(async () => {
-    if (!supabase) {
-      setLoading(false);
+    const portalUser = readPortalUser();
+    if (!portalUser) {
+      navigate("/patient/login", { replace: true });
       return;
     }
+    const request = ++requestRef.current;
     setLoading(true);
-    setError("");
-
-    try {
-      const portalUser = readPortalUser();
-      if (!portalUser) {
-        navigate("/patient/login", { replace: true });
-        return;
-      }
-
-      const { data, error: resultsError } = await supabase
-        .from("patient_lab_results")
-        .select("*")
-        .eq("patient_id", portalUser.patientId)
-        .order("ordered_date", { ascending: false });
-
-      if (resultsError) throw resultsError;
-
-      setResults(data || []);
+    // Only the signed-in account's own records (or a managed profile listed
+    // on it); the server checks ownership again.
+    const patientId = resolveActivePatientId(portalUser, readActiveProfile());
+    // accountId: if this phone is signed in online as someone else, say
+    // "sign in" rather than showing their (empty) list as this patient's.
+    const outcome = await fetchMyReleasedLabResults({
+      patientId: patientId || undefined,
+      accountId: portalUser.id || undefined,
+    });
+    if (request !== requestRef.current) return;
+    setStatus(outcome.status);
+    if (outcome.status === "ok") {
+      // Held in this page only; lab results are never saved on the phone.
+      setResults(outcome.results);
+      loadedRef.current = true;
       setLoaded(true);
-    } catch (err) {
-      logger.error(
-        "Error loading lab results:",
-        err instanceof Error ? err.name : "unknown",
-      );
-      // Offline, the "You are offline" notice already explains it.
-      setError(
-        navigator.onLine
-          ? "We could not load your lab results. Please try again."
-          : "",
-      );
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, [navigate]);
 
-  // Try once even when offline (this phone may have kept a copy from the last
-  // time it was online), then reload when the connection comes back.
-  const attempted = useRef(false);
-
+  // Load on arrival and again when the connection comes back.
   useEffect(() => {
     if (!supabase) {
       setLoading(false);
       return;
     }
-    if (!online && attempted.current) return;
-    attempted.current = true;
-    loadLabResults();
+    // Offline after a load: keep the list shown rather than replace it
+    // with the offline notice. It reloads when the connection returns.
+    if (!online && loadedRef.current) return;
+    void loadLabResults();
   }, [online, loadLabResults]);
 
   // Move focus with the view so keyboard and screen-reader users follow it.
@@ -113,24 +96,21 @@ export function LabResults() {
     if (selectedResult) {
       detailHeadingRef.current?.focus();
     } else if (lastOpenedId.current) {
-      document
-        .getElementById(`lab-result-${lastOpenedId.current}`)
-        ?.focus();
+      document.getElementById(`lab-result-${lastOpenedId.current}`)?.focus();
     }
   }, [selectedResult]);
 
-  const openResult = (result: LabResult) => {
-    lastOpenedId.current = result.id;
+  const openResult = (result: PortalLabResult) => {
+    lastOpenedId.current = result.resultId;
     setSelectedResult(result);
   };
 
   if (!supabase) {
+    const notice = portalLabLoadNotice("unavailable");
     return (
       <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
-        <PortalNotice tone="info" title="Lab results are not available here">
-          This portal is not connected to the clinic&apos;s online records, so
-          lab results cannot be shown. Ask the outreach team about your results
-          at your next visit.
+        <PortalNotice tone="info" title={notice?.title}>
+          {notice?.body}
         </PortalNotice>
       </PortalPage>
     );
@@ -141,8 +121,7 @@ export function LabResults() {
   }
 
   if (selectedResult) {
-    const status = labStatusInfo(selectedResult.status);
-    const hasResult = labHasResult(selectedResult.status);
+    const advice = portalLabAdvice(selectedResult.interpretation);
     return (
       <PortalPage title={PAGE_TITLE}>
         <button
@@ -163,170 +142,156 @@ export function LabResults() {
                 tabIndex={-1}
                 className="text-h2 text-ink focus:outline-none"
               >
-                {selectedResult.test_name}
+                {selectedResult.testName}
               </h2>
-              {selectedResult.test_type && (
+              {selectedResult.specimenType && (
                 <p className="text-body text-ink-muted">
-                  {selectedResult.test_type}
+                  Sample: {selectedResult.specimenType}
                 </p>
               )}
             </div>
-            <StatusBadge tone={status.tone} icon>
-              {status.label}
+            <StatusBadge tone={RELEASED.tone} icon>
+              {RELEASED.label}
             </StatusBadge>
           </div>
 
           <div className="panel-body space-y-4">
             <p className="text-body text-ink-secondary">
-              Ordered on {formatPortalDate(selectedResult.ordered_date)}
-              {selectedResult.result_date && (
-                <>
-                  . Result recorded on{" "}
-                  {formatPortalDate(selectedResult.result_date)}
-                </>
+              {selectedResult.orderedAt && (
+                <>Ordered on {formatPortalDate(selectedResult.orderedAt)}. </>
               )}
-              .
+              {selectedResult.resultDate && (
+                <>Result recorded on {formatPortalDate(selectedResult.resultDate)}. </>
+              )}
+              {selectedResult.releasedAt && (
+                <>Shared with you on {formatPortalDate(selectedResult.releasedAt)}.</>
+              )}
             </p>
 
-            {hasResult ? (
-              <div className="rounded-lg border border-line bg-surface-sunken p-4">
-                <p className="text-label text-ink-secondary">Your result</p>
-                <p className="mt-1 text-display tabular-nums text-ink">
-                  {selectedResult.result_value || "—"}
-                  {selectedResult.unit && (
-                    <span className="ml-2 text-body font-normal text-ink-muted">
-                      {selectedResult.unit}
-                    </span>
-                  )}
+            <div className="rounded-lg border border-line bg-surface-sunken p-4">
+              <p className="text-label text-ink-secondary">Your result</p>
+              <p className="mt-1 text-display tabular-nums text-ink">
+                {selectedResult.resultValue || "—"}
+                {selectedResult.resultUnit && (
+                  <span className="ml-2 text-body font-normal text-ink-muted">
+                    {selectedResult.resultUnit}
+                  </span>
+                )}
+              </p>
+              {selectedResult.referenceRange && (
+                <p className="mt-1 text-body text-ink-secondary">
+                  Usual range: {selectedResult.referenceRange}
                 </p>
-                {selectedResult.reference_range && (
-                  <p className="mt-1 text-body text-ink-secondary">
-                    Usual range: {selectedResult.reference_range}
-                  </p>
-                )}
-                {selectedResult.abnormal && (
-                  <div className="mt-3">
-                    <OutsideRangeBadge />
-                  </div>
-                )}
+              )}
+              <div className="mt-3">
+                <InterpretationBadge interpretation={selectedResult.interpretation} />
               </div>
-            ) : (
-              <PortalNotice tone="info">
-                There is no result for this test yet. It will show here once
-                the clinic enters it.
-              </PortalNotice>
-            )}
+            </div>
 
-            {selectedResult.notes && (
+            {selectedResult.patientNote && (
               <div>
                 <h3 className="text-label text-ink-secondary">
-                  Notes on this test
+                  Note from the clinic
                 </h3>
                 <p className="mt-1 whitespace-pre-wrap text-body text-ink">
-                  {selectedResult.notes}
+                  {selectedResult.patientNote}
                 </p>
               </div>
             )}
 
-            {hasResult && (
-              <PortalNotice tone={selectedResult.abnormal ? "warning" : "info"}>
-                {selectedResult.abnormal
-                  ? "This result is outside the usual range. Talk to your clinician about this result."
-                  : "Talk to your clinician about this result if you have questions."}
-              </PortalNotice>
-            )}
+            <PortalNotice tone={advice.tone}>{advice.text}</PortalNotice>
           </div>
         </section>
       </PortalPage>
     );
   }
 
+  const notice = status ? portalLabLoadNotice(status) : null;
+  // Offline after a successful load: keep showing what was loaded.
+  const showOfflineStale = !online && loaded;
+
   return (
     <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
-      {!online && (
+      {showOfflineStale ? (
         <PortalNotice tone="offline" title="You are offline">
-          {loaded
-            ? "You are seeing the results loaded when this phone was last online. They may be out of date."
-            : "Connect to the internet to see your lab results."}
+          You are seeing the results loaded before the connection dropped. They
+          may be out of date.
         </PortalNotice>
-      )}
-
-      {error && (
-        <PortalNotice
-          tone="danger"
-          action={
-            online ? (
-              <button
-                type="button"
-                onClick={loadLabResults}
-                className="btn-secondary"
-              >
-                <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                Try again
-              </button>
-            ) : undefined
-          }
-        >
-          {error}
-        </PortalNotice>
+      ) : (
+        notice && (
+          <PortalNotice
+            tone={status === "offline" ? "offline" : notice.tone}
+            title={notice.title}
+            action={
+              notice.retry && online ? (
+                <button
+                  type="button"
+                  onClick={() => void loadLabResults()}
+                  className="btn-secondary"
+                  disabled={loading}
+                >
+                  <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                  {loading ? "Trying again…" : "Try again"}
+                </button>
+              ) : undefined
+            }
+          >
+            {notice.body}
+            {loaded && " The results below are from the last time they loaded."}
+          </PortalNotice>
+        )
       )}
 
       {loaded && results.length === 0 && (
         <div className="panel">
           <EmptyState
             icon={BeakerIcon}
-            title="No lab results yet"
-            description="When the clinic adds a test or a result for you, it will show here. If you are waiting for a result, ask the outreach team."
+            title="No lab results shared with you yet"
+            description="Results show here after a clinician has reviewed them and shared them with you. If you are waiting for a result, ask the outreach team."
           />
         </div>
       )}
 
       {results.length > 0 && (
         <ul className="panel divide-y divide-line" aria-label="Lab results">
-          {results.map((result) => {
-            const status = labStatusInfo(result.status);
-            return (
-              <li key={result.id}>
-                <button
-                  id={`lab-result-${result.id}`}
-                  type="button"
-                  onClick={() => openResult(result)}
-                  className="flex min-h-touch-target w-full items-start gap-3 p-4 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-body font-medium text-ink">
-                      {result.test_name}
-                    </span>
-                    {result.test_type && (
-                      <span className="block text-caption text-ink-muted">
-                        {result.test_type}
+          {results.map((result) => (
+            <li key={result.resultId}>
+              <button
+                id={`lab-result-${result.resultId}`}
+                type="button"
+                onClick={() => openResult(result)}
+                className="flex min-h-touch-target w-full items-start gap-3 p-4 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block text-body font-medium text-ink">
+                    {result.testName}
+                  </span>
+                  <span className="block text-caption text-ink-secondary tabular-nums">
+                    {result.resultValue || "—"}
+                    {result.resultUnit ? ` ${result.resultUnit}` : ""}
+                  </span>
+                  <span className="mt-2 flex flex-wrap items-center gap-2">
+                    <InterpretationBadge interpretation={result.interpretation} />
+                    {result.patientNote && (
+                      <span className="text-caption text-ink-muted">
+                        Note from the clinic
                       </span>
                     )}
-                    <span className="mt-2 flex flex-wrap items-center gap-2">
-                      <StatusBadge tone={status.tone} icon>
-                        {status.label}
-                      </StatusBadge>
-                      {result.abnormal && labHasResult(result.status) && (
-                        <OutsideRangeBadge />
-                      )}
-                    </span>
                   </span>
-                  <span className="shrink-0 text-right">
-                    <span className="block text-caption text-ink-muted">
-                      Ordered
-                    </span>
-                    <span className="block whitespace-nowrap text-caption text-ink-secondary">
-                      {formatPortalDate(result.ordered_date)}
-                    </span>
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className="block text-caption text-ink-muted">Result</span>
+                  <span className="block whitespace-nowrap text-caption text-ink-secondary">
+                    {result.resultDate ? formatPortalDate(result.resultDate) : "Date not recorded"}
                   </span>
-                  <ChevronRightIcon
-                    className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted"
-                    aria-hidden
-                  />
-                </button>
-              </li>
-            );
-          })}
+                </span>
+                <ChevronRightIcon
+                  className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted"
+                  aria-hidden
+                />
+              </button>
+            </li>
+          ))}
         </ul>
       )}
     </PortalPage>

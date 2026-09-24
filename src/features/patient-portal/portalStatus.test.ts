@@ -10,6 +10,9 @@ import {
   labStatusInfo,
   messageDeliveryInfo,
   pickNextAppointment,
+  portalLabAdvice,
+  portalLabInterpretationInfo,
+  portalLabLoadNotice,
   upcomingAppointments,
   vitalStatusTone,
 } from "./portalStatus";
@@ -67,6 +70,44 @@ describe("lab status", () => {
     expect(labHasResult("reviewed")).toBe(true);
     expect(labHasResult("pending")).toBe(false);
     expect(labHasResult(undefined)).toBe(false);
+  });
+
+  it("treats a released result as reviewed, with a result", () => {
+    expect(labStatusInfo("released").label).toBe("Reviewed by the clinic");
+    expect(labStatusInfo("released").tone).not.toBe("success");
+    expect(labHasResult("released")).toBe(true);
+  });
+});
+
+describe("released lab result wording", () => {
+  it("labels each recorded interpretation in plain words", () => {
+    expect(portalLabInterpretationInfo("normal").label).toBe("In the usual range");
+    expect(portalLabInterpretationInfo("abnormal").label).toBe("Outside the usual range");
+    expect(portalLabInterpretationInfo("critical").tone).toBe("danger");
+  });
+
+  it("never shows a missing or unexpected interpretation as normal", () => {
+    for (const value of [null, undefined, "", "unknown", "Normal"]) {
+      const info = portalLabInterpretationInfo(value);
+      expect(info.tone).not.toBe("success");
+      expect(info.label).not.toMatch(/usual range/i);
+      expect(portalLabAdvice(value).text).toMatch(/ask your clinician/i);
+    }
+  });
+
+  it("tells the patient to act on a critical result", () => {
+    const advice = portalLabAdvice("critical");
+    expect(advice.tone).toBe("danger");
+    expect(advice.text).toMatch(/contact the clinic/i);
+  });
+
+  it("explains every way the list can fail to load, and only offers retry for failures", () => {
+    expect(portalLabLoadNotice("ok")).toBeNull();
+    expect(portalLabLoadNotice("not_signed_in")?.title).toMatch(/sign in online/i);
+    expect(portalLabLoadNotice("offline")?.retry).toBe(false);
+    expect(portalLabLoadNotice("unavailable")?.retry).toBe(false);
+    expect(portalLabLoadNotice("not_updated")?.retry).toBe(false);
+    expect(portalLabLoadNotice("failed")).toMatchObject({ tone: "danger", retry: true });
   });
 });
 

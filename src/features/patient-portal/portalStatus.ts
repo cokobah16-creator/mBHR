@@ -86,10 +86,18 @@ export function vitalStatusTone(
   }
 }
 
-// ─── Lab results (patient_lab_results.status) ─────────────────────────────────
+// ─── Lab results ──────────────────────────────────────────────────────────────
+//
+// The portal shows only results the clinic has reviewed and released
+// (portal_my_lab_results). Every row it gets is therefore "released".
 
+/**
+ * Status of a lab result row. "released" is the only status the portal
+ * receives today; the other values are kept for older callers.
+ */
 export function labStatusInfo(status: string | null | undefined): StatusInfo {
   switch (status) {
+    case "released":
     case "reviewed":
       // Not green: a reviewed result can still be outside the usual range.
       return { label: "Reviewed by the clinic", tone: "info" };
@@ -104,7 +112,103 @@ export function labStatusInfo(status: string | null | undefined): StatusInfo {
 
 /** A result value exists once the test is completed (and after review). */
 export function labHasResult(status: string | null | undefined): boolean {
-  return status === "completed" || status === "reviewed";
+  return status === "completed" || status === "reviewed" || status === "released";
+}
+
+/**
+ * Plain words for the interpretation the clinic recorded. Display only: the
+ * interpretation itself is chosen by clinic staff, never worked out here.
+ * A missing or unexpected value is never shown as normal.
+ */
+export function portalLabInterpretationInfo(
+  interpretation: string | null | undefined,
+): StatusInfo {
+  switch (interpretation) {
+    case "normal":
+      return { label: "In the usual range", tone: "success" };
+    case "abnormal":
+      return { label: "Outside the usual range", tone: "warning" };
+    case "critical":
+      return { label: "Needs prompt attention", tone: "danger" };
+    default:
+      return { label: "Ask the clinic about this result", tone: "neutral" };
+  }
+}
+
+/** What the patient should do next, by the recorded interpretation. */
+export function portalLabAdvice(
+  interpretation: string | null | undefined,
+): { text: string; tone: "info" | "warning" | "danger" } {
+  switch (interpretation) {
+    case "normal":
+      return {
+        text: "Talk to your clinician about this result if you have questions.",
+        tone: "info",
+      };
+    case "abnormal":
+      return {
+        text: "This result is outside the usual range. Talk to your clinician about this result.",
+        tone: "warning",
+      };
+    case "critical":
+      return {
+        text: "This result needs prompt attention. Contact the clinic or the outreach team as soon as you can. If you feel very unwell, go to the nearest hospital.",
+        tone: "danger",
+      };
+    default:
+      return {
+        text: "The clinic has not recorded how this result reads. Ask your clinician what it means for you.",
+        tone: "info",
+      };
+  }
+}
+
+/**
+ * Why the lab results list is empty when it did not load. Null for "ok"
+ * (an empty list then really means nothing has been released yet).
+ */
+export function portalLabLoadNotice(
+  status: string,
+): { title: string; body: string; tone: "info" | "warning" | "danger"; retry: boolean } | null {
+  switch (status) {
+    case "ok":
+      return null;
+    case "unavailable":
+      return {
+        title: "Lab results are not available here",
+        body: "This portal is not connected to the clinic's online records, so lab results cannot be shown. Ask the outreach team about your results at your next visit.",
+        tone: "info",
+        retry: false,
+      };
+    case "offline":
+      return {
+        title: "You are offline",
+        body: "Lab results are not saved on this phone. Connect to the internet to see them.",
+        tone: "warning",
+        retry: false,
+      };
+    case "not_signed_in":
+      return {
+        title: "Sign in online to see lab results",
+        body: "Lab results are only shown when you are signed in to the portal online. Sign out, then sign in again while connected to the internet.",
+        tone: "info",
+        retry: false,
+      };
+    case "not_updated":
+      return {
+        title: "Lab results are not available yet",
+        body: "The clinic's online system has not been set up to share lab results yet. Ask the outreach team about your results.",
+        tone: "info",
+        retry: false,
+      };
+    default:
+      return {
+        title: "We could not load your lab results",
+        body: "This page could not reach the clinic's records. Please try again.",
+        tone: "danger",
+        retry: true,
+      };
+  }
 }
 
 // ─── Conditions (patient_medical_conditions.status) ───────────────────────────

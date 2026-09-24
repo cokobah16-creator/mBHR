@@ -5,10 +5,16 @@ import {
   deriveLabStage,
   describeLabError,
   formatResultValue,
+  interpretationMeta,
   isInterpretation,
   isLabFilter,
   matchesFilter,
   matchesSearch,
+  releaseStateOf,
+  resultsAwaitingRelease,
+  resultsToRelease,
+  resultsWithholdable,
+  severityOf,
   worstInterpretation,
   worstUnreviewed,
   type LabStage,
@@ -95,6 +101,7 @@ describe("filters", () => {
     expect(countByFilter(stages)).toEqual({
       open: 6,
       review: 2,
+      release: 1,
       ordered: 1,
       collected: 1,
       processing: 1,
@@ -231,5 +238,180 @@ describe("severity is never downgraded to normal", () => {
     const critical: WorklistSortable = { ...base, severity: "critical" };
     const normal: WorklistSortable = { ...base, severity: "normal" };
     expect([normal, critical].sort(compareWorklist)[0]).toBe(critical);
+  });
+});
+
+describe("release state", () => {
+  const releasedAt = new Date("2026-09-02T10:00:00Z");
+  const withheldAt = new Date("2026-09-02T11:00:00Z");
+
+  it("reads each result's review and release markers", () => {
+    expect(releaseStateOf(unreviewed)).toBe("not_reviewed");
+    expect(releaseStateOf(reviewed)).toBe("not_released");
+    expect(releaseStateOf({ ...reviewed, releasedToPatientAt: releasedAt })).toBe("released");
+    expect(releaseStateOf({ ...reviewed, withheldAt })).toBe("withheld");
+  });
+
+  it("never calls an unreviewed result released, whatever the other fields say", () => {
+    expect(releaseStateOf({ ...unreviewed, releasedToPatientAt: releasedAt })).toBe(
+      "not_reviewed",
+    );
+  });
+
+  it("puts reviewed results without a release decision in their own stage", () => {
+    expect(deriveLabStage({ status: "completed" }, [reviewed])).toBe("reviewed");
+    expect(
+      deriveLabStage({ status: "completed" }, [
+        { ...reviewed, releasedToPatientAt: releasedAt },
+        reviewed,
+      ]),
+    ).toBe("reviewed");
+  });
+
+  it("is released only when every current result is released", () => {
+    expect(
+      deriveLabStage({ status: "completed" }, [
+        { ...reviewed, releasedToPatientAt: releasedAt },
+      ]),
+    ).toBe("released");
+  });
+
+  it("shows withheld when any decided result is withheld", () => {
+    expect(
+      deriveLabStage({ status: "completed" }, [
+        { ...reviewed, releasedToPatientAt: releasedAt },
+        { ...reviewed, withheldAt },
+      ]),
+    ).toBe("withheld");
+  });
+
+  it("ignores a superseded result when deciding the release stage", () => {
+    expect(
+      deriveLabStage({ status: "completed" }, [
+        { ...reviewed, supersededBy: "r2" },
+        { ...reviewed, releasedToPatientAt: releasedAt },
+      ]),
+    ).toBe("released");
+  });
+
+  it("an unreviewed result still wins over any release state", () => {
+    expect(
+      deriveLabStage({ status: "completed" }, [
+        { ...reviewed, releasedToPatientAt: releasedAt },
+        unreviewed,
+      ]),
+    ).toBe("awaiting_review");
+  });
+
+  it("lists the results a release or withhold would act on", () => {
+    const a = { id: "a", ...reviewed };
+    const b = { id: "b", ...reviewed, releasedToPatientAt: releasedAt };
+    const c = { id: "c", ...reviewed, withheldAt };
+    const d = { id: "d", ...unreviewed };
+    expect(resultsAwaitingRelease([a, b, c, d]).map((r) => r.id)).toEqual(["a"]);
+    expect(resultsWithholdable([a, b, c, d]).map((r) => r.id)).toEqual(["a", "b", "d"]);
+  });
+
+  it("never releases a withheld result together with new ones", () => {
+    const fresh = { id: "fresh", ...reviewed };
+    const kept = { id: "kept", ...reviewed, withheldAt };
+    const shown = { id: "shown", ...reviewed, releasedToPatientAt: releasedAt };
+    const old = { id: "old", ...reviewed, supersededBy: "fresh" };
+    const pending = { id: "pending", ...unreviewed };
+    expect(resultsToRelease([fresh, kept, shown, old, pending]).map((r) => r.id)).toEqual([
+      "fresh",
+    ]);
+    // Only when nothing else is waiting is the withheld result offered.
+    expect(resultsToRelease([kept, shown, old]).map((r) => r.id)).toEqual(["kept"]);
+    expect(resultsToRelease([shown, old, pending])).toEqual([]);
+  });
+
+  it("filters the reviewed-not-released bucket separately from finished work", () => {
+    expect(matchesFilter("reviewed", "release")).toBe(true);
+    expect(matchesFilter("released", "release")).toBe(false);
+    expect(matchesFilter("withheld", "release")).toBe(false);
+    expect(matchesFilter("released", "reviewed")).toBe(true);
+    expect(matchesFilter("withheld", "reviewed")).toBe(true);
+    expect(matchesFilter("released", "open")).toBe(false);
+    expect(matchesFilter("withheld", "open")).toBe(false);
+  });
+
+  it("sorts reviewed-not-released before released or withheld work", () => {
+    const base = { priority: "routine" as const, severity: "normal" as const };
+    const released: WorklistSortable = { ...base, stage: "released" };
+    const notReleased: WorklistSortable = { ...base, stage: "reviewed" };
+    const cancelled: WorklistSortable = { ...base, stage: "cancelled", severity: null };
+    expect([cancelled, released, notReleased].sort(compareWorklist)).toEqual([
+      notReleased,
+      released,
+      cancelled,
+    ]);
+  });
+});
+
+describe("unknown interpretations need attention", () => {
+  it("maps anything but the three values to unknown", () => {
+    expect(severityOf("critical")).toBe("critical");
+    expect(severityOf(null)).toBe("unknown");
+    expect(severityOf(undefined)).toBe("unknown");
+    expect(severityOf("High")).toBe("unknown");
+  });
+
+  it("never lets an unknown interpretation hide behind normal", () => {
+    expect(
+      worstInterpretation([{ interpretation: "normal" }, { interpretation: null }]),
+    ).toBe("unknown");
+    expect(worstInterpretation([{ interpretation: undefined }])).toBe("unknown");
+  });
+
+  it("keeps critical above unknown", () => {
+    expect(
+      worstInterpretation([{ interpretation: "bogus" }, { interpretation: "critical" }]),
+    ).toBe("critical");
+  });
+
+  it("sorts an unknown interpretation above normal and below critical", () => {
+    const base = { stage: "awaiting_review" as LabStage, priority: "routine" as const };
+    const normal: WorklistSortable = { ...base, severity: "normal" };
+    const unknown: WorklistSortable = { ...base, severity: "unknown" };
+    const critical: WorklistSortable = { ...base, severity: "critical" };
+    expect([normal, unknown, critical].sort(compareWorklist)).toEqual([
+      critical,
+      unknown,
+      normal,
+    ]);
+  });
+
+  it("labels an unknown value as needing a check, not as normal", () => {
+    expect(interpretationMeta("normal").label).toBe("Normal");
+    expect(interpretationMeta(null).label).toMatch(/check/i);
+    expect(interpretationMeta(null).tone).not.toBe("success");
+  });
+});
+
+describe("describeLabError for review and release", () => {
+  it("explains a server refusal by its reason", () => {
+    const err = Object.assign(new Error("x"), {
+      name: "LabServiceError",
+      code: "REJECTED",
+      reason: "not_reviewed",
+    });
+    expect(describeLabError(err, "Not released.")).toBe(
+      "Not released. The result has not been reviewed yet. Review it first.",
+    );
+  });
+
+  it("says when the server has not been updated for release yet", () => {
+    const err = Object.assign(new Error("x"), { name: "LabServiceError", code: "PGRST202" });
+    expect(describeLabError(err, "Not released.")).toMatch(/database update/);
+  });
+
+  it("falls back for an unknown refusal reason", () => {
+    const err = Object.assign(new Error("x"), {
+      name: "LabServiceError",
+      code: "REJECTED",
+      reason: "something_new",
+    });
+    expect(describeLabError(err, "Not saved.")).toMatch(/^Not saved\. The cloud refused/);
   });
 });

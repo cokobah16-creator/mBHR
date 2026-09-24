@@ -6,8 +6,8 @@ import {
   ArrowPathIcon,
   ChatBubbleLeftRightIcon,
 } from "@heroicons/react/24/outline";
-import { getVisitDetails } from "@/services/patientPortalData";
-import type { PatientMedicalRecord } from "@/types/patientPortal";
+import { loadVisitDetails } from "@/services/patientPortalData";
+import type { PatientMedicalRecord, PortalDataError } from "@/types/patientPortal";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
@@ -23,6 +23,15 @@ function BackLink() {
       <ArrowLeftIcon className="h-5 w-5" aria-hidden />
       Back to your visits
     </Link>
+  );
+}
+
+function NotConnectedNotice() {
+  return (
+    <PortalNotice tone="info" title="Visit details are not available here">
+      This portal is not connected to the clinic&apos;s online records, so
+      visit details cannot be shown.
+    </PortalNotice>
   );
 }
 
@@ -64,12 +73,17 @@ export function VisitDetail() {
   const { visitId } = useParams<{ visitId: string }>();
   const [visit, setVisit] = useState<PatientMedicalRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  // A problem with the link itself (no visit id).
   const [error, setError] = useState("");
+  // Why the visit did not load: "not_found" only when the server answered
+  // that it has no such visit for this patient.
+  const [loadError, setLoadError] = useState<PortalDataError | null>(null);
 
-  const loadVisitDetails = useCallback(
+  const loadVisit = useCallback(
     async (id: string) => {
       setLoading(true);
       setError("");
+      setLoadError(null);
       // Never show a different visit under this link while loading.
       setVisit((current) => (current && current.visitId === id ? current : null));
       try {
@@ -83,18 +97,16 @@ export function VisitDetail() {
           navigate("/patient/login", { replace: true });
           return;
         }
-        const visitData = await getVisitDetails(
+        const result = await loadVisitDetails(
           portalUser.id,
           portalUser.patientId,
           id,
         );
-        if (visitData) {
-          setVisit(visitData);
+        if (result.visit && !result.error) {
+          setVisit(result.visit);
         } else {
           setVisit(null);
-          setError(
-            "We could not find this visit. It may not be uploaded yet, or it could not be loaded.",
-          );
+          setLoadError(result.error ?? "failed");
         }
       } catch (err) {
         logger.error(
@@ -102,7 +114,7 @@ export function VisitDetail() {
           err instanceof Error ? err.name : "unknown",
         );
         setVisit(null);
-        setError("We could not load this visit. Please try again.");
+        setLoadError(navigator.onLine ? "failed" : "offline");
       } finally {
         setLoading(false);
       }
@@ -126,16 +138,13 @@ export function VisitDetail() {
     }
     if (!online && attemptedFor.current === visitId) return;
     attemptedFor.current = visitId;
-    loadVisitDetails(visitId);
-  }, [visitId, online, loadVisitDetails]);
+    loadVisit(visitId);
+  }, [visitId, online, loadVisit]);
 
   if (!isSupabaseEnabled) {
     return (
       <PortalPage title="Visit details" breadcrumbs={[BACK_CRUMB, { label: "Visit" }]}>
-        <PortalNotice tone="info" title="Visit details are not available here">
-          This portal is not connected to the clinic&apos;s online records, so
-          visit details cannot be shown.
-        </PortalNotice>
+        <NotConnectedNotice />
         <BackLink />
       </PortalPage>
     );
@@ -148,31 +157,46 @@ export function VisitDetail() {
   }
 
   if (!visit) {
+    // Offline, the page reloads by itself when the connection comes back.
+    const retry =
+      visitId && online ? (
+        <button
+          type="button"
+          onClick={() => loadVisit(visitId)}
+          className="btn-secondary"
+        >
+          <ArrowPathIcon className="h-5 w-5" aria-hidden />
+          Try again
+        </button>
+      ) : undefined;
+    let notice: ReactNode;
+    if (error) {
+      notice = <PortalNotice tone="danger">{error}</PortalNotice>;
+    } else if (loadError === "not_found") {
+      notice = (
+        <PortalNotice tone="warning" title="We could not find this visit">
+          It may not be uploaded from the clinic&apos;s device yet. Your
+          visits page lists the visits that are ready to see.
+        </PortalNotice>
+      );
+    } else if (loadError === "unavailable") {
+      notice = <NotConnectedNotice />;
+    } else if (loadError === "offline" || !online) {
+      notice = (
+        <PortalNotice tone="offline" title="You are offline" action={retry}>
+          Connect to the internet to see this visit.
+        </PortalNotice>
+      );
+    } else {
+      notice = (
+        <PortalNotice tone="danger" action={retry}>
+          We could not load this visit. Please try again.
+        </PortalNotice>
+      );
+    }
     return (
       <PortalPage title="Visit details" breadcrumbs={[BACK_CRUMB, { label: "Visit" }]}>
-        {!online ? (
-          <PortalNotice tone="offline" title="You are offline">
-            Connect to the internet to see this visit.
-          </PortalNotice>
-        ) : (
-          <PortalNotice
-            tone="danger"
-            action={
-              visitId ? (
-                <button
-                  type="button"
-                  onClick={() => loadVisitDetails(visitId)}
-                  className="btn-secondary"
-                >
-                  <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                  Try again
-                </button>
-              ) : undefined
-            }
-          >
-            {error || "We could not load this visit."}
-          </PortalNotice>
-        )}
+        {notice}
         <BackLink />
       </PortalPage>
     );
