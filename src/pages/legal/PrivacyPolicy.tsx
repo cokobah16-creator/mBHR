@@ -2,13 +2,15 @@
 //
 // Every statement here must stay true to what the code does. If you add a
 // data processor, a tracker or a new category of data, update this page.
+// When the text changes, set PRIVACY_VERSION in ./policyMeta.ts to that day.
 // Pending review by a qualified Nigerian data-protection lawyer (NDPA 2023)
 // — see docs/legal/README.md.
 import { LegalPage, LegalSection } from "./LegalPage";
+import { PRIVACY_VERSION, formatPolicyDate } from "./policyMeta";
 
 export default function PrivacyPolicy() {
   return (
-    <LegalPage title="Privacy notice" updated="22 September 2026">
+    <LegalPage title="Privacy notice" updated={formatPolicyDate(PRIVACY_VERSION)}>
       <p>
         Med Bridge Health Reach (mBHR) is used by the Dr. Isioma Okobah
         Foundation to run medical outreach clinics in Nigeria. This notice

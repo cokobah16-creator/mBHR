@@ -1,10 +1,12 @@
 // Terms of use for Med Bridge Health Reach.
 // Pending review by a qualified Nigerian lawyer — see docs/legal/README.md.
+// When the text changes, set TERMS_VERSION in ./policyMeta.ts to that day.
 import { LegalPage, LegalSection } from "./LegalPage";
+import { TERMS_VERSION, formatPolicyDate } from "./policyMeta";
 
 export default function TermsOfUse() {
   return (
-    <LegalPage title="Terms of use" updated="22 September 2026">
+    <LegalPage title="Terms of use" updated={formatPolicyDate(TERMS_VERSION)}>
       <p>
         These terms cover the use of Med Bridge Health Reach (mBHR), the
         outreach record system and patient portal operated by the Dr. Isioma
