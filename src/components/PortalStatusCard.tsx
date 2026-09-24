@@ -2,7 +2,8 @@
  * Portal Status Card Component
  *
  * Displays patient portal enrollment status with:
- * - Enable/disable switch (turning access off asks for confirmation)
+ * - Enable/disable switch. Turning access on asks staff to tick that the
+ *   patient has agreed; turning it off asks for confirmation.
  * - Verification status
  * - Last login date
  * - Invitation history
@@ -76,6 +77,9 @@ export function PortalStatusCard({
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const [confirmEnable, setConfirmEnable] = useState(false);
+  // Staff attestation for turning access on. Starts unticked every time.
+  const [patientAgreed, setPatientAgreed] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
   const [inviteLink, setInviteLink] = useState<{
     url: string;
@@ -122,8 +126,17 @@ export function PortalStatusCard({
     }
   }, [countdown]);
 
+  const closeEnableDialog = () => {
+    setConfirmEnable(false);
+    setPatientAgreed(false);
+  };
+
   const setPortalAccess = async (enable: boolean) => {
+    // Access is turned on only after staff tick that the patient agreed.
+    const agreed = patientAgreed;
+    if (enable && !agreed) return;
     setConfirmDisable(false);
+    closeEnableDialog();
     if (!status) return;
     if (!canEdit) {
       pushToast({
@@ -138,7 +151,7 @@ export function PortalStatusCard({
     setToggling(true);
     try {
       const result = enable
-        ? await enablePortalAccess(patientId, { termsAccepted: true })
+        ? await enablePortalAccess(patientId, { termsAccepted: agreed })
         : await disablePortalAccess(patientId);
 
       if (result.success) {
@@ -177,8 +190,12 @@ export function PortalStatusCard({
 
   const handleSwitch = () => {
     if (!status) return;
-    if (status.enabled) setConfirmDisable(true);
-    else setPortalAccess(true);
+    if (status.enabled) {
+      setConfirmDisable(true);
+    } else {
+      setPatientAgreed(false);
+      setConfirmEnable(true);
+    }
   };
 
   const handleSendInvitation = async () => {
@@ -526,6 +543,34 @@ export function PortalStatusCard({
           </p>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmEnable}
+        title={`Turn on portal access for ${firstName}?`}
+        confirmLabel="Turn on access"
+        confirmDisabled={!patientAgreed}
+        busy={toggling}
+        busyLabel="Turning on…"
+        onConfirm={() => setPortalAccess(true)}
+        onCancel={closeEnableDialog}
+      >
+        <p>
+          Turning on portal access lets {firstName} view their medical
+          records, request appointments and message the clinic online.
+        </p>
+        <label className="flex items-start gap-3 rounded-md border border-line bg-surface-sunken p-3">
+          <input
+            type="checkbox"
+            id={`${titleId}-agreed`}
+            checked={patientAgreed}
+            onChange={(e) => setPatientAgreed(e.target.checked)}
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
+          />
+          <span className="text-body text-ink">
+            {firstName} has agreed to use the patient portal.
+          </span>
+        </label>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={confirmDisable}
