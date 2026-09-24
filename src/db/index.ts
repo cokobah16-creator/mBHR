@@ -21,6 +21,11 @@ export interface User {
   pinHash: string;
   pinSalt: string;
   pinEnrolledAt?: Date;
+  // Set when an administrator deactivates the account on this device. A
+  // download never reactivates it; if the server still lists the person as
+  // active, accessConflict is set for an administrator to resolve.
+  disabledLocallyAt?: Date;
+  accessConflict?: 0 | 1;
   adminAccess?: boolean;
   adminPermanent?: boolean;
   createdAt: Date;
