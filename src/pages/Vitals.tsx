@@ -9,8 +9,21 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PatientDetailSkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 import { ensureTodaysVisit } from "@/services/visits";
+import { canonicalPatientId } from "@/services/patientMerge";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
+
+/**
+ * The record to file today's visit under. A record merged into another on
+ * this device files new care on the kept record (the server moves late
+ * records there too). Falls back to the chosen record when the kept one is
+ * not on this device.
+ */
+async function recordForNewCare(chosen: Patient): Promise<Patient> {
+  const keptId = await canonicalPatientId(chosen.id);
+  if (keptId === chosen.id) return chosen;
+  return (await db.patients.get(keptId)) ?? chosen;
+}
 
 export function Vitals() {
   const { visitId } = useParams<{ visitId: string }>();
@@ -38,22 +51,23 @@ export function Vitals() {
         setPatient(patientData || null);
       }
     } catch (error) {
-      console.error("Error loading visit data:", error);
+      console.error("Error loading visit data:", error instanceof Error ? error.name : "unknown");
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePatientSelect = async (selectedPatient: Patient) => {
+  const handlePatientSelect = async (chosen: Patient) => {
     try {
+      const target = await recordForNewCare(chosen);
       // Continue today's visit if there is one; otherwise start it.
-      const newVisit: Visit = await ensureTodaysVisit(selectedPatient.id);
+      const newVisit: Visit = await ensureTodaysVisit(target.id);
 
-      setPatient(selectedPatient);
+      setPatient(target);
       setVisit(newVisit);
-      setSelectedPatient(selectedPatient);
+      setSelectedPatient(target);
     } catch (error) {
-      console.error("Error creating visit:", error);
+      console.error("Error creating visit:", error instanceof Error ? error.name : "unknown");
     }
   };
 

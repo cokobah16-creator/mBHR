@@ -13,8 +13,13 @@ import { stableStringify } from "./fieldCompare";
 
 type Row = Record<string, unknown>;
 
-/** Sync bookkeeping fields; they are not record content. */
-const SYNC_MARKERS = ["_dirty", "_syncedAt"];
+/**
+ * Sync bookkeeping fields; they are not record content. transitionPending
+ * and ticketPending are device-only queue markers (never uploaded): they are
+ * set together with a status or ticket change, which still counts as an
+ * edit, and the queue-ticket sync participant clears them on its own.
+ */
+const SYNC_MARKERS = ["_dirty", "_syncedAt", "transitionPending", "ticketPending"];
 
 function content(row: Row): string {
   const copy: Row = { ...row };

@@ -26,7 +26,18 @@ const {
   };
 });
 
+const { mockRequestChange, mockDrain, authState } = vi.hoisted(() => ({
+  mockRequestChange: vi.fn(),
+  mockDrain: vi.fn().mockResolvedValue(null),
+  authState: { currentUser: { id: "u1", role: "nurse" } as { id: string; role: string } | null },
+}));
+
 vi.mock("@/lib/supabase", () => ({ supabase: mockSupabase }));
+vi.mock("./portalAccess", () => ({ requestPortalAccessChange: mockRequestChange }));
+vi.mock("@/sync/adapter", () => ({ drainServerCommands: mockDrain }));
+vi.mock("@/stores/auth", () => ({
+  useAuthStore: { getState: () => authState },
+}));
 vi.mock("@/db", () => ({
   db: {
     patients: {
@@ -78,8 +89,8 @@ function makeSupabaseChain(
       Promise.resolve({ data, error }).then(r),
     select: vi.fn().mockReturnThis(),
     update: vi.fn().mockReturnThis(),
-    insert: vi.fn().mockResolvedValue({ error: null }),
-    upsert: vi.fn().mockResolvedValue({ error: null }),
+    insert: vi.fn().mockReturnThis(),
+    upsert: vi.fn().mockReturnThis(),
     eq: vi.fn(),
   };
   (chain.eq as ReturnType<typeof vi.fn>).mockReturnValue(chain);
@@ -92,6 +103,11 @@ describe("isEligibleForAutoEnrollment", () => {
     requireEmail: false,
     sendWelcomeNotification: true,
   };
+
+  it("returns false while a change is waiting for the server or the record was merged", () => {
+    expect(isEligibleForAutoEnrollment(makePatient({ portalPending: 1 }), baseSettings)).toBe(false);
+    expect(isEligibleForAutoEnrollment(makePatient({ mergeInto: "p9" }), baseSettings)).toBe(false);
+  });
 
   it("returns false when auto enrollment is disabled", () => {
     const p = makePatient({ phone: "08012345678" });
@@ -171,10 +187,13 @@ describe("getEnrollmentSettings", () => {
 });
 
 describe("updateEnrollmentSetting", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.currentUser = { id: "admin-1", role: "admin" };
+  });
 
-  it("returns true on success", async () => {
-    mockFrom.mockReturnValue(makeSupabaseChain());
+  it("returns true when the server changed the setting", async () => {
+    mockFrom.mockReturnValue(makeSupabaseChain([{ setting_key: "auto_enrollment_enabled" }]));
 
     const result = await updateEnrollmentSetting(
       "auto_enrollment_enabled",
@@ -196,12 +215,32 @@ describe("updateEnrollmentSetting", () => {
 
     expect(result).toBe(false);
   });
+
+  it("treats zero changed rows as failure", async () => {
+    mockFrom.mockReturnValue(makeSupabaseChain([]));
+
+    const result = await updateEnrollmentSetting("unknown_key", true, "admin");
+
+    expect(result).toBe(false);
+  });
+
+  it("refuses a role that cannot manage users, without calling the server", async () => {
+    authState.currentUser = { id: "u1", role: "nurse" };
+
+    const result = await updateEnrollmentSetting("require_email", true, "u1");
+
+    expect(result).toBe(false);
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
 });
 
 describe("checkAndEnrollPatient", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.currentUser = { id: "u1", role: "nurse" };
     mockFrom.mockReturnValue(makeSupabaseChain());
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, portalPending: 1 }));
   });
 
   it("skips patient that is already portal-enabled", async () => {
@@ -215,22 +254,57 @@ describe("checkAndEnrollPatient", () => {
     expect(mockPatientsUpdate).not.toHaveBeenCalled();
   });
 
-  it("enrolls eligible patient and updates local db", async () => {
+  it("asks the server through the command outbox (source auto_enrollment)", async () => {
     mockFrom.mockReturnValue(makeSupabaseChain([]));
     const p = makePatient({ phone: "08012345678" });
 
     const result = await checkAndEnrollPatient(p);
 
-    expect(result.enrolled).toBe(true);
-    expect(mockPatientsUpdate).toHaveBeenCalledWith(
-      "p1",
-      expect.objectContaining({ portalEnabled: 1, _dirty: 1 }),
-    );
+    expect(result).toEqual({ enrolled: true, pending: true });
+    expect(mockRequestChange).toHaveBeenCalledWith("p1", true, {
+      source: "auto_enrollment",
+      reason: "auto_enrollment",
+    });
+    // No direct write of portal_enabled to the server or this device.
+    expect(mockPatientsUpdate).not.toHaveBeenCalled();
+    expect(mockFrom).not.toHaveBeenCalledWith("patients");
+    // Not confirmed yet: no welcome notification.
+    expect(mockFrom).not.toHaveBeenCalledWith("patient_notifications");
   });
 
-  it("returns enrolled=false with reason=error when db throws", async () => {
+  it("sends the welcome notification only after the server confirmed access", async () => {
+    mockFrom.mockReturnValue(makeSupabaseChain([{ id: "row" }]));
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, portalPending: 0 }));
+
+    const result = await checkAndEnrollPatient(makePatient({ phone: "08012345678" }));
+
+    expect(result).toEqual({ enrolled: true, pending: false });
+    expect(mockFrom).toHaveBeenCalledWith("patient_portal_users");
+    expect(mockFrom).toHaveBeenCalledWith("patient_notifications");
+  });
+
+  it("refuses a role without portal_manage", async () => {
+    authState.currentUser = { id: "ph", role: "pharmacist" };
+
+    const result = await checkAndEnrollPatient(makePatient({ phone: "08012345678" }));
+
+    expect(result).toEqual({ enrolled: false, reason: "not_allowed" });
+    expect(mockRequestChange).not.toHaveBeenCalled();
+  });
+
+  it("returns enrolled=false with reason=error when the change is not saved", async () => {
     mockFrom.mockReturnValue(makeSupabaseChain([]));
-    mockPatientsUpdate.mockRejectedValueOnce(new Error("DB crash"));
+    mockRequestChange.mockResolvedValueOnce({ ok: false, error: "Portal access was not saved. Try again." });
+
+    const result = await checkAndEnrollPatient(makePatient({ phone: "08012345678" }));
+
+    expect(result.enrolled).toBe(false);
+    expect(result.reason).toBe("error");
+  });
+
+  it("returns enrolled=false with reason=error when the request throws", async () => {
+    mockFrom.mockReturnValue(makeSupabaseChain([]));
+    mockRequestChange.mockRejectedValueOnce(new Error("DB crash"));
     const p = makePatient({ phone: "08012345678" });
 
     const result = await checkAndEnrollPatient(p);
@@ -243,7 +317,20 @@ describe("checkAndEnrollPatient", () => {
 describe("bulkAutoEnroll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.currentUser = { id: "u1", role: "nurse" };
     mockFrom.mockReturnValue(makeSupabaseChain([]));
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, portalPending: 1 }));
+  });
+
+  it("refuses a role without portal_manage", async () => {
+    authState.currentUser = { id: "ph", role: "pharmacist" };
+
+    const result = await bulkAutoEnroll();
+
+    expect(result.enrolled).toBe(0);
+    expect(result.error).toMatch(/role cannot/);
+    expect(mockRequestChange).not.toHaveBeenCalled();
   });
 
   it("returns zeroes when auto enrollment is disabled in settings", async () => {
@@ -296,20 +383,25 @@ describe("optOutPatient", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFrom.mockReturnValue(makeSupabaseChain());
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
   });
 
-  it("updates local db to disable portal and returns true", async () => {
+  it("asks the server to turn access off and returns true", async () => {
     const result = await optOutPatient("p1");
 
     expect(result).toBe(true);
-    expect(mockPatientsUpdate).toHaveBeenCalledWith(
-      "p1",
-      expect.objectContaining({ portalEnabled: 0, _dirty: 1 }),
-    );
+    expect(mockRequestChange).toHaveBeenCalledWith("p1", false, { reason: "opt_out" });
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it("returns false when db throws", async () => {
-    mockPatientsUpdate.mockRejectedValueOnce(new Error("crash"));
+  it("returns false when the change is refused", async () => {
+    mockRequestChange.mockResolvedValueOnce({ ok: false, error: "Your role cannot change portal access." });
+
+    expect(await optOutPatient("p1")).toBe(false);
+  });
+
+  it("returns false when the request throws", async () => {
+    mockRequestChange.mockRejectedValueOnce(new Error("crash"));
 
     const result = await optOutPatient("p1");
 

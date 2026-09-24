@@ -12,6 +12,10 @@ import {
   isFlowStage,
   isTicketPriority,
   issueErrorMessage,
+  ticketStateBadge,
+  canMoveForward,
+  moveForwardLabel,
+  moveForwardDescription,
 } from "./queueBoardModel";
 
 const NOW = new Date("2026-09-23T12:00:00").getTime();
@@ -127,5 +131,49 @@ describe("isTicketPriority", () => {
   it("accepts only the queue priorities", () => {
     expect(["urgent", "normal", "low"].every(isTicketPriority)).toBe(true);
     expect(isTicketPriority("high")).toBe(false);
+  });
+});
+
+describe("ticketStateBadge", () => {
+  it("shows nothing for a confirmed number or without cloud sync", () => {
+    expect(ticketStateBadge({ ticketNumber: "Q-021", ticketPending: 0 }, true)).toBeNull();
+    expect(ticketStateBadge({ ticketNumber: "K7-001", ticketPending: 1, ticketProvisional: 1 }, false)).toBeNull();
+  });
+
+  it("names temporary, unconfirmed and changed numbers in words", () => {
+    expect(ticketStateBadge({ ticketPending: 1, ticketProvisional: 1 }, true)).toMatchObject({
+      tone: "warning",
+      label: "Temporary number",
+    });
+    expect(ticketStateBadge({ ticketPending: 1, ticketProvisional: 0 }, true)).toMatchObject({
+      tone: "info",
+      label: "Not confirmed yet",
+    });
+    expect(
+      ticketStateBadge({ ticketNumber: "Q-014", ticketRelabelledFrom: "K7-003" }, true),
+    ).toMatchObject({ tone: "warning", label: "Changed from K7-003" });
+  });
+});
+
+describe("move forward", () => {
+  const waiting = [
+    { id: "u1", position: 1, priority: "urgent" },
+    { id: "n1", position: 2, priority: "normal" },
+    { id: "n2", position: 3, priority: "normal" },
+  ];
+
+  it("offers the move only when the ticket can pass someone of its own priority or lower", () => {
+    expect(canMoveForward(waiting, "n2")).toBe(true);
+    expect(canMoveForward(waiting, "n1")).toBe(false);
+    expect(canMoveForward(waiting, "u1")).toBe(false);
+  });
+
+  it("says urgent tickets stay ahead", () => {
+    expect(moveForwardLabel("urgent")).toBe("Move to front");
+    expect(moveForwardLabel("normal")).toBe("Move up");
+    expect(moveForwardDescription("Ticket Q-003", "normal")).toMatch(/urgent tickets stay ahead/i);
+    // The accessible name starts with the visible text (label in name).
+    expect(moveForwardDescription("Ticket Q-003", "normal").startsWith("Move up")).toBe(true);
+    expect(moveForwardDescription("Ticket Q-003", "urgent").startsWith("Move to front")).toBe(true);
   });
 });

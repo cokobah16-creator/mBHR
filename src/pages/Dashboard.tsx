@@ -23,6 +23,9 @@ import { LiveQueueTable } from "@/components/dashboard/LiveQueueTable";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getFlagLabel, getFlagTone } from "@/utils/vitals";
 
+/** Latest valid Date: upper bound for Date-typed index ranges. */
+const LATEST_DATE = new Date(8.64e15);
+
 export function Dashboard() {
   const { currentUser } = useAuthStore();
   const [showAppointments, setShowAppointments] = useState(false);
@@ -99,15 +102,25 @@ export function Dashboard() {
     ) ?? 0;
 
   // Both dispensing paths: visit dispensing (db.dispenses) and
-  // prescription dispensing (mbhrDb.dispenses).
+  // prescription dispensing (mbhrDb.dispenses). A prescription dispense
+  // downloaded from the server is in both with the same id, so count
+  // distinct ids (the rule the outreach report uses too).
   const dispensedToday =
     useLiveQuery(
       async () => {
-        const [rx, visit] = await Promise.all([
-          mbhrDb.dispenses.where("dispensedAt").above(startOfTodayIso).count(),
-          db.dispenses.where("dispensedAt").above(startOfToday).count(),
+        const [rx, withDate, withText] = await Promise.all([
+          mbhrDb.dispenses.where("dispensedAt").above(startOfTodayIso).primaryKeys(),
+          // Rows holding a Date (recorded here, or downloaded by the full
+          // sync). The upper bound keeps out rows holding text, which sort
+          // after every Date.
+          db.dispenses
+            .where("dispensedAt")
+            .between(startOfToday, LATEST_DATE, false, true)
+            .primaryKeys(),
+          // Rows downloaded by the main sync hold the server's ISO text.
+          db.dispenses.where("dispensedAt").above(startOfTodayIso).primaryKeys(),
         ]);
-        return rx + visit;
+        return new Set<unknown>([...rx, ...withDate, ...withText]).size;
       },
       [startOfTodayIso, startOfToday],
       0,

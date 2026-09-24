@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, generateId } from "@/db";
-import type { Patient, QueueItem } from "@/db";
+import type { Patient, QueueItem, TicketLease } from "@/db";
 import { queueManagement } from "@/services/queueManagement";
 import { PatientSearch } from "@/components/PatientSearch";
 import {
@@ -18,6 +18,13 @@ import { useToast } from "@/stores/toast";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import { useActiveSite } from "@/hooks/useActiveSite";
 import { DEFAULT_SITE_NAME } from "@/services/activeSite";
+import { getDeviceId } from "@/services/queueAudit";
+import {
+  remainingInLeases,
+  serviceDateOf,
+  siteKeyFromName,
+  type QueueRow,
+} from "@/services/queueTickets";
 import {
   FLOW_STAGES,
   FLOW_STAGE_LABELS,
@@ -35,6 +42,7 @@ import {
   issueErrorMessage,
   savedNote,
   ticketLabel,
+  ticketStateBadge,
   type TicketPriority,
 } from "./queueBoardModel";
 import { STAGE_CHIP_CLASS, STAGE_MARKER_CLASS } from "./stageStyles";
@@ -47,11 +55,12 @@ const STAGE_OPTION_LABEL: Record<FlowStage, string> = {
   pharmacy: "Pharmacy",
 };
 
-// Urgent tickets are not always placed first (see queueManagement
-// calculatePosition), so the hint must not promise the front of the line.
+// Mirrors insertionPosition in services/queuePriority: an urgent ticket goes
+// ahead of every waiting non-urgent ticket, behind urgent ones already
+// waiting.
 const PRIORITY_HINT: Record<TicketPriority, string> = {
   urgent:
-    "The ticket is flagged urgent. It is not always placed first: to call the patient next, use Move to front on the queue page.",
+    "The ticket goes ahead of everyone waiting who is not urgent, behind urgent patients already waiting. Urgent stays on the ticket at every stage.",
   normal: "The patient is added to the end of the queue.",
   low: "For non-critical cases. The patient is added to the end of the queue.",
 };
@@ -123,18 +132,26 @@ export default function TicketIssuer() {
   // Real sync state of the last ticket: the row stays dirty until the sync
   // adapter has uploaded it.
   const issuedId = lastIssued?.queueItemId;
-  const issuedRow: QueueItem | undefined = useLiveQuery(
+  const issuedRowRaw: QueueRow | undefined = useLiveQuery(
     () => (issuedId ? db.queue.get(issuedId) : undefined),
     [issuedId],
   );
   // useLiveQuery keeps the previous result until the new query answers, so
   // only trust a row that belongs to the ticket on screen.
+  const issuedRow =
+    issuedRowRaw && issuedRowRaw.id === issuedId ? issuedRowRaw : undefined;
   const issuedSyncText =
-    !isSupabaseEnabled || !issuedRow || issuedRow.id !== issuedId
+    !isSupabaseEnabled || !issuedRow
       ? ""
       : issuedRow._dirty
         ? " Waiting to sync."
         : " Queue entry synced.";
+  // The number can change after a sync (another desk had already given the
+  // patient a ticket today): always show the row's current number.
+  const currentNumber = issuedRow?.ticketNumber ?? lastIssued?.ticketNumber ?? "";
+  const numberChanged =
+    !!lastIssued && !!issuedRow?.ticketNumber && issuedRow.ticketNumber !== lastIssued.ticketNumber;
+  const issuedBadge = issuedRow ? ticketStateBadge(issuedRow, isSupabaseEnabled) : null;
 
   // The Issue button disappears when the form resets; move focus to the
   // result so keyboard and screen-reader users are not dropped at the top
@@ -193,7 +210,11 @@ export default function TicketIssuer() {
         id: generateId(),
         tone: "success",
         title: `Ticket ${issued.ticketNumber} issued`,
-        body: `Added to the ${FLOW_STAGE_LABELS[chosenStage].toLowerCase()} queue at position ${item.position}. ${savedNote(isSupabaseEnabled)}`,
+        body: `Added to the ${FLOW_STAGE_LABELS[chosenStage].toLowerCase()} queue at position ${item.position}. ${savedNote(isSupabaseEnabled)}${
+          isSupabaseEnabled && item.ticketProvisional === 1
+            ? " This is a temporary number because no reserved numbers were left on this device."
+            : ""
+        }`,
       });
       // Ready for the next patient straight away.
       setSelectedPatient(null);
@@ -216,7 +237,7 @@ export default function TicketIssuer() {
     setPrintError("");
     try {
       printTicket({
-        ticketNumber: lastIssued.ticketNumber,
+        ticketNumber: currentNumber || lastIssued.ticketNumber,
         destination: FLOW_STAGE_LABELS[lastIssued.stage],
         siteName,
         issuedAt: lastIssued.issuedAt,
@@ -442,10 +463,30 @@ export default function TicketIssuer() {
                 </StatusBadge>
               </div>
               <div className="panel-body text-center">
+                {numberChanged && (
+                  <div className="banner banner-warning mb-3 text-left" role="alert">
+                    <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                    <span>
+                      Ticket changed from{" "}
+                      <strong className="font-semibold">{lastIssued.ticketNumber}</strong> to{" "}
+                      <strong className="font-semibold">{currentNumber}</strong>. Another
+                      desk had already given this patient a ticket today, or the
+                      number was taken. Tell the patient their new number.
+                    </span>
+                  </div>
+                )}
                 <p className="section-label">Ticket number</p>
                 <p className="mt-1 text-6xl font-bold tabular-nums tracking-tight text-ink">
-                  {lastIssued.ticketNumber}
+                  {currentNumber}
                 </p>
+                {issuedBadge && !numberChanged && (
+                  <div className="mt-2">
+                    <StatusBadge tone={issuedBadge.tone} icon>
+                      {issuedBadge.label}
+                    </StatusBadge>
+                    <p className="field-hint">{issuedBadge.hint}</p>
+                  </div>
+                )}
                 <p className="mt-3">
                   <span
                     className={`inline-flex items-center gap-2 rounded-md border px-3 py-1 text-label ${STAGE_CHIP_CLASS[lastIssued.stage]}`}
@@ -479,7 +520,7 @@ export default function TicketIssuer() {
                   className="btn-secondary mt-4"
                 >
                   <PrinterIcon className="h-5 w-5" aria-hidden />
-                  Print ticket {lastIssued.ticketNumber}
+                  Print ticket {currentNumber}
                 </button>
                 <p className="field-hint">
                   The printed slip shows the ticket number, destination and
@@ -494,6 +535,7 @@ export default function TicketIssuer() {
             </section>
           )}
 
+          <TicketNumbers />
           <QueueStats />
         </div>
       </div>
@@ -570,5 +612,66 @@ function QueueStats() {
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * Where this device's ticket numbers come from, so staff know before they
+ * go offline whether new tickets get a real number or a temporary one.
+ */
+function TicketNumbers() {
+  const { site, loading } = useActiveSite();
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getDeviceId()
+      .then((id) => {
+        if (!cancelled) setDeviceId(id);
+      })
+      .catch(() => {
+        if (!cancelled) setDeviceId("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const siteKey = loading ? null : siteKeyFromName(site?.name, DEFAULT_SITE_NAME);
+  const today = serviceDateOf(new Date());
+  const leases: TicketLease[] | undefined = useLiveQuery(
+    async () => {
+      try {
+        return await db.ticketLeases.where("serviceDate").equals(today).toArray();
+      } catch {
+        return [];
+      }
+    },
+    [today],
+  );
+
+  if (!isSupabaseEnabled) {
+    return (
+      <p className="field-hint" role="note">
+        Ticket numbers are issued on this device only: cloud sync is not set
+        up, so other devices do not see these tickets.
+      </p>
+    );
+  }
+  if (siteKey === null || deviceId === null || leases === undefined) return null;
+
+  const left = remainingInLeases(leases, siteKey, today, deviceId);
+  return (
+    <div className={`banner ${left > 0 ? "banner-info" : "banner-warning"}`} role="status">
+      {left > 0 ? (
+        <InformationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+      ) : (
+        <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+      )}
+      <span>
+        {left > 0
+          ? `${left} ticket ${left === 1 ? "number is" : "numbers are"} reserved on this device for today, so tickets get a Q- number even without internet.`
+          : "No ticket numbers are reserved on this device for today. Without internet, new tickets get a temporary number that starts with this device's code until it syncs."}
+      </span>
+    </div>
   );
 }

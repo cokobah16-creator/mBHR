@@ -15,26 +15,95 @@ import * as logger from "@/lib/logger";
 import { logAccess } from "./patientPortalAuth";
 import type {
   PatientDashboardData,
+  PatientDashboardSection,
   PatientMedicalRecord,
   PatientNotification,
   PatientMessage,
+  PortalDataError,
 } from "@/types/patientPortal";
 import { resolveBmi } from "@/utils/vitals";
+import { fetchMyReleasedLabResults } from "./portalLabResults";
 
 /**
- * Get patient dashboard summary data
+ * Error name or code only: Supabase messages and details can echo row data
+ * (names, phone numbers, notes), which must never reach the logs.
+ */
+function safeError(error: unknown): string {
+  // The code first: a Supabase error can be an Error instance whose name
+  // ("PostgrestError") says nothing about what went wrong.
+  const code = errorCode(error);
+  if (code) return code;
+  if (error instanceof Error) return error.name;
+  return error ? "unknown" : "none";
+}
+
+function errorCode(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return "";
+}
+
+function isOffline(): boolean {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+/** "offline" when the device reports no connection, otherwise "failed". */
+function failure(): PortalDataError {
+  return isOffline() ? "offline" : "failed";
+}
+
+export interface PatientDashboardLoad {
+  /** Null when the dashboard could not be built (see error). */
+  data: PatientDashboardData | null;
+  error?: PortalDataError;
+}
+
+export interface PatientMedicalHistoryLoad {
+  records: PatientMedicalRecord[];
+  total: number;
+  /**
+   * Set when the visits could not be loaded. The empty list then means
+   * "not loaded", never "no visits".
+   */
+  error?: PortalDataError;
+}
+
+export interface VisitDetailsLoad {
+  visit: PatientMedicalRecord | null;
+  /** "not_found" when the visit is not this patient's or does not exist. */
+  error?: PortalDataError;
+}
+
+/**
+ * Get patient dashboard summary data. Null when it could not be loaded;
+ * use loadPatientDashboard to learn why.
  */
 export async function getPatientDashboard(
   portalUserId: string,
   patientId: string,
 ): Promise<PatientDashboardData | null> {
+  return (await loadPatientDashboard(portalUserId, patientId)).data;
+}
+
+/**
+ * Dashboard summary with an explicit error. Sections whose query failed are
+ * listed in data.failedSections (their lists are empty because they could
+ * not be loaded). Recent lab results are only those the clinic has reviewed
+ * and released (recentLabResultsStatus says whether they loaded).
+ */
+export async function loadPatientDashboard(
+  portalUserId: string,
+  patientId: string,
+): Promise<PatientDashboardLoad> {
   try {
     await logAccess(portalUserId, patientId, "view", "dashboard");
 
     if (!supabase) {
       const { db } = await import("@/db");
       const patient = await db.patients.get(patientId);
-      if (!patient) return null;
+      if (!patient) return { data: null, error: "not_found" };
       const vitalsArr = await db.vitals
         .where("patientId")
         .equals(patientId)
@@ -53,7 +122,7 @@ export async function getPatientDashboard(
             new Date(a.dispensedAt).getTime(),
         )
         .slice(0, 10);
-      return {
+      const localData: PatientDashboardData = {
         patient: {
           id: patient.id,
           givenName: patient.givenName,
@@ -85,8 +154,11 @@ export async function getPatientDashboard(
         })),
         unreadMessages: 0,
         unreadNotifications: 0,
+        // Lab results are kept only on the clinic's online records.
         recentLabResults: [],
+        recentLabResultsStatus: "unavailable",
       };
+      return { data: localData };
     }
 
     const { data: patient, error: patientError } = await supabase
@@ -96,11 +168,16 @@ export async function getPatientDashboard(
       .single();
 
     if (patientError || !patient) {
-      logger.error("Error fetching patient:", patientError);
-      return null;
+      // PGRST116: no row (not this patient's record, or it does not exist).
+      const notFound =
+        !patientError || errorCode(patientError) === "PGRST116";
+      logger.error("Error fetching patient:", safeError(patientError));
+      return { data: null, error: notFound ? "not_found" : failure() };
     }
 
-    const { data: upcomingAppointments } = await supabase
+    const failedSections: PatientDashboardSection[] = [];
+
+    const { data: upcomingAppointments, error: appointmentsError } = await supabase
       .from("appointments")
       .select("*")
       .eq("patient_id", patientId)
@@ -109,7 +186,9 @@ export async function getPatientDashboard(
       .order("scheduled_at", { ascending: true })
       .limit(3);
 
-    const { data: recentVitalsData } = await supabase
+    if (appointmentsError) failedSections.push("appointments");
+
+    const { data: recentVitalsData, error: vitalsError } = await supabase
       .from("vitals")
       .select("*")
       .eq("patient_id", patientId)
@@ -117,10 +196,13 @@ export async function getPatientDashboard(
       .limit(1)
       .maybeSingle();
 
+    if (vitalsError) failedSections.push("vitals");
+
     const thirtyDaysAgo = new Date(
       Date.now() - 30 * 24 * 60 * 60 * 1000,
     ).toISOString();
-    const { data: activeMedicationsData } = await supabase
+
+    const { data: activeMedicationsData, error: medicationsError } = await supabase
       .from("dispenses")
       .select("*")
       .eq("patient_id", patientId)
@@ -128,33 +210,34 @@ export async function getPatientDashboard(
       .order("dispensed_at", { ascending: false })
       .limit(10);
 
-    const { count: unreadMessagesCount } = await supabase
+    if (medicationsError) failedSections.push("medications");
+
+    const { count: unreadMessagesCount, error: messagesError } = await supabase
       .from("patient_secure_messages")
       .select("*", { count: "exact", head: true })
       .eq("patient_id", patientId)
       .eq("read", false)
       .eq("from_patient", false);
 
+    if (messagesError) failedSections.push("messages");
+
     const unreadNotificationsCount = 0;
 
-    const { data: recentLabResultsData } = await supabase
-      .from("lab_results")
-      .select(
-        `
-        *,
-        lab_orders!inner (
-          patient_id,
-          test_name,
-          status
-        )
-      `,
-      )
-      .eq("lab_orders.patient_id", patientId)
-      .eq("lab_orders.status", "completed")
-      .order("result_date", { ascending: false })
-      .limit(5);
+    // Only results a clinician has reviewed AND released to the portal,
+    // for this patient's own records (server function
+    // portal_my_lab_results). Never read lab_results directly: that would
+    // include results nobody has reviewed yet.
+    // accountId: a device signed in online as someone else (for example
+    // staff on a shared phone) is reported as "not_signed_in", never as
+    // "no results".
+    const labs = await fetchMyReleasedLabResults({
+      limit: 5,
+      patientId,
+      accountId: portalUserId,
+    });
+    if (labs.status === "failed") failedSections.push("labResults");
 
-    return {
+    const data: PatientDashboardData = {
       patient: {
         id: patient.id,
         givenName: patient.given_name,
@@ -196,14 +279,26 @@ export async function getPatientDashboard(
       })),
       unreadMessages: unreadMessagesCount || 0,
       unreadNotifications: unreadNotificationsCount || 0,
-      recentLabResults: (recentLabResultsData || []).map((result) => ({
-        testName: result.lab_orders.test_name,
-        resultDate: new Date(result.result_date),
-        interpretation: result.interpretation,
-      })),
+      recentLabResults: labs.results.flatMap((result) => {
+        // result_date is required on the server; a row without a readable
+        // date is left out rather than shown with an invalid one.
+        const resultDate = result.resultDate ?? result.releasedAt;
+        return resultDate
+          ? [
+              {
+                testName: result.testName,
+                resultDate,
+                interpretation: result.interpretation,
+              },
+            ]
+          : [];
+      }),
+      recentLabResultsStatus: labs.status,
+      failedSections: failedSections.length > 0 ? failedSections : undefined,
     };
+    return { data };
   } catch (error) {
-    logger.error("Error in getPatientDashboard:", error);
+    logger.error("Error in getPatientDashboard:", safeError(error));
     await logAccess(
       portalUserId,
       patientId,
@@ -211,9 +306,9 @@ export async function getPatientDashboard(
       "dashboard",
       undefined,
       false,
-      String(error),
+      safeError(error),
     );
-    return null;
+    return { data: null, error: failure() };
   }
 }
 
@@ -225,9 +320,11 @@ export async function getPatientMedicalHistory(
   patientId: string,
   limit: number = 20,
   offset: number = 0,
-): Promise<{ records: PatientMedicalRecord[]; total: number }> {
+): Promise<PatientMedicalHistoryLoad> {
   try {
     await logAccess(portalUserId, patientId, "view", "medical_history");
+
+    if (!supabase) return { records: [], total: 0, error: "unavailable" };
 
     const {
       data: visits,
@@ -241,27 +338,35 @@ export async function getPatientMedicalHistory(
       .order("started_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (visitsError) {
-      logger.error("Error fetching visits:", visitsError);
-      return { records: [], total: 0 };
+    if (visitsError || !visits) {
+      logger.error("Error fetching visits:", safeError(visitsError));
+      return { records: [], total: 0, error: failure() };
     }
 
     const visitIds = visits.map((v) => v.id);
 
-    const { data: vitals } = await supabase
+    const { data: vitals, error: vitalsError } = await supabase
       .from("vitals")
       .select("*")
       .in("visit_id", visitIds);
 
-    const { data: consultations } = await supabase
+    const { data: consultations, error: consultationsError } = await supabase
       .from("consultations")
       .select("*")
       .in("visit_id", visitIds);
 
-    const { data: dispenses } = await supabase
+    const { data: dispenses, error: dispensesError } = await supabase
       .from("dispenses")
       .select("*")
       .in("visit_id", visitIds);
+
+    // A visit shown without its vitals, notes or medicines would look
+    // complete when it is not: report the failure instead.
+    const detailError = vitalsError || consultationsError || dispensesError;
+    if (detailError) {
+      logger.error("Error fetching visit details:", safeError(detailError));
+      return { records: [], total: 0, error: failure() };
+    }
 
     const records: PatientMedicalRecord[] = visits.map((visit) => {
       const visitVitals = vitals?.find((v) => v.visit_id === visit.id);
@@ -314,7 +419,7 @@ export async function getPatientMedicalHistory(
       total: count || 0,
     };
   } catch (error) {
-    logger.error("Error in getPatientMedicalHistory:", error);
+    logger.error("Error in getPatientMedicalHistory:", safeError(error));
     await logAccess(
       portalUserId,
       patientId,
@@ -322,53 +427,72 @@ export async function getPatientMedicalHistory(
       "medical_history",
       undefined,
       false,
-      String(error),
+      safeError(error),
     );
-    return { records: [], total: 0 };
+    return { records: [], total: 0, error: failure() };
   }
 }
 
 /**
- * Get detailed visit information
+ * Get detailed visit information. Null when it could not be loaded; use
+ * loadVisitDetails to tell "not found" from "load failed".
  */
 export async function getVisitDetails(
   portalUserId: string,
   patientId: string,
   visitId: string,
 ): Promise<PatientMedicalRecord | null> {
+  return (await loadVisitDetails(portalUserId, patientId, visitId)).visit;
+}
+
+/** One visit with an explicit error ("not_found", "offline", "failed"...). */
+export async function loadVisitDetails(
+  portalUserId: string,
+  patientId: string,
+  visitId: string,
+): Promise<VisitDetailsLoad> {
   try {
     await logAccess(portalUserId, patientId, "view", "visit", visitId);
+
+    if (!supabase) return { visit: null, error: "unavailable" };
 
     const { data: visit, error: visitError } = await supabase
       .from("visits")
       .select("*")
       .eq("id", visitId)
       .eq("patient_id", patientId)
-      .single();
+      .maybeSingle();
 
-    if (visitError || !visit) {
-      logger.error("Error fetching visit:", visitError);
-      return null;
+    if (visitError) {
+      logger.error("Error fetching visit:", safeError(visitError));
+      return { visit: null, error: failure() };
     }
+    if (!visit) return { visit: null, error: "not_found" };
 
-    const { data: vitals } = await supabase
+    const { data: vitals, error: vitalsError } = await supabase
       .from("vitals")
       .select("*")
       .eq("visit_id", visitId)
       .maybeSingle();
 
-    const { data: consultation } = await supabase
+    const { data: consultation, error: consultationError } = await supabase
       .from("consultations")
       .select("*")
       .eq("visit_id", visitId)
       .maybeSingle();
 
-    const { data: dispenses } = await supabase
+    const { data: dispenses, error: dispensesError } = await supabase
       .from("dispenses")
       .select("*")
       .eq("visit_id", visitId);
 
-    return {
+    const detailError = vitalsError || consultationError || dispensesError;
+    if (detailError) {
+      logger.error("Error fetching visit details:", safeError(detailError));
+      return { visit: null, error: failure() };
+    }
+
+    const record: PatientMedicalRecord = {
       visitId: visit.id,
       visitDate: new Date(visit.started_at),
       vitals: vitals
@@ -404,8 +528,9 @@ export async function getVisitDetails(
         dispensedAt: new Date(d.dispensed_at),
       })),
     };
+    return { visit: record };
   } catch (error) {
-    logger.error("Error in getVisitDetails:", error);
+    logger.error("Error in getVisitDetails:", safeError(error));
     await logAccess(
       portalUserId,
       patientId,
@@ -413,9 +538,9 @@ export async function getVisitDetails(
       "visit",
       visitId,
       false,
-      String(error),
+      safeError(error),
     );
-    return null;
+    return { visit: null, error: failure() };
   }
 }
 
@@ -470,7 +595,7 @@ export async function getPatientMessages(
     const { data, error } = await query;
 
     if (error) {
-      logger.error("Error fetching messages:", error);
+      logger.error("Error fetching messages:", safeError(error));
       return [];
     }
 
@@ -492,7 +617,7 @@ export async function getPatientMessages(
       updatedAt: new Date(message.created_at),
     }));
   } catch (error) {
-    logger.error("Error in getPatientMessages:", error);
+    logger.error("Error in getPatientMessages:", safeError(error));
     return [];
   }
 }
@@ -538,7 +663,7 @@ export async function sendMessage(
       .single();
 
     if (error || !data) {
-      logger.error("Error sending message:", error);
+      logger.error("Error sending message:", safeError(error));
       return null;
     }
 
@@ -557,7 +682,7 @@ export async function sendMessage(
       updatedAt: new Date(data.created_at),
     };
   } catch (error) {
-    logger.error("Error in sendMessage:", error);
+    logger.error("Error in sendMessage:", safeError(error));
     return null;
   }
 }
@@ -582,13 +707,13 @@ export async function markMessageAsRead(
       .eq("patient_id", patientId);
 
     if (error) {
-      logger.error("Error marking message as read:", error);
+      logger.error("Error marking message as read:", safeError(error));
       return false;
     }
 
     return true;
   } catch (error) {
-    logger.error("Error in markMessageAsRead:", error);
+    logger.error("Error in markMessageAsRead:", safeError(error));
     return false;
   }
 }

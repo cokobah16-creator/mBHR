@@ -5,7 +5,12 @@
 
 set -e
 
-RESEND_API_KEY="re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu"
+# Never commit a real key. Pass it in the environment:
+#   RESEND_API_KEY=re_... ./scripts/set-resend-key.sh
+if [ -z "${RESEND_API_KEY:-}" ] || [ "$RESEND_API_KEY" = "re_YOUR_RESEND_API_KEY" ]; then
+    echo "Set RESEND_API_KEY in the environment first (a key from the Resend dashboard)."
+    exit 1
+fi
 
 echo "=========================================="
 echo "  Resend API Key Setup for mBHR"
@@ -67,7 +72,7 @@ else
     echo ""
     echo "Secret details:"
     echo "  Name:  RESEND_API_KEY"
-    echo "  Value: $RESEND_API_KEY"
+    echo "  Value: (the key you passed in RESEND_API_KEY)"
     echo ""
     exit 1
 fi

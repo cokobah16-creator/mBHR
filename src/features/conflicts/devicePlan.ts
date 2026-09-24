@@ -15,6 +15,7 @@ import {
   type FieldSelections,
   type Side,
 } from "./conflictDiff";
+import { buildFieldChoices, type MergeFieldChoices } from "@/services/patientMergeRules";
 
 export interface FieldChange {
   field: string;
@@ -220,4 +221,20 @@ export function deviceMatchesDecision(plan: DevicePlan): boolean {
     return plan.alreadyMerged && plan.copied.every((c) => !c.changesValue);
   }
   return false;
+}
+
+/**
+ * Field choices sent with the merge command (server column -> choice).
+ * Copied values always come from record B, the record merged away; values
+ * that already match the kept record are not sent. `skipped` lists fields
+ * the server would not apply (for example an empty name).
+ */
+export function mergeFieldChoicesFor(
+  plan: Extract<DevicePlan, { kind: "merge_patients" }>,
+): { choices: MergeFieldChoices; skipped: string[] } {
+  return buildFieldChoices(
+    plan.copied
+      .filter((c) => c.changesValue && !isProtectedField(c.field))
+      .map((c) => ({ field: c.field, value: c.next, source: "loser" as const })),
+  );
 }

@@ -5,7 +5,14 @@ import * as logger from "@/lib/logger";
 // Lab orders and results live only in Supabase (tables lab_orders and
 // lab_results); there is no copy in IndexedDB. Every call here needs cloud
 // sync to be configured, a connection, and a Supabase sign-in: row-level
-// security only lets admin/doctor/nurse app_users read or change them.
+// security only lets staff app_users read them, and each write is checked
+// against the permission matrix (see src/auth/roles.ts).
+//
+// Review and release (supabase/migrations/20260925100500_lab_results_release.sql):
+// a result reaches the patient portal only after it is reviewed
+// (lab_review) and then released (lab_release). Both steps run as server
+// RPCs that credit the signed-in account; a lab_release holder can instead
+// withhold a result from the portal, with a reason.
 
 export interface LabOrder {
   id?: string;
@@ -24,17 +31,60 @@ export interface LabOrder {
   cancelledAt?: Date;
 }
 
+export type LabInterpretation = "normal" | "abnormal" | "critical";
+
+const LAB_INTERPRETATIONS: readonly LabInterpretation[] = [
+  "normal",
+  "abnormal",
+  "critical",
+];
+
 export interface LabResult {
   id?: string;
   orderId: string;
   resultValue: string;
   resultUnit?: string;
   referenceRange?: string;
-  interpretation: "normal" | "abnormal" | "critical";
+  /**
+   * Chosen by the person who records the result. Required for every new
+   * result. A stored row can still hold an unexpected or missing value
+   * (older data); display and sorting treat that as needing a check, never
+   * as normal.
+   */
+  interpretation: LabInterpretation;
   resultDate: Date;
   reviewedBy?: string;
   reviewedAt?: Date;
   notes?: string;
+  /** Staff account that recorded the result (server-stamped). */
+  enteredBy?: string;
+  /** When the result was released to the patient portal, if it was. */
+  releasedToPatientAt?: Date;
+  releasedToPatientBy?: string;
+  /** Plain-language note shown to the patient with a released result. */
+  patientNote?: string;
+  /** When a lab_release holder kept the result off the portal. */
+  withheldAt?: Date;
+  withheldBy?: string;
+  withheldReason?: string;
+  /** Last change to the value or interpretation after it was recorded. */
+  amendedAt?: Date;
+  /** A newer result that replaces this one. */
+  supersededBy?: string;
+}
+
+/** Review / release state of one result as the server returned it. */
+export interface LabReleaseState {
+  resultId: string;
+  reviewedAt?: Date;
+  reviewedBy?: string;
+  releasedToPatientAt?: Date;
+  releasedToPatientBy?: string;
+  withheldAt?: Date;
+  withheldReason?: string;
+  patientNote?: string;
+  /** True when nothing changed because the step had already been done. */
+  alreadyDone: boolean;
 }
 
 /** A stored lab order with every result recorded against it (newest first). */
@@ -63,13 +113,29 @@ const WORKLIST_UNREVIEWED_LIMIT = 500;
 export class LabServiceError extends Error {
   readonly operation: string;
   readonly code?: string;
+  /**
+   * For code "REJECTED": the server's fixed reason (for example
+   * "not_reviewed" or "reason_required"). Never contains row data.
+   */
+  readonly reason?: string;
 
-  constructor(operation: string, code?: string) {
-    super(`Lab service call failed: ${operation}${code ? ` (${code})` : ""}`);
+  constructor(operation: string, code?: string, reason?: string) {
+    super(
+      `Lab service call failed: ${operation}${code ? ` (${code}${reason ? `: ${reason}` : ""})` : ""}`,
+    );
     this.name = "LabServiceError";
     this.operation = operation;
     this.code = code;
+    this.reason = reason;
   }
+}
+
+/** True for one of the three interpretations a result may be filed with. */
+export function isLabInterpretation(value: unknown): value is LabInterpretation {
+  return (
+    typeof value === "string" &&
+    (LAB_INTERPRETATIONS as readonly string[]).includes(value)
+  );
 }
 
 /** Thrown when cloud sync is not configured, so lab data cannot be reached. */
@@ -93,11 +159,19 @@ function errorCode(error: unknown): string | undefined {
   return undefined;
 }
 
-function logAndThrow(error: unknown, context: string): never {
+function logAndThrow(
+  error: unknown,
+  context: string,
+  reason?: string,
+): never {
   // Supabase messages and details can echo row values (names, notes,
   // results), so only the operation and the error code leave this module.
-  const safe = new LabServiceError(context, errorCode(error));
-  logger.error(`[labs] ${context} failed:`, safe.code ?? (error instanceof Error ? error.name : "unknown"));
+  const safe = new LabServiceError(context, errorCode(error), reason);
+  logger.error(
+    `[labs] ${context} failed:`,
+    safe.code ?? (error instanceof Error ? error.name : "unknown"),
+    safe.reason ?? "",
+  );
   const offline = typeof navigator !== "undefined" && navigator.onLine === false;
   if (import.meta.env.VITE_SENTRY_DSN && !offline) {
     Sentry.captureException(safe, {
@@ -137,6 +211,16 @@ interface LabResultRow {
   reviewed_by: string | null;
   reviewed_at: string | null;
   notes: string | null;
+  // Added by 20260925100500; undefined until that migration is applied.
+  entered_by?: string | null;
+  released_to_patient_at?: string | null;
+  released_to_patient_by?: string | null;
+  patient_note?: string | null;
+  withheld_at?: string | null;
+  withheld_by?: string | null;
+  withheld_reason?: string | null;
+  amended_at?: string | null;
+  superseded_by?: string | null;
 }
 
 interface LabOrderRowWithResults extends LabOrderRow {
@@ -181,6 +265,15 @@ function mapResultRow(r: LabResultRow): LabResult {
     reviewedBy: r.reviewed_by,
     reviewedAt: toDate(r.reviewed_at),
     notes: r.notes,
+    enteredBy: r.entered_by ?? undefined,
+    releasedToPatientAt: toDate(r.released_to_patient_at),
+    releasedToPatientBy: r.released_to_patient_by ?? undefined,
+    patientNote: r.patient_note ?? undefined,
+    withheldAt: toDate(r.withheld_at),
+    withheldBy: r.withheld_by ?? undefined,
+    withheldReason: r.withheld_reason ?? undefined,
+    amendedAt: toDate(r.amended_at),
+    supersededBy: r.superseded_by ?? undefined,
   };
 }
 
@@ -229,6 +322,11 @@ export async function updateLabOrderStatus(
 }
 
 export async function addLabResult(result: LabResult): Promise<string> {
+  // The database no longer defaults a missing interpretation to "normal";
+  // refuse it here too, before anything is written.
+  if (!isLabInterpretation(result.interpretation)) {
+    logAndThrow({ code: "INVALID_INTERPRETATION" }, "addLabResult");
+  }
   const { data, error } = await client()
     .from("lab_results")
     .insert({
@@ -248,23 +346,171 @@ export async function addLabResult(result: LabResult): Promise<string> {
   return data!.id;
 }
 
+interface LabReleaseRpcResult {
+  outcome?: string;
+  reason?: string;
+  result_id?: string;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  released_to_patient_at?: string | null;
+  released_to_patient_by?: string | null;
+  withheld_at?: string | null;
+  withheld_reason?: string | null;
+  patient_note?: string | null;
+  already_reviewed?: boolean;
+  already_released?: boolean;
+  already_withheld?: boolean;
+}
+
+/**
+ * Turns a review / release RPC answer into a state, or throws. A refusal
+ * the server returns (rather than raises) becomes code "REJECTED" with the
+ * server's fixed reason; "not_found" becomes "NO_ROWS" like the other
+ * calls, so the same message is shown.
+ */
+export function parseLabReleaseResult(
+  operation: string,
+  resultId: string,
+  data: unknown,
+): LabReleaseState {
+  const row = (data && typeof data === "object" ? data : {}) as LabReleaseRpcResult;
+  if (row.outcome === "rejected") {
+    if (row.reason === "not_found") logAndThrow({ code: "NO_ROWS" }, operation);
+    logAndThrow({ code: "REJECTED" }, operation, row.reason ?? "unknown");
+  }
+  if (row.outcome !== "applied") {
+    logAndThrow({ code: "UNEXPECTED_RESPONSE" }, operation);
+  }
+  return {
+    resultId: row.result_id ?? resultId,
+    reviewedAt: toDate(row.reviewed_at),
+    reviewedBy: row.reviewed_by ?? undefined,
+    releasedToPatientAt: toDate(row.released_to_patient_at),
+    releasedToPatientBy: row.released_to_patient_by ?? undefined,
+    withheldAt: toDate(row.withheld_at),
+    withheldReason: row.withheld_reason ?? undefined,
+    patientNote: row.patient_note ?? undefined,
+    alreadyDone: !!(
+      row.already_reviewed ||
+      row.already_released ||
+      row.already_withheld
+    ),
+  };
+}
+
+const blankToNull = (value?: string | null): string | null => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+};
+
+/**
+ * Marks a result reviewed (server RPC lab_review_result). The server
+ * credits the signed-in account and uses its own clock; reviewing a result
+ * that is already reviewed changes nothing. With `release`, the result is
+ * also released to the patient portal in the same call (needs lab_release).
+ */
 export async function reviewLabResult(
   resultId: string,
-  reviewedBy: string,
-): Promise<void> {
+  options: { release?: boolean; patientNote?: string } = {},
+): Promise<LabReleaseState> {
+  const operation = options.release ? "reviewAndRelease" : "reviewLabResult";
+  const { data, error } = await client().rpc("lab_review_result", {
+    p_result_id: resultId,
+    p_release: !!options.release,
+    p_patient_note: blankToNull(options.patientNote),
+  });
+  if (error) {
+    // The app can reach a database that does not have the review RPC yet
+    // (20260925100500 not applied). Reviewing is core clinical work, so it
+    // falls back to the direct update used before; releasing has no
+    // fallback (nothing can reach the portal without the update).
+    if (!options.release && isMissingFunction(error)) {
+      return reviewLabResultDirect(resultId);
+    }
+    logAndThrow(error, operation);
+  }
+  return parseLabReleaseResult(operation, resultId, data);
+}
+
+/** PostgREST / Postgres codes for "this function does not exist". */
+function isMissingFunction(error: unknown): boolean {
+  const code = errorCode(error);
+  return code === "PGRST202" || code === "42883";
+}
+
+/**
+ * The review as it was made before the review RPC existed: sets
+ * reviewed_by / reviewed_at directly. Credited to the account signed in
+ * online (the only id row-level security accepts for this person); the
+ * caller must already have checked that this account is the person using
+ * the app.
+ */
+async function reviewLabResultDirect(resultId: string): Promise<LabReleaseState> {
+  const session = await getLabSessionUser();
+  if (!session) logAndThrow({ code: "42501" }, "reviewLabResult");
+  const reviewedAt = new Date();
   const { error, count } = await client()
     .from("lab_results")
     .update(
-      {
-        reviewed_by: reviewedBy,
-        reviewed_at: new Date().toISOString(),
-      },
+      { reviewed_by: session.id, reviewed_at: reviewedAt.toISOString() },
       { count: "exact" },
     )
     .eq("id", resultId);
-
   if (error) logAndThrow(error, "reviewLabResult");
   if (count === 0) logAndThrow({ code: "NO_ROWS" }, "reviewLabResult");
+  return {
+    resultId,
+    reviewedAt,
+    reviewedBy: session.id,
+    alreadyDone: false,
+  };
+}
+
+/** Review and release in one server call (needs lab_review and lab_release). */
+export function reviewAndRelease(
+  resultId: string,
+  patientNote?: string,
+): Promise<LabReleaseState> {
+  return reviewLabResult(resultId, { release: true, patientNote });
+}
+
+/**
+ * Releases a reviewed result to the patient portal (server RPC
+ * lab_release_result, needs lab_release). Refused with reason
+ * "not_reviewed" if nobody has reviewed it. The patient sees it only if
+ * their portal access is on.
+ */
+export async function releaseLabResult(
+  resultId: string,
+  patientNote?: string,
+): Promise<LabReleaseState> {
+  const { data, error } = await client().rpc("lab_release_result", {
+    p_result_id: resultId,
+    p_patient_note: blankToNull(patientNote),
+  });
+  if (error) logAndThrow(error, "releaseLabResult");
+  return parseLabReleaseResult("releaseLabResult", resultId, data);
+}
+
+/**
+ * Keeps a result off the patient portal, or takes it off if it was
+ * released (server RPC lab_withhold_result, needs lab_release). A reason
+ * is required; an empty one is refused here before anything is sent.
+ */
+export async function withholdLabResult(
+  resultId: string,
+  reason: string,
+): Promise<LabReleaseState> {
+  const trimmed = blankToNull(reason);
+  if (!trimmed) {
+    logAndThrow({ code: "REJECTED" }, "withholdLabResult", "reason_required");
+  }
+  const { data, error } = await client().rpc("lab_withhold_result", {
+    p_result_id: resultId,
+    p_reason: trimmed,
+  });
+  if (error) logAndThrow(error, "withholdLabResult");
+  return parseLabReleaseResult("withholdLabResult", resultId, data);
 }
 
 export async function getPatientLabOrders(
@@ -441,7 +687,7 @@ export async function getLabSessionUser(): Promise<LabSessionUser | null> {
 }
 
 /**
- * The staff id to store in ordered_by / reviewed_by (foreign keys to
+ * The staff id to store in ordered_by (a foreign key to
  * app_users). Online sign-in can keep an older local user record whose id
  * differs from the Supabase account id, so the session id is used when the
  * session provably belongs to the same person (same id or same email).

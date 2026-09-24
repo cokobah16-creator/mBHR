@@ -8,7 +8,12 @@ export type Role =
   | "volunteer"
   | "guest"
   | "auditor"
-  | "lead_clinician";
+  | "lead_clinician"
+  /**
+   * Registration desk lead: register, queue, portal_manage and
+   * portal_invite. No vitals (owner decision: registration, not clinical).
+   */
+  | "registration_lead";
 
 export type Permission =
   | "register" // Register new patients
@@ -43,12 +48,21 @@ export type Permission =
   /** Merge duplicate patient records (resolve_conflicts holders). */
   | "merge_patients"
   /** Release a reviewed lab result to the patient portal (lab_review holders). */
-  | "lab_release";
+  | "lab_release"
+  /**
+   * Send a patient portal invitation by SMS or email: registration_lead,
+   * lead_clinician and admin (owner decision). Separate from portal_manage:
+   * volunteers turn portal access on at registration but do not send
+   * invitations. The server checks the same rule before any invitation goes
+   * out (public.app_role_has_permission(..., 'portal_invite'), used by the
+   * send-sms-reminder and send-otp-email functions).
+   */
+  | "portal_invite";
 
 // Role permission matrix. lab_review is granted to doctor, lead_clinician
 // and admin for now; that list must follow DIOF clinical policy and match
 // public.app_role_has_permission in the database (latest definition:
-// supabase/migrations/20260925100000_sync_authority_foundation.sql).
+// supabase/migrations/20260925100600_registration_lead_portal_invite.sql).
 // src/auth/roleMatrixParity.test.ts fails when the two differ.
 const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
   volunteer: {
@@ -67,6 +81,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     portal_manage: true,
     merge_patients: false,
     lab_release: false,
+    portal_invite: false,
   },
   nurse: {
     register: true,
@@ -84,6 +99,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     portal_manage: true,
     merge_patients: true,
     lab_release: false,
+    portal_invite: false,
   },
   doctor: {
     register: true,
@@ -101,6 +117,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     portal_manage: true,
     merge_patients: true,
     lab_release: true,
+    portal_invite: false,
   },
   pharmacist: {
     register: false,
@@ -118,6 +135,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     portal_manage: false,
     merge_patients: false,
     lab_release: false,
+    portal_invite: false,
   },
   admin: {
     register: true,
@@ -135,6 +153,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     portal_manage: true,
     merge_patients: true,
     lab_release: true,
+    portal_invite: true,
   },
   guest: {
     register: false,
@@ -152,6 +171,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     portal_manage: false,
     merge_patients: false,
     lab_release: false,
+    portal_invite: false,
   },
   auditor: {
     register: false,
@@ -169,6 +189,7 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     portal_manage: false,
     merge_patients: true,
     lab_release: false,
+    portal_invite: false,
   },
   lead_clinician: {
     register: true,
@@ -186,6 +207,27 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     portal_manage: true,
     merge_patients: true,
     lab_release: true,
+    portal_invite: true,
+  },
+  registration_lead: {
+    register: true,
+    // Owner decision: registration-focused, not clinical. Vitals stay with
+    // staff explicitly assigned to that workflow.
+    vitals: false,
+    consult: false,
+    dispense: false,
+    inventory: false,
+    export: false,
+    users: false,
+    approve_phi_conflicts: false,
+    audit_access: false,
+    resolve_conflicts: false,
+    lab_review: false,
+    queue: true,
+    portal_manage: true,
+    merge_patients: false,
+    lab_release: false,
+    portal_invite: true,
   },
 };
 
@@ -239,6 +281,8 @@ export function getRoleColor(role: Role): string {
       return "bg-amber-100 text-amber-800";
     case "lead_clinician":
       return "bg-teal-100 text-teal-800";
+    case "registration_lead":
+      return "bg-gray-100 text-gray-800";
     default:
       return "bg-gray-100 text-gray-800";
   }
@@ -254,8 +298,26 @@ export function getRoleDisplayName(role: Role): string {
     guest: "Guest",
     auditor: "Auditor",
     lead_clinician: "Lead Clinician",
+    registration_lead: "Registration lead",
   };
   return displayNames[role] || role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+/** Roles that hold a permission, in matrix order. */
+export function rolesWithPermission(permission: Permission): Role[] {
+  return (Object.keys(ROLE_PERMISSIONS) as Role[]).filter((role) =>
+    can(role, permission),
+  );
+}
+
+/**
+ * Plain refusal for staff whose role lacks portal_invite, naming the roles
+ * that hold it. The services that send invitations and the screens that
+ * explain a hidden "Send invitation" action use the same words.
+ */
+export function portalInviteRefusal(): string {
+  const names = rolesWithPermission("portal_invite").map(getRoleDisplayName);
+  return `Your role cannot send portal invitations. Roles that can: ${names.join(", ")}.`;
 }
 
 export function canApproveConflict(

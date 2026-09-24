@@ -20,6 +20,7 @@ const PERMISSION_LABEL: Record<Permission, string> = {
   portal_manage: "manage patient portal access",
   merge_patients: "merge patient records",
   lab_release: "release lab results to patients",
+  portal_invite: "send patient portal invitations",
 };
 
 type Props = {

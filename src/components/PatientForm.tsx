@@ -22,6 +22,8 @@ interface PatientFormProps {
 }
 
 export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
+  // Sending an invitation is a separate permission from enabling access.
+  const canSendInvite = can(useAuthStore((st) => st.currentUser?.role), "portal_invite");
   const { t } = useTranslation();
   const { addPatient } = usePatientsStore();
   const [loading, setLoading] = useState(false);
@@ -118,6 +120,24 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             title: "Portal access not set up",
             tone: "warning",
             body: `The patient is registered, but portal enrolment failed (${portalResult.error}). You can enable it later from their record.`,
+          });
+        } else if (portalResult.deviceOnly) {
+          // No server on this device: nothing was confirmed anywhere else.
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Portal access on this device only",
+            tone: "info",
+            body: "Portal access is on for this device only: no server is connected.",
+          });
+        } else if (portalResult.pending) {
+          // Queued for the server, which decides at the next sync.
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Portal access requested",
+            tone: "info",
+            body:
+              portalResult.message ??
+              "Saved on this device. The patient can sign in once the clinic server confirms it.",
           });
         } else {
           console.log("Portal account created");
@@ -631,6 +651,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                       </p>
                     )}
 
+                    {canSendInvite ? (
                     <div className="flex items-start ml-6">
                       <input
                         {...register("sendInviteNow")}
@@ -651,6 +672,13 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                         </span>
                       </label>
                     </div>
+                    ) : (
+                      <p className="field-hint ml-6">
+                        A registration lead, lead clinician or administrator
+                        sends the portal invitation from the patient&apos;s
+                        record.
+                      </p>
+                    )}
                   </>
                 )}
               </div>

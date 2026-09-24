@@ -6,6 +6,7 @@ import { db, generateId } from "@/db";
 import type { User } from "@/db";
 import { getRoleDisplayName } from "@/auth/roles";
 import {
+  isOnlineStaffId,
   palaverRoom,
   PalaverError,
   type MessagePriority,
@@ -122,10 +123,18 @@ export function PalaverRoom({
 }: PalaverRoomProps) {
   const currentUser = useAuthStore((s) => s.currentUser);
   const { push } = useToast();
-  const userId = currentUser?.id;
   const userRole = currentUser?.role;
   const [availability] = useState(() => palaverRoom.getAvailabilityStatus());
   const configured = availability.available;
+  // Messages are stored against the online staff account (app_users id) and
+  // the server only serves that signed-in account, so messaging needs an
+  // online sign-in; a PIN-only unlock has none. undefined = still checking.
+  const [onlineStaffId, setOnlineStaffId] = useState<string | null | undefined>(
+    undefined,
+  );
+  const userId = onlineStaffId ?? undefined;
+  const localUserId = currentUser?.id;
+  const localUserEmail = currentUser?.email;
   const online = useOnlineStatus();
   const mayMessage = canMessageStaff(userRole);
   const mayAnnounce = canPostAnnouncements(userRole);
@@ -182,9 +191,34 @@ export function PalaverRoom({
 
   const [actionError, setActionError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [unsent, setUnsent] = useState<Unsent[]>(() =>
-    userId ? palaverUnsent.list(userId) : [],
-  );
+  const [unsent, setUnsent] = useState<Unsent[]>([]);
+
+  // ── Online staff sign-in ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!localUserId || !configured) {
+      setOnlineStaffId(null);
+      return;
+    }
+    let cancelled = false;
+    // A different person: never act as the previous person's account while
+    // the new one is being checked.
+    setOnlineStaffId(undefined);
+    const check = () => {
+      void palaverRoom
+        .getStaffSession({ id: localUserId, email: localUserEmail })
+        .then((session) => {
+          if (!cancelled) {
+            setOnlineStaffId(session.status === "signed_in" ? session.id : null);
+          }
+        });
+    };
+    check();
+    const unsubscribe = palaverRoom.onStaffSessionChange(check);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [localUserId, localUserEmail, configured]);
 
   // ── Staff directory (local) ────────────────────────────────────────────────
   useEffect(() => {
@@ -213,10 +247,13 @@ export function PalaverRoom({
           (u) =>
             u.isActive === 1 &&
             u.id !== userId &&
+            u.id !== localUserId &&
+            // Only online staff accounts can receive messages.
+            isOnlineStaffId(u.id) &&
             RECIPIENT_ROLES.includes(u.role),
         )
         .sort((a, b) => a.fullName.localeCompare(b.fullName)),
-    [staff, userId],
+    [staff, userId, localUserId],
   );
   const roleOf = (id: string): string | null => {
     const u = staffById.get(id);
@@ -500,7 +537,11 @@ export function PalaverRoom({
     body: string,
     priority: MessagePriority,
   ): boolean => {
-    if (!currentUser || !userId) return false;
+    if (!currentUser) return false;
+    if (!userId) {
+      setActionError("Sign in online to use messaging. Nothing was sent.");
+      return false;
+    }
     if (!canMessageStaff(currentUser.role)) {
       setActionError("Your role can read staff messages but not send them.");
       return false;
@@ -512,7 +553,7 @@ export function PalaverRoom({
       return false;
     }
     const params: SendMessageParams = {
-      senderId: currentUser.id,
+      senderId: userId,
       senderName: currentUser.fullName,
       recipientId: to.id,
       recipientName: to.name,
@@ -586,6 +627,10 @@ export function PalaverRoom({
   const submitBroadcast = async (e: FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
+    if (!userId) {
+      setBroadcastError("Sign in online to use messaging. Nothing was posted.");
+      return;
+    }
     if (!canPostAnnouncements(currentUser.role)) {
       setBroadcastError(
         "Only doctors, lead clinicians and admins can post announcements.",
@@ -614,7 +659,7 @@ export function PalaverRoom({
     setBroadcastError("");
     try {
       const saved = await palaverRoom.sendBroadcast({
-        senderId: currentUser.id,
+        senderId: userId,
         senderName: currentUser.fullName,
         targetRole: broadcastForm.targetRole,
         subject: broadcastForm.subject.trim(),
@@ -776,7 +821,7 @@ export function PalaverRoom({
   };
 
   const dismissBroadcast = (b: PalaverBroadcast) => {
-    if (!currentUser || b.sender_id !== currentUser.id) {
+    if (!currentUser || !userId || b.sender_id !== userId) {
       setActionError("Only the person who posted an announcement can remove it.");
       return;
     }
@@ -1375,8 +1420,10 @@ export function PalaverRoom({
           </select>
           {recipients.length === 0 && (
             <p className="field-hint">
-              No other active doctors, nurses or admins are registered on this
-              device.
+              No other active doctors, nurses or admins with an online staff
+              account are registered on this device. Colleagues appear here
+              when this device has their online staff account, for example
+              after they first sign in online on it.
             </p>
           )}
           {composeErrors.recipientId && (
@@ -1621,6 +1668,18 @@ export function PalaverRoom({
         />
       );
     }
+    if (onlineStaffId === undefined) {
+      return <ThreadListSkeleton label="Checking your online sign-in" />;
+    }
+    if (onlineStaffId === null) {
+      return (
+        <EmptyState
+          icon={ExclamationTriangleIcon}
+          title="Sign in online to use messaging"
+          description="Staff messages are sent and read with your own online staff account, and this device has no online sign-in for you (for example, it was unlocked with a PIN only). Nothing can be sent or read here until you do. Sign out, then sign in online with your email and password while connected to the internet."
+        />
+      );
+    }
     if (view === "conversation") return renderConversation();
     if (view === "compose") return renderCompose();
     if (view === "broadcast") return renderBroadcast();
@@ -1680,7 +1739,7 @@ export function PalaverRoom({
         onClose={onClose}
         closeLabel="Close Palaver Room"
       />
-      {currentUser && (
+      {currentUser && userId && (
         <ConnectionBar
           summary={summary}
           lastCheckedAt={lastCheckedAt}

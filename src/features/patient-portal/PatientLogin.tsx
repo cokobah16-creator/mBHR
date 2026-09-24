@@ -11,7 +11,14 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
+import { clearStoredSupabaseAuth } from "@/lib/supabaseAuthStorage";
 import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
+import {
+  fetchPortalAccessStatus,
+  linkDetailsFromUser,
+  linkPortalAccount,
+} from "@/services/portalSignIn";
+import { portalSignInRefusalMessage } from "@/services/portalAccessRules";
 import { AuthShell } from "./account/AuthShell";
 
 const onlineSchema = z.object({
@@ -24,14 +31,14 @@ const offlineSchema = z.object({
   credential: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
 });
 
-const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
-type LoginForm = z.infer<typeof schema>;
+type LoginForm = z.infer<typeof onlineSchema>;
 
 export function PatientLogin() {
   const navigate = useNavigate();
   const { login } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
 
   const form = useForm<LoginForm>({
     resolver: zodResolver(schema),
@@ -61,6 +68,36 @@ export function PatientLogin() {
       }
       return;
     }
+
+    // Portal access is decided by the clinic's server: open the portal only
+    // when it says access is on. Anything else (off, not linked, no answer)
+    // signs the account out again on this device.
+    const refuse = async (message: string) => {
+      if (supabase) await supabase.auth.signOut().catch(() => undefined);
+      clearStoredSupabaseAuth();
+      localStorage.removeItem("patient_portal_user");
+      setError(message);
+    };
+
+    let access = await fetchPortalAccessStatus(supabase);
+    if (access.kind === "not_linked" && supabase) {
+      // First sign-in after confirming the email: link the clinic record
+      // with the details given at registration.
+      const {
+        data: { user: signedIn },
+      } = await supabase.auth.getUser();
+      const link = await linkPortalAccount(supabase, linkDetailsFromUser(signedIn));
+      if (!link.linked) {
+        await refuse(link.message ?? portalSignInRefusalMessage("not_linked"));
+        return;
+      }
+      access = await fetchPortalAccessStatus(supabase);
+    }
+    if (access.kind !== "allowed") {
+      await refuse(portalSignInRefusalMessage(access.kind));
+      return;
+    }
+
     // Populate patient_portal_user so Medical History / Messages can find the patient ID
     if (supabase) {
       try {

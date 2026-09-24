@@ -80,6 +80,26 @@ export function validOtp(raw: unknown): string | null {
   return /^\d{4,8}$/.test(otp) ? otp : null;
 }
 
+// Local part, "@", domain with at least one dot; no spaces, quotes, angle
+// brackets or separators that could smuggle a second address.
+const EMAIL_PATTERN = /^[^\s@<>"',;:()[\]\\]+@[^\s@<>"',;:()[\]\\]+\.[^\s@<>"',;:()[\]\\]+$/;
+
+/** Trimmed email address, or null when it does not look like one. */
+export function validEmail(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const email = raw.trim();
+  if (!email || email.length > 254 || !EMAIL_PATTERN.test(email)) return null;
+  return email;
+}
+
+/** Masked form for logs: "ada.obi@example.org" -> "a***@example.org". */
+export function maskEmail(email: string | null | undefined): string {
+  const value = (email || "").trim();
+  const at = value.lastIndexOf("@");
+  if (at < 1) return value ? "***" : "(none)";
+  return `${value[0]}***${value.slice(at)}`;
+}
+
 /** Identifiers passed by the client (reminder / patient ids). */
 export function validId(raw: unknown): string | null {
   if (typeof raw !== "string") return null;

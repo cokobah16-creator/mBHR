@@ -81,13 +81,69 @@ mBHR is an offline-first Progressive Web App (PWA) for medical record management
 ### 4. Sync Layer (`/src/sync/`)
 - **Purpose**: Bidirectional data synchronization
 - **Components**:
-  - `adapter.ts` - Supabase sync adapter
-  - `mbhrAdapter.ts` - Healthcare-specific sync
+  - `adapter.ts` - Supabase sync adapter (the main engine; other packages
+    hook in as sync participants)
+  - `commandOutbox.ts` - Sends server-authoritative actions as idempotent
+    RPC commands (see below)
+  - `queueSync.ts` - Queue-ticket participant
+  - `pharmacySync.ts` - Pharmacy ledger participant (replaces
+    `mbhrAdapter.ts`, now deleted: it was never switched on and was built to
+    upload whole pharmacy tables with absolute stock quantities)
 - **Features**:
   - Cursor-based incremental sync
-  - Conflict detection
+  - Conflict detection (by server `row_version` for patients; queue rows are
+    last-writer-wins for priority and position, and the server keeps their
+    status, stage and ticket)
   - Dirty flag tracking
   - Field-level mapping
+
+#### Server-authoritative clinical state
+Some decisions belong to the server, not to whichever device uploads last:
+portal access, queue ticket numbers and queue status, patient merges,
+pharmacy stock, and lab result release. An upload from a device cannot
+change these values.
+
+1. **Command outbox** (portal access, patient merges, pharmacy stock). The
+   action updates the local record at once and, in the same Dexie
+   transaction, queues a command: an RPC call with a client UUID
+   (`p_command_id`). The screen shows the change as waiting for the server.
+   `src/sync/commandOutbox.ts` sends commands oldest first; a command made
+   by a staff member is sent only while that person is signed in online on
+   the device (automatic ones by anyone signed in online with the needed
+   permission). Resending is safe: the RPC stores each outcome in
+   `command_receipts` and returns the stored result for a command id it has
+   already seen. A refusal is an answer (`{"outcome": "rejected", "reason":
+   ...}`), not an error: the command's handler undoes or corrects the local
+   change and tells staff.
+2. **Queue.** Status changes are uploaded as `queue_transitions` rows, which
+   the server applies to the queue row with a compare-and-set (a stale
+   change is kept for audit and not applied). Ticket numbers are confirmed
+   by the queue participant after each download (`issue_queue_ticket()`),
+   using blocks of numbers leased for offline use.
+3. **Lab review and release** are online-only RPC calls (not queued).
+4. **Server-owned fields.** Guard triggers keep columns such as
+   `portal_enabled`, `merged_into`, queue status and stage, and stock
+   balances, whatever an upload says. A download applies these fields even
+   over unsent local edits (`SERVER_OWNED` and participant `serverOwned` in
+   `adapter.ts`), except while a local change is still waiting for its
+   command (holds).
+5. **Server clock.** On patients, queue, queue tickets, prescriptions,
+   medicines and lots (`pharmacy_items`, `pharmacy_batches`) the server
+   stamps `updated_at` and bumps `row_version` on every write, so pull
+   cursors and conflict checks do not depend on device clocks.
+
+Participants:
+
+| Area | Device side | Server side |
+| --- | --- | --- |
+| Portal access | `src/services/portalAccess.ts` (staff), `src/services/portalSignIn.ts` (portal sign-in check) | `set_patient_portal_access()`, `portal_access_status()` |
+| Queue tickets | `src/sync/queueSync.ts`, `src/services/queueTicketStore.ts` | `issue_queue_ticket()`, `lease_ticket_block()`, `queue_transitions` applied by the server |
+| Patient merges | `src/services/patientMerge.ts`, `src/services/patientMergeCore.ts` | `merge_patients()`, immutable `patient_merges` |
+| Pharmacy stock | `src/services/pharmacyCommands.ts`, `src/sync/pharmacySync.ts` (own outbox in the pharmacy database) | `rx_*` RPCs, append-only `stock_movements` |
+| Lab release | `src/services/labs.ts` (online-only RPC calls, not queued), `src/services/portalLabResults.ts` (portal read) | `lab_review_result()`, `lab_release_result()`, `lab_withhold_result()`, `portal_my_lab_results()` |
+
+Migrations: `supabase/migrations/20260925100000` to `20260925100500`. Access
+rules: `docs/security/RLS_MATRIX.md`. Database tests: `supabase/tests/`.
 
 ### 5. UI Components
 
@@ -231,6 +287,8 @@ Conflicts occur when:
 - User isolation
 - Audit logging
 - Site-based data filtering
+- The full table-by-table rules, guard triggers and RPC permissions are in
+  `docs/security/RLS_MATRIX.md`
 
 ### Data Protection
 - Client-side encryption for sensitive fields
