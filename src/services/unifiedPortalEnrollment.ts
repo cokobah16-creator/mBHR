@@ -7,13 +7,32 @@
 
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
+import { drainServerCommands } from "@/sync/adapter";
 import { safeErrorLabel } from "./logSafe";
+import {
+  getPortalAccessCommands,
+  requestPortalAccessChange,
+} from "./portalAccess";
+import { portalRejectionMessage } from "./portalAccessRules";
+import { can, type Role } from "@/auth/roles";
+import { useAuthStore } from "@/stores/auth";
 
 export interface EnrollmentResult {
   success: boolean;
   portalUserId?: string;
   error?: string;
   invitationSent?: boolean;
+  /**
+   * Portal access was asked for and is waiting for the server to confirm it
+   * (queued on this device; sent at the next sync).
+   */
+  pending?: boolean;
+  /** No server is set up on this device: access is on for this device only. */
+  deviceOnly?: boolean;
+  /** Plain note for staff about what still has to happen, if anything. */
+  message?: string;
+  /** The queued portal access command, to follow the server's answer. */
+  commandId?: string;
 }
 
 export interface PatientEnrollmentData {
@@ -57,11 +76,35 @@ export async function enrollPatientInPortal(
       };
     }
 
-    // Say plainly that this needs the server, instead of failing on a
-    // missing client or a network error.
+    // Portal accounts and access are portal_manage work (checked again when
+    // the access change is saved, and by the server).
+    const role = useAuthStore.getState().currentUser?.role as Role | undefined;
+    if (!role || !can(role, "portal_manage")) {
+      return { success: false, error: "Your role cannot change portal access." };
+    }
+
+    // Without the server (offline, or none set up) the portal account cannot
+    // be made now, but portal access can still be asked for: it is queued
+    // and the server decides at the next sync.
     const unavailable = serverUnavailableReason();
     if (unavailable) {
-      return { success: false, error: unavailable };
+      const access = await requestPortalAccessChange(patientId, true, {
+        reason: "registration",
+      });
+      if (!access.ok) {
+        return { success: false, error: access.error };
+      }
+      const deviceOnly = access.state === "device_only";
+      return {
+        success: true,
+        pending: !deviceOnly,
+        deviceOnly,
+        commandId: access.commandId,
+        invitationSent: false,
+        message: deviceOnly
+          ? "Portal access is on for this device only: no server is connected."
+          : "Portal access is saved on this device and waits for the server. The portal account is made when this device is online.",
+      };
     }
 
     // Check if patient already has portal account
@@ -72,10 +115,32 @@ export async function enrollPatientInPortal(
       .maybeSingle();
 
     if (existingPortalUser) {
+      // Make sure access itself is asked for too (the server ignores a
+      // repeat of what it already holds).
+      const access = await requestPortalAccessChange(patientId, true, {
+        reason: "registration",
+        serverRecord: true,
+      });
+      if (!access.ok) {
+        // The account exists, but access itself was not asked for: do not
+        // report success.
+        return {
+          success: false,
+          portalUserId: existingPortalUser.id,
+          error: access.error ?? "Portal access could not be requested.",
+        };
+      }
       return {
         success: true,
         portalUserId: existingPortalUser.id,
         error: "Patient already has portal access",
+        pending: access.state === "waiting_for_server",
+        deviceOnly: access.state === "device_only",
+        commandId: access.commandId,
+        message:
+          access.state === "waiting_for_server"
+            ? "The patient already has a portal account. Portal access is saved on this device and waits for the server."
+            : undefined,
       };
     }
 
@@ -141,21 +206,31 @@ export async function enrollPatientInPortal(
       };
     }
 
-    // Update patient record to reflect portal enrollment
-    await supabase
-      .from("patients")
-      .update({
-        portal_enabled: true,
-        portal_invited_at: new Date().toISOString(),
-      })
-      .eq("id", patientId);
+    // Portal access itself is the server's decision: ask for it with the
+    // command outbox (never by writing patients.portal_enabled).
+    const access = await requestPortalAccessChange(patientId, true, {
+      reason: "registration",
+      serverRecord: true,
+    });
 
     logger.info("Portal account created on the server");
+
+    if (!access.ok) {
+      return {
+        success: false,
+        portalUserId: newPortalUser.id,
+        invitationSent: false,
+        error: `Portal account made, but portal access was not turned on: ${access.error}`,
+      };
+    }
 
     return {
       success: true,
       portalUserId: newPortalUser.id,
       invitationSent: false,
+      pending: access.state === "waiting_for_server",
+      deviceOnly: access.state === "device_only",
+      commandId: access.commandId,
     };
   } catch (error) {
     logger.error("Error in enrollPatientInPortal:", safeErrorLabel(error));
@@ -177,6 +252,16 @@ export async function enrollPatientInPortal(
 export async function sendPortalInvitation(
   patientId: string,
 ): Promise<EnrollmentResult> {
+  const role = useAuthStore.getState().currentUser?.role as Role | undefined;
+  if (!role || !can(role, "portal_manage")) {
+    return { success: false, error: "Your role cannot send portal invitations." };
+  }
+  if (!supabase) {
+    return {
+      success: false,
+      error: "Portal invitations are recorded on the mBHR server, which is not connected on this device",
+    };
+  }
   try {
     // Get patient details
     const { data: patient, error: patientError } = await supabase
@@ -225,12 +310,25 @@ export async function sendPortalInvitation(
 
     // No email/SMS provider is wired up here: only the invitation time is
     // recorded. Never report the invitation as sent.
-    await supabase
+    const { data: invitedRows, error: invitedError } = await supabase
       .from("patients")
       .update({
         portal_invited_at: new Date().toISOString(),
       })
-      .eq("id", patientId);
+      .eq("id", patientId)
+      .select("id");
+
+    if (invitedError || !Array.isArray(invitedRows) || invitedRows.length === 0) {
+      logger.warn(
+        "Portal invitation time not recorded on the server:",
+        invitedError ? safeErrorLabel(invitedError) : "no row changed",
+      );
+      return {
+        success: false,
+        invitationSent: false,
+        error: "The invitation time could not be saved on the server. Try again.",
+      };
+    }
 
     logger.info("Portal invitation recorded on the server; no message sent");
 
@@ -287,16 +385,27 @@ export async function canEnrollInPortal(patientId: string): Promise<{
  * Bulk enroll multiple patients in portal
  * Useful for migrating existing patients
  */
-export async function bulkEnrollPatients(patientIds: string[]): Promise<{
+export interface BulkEnrollResult {
+  /** Portal account ready and portal access asked for. */
   success: number;
   failed: number;
   errors: Array<{ patientId: string; error: string }>;
-}> {
+  /** What the server said about portal access when the run finished. */
+  access?: {
+    applied: number;
+    /** Still waiting (not sent yet, or no answer yet). */
+    pending: number;
+    rejected: Array<{ patientId: string; error: string }>;
+  };
+}
+
+export async function bulkEnrollPatients(patientIds: string[]): Promise<BulkEnrollResult> {
   if (patientIds.length === 0) return { success: 0, failed: 0, errors: [] };
 
   let success = 0;
   let failed = 0;
   const errors: Array<{ patientId: string; error: string }> = [];
+  const queued: Array<{ patientId: string; commandId: string }> = [];
 
   // Without the server nothing can be enrolled; say why for every patient
   // instead of reporting them as "not found".
@@ -351,6 +460,7 @@ export async function bulkEnrollPatients(patientIds: string[]): Promise<{
       sex: patient.sex,
     });
 
+    if (result.commandId) queued.push({ patientId, commandId: result.commandId });
     if (result.success) {
       success++;
     } else {
@@ -361,7 +471,33 @@ export async function bulkEnrollPatients(patientIds: string[]): Promise<{
 
   logger.info(`Bulk enrollment complete: ${success} success, ${failed} failed`);
 
-  return { success, failed, errors };
+  const access = queued.length > 0 ? await followAccessCommands(queued) : undefined;
+  return { success, failed, errors, access };
+}
+
+/**
+ * Send the queued portal access commands now and report what the server
+ * answered for these patients (applied, refused, or still waiting).
+ */
+async function followAccessCommands(
+  ids: Array<{ patientId: string; commandId: string }>,
+): Promise<BulkEnrollResult["access"]> {
+  try {
+    await drainServerCommands().catch(() => null);
+    const summary = { applied: 0, pending: 0, rejected: [] as Array<{ patientId: string; error: string }> };
+    const commands = await getPortalAccessCommands(ids.map((c) => c.commandId));
+    ids.forEach(({ patientId }, i) => {
+      const command = commands[i];
+      if (command?.status === "applied") summary.applied++;
+      else if (command?.status === "rejected") {
+        summary.rejected.push({ patientId, error: portalRejectionMessage(command.rejectReason) });
+      } else summary.pending++;
+    });
+    return summary;
+  } catch (error) {
+    logger.warn("Could not read portal access answers:", safeErrorLabel(error));
+    return undefined;
+  }
 }
 
 /**

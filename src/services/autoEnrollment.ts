@@ -1,6 +1,11 @@
 import { supabase } from "@/lib/supabase";
 import { db, Patient } from "@/db";
 import * as logger from "@/lib/logger";
+import { can, type Role } from "@/auth/roles";
+import { useAuthStore } from "@/stores/auth";
+import { drainServerCommands } from "@/sync/adapter";
+import { requestPortalAccessChange } from "./portalAccess";
+import { safeErrorLabel } from "./logSafe";
 
 interface EnrollmentSettings {
   autoEnrollmentEnabled: boolean;
@@ -11,6 +16,11 @@ interface EnrollmentSettings {
 let cachedSettings: EnrollmentSettings | null = null;
 let settingsCacheTime: number = 0;
 const SETTINGS_CACHE_TTL = 60000;
+
+function currentRole(): Role | null {
+  const role = useAuthStore.getState().currentUser?.role;
+  return role ? (role as Role) : null;
+}
 
 export async function getEnrollmentSettings(): Promise<EnrollmentSettings> {
   const now = Date.now();
@@ -35,7 +45,7 @@ export async function getEnrollmentSettings(): Promise<EnrollmentSettings> {
       .select("setting_key, setting_value");
 
     if (error) {
-      logger.error("Failed to fetch enrollment settings:", error);
+      logger.error("Failed to fetch enrollment settings:", safeErrorLabel(error));
       return defaults;
     }
 
@@ -62,11 +72,16 @@ export async function getEnrollmentSettings(): Promise<EnrollmentSettings> {
     settingsCacheTime = now;
     return settings;
   } catch (error) {
-    logger.error("Failed to get enrollment settings:", error);
+    logger.error("Failed to get enrollment settings:", safeErrorLabel(error));
     return defaults;
   }
 }
 
+/**
+ * Change an auto-enrolment setting on the server. Needs the "users"
+ * permission (administrators), the same rule as the server. False when the
+ * server did not change a row (unknown key, refused, offline).
+ */
 export async function updateEnrollmentSetting(
   key: string,
   value: boolean,
@@ -77,25 +92,36 @@ export async function updateEnrollmentSetting(
     return false;
   }
 
+  const role = currentRole();
+  if (!role || !can(role, "users")) {
+    logger.warn("Enrollment setting not changed: this role cannot change portal settings");
+    return false;
+  }
+
   try {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("portal_enrollment_settings")
       .update({
         setting_value: value,
         updated_by: updatedBy,
         updated_at: new Date().toISOString(),
       })
-      .eq("setting_key", key);
+      .eq("setting_key", key)
+      .select("setting_key");
 
     if (error) {
-      logger.error("Failed to update enrollment setting:", error);
+      logger.error("Failed to update enrollment setting:", safeErrorLabel(error));
+      return false;
+    }
+    if (!Array.isArray(data) || data.length === 0) {
+      logger.warn("Enrollment setting not changed: the server updated no row");
       return false;
     }
 
     cachedSettings = null;
     return true;
   } catch (error) {
-    logger.error("Failed to update enrollment setting:", error);
+    logger.error("Failed to update enrollment setting:", safeErrorLabel(error));
     return false;
   }
 }
@@ -112,6 +138,11 @@ export function isEligibleForAutoEnrollment(
     return false;
   }
 
+  // A change is already waiting for the server, or the record was merged.
+  if (patient.portalPending === 1 || patient.mergeInto) {
+    return false;
+  }
+
   if (settings.requireEmail) {
     return Boolean(patient.email && patient.email.trim() !== "");
   }
@@ -122,78 +153,129 @@ export function isEligibleForAutoEnrollment(
   return hasPhone || hasEmail;
 }
 
+export interface AutoEnrollResult {
+  /** The request was saved (on this device, and queued for the server). */
+  enrolled: boolean;
+  /** Waiting for the server to confirm. */
+  pending?: boolean;
+  reason?: "not_eligible" | "not_allowed" | "error";
+}
+
+/**
+ * After the server confirmed access: create the portal account row and the
+ * welcome notification (register permission, as on the server). Failures
+ * are logged; access itself is already on.
+ */
+async function afterConfirmedEnable(
+  patient: Patient,
+  settings: EnrollmentSettings,
+): Promise<void> {
+  if (!supabase) return;
+  const role = currentRole();
+  if (!role || !can(role, "register")) return;
+
+  const phoneNumber = patient.phone?.trim() || null;
+  const email = patient.email?.trim() || null;
+
+  if (phoneNumber || email) {
+    const { data, error: portalUserError } = await supabase
+      .from("patient_portal_users")
+      .upsert(
+        {
+          patient_id: patient.id,
+          phone_number: phoneNumber,
+          email: email,
+          account_status: "active",
+        },
+        {
+          onConflict: "patient_id",
+        },
+      )
+      .select("id");
+
+    if (portalUserError || !Array.isArray(data) || data.length === 0) {
+      // The raw error can echo the email or phone that clashed.
+      logger.error(
+        "Portal user not created:",
+        portalUserError ? safeErrorLabel(portalUserError) : "no row written",
+      );
+    }
+  }
+
+  if (settings.sendWelcomeNotification) {
+    const { data, error: notificationError } = await supabase
+      .from("patient_notifications")
+      .insert({
+        patient_id: patient.id,
+        notification_type: "welcome",
+        title: "Welcome to the Patient Portal",
+        message:
+          "Your patient portal account has been activated. You can now view your health records, request appointments, and message your care team.",
+        priority: "normal",
+      })
+      .select("id");
+    if (notificationError || !Array.isArray(data) || data.length === 0) {
+      logger.error(
+        "Welcome notification not saved:",
+        notificationError ? safeErrorLabel(notificationError) : "no row written",
+      );
+    }
+  }
+}
+
+/**
+ * Ask for portal access for an eligible patient. The server decides
+ * (source "auto_enrollment": it never overrides a decision the server
+ * already holds). The welcome notification goes out only once the server
+ * has confirmed access.
+ */
 export async function checkAndEnrollPatient(
   patient: Patient,
-): Promise<{ enrolled: boolean; reason?: string }> {
+): Promise<AutoEnrollResult> {
   const settings = await getEnrollmentSettings();
 
   if (!isEligibleForAutoEnrollment(patient, settings)) {
     return { enrolled: false, reason: "not_eligible" };
   }
 
+  const role = currentRole();
+  if (!role || !can(role, "portal_manage")) {
+    return { enrolled: false, reason: "not_allowed" };
+  }
+
   try {
-    const now = new Date();
-
-    await db.patients.update(patient.id, {
-      portalEnabled: 1,
-      updatedAt: now,
-      _dirty: 1,
+    const change = await requestPortalAccessChange(patient.id, true, {
+      source: "auto_enrollment",
+      reason: "auto_enrollment",
     });
-
-    if (supabase) {
-      const { error: patientError } = await supabase
-        .from("patients")
-        .update({
-          portal_enabled: true,
-          auto_enrolled: true,
-          auto_enrolled_at: now.toISOString(),
-          updated_at: now.toISOString(),
-        })
-        .eq("id", patient.id);
-
-      if (patientError) {
-        logger.error("Failed to update patient in Supabase:", patientError);
-      }
-
-      const phoneNumber = patient.phone?.trim() || null;
-      const email = patient.email?.trim() || null;
-
-      if (phoneNumber || email) {
-        const { error: portalUserError } = await supabase
-          .from("patient_portal_users")
-          .upsert(
-            {
-              patient_id: patient.id,
-              phone_number: phoneNumber,
-              email: email,
-              account_status: "active",
-            },
-            {
-              onConflict: "patient_id",
-            },
-          );
-
-        if (portalUserError) {
-          logger.error("Failed to create portal user:", portalUserError);
-        }
-      }
-
-      if (settings.sendWelcomeNotification) {
-        await supabase.from("patient_notifications").insert({
-          patient_id: patient.id,
-          notification_type: "welcome",
-          title: "Welcome to the Patient Portal",
-          message:
-            "Your patient portal account has been activated. You can now view your health records, request appointments, and message your care team.",
-          priority: "normal",
-        });
-      }
+    if (!change.ok) {
+      logger.warn("Auto-enrollment not saved for a patient");
+      return { enrolled: false, reason: "error" };
     }
 
-    logger.log(`Auto-enrolled patient ${patient.id} in portal`);
-    return { enrolled: true };
+    if (change.state === "device_only") {
+      logger.log("Auto-enrolled a patient on this device (no server set up)");
+      return { enrolled: true, pending: false };
+    }
+
+    // Try to get the server's answer now; otherwise it arrives at the next sync.
+    if (typeof navigator === "undefined" || navigator.onLine !== false) {
+      await drainServerCommands().catch(() => null);
+    }
+    const after = await db.patients.get(patient.id);
+    const confirmed = after?.portalPending !== 1 && after?.portalEnabled === 1;
+    if (confirmed && after) {
+      await afterConfirmedEnable(after, settings);
+    }
+
+    logger.log(
+      confirmed
+        ? "Auto-enrolled a patient (confirmed by the server)"
+        : "Auto-enrollment queued for the server",
+    );
+    return { enrolled: true, pending: !confirmed };
   } catch (error) {
-    logger.error("Failed to auto-enroll patient:", error);
+    logger.error("Failed to auto-enroll patient:", safeErrorLabel(error));
     return { enrolled: false, reason: "error" };
   }
 }
@@ -206,11 +288,21 @@ export async function processAutoEnrollmentForNewPatient(
 
 export async function bulkAutoEnroll(
   onProgress?: (processed: number, total: number) => void,
-): Promise<{ enrolled: number; skipped: number; failed: number }> {
+): Promise<{ enrolled: number; skipped: number; failed: number; error?: string }> {
   const settings = await getEnrollmentSettings();
 
   if (!settings.autoEnrollmentEnabled) {
     return { enrolled: 0, skipped: 0, failed: 0 };
+  }
+
+  const role = currentRole();
+  if (!role || !can(role, "portal_manage")) {
+    return {
+      enrolled: 0,
+      skipped: 0,
+      failed: 0,
+      error: "Your role cannot change portal access.",
+    };
   }
 
   let enrolled = 0;
@@ -222,6 +314,7 @@ export async function bulkAutoEnroll(
       .filter(
         (p) =>
           p.portalEnabled !== 1 &&
+          p.portalPending !== 1 &&
           !p.mergeInto &&
           (Boolean(p.phone?.trim()) || Boolean(p.email?.trim())),
       )
@@ -257,37 +350,31 @@ export async function bulkAutoEnroll(
     }
 
     logger.log(
-      `Bulk auto-enrollment complete: ${enrolled} enrolled, ${skipped} skipped, ${failed} failed`,
+      `Bulk auto-enrollment complete: ${enrolled} requested, ${skipped} skipped, ${failed} failed`,
     );
   } catch (error) {
-    logger.error("Bulk auto-enrollment failed:", error);
+    logger.error("Bulk auto-enrollment failed:", safeErrorLabel(error));
   }
 
   return { enrolled, skipped, failed };
 }
 
+/**
+ * The patient does not want portal access: turn it off (server decides;
+ * a disable always applies there and is recorded as an opt-out).
+ */
 export async function optOutPatient(patientId: string): Promise<boolean> {
   try {
-    await db.patients.update(patientId, {
-      portalEnabled: 0,
-      updatedAt: new Date(),
-      _dirty: 1,
+    const change = await requestPortalAccessChange(patientId, false, {
+      reason: "opt_out",
     });
-
-    if (supabase) {
-      await supabase
-        .from("patients")
-        .update({
-          portal_enabled: false,
-          portal_opt_out: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", patientId);
+    if (!change.ok) {
+      logger.warn("Portal opt-out not saved for a patient");
+      return false;
     }
-
     return true;
   } catch (error) {
-    logger.error("Failed to opt out patient:", error);
+    logger.error("Failed to opt out patient:", safeErrorLabel(error));
     return false;
   }
 }

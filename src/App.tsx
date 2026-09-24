@@ -16,6 +16,10 @@ import {
 } from "@/services/portalSyncWorker";
 import { GlobalErrorBoundary } from "@/components/GlobalErrorBoundary";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
+import type { SupabaseClient, User as SupabaseUser } from "@supabase/supabase-js";
+import { clearStoredSupabaseAuth } from "@/lib/supabaseAuthStorage";
+import { fetchPortalAccessStatus } from "@/services/portalSignIn";
+import type { PortalSignInCheck } from "@/services/portalAccessRules";
 import { AuthCallback } from "@/components/AuthCallback";
 import {
   PageSkeleton,
@@ -311,6 +315,52 @@ function DataSharingWrapper() {
   return <DataSharingPreferences patientId={patientId} />;
 }
 
+/** How long a restored portal sign-in waits for the server's access check. */
+const PORTAL_ACCESS_CHECK_TIMEOUT_MS = 8000;
+
+/** The server's portal access answer, or "unavailable" when it is slow. */
+async function portalAccessWithin(
+  client: SupabaseClient,
+  ms: number,
+): Promise<PortalSignInCheck> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<PortalSignInCheck>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "unavailable" }), ms);
+  });
+  try {
+    return await Promise.race([fetchPortalAccessStatus(client), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Staff and the patient portal share one Supabase sign-in in this browser.
+ * True when the restored sign-in is the staff member signed in on this
+ * device, whose online sign-in (and sync) must not be ended by the portal.
+ */
+function isSignedInStaff(user: Pick<SupabaseUser, "id" | "email">): boolean {
+  const { isAuthenticated, currentUser } = useAuthStore.getState();
+  if (!isAuthenticated || !currentUser) return false;
+  if (currentUser.id === user.id) return true;
+  const staffEmail = currentUser.email?.trim().toLowerCase();
+  return !!staffEmail && staffEmail === user.email?.trim().toLowerCase();
+}
+
+/**
+ * Forget the portal patient kept in this browser (the same keys the portal's
+ * log out clears). Storage may be blocked: nothing to clear then.
+ */
+function clearStoredPortalUser(): void {
+  try {
+    localStorage.removeItem("patient_portal_user");
+    localStorage.removeItem("patient_active_profile");
+    sessionStorage.removeItem("patient_session_token");
+  } catch {
+    // Storage blocked.
+  }
+}
+
 function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
   const [isValidating, setIsValidating] = React.useState(true);
   const [isValid, setIsValid] = React.useState(false);
@@ -321,9 +371,37 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
     const validateSession = async () => {
       // 1. If Supabase is configured, trust the Supabase session first
       if (isSupabaseEnabled && supabase) {
-        const { data } = await supabase.auth.getSession();
+        const client = supabase;
+        const { data } = await client.auth.getSession();
         if (!mounted) return;
         if (data.session) {
+          // Portal access is the server's decision. A sign-in restored from
+          // this browser is checked again when the device is online. Offline,
+          // or when the server cannot be reached, the portal keeps working
+          // from this device's copy (the server's RLS still guards its data).
+          const online =
+            typeof navigator === "undefined" || navigator.onLine !== false;
+          if (online) {
+            const access = await portalAccessWithin(
+              client,
+              PORTAL_ACCESS_CHECK_TIMEOUT_MS,
+            );
+            if (!mounted) return;
+            if (access.kind === "not_enabled" || access.kind === "not_linked") {
+              // The server answered that access is off (or there is no clinic
+              // record): end this portal sign-in on the device, as a refused
+              // sign-in does, and go back to the login page.
+              if (!isSignedInStaff(data.session.user)) {
+                await client.auth.signOut().catch(() => undefined);
+                clearStoredSupabaseAuth();
+              }
+              clearStoredPortalUser();
+              if (!mounted) return;
+              setIsValid(false);
+              setIsValidating(false);
+              return;
+            }
+          }
           setIsValid(true);
           setIsValidating(false);
           return;
@@ -363,9 +441,10 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
         setIsValid(true);
         setIsValidating(false);
       } catch (err) {
+        // Error name only: messages can carry patient data.
         console.error(
           "[PatientProtectedRoute] Exception during validation:",
-          err,
+          err instanceof Error ? err.name : "unknown",
         );
         if (!mounted) return;
         sessionStorage.removeItem("patient_session_token");
@@ -836,7 +915,11 @@ function App() {
                         path="/labs"
                         element={
                           /* Matches the server's lab_orders/lab_results policies
-                             (doctor, nurse, admin); widen both together. */
+                             (doctor, nurse, admin); widen both together.
+                             Patients never read lab_results directly: a result
+                             reaches the portal only through portal_my_lab_results
+                             after it is reviewed and released (migration
+                             20260925100500). */
                           <RequireRoles roles={["doctor", "nurse", "admin"]}>
                             <LabResultsDashboard />
                           </RequireRoles>

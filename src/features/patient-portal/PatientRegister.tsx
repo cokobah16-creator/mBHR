@@ -75,9 +75,11 @@ export function PatientRegister() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { signup } = useAuth();
-  const [step, setStep] = useState<"form" | "success">("form");
+  const [step, setStep] = useState<"form" | "check_email" | "success">("form");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // Account made, but the email address must be confirmed before sign-in.
+  const [confirmNotice, setConfirmNotice] = useState("");
 
   // Pre-fill from staff-shared invitation link (?email=xxx&phone=xxx)
   const prefillEmail = searchParams.get("email") || "";
@@ -120,6 +122,19 @@ export function PatientRegister() {
       dob: data.dateOfBirth || undefined,
     });
     if (authError) {
+      // The account exists but needs its email confirmed first: this is
+      // information, not a failure, and there is no session to open.
+      if (authError.code === "confirm_email") {
+        setConfirmNotice(authError.message);
+        setStep("check_email");
+        return;
+      }
+      // The server did not link a clinic record (the message says why);
+      // the account has already been signed out on this device.
+      if (authError.code === "not_linked") {
+        setError(authError.message);
+        return;
+      }
       const msg = authError.message.toLowerCase();
       if (
         msg.includes("already registered") ||
@@ -154,11 +169,11 @@ export function PatientRegister() {
               }),
             );
           }
-          // If profile is null here, email confirmation may be required —
-          // the user will be prompted to log in after confirming.
+          // If the profile is not readable yet, the portal layout looks it
+          // up again when the dashboard opens.
         }
       } catch {
-        // Profile fetch failed; user can still log in after email confirmation
+        // Profile fetch failed; the portal layout looks it up again.
       }
     }
     setStep("success");
@@ -554,14 +569,26 @@ export function PatientRegister() {
         </>
       )}
 
+      {step === "check_email" && (
+        <div className="py-2">
+          <h1 className="text-h1 text-ink">Check your email</h1>
+          <div className="banner banner-info mt-4" role="status">
+            <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>{confirmNotice}</p>
+          </div>
+          <Link to="/patient/login" className="btn-primary mt-6 w-full">
+            Go to log in
+            <ArrowRightIcon className="h-5 w-5" aria-hidden />
+          </Link>
+        </div>
+      )}
+
       {step === "success" && (
         <div className="py-6 text-center" role="status">
           <CheckCircleIcon className="mx-auto mb-4 h-12 w-12 text-success" aria-hidden />
           <h1 className="text-h1 text-ink">Your account is ready</h1>
           <p className="mt-2 text-body text-ink-secondary">
-            {isSupabaseEnabled
-              ? "Welcome to mBHR. If we asked you to confirm your email address, check your inbox first, then log in."
-              : "Welcome to mBHR. Opening your dashboard…"}
+            Welcome to mBHR. Opening your dashboard…
           </p>
           <span
             className="mx-auto mt-6 block h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"

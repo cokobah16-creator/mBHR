@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import { UserPlusIcon, CloudIcon } from "@heroicons/react/24/outline";
 import { supabase } from "@/lib/supabase";
 import { bulkEnrollPatients } from "@/services/unifiedPortalEnrollment";
+import { listPortalAccessCommandsFor } from "@/services/portalAccess";
+import { summarizeCommandOutcomes } from "@/services/portalAccessRules";
+import { can } from "@/auth/roles";
 import { useAuthStore } from "@/stores/auth";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -34,6 +38,8 @@ interface EnrollmentResult {
   failed: number;
   errors: BulkRunError[];
   names: Map<string, string>;
+  /** Patients whose portal access was asked for (followed live). */
+  requestedIds: string[];
 }
 
 const SERVER_LIMIT = 100;
@@ -56,7 +62,8 @@ function rowName(p: ServerPatientRow) {
 
 export function BulkPortalMigration() {
   const role = useAuthStore((s) => s.currentUser?.role);
-  const canRun = canManagePortalEnrollment(role);
+  // Page rule (administrators) and the portal_manage permission.
+  const canRun = canManagePortalEnrollment(role) && !!role && can(role, "portal_manage");
   const server = useServerStatus();
 
   const [patients, setPatients] = useState<ServerPatientRow[]>([]);
@@ -71,6 +78,22 @@ export function BulkPortalMigration() {
   const [runError, setRunError] = useState(false);
   const [results, setResults] = useState<EnrollmentResult | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+
+  // Follow the server's answers to the portal access requests of the last
+  // run (the queued commands on this device).
+  const requestedIds = useMemo(() => results?.requestedIds ?? [], [results?.requestedIds]);
+  const accessCommands = useLiveQuery(
+    () => (requestedIds.length > 0 ? listPortalAccessCommandsFor(requestedIds) : []),
+    [requestedIds],
+    [],
+  );
+  const access = useMemo(
+    () =>
+      requestedIds.length > 0
+        ? summarizeCommandOutcomes(requestedIds, accessCommands ?? [])
+        : null,
+    [requestedIds, accessCommands],
+  );
 
   const loadEligiblePatients = useCallback(async () => {
     if (!supabase) return;
@@ -138,7 +161,15 @@ export function BulkPortalMigration() {
     setResults(null);
     try {
       const result = await bulkEnrollPatients(ids);
-      setResults({ total: ids.length, ...result, names });
+      const failedIds = new Set(result.errors.map((e) => e.patientId));
+      setResults({
+        total: ids.length,
+        success: result.success,
+        failed: result.failed,
+        errors: result.errors,
+        names,
+        requestedIds: ids.filter((id) => !failedIds.has(id)),
+      });
       setSelectedPatients(new Set());
       if (result.success > 0) await loadEligiblePatients();
     } catch (error) {
@@ -216,12 +247,64 @@ export function BulkPortalMigration() {
                   {/* The service also counts a patient who already had a
                       portal account as a success, so do not say "created". */}
                   Portal account ready on the server for {results.success} of{" "}
-                  {plural(results.total)}.
+                  {plural(results.total)}, and portal access asked for.
                   {results.failed > 0 && ` ${results.failed} failed.`} No
-                  invitation was sent: tell patients to register or sign in at
-                  the patient portal with their email or phone number.
+                  invitation was sent: once access is confirmed, tell patients
+                  to register or sign in at the patient portal with their email
+                  or phone number.
                 </p>
               </div>
+              {access && (
+                <ul
+                  className="grid gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-3"
+                  aria-live="polite"
+                >
+                  <li className="bg-surface-sunken px-3 py-2">
+                    <StatusBadge tone="success" icon>
+                      Access confirmed by the server
+                    </StatusBadge>
+                    <p className="mt-1 text-label text-ink tabular-nums">
+                      {plural(access.applied)}
+                    </p>
+                  </li>
+                  <li className="bg-surface-sunken px-3 py-2">
+                    <StatusBadge tone="warning" icon>
+                      Waiting for the server
+                    </StatusBadge>
+                    <p className="mt-1 text-label text-ink tabular-nums">
+                      {plural(access.waiting)}
+                    </p>
+                    {access.waiting > 0 && (
+                      <p className="text-caption text-ink-muted">
+                        Sent again at the next sync. Needs someone allowed to
+                        manage portal access to be signed in online.
+                      </p>
+                    )}
+                  </li>
+                  <li className="bg-surface-sunken px-3 py-2">
+                    <StatusBadge tone={access.refused.length > 0 ? "danger" : "neutral"} icon>
+                      Refused by the server
+                    </StatusBadge>
+                    <p className="mt-1 text-label text-ink tabular-nums">
+                      {plural(access.refused.length)}
+                    </p>
+                  </li>
+                </ul>
+              )}
+              {access && access.refused.length > 0 && (
+                <div>
+                  <h3 className="text-label text-ink">Why the server refused access</h3>
+                  <ul className="mt-1 space-y-1 text-body text-ink-secondary">
+                    {groupFailureReasons(
+                      access.refused.map((r) => ({ patientId: r.patientId, error: r.message })),
+                    ).map((g) => (
+                      <li key={g.reason}>
+                        {g.count} × {g.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {results.errors.length > 0 && (
                 <div>
                   <h3 className="text-label text-ink">Why patients failed</h3>
@@ -391,7 +474,11 @@ export function BulkPortalMigration() {
         </div>
         <ul className="panel-body list-disc space-y-1 pl-9 text-body text-ink-secondary">
           <li>Select patients who should have portal access.</li>
-          <li>A portal account is created on the server for each one.</li>
+          <li>
+            A portal account is created on the server for each one, and portal
+            access is asked for. The server decides and the result shows its
+            answer.
+          </li>
           <li>
             Patients sign in with their email or phone number and a one-time
             code.
@@ -413,7 +500,9 @@ export function BulkPortalMigration() {
       >
         <p>
           A portal account is created on the server for each selected patient,
-          and their server record is marked as portal-enabled.
+          and portal access is asked for. The server confirms it, or refuses it
+          (for example when access was turned off there more recently); the
+          result shows each answer.
         </p>
         <p>
           No invitation is sent. Patients whose email or phone number is already

@@ -1,7 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // --- mocks ---
-const { mockFrom } = vi.hoisted(() => ({ mockFrom: vi.fn() }));
+const { mockFrom, mockRequestChange, mockGetCommands, mockDrain } = vi.hoisted(() => ({
+  mockFrom: vi.fn(),
+  mockRequestChange: vi.fn(),
+  mockGetCommands: vi.fn(),
+  mockDrain: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("./portalAccess", () => ({
+  requestPortalAccessChange: mockRequestChange,
+  getPortalAccessCommands: mockGetCommands,
+}));
+vi.mock("@/sync/adapter", () => ({ drainServerCommands: mockDrain }));
+const authState = vi.hoisted(() => ({
+  currentUser: { id: "admin-1", role: "admin" } as { id: string; role: string } | null,
+}));
+vi.mock("@/stores/auth", () => ({
+  useAuthStore: { getState: () => authState },
+}));
 
 vi.mock("@/lib/supabase", () => ({ supabase: { from: mockFrom } }));
 vi.mock("@/lib/logger", () => ({
@@ -22,11 +39,19 @@ vi.mock("@/db", () => ({
   },
 }));
 
-import { bulkEnrollPatients } from "./unifiedPortalEnrollment";
+import { bulkEnrollPatients, enrollPatientInPortal } from "./unifiedPortalEnrollment";
 
 describe("bulkEnrollPatients", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequestChange.mockImplementation(async (id: string) => ({
+      ok: true,
+      state: "waiting_for_server",
+      commandId: `cmd-${id}`,
+    }));
+    mockGetCommands.mockImplementation(async (ids: string[]) =>
+      ids.map((id) => ({ id, status: "pending" })),
+    );
   });
 
   it("handles empty list without any DB calls", async () => {
@@ -121,5 +146,115 @@ describe("bulkEnrollPatients", () => {
     // patients lookup should be a single batch .in() call, not 3 individual .eq() calls
     expect(inSpy).toHaveBeenCalledTimes(1);
     expect(inSpy).toHaveBeenCalledWith("id", ["id1", "id2", "id3"]);
+  });
+
+  it("asks for portal access through the outbox and reports the server's answers", async () => {
+    const patientsUpdate = vi.fn();
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "patients") {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [
+                { id: "id1", given_name: "A", family_name: "B", dob: "1990-01-01", email: "a@t.com" },
+                { id: "id2", given_name: "C", family_name: "D", dob: "1990-01-01", email: "c@t.com" },
+              ],
+              error: null,
+            }),
+          }),
+          update: patientsUpdate,
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }),
+          ilike: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }),
+        }),
+        insert: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({ data: { id: "portal-u" }, error: null }),
+          }),
+        }),
+      };
+    });
+    mockGetCommands.mockResolvedValue([
+      { id: "cmd-id1", status: "applied" },
+      { id: "cmd-id2", status: "rejected", rejectReason: "newer_decision_on_server" },
+    ]);
+
+    const result = await bulkEnrollPatients(["id1", "id2"]);
+
+    // Never writes patients.portal_enabled directly.
+    expect(patientsUpdate).not.toHaveBeenCalled();
+    expect(mockRequestChange).toHaveBeenCalledWith("id1", true, {
+      reason: "registration",
+      serverRecord: true,
+    });
+    expect(mockDrain).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(2);
+    expect(result.access?.applied).toBe(1);
+    expect(result.access?.pending).toBe(0);
+    expect(result.access?.rejected).toEqual([
+      { patientId: "id2", error: expect.stringMatching(/server's setting was kept/) },
+    ]);
+  });
+});
+
+describe("enrollPatientInPortal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.currentUser = { id: "admin-1", role: "admin" };
+  });
+
+  it("refuses a role without portal_manage before any server call", async () => {
+    authState.currentUser = { id: "ph", role: "pharmacist" };
+
+    const result = await enrollPatientInPortal({
+      patientId: "p1",
+      givenName: "Ada",
+      familyName: "Obi",
+      dob: "1990-01-01",
+      email: "ada@test.com",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/role cannot/);
+    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockRequestChange).not.toHaveBeenCalled();
+  });
+
+  it("queues portal access when the device is offline instead of failing", async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server", commandId: "c1" });
+
+    const result = await enrollPatientInPortal({
+      patientId: "p1",
+      givenName: "Ada",
+      familyName: "Obi",
+      dob: "1990-01-01",
+      phone: "08012345678",
+    });
+
+    expect(result).toMatchObject({ success: true, pending: true, commandId: "c1" });
+    expect(result.message).toMatch(/waits for the server/);
+    expect(mockFrom).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("passes on a refusal to change portal access", async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    mockRequestChange.mockResolvedValue({ ok: false, error: "Your role cannot change portal access." });
+
+    const result = await enrollPatientInPortal({
+      patientId: "p1",
+      givenName: "Ada",
+      familyName: "Obi",
+      dob: "1990-01-01",
+      email: "ada@test.com",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/role cannot/);
+    vi.unstubAllGlobals();
   });
 });

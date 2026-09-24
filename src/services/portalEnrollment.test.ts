@@ -10,10 +10,11 @@ const { mockSupabase, mockFrom, mockFunctionsInvoke } = vi.hoisted(() => {
   return { mockSupabase, mockFrom, mockFunctionsInvoke };
 });
 
-const { mockPatientsGet, mockPatientsUpdate, mockPatientsWhere } = vi.hoisted(
+const { mockPatientsGet, mockPatientsUpdate, mockPatientsWhere, mockPatientsBulkGet } = vi.hoisted(
   () => {
     const mockPatientsUpdate = vi.fn().mockResolvedValue(1);
     const mockPatientsGet = vi.fn();
+    const mockPatientsBulkGet = vi.fn().mockResolvedValue([]);
     const mockEqualsFirst = vi.fn();
     const mockWhere = vi
       .fn()
@@ -22,6 +23,7 @@ const { mockPatientsGet, mockPatientsUpdate, mockPatientsWhere } = vi.hoisted(
       });
     return {
       mockPatientsGet,
+      mockPatientsBulkGet,
       mockPatientsUpdate,
       mockPatientsWhere: mockWhere,
       mockEqualsFirst,
@@ -29,13 +31,27 @@ const { mockPatientsGet, mockPatientsUpdate, mockPatientsWhere } = vi.hoisted(
   },
 );
 
+const { mockRequestChange, mockDrain } = vi.hoisted(() => ({
+  mockRequestChange: vi.fn(),
+  mockDrain: vi.fn().mockResolvedValue(null),
+}));
+
+const authState = vi.hoisted(() => ({
+  currentUser: { id: "nurse-1", role: "nurse" } as { id: string; role: string } | null,
+}));
+vi.mock("@/stores/auth", () => ({
+  useAuthStore: { getState: () => authState },
+}));
 vi.mock("@/lib/supabase", () => ({ supabase: mockSupabase }));
+vi.mock("./portalAccess", () => ({ requestPortalAccessChange: mockRequestChange }));
+vi.mock("@/sync/adapter", () => ({ drainServerCommands: mockDrain }));
 vi.mock("@/db", () => ({
   db: {
     patients: {
       get: mockPatientsGet,
       update: mockPatientsUpdate,
       where: mockPatientsWhere,
+      bulkGet: mockPatientsBulkGet,
     },
   },
 }));
@@ -58,6 +74,8 @@ import {
   getPortalStatus,
   linkAuthUserToPatient,
   findEligiblePatients,
+  bulkEnablePortalAccess,
+  INVITE_NOT_SENT_REASONS,
 } from "./portalEnrollment";
 import type { Patient } from "@/db";
 
@@ -125,44 +143,91 @@ describe("enablePortalAccess", () => {
     expect(result.error).toContain("email or phone");
   });
 
-  it("enables portal and updates local db on success", async () => {
+  it("queues the change for the server and reports it as waiting", async () => {
     mockPatientsGet.mockResolvedValue(makePatient());
-    mockFrom.mockReturnValue(makeChain(null, null));
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
 
     const result = await enablePortalAccess("p1", { termsAccepted: true });
 
-    expect(result.success).toBe(true);
-    expect(mockPatientsUpdate).toHaveBeenCalledWith(
-      "p1",
-      expect.objectContaining({ portalEnabled: 1, _dirty: 1 }),
-    );
+    expect(result).toMatchObject({ success: true, pending: true, deviceOnly: false });
+    expect(mockRequestChange).toHaveBeenCalledWith("p1", true, { reason: "staff_choice" });
+    // No direct write of portal access and no server table insert here.
+    expect(mockPatientsUpdate).not.toHaveBeenCalled();
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it("returns false when db update throws", async () => {
+  it("says when the change stays on this device (no server)", async () => {
     mockPatientsGet.mockResolvedValue(makePatient());
-    mockPatientsUpdate.mockRejectedValueOnce(new Error("crash"));
+    mockRequestChange.mockResolvedValue({ ok: true, state: "device_only" });
+
+    const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(result).toMatchObject({ success: true, pending: false, deviceOnly: true });
+  });
+
+  it("passes on a refusal (for example the role cannot manage portal access)", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient());
+    mockRequestChange.mockResolvedValue({
+      ok: false,
+      error: "Your role cannot change portal access.",
+    });
 
     const result = await enablePortalAccess("p1", { termsAccepted: true });
 
     expect(result.success).toBe(false);
+    expect(result.error).toMatch(/role cannot/);
+  });
+
+  it("returns false when the request throws", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient());
+    mockRequestChange.mockRejectedValueOnce(new Error("crash"));
+
+    const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("does not invite while the server has not confirmed access", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, portalPending: 1 }));
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
+
+    const result = await enablePortalAccess("p1", {
+      termsAccepted: true,
+      sendInviteNow: true,
+    });
+
+    expect(mockDrain).toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.inviteDeferred).toBe(true);
+    expect(result.inviteError).toMatch(/waiting for the server/);
+    expect(mockFunctionsInvoke).not.toHaveBeenCalled();
   });
 });
 
 describe("disablePortalAccess", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("disables portal and returns success", async () => {
+  it("queues the disable for the server", async () => {
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
+
     const result = await disablePortalAccess("p1");
 
-    expect(result.success).toBe(true);
-    expect(mockPatientsUpdate).toHaveBeenCalledWith(
-      "p1",
-      expect.objectContaining({ portalEnabled: 0, _dirty: 1 }),
-    );
+    expect(result).toMatchObject({ success: true, pending: true });
+    expect(mockRequestChange).toHaveBeenCalledWith("p1", false, { reason: "staff_choice" });
+    expect(mockPatientsUpdate).not.toHaveBeenCalled();
   });
 
-  it("returns error when db throws", async () => {
-    mockPatientsUpdate.mockRejectedValueOnce(new Error("crash"));
+  it("returns the refusal when the change is not allowed", async () => {
+    mockRequestChange.mockResolvedValue({ ok: false, error: "Sign in to change portal access." });
+
+    const result = await disablePortalAccess("p1");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Sign in/);
+  });
+
+  it("returns error when the request throws", async () => {
+    mockRequestChange.mockRejectedValueOnce(new Error("crash"));
 
     const result = await disablePortalAccess("p1");
 
@@ -173,8 +238,30 @@ describe("disablePortalAccess", () => {
 describe("sendPortalInvitation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.currentUser = { id: "nurse-1", role: "nurse" };
     mockFrom.mockReturnValue(makeChain());
     mockFunctionsInvoke.mockResolvedValue({ error: null });
+  });
+
+  it("refuses a role without portal_manage before any write or message", async () => {
+    authState.currentUser = { id: "ph-1", role: "pharmacist" };
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/cannot send portal invitations/);
+    expect(mockPatientsUpdate).not.toHaveBeenCalled();
+    expect(mockFunctionsInvoke).not.toHaveBeenCalled();
+  });
+
+  it("refuses when nobody is signed in", async () => {
+    authState.currentUser = null;
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.success).toBe(false);
+    expect(mockPatientsUpdate).not.toHaveBeenCalled();
   });
 
   it("returns error when patient not found", async () => {
@@ -195,21 +282,100 @@ describe("sendPortalInvitation", () => {
     expect(result.error).toContain("not enabled");
   });
 
-  it("sends via edge function and marks status=sent", async () => {
+  it("refuses while portal access is waiting for the server", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, portalPending: 1 }));
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/waiting for the server/);
+    expect(mockFunctionsInvoke).not.toHaveBeenCalled();
+  });
+
+  it("sends via edge function and marks status=sent only when the server confirms", async () => {
     mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
+    mockFunctionsInvoke.mockResolvedValue({ data: { success: true }, error: null });
 
     const result = await sendPortalInvitation("p1");
 
     expect(result.success).toBe(true);
+    expect(result.demoOTP).toBeUndefined();
     expect(mockFunctionsInvoke).toHaveBeenCalledWith(
       "send-otp-email",
       expect.objectContaining({
         body: expect.objectContaining({ email: "ada@example.com" }),
       }),
     );
+    expect(mockPatientsUpdate).toHaveBeenLastCalledWith(
+      "p1",
+      expect.objectContaining({
+        portalInvitation: expect.objectContaining({ lastStatus: "sent" }),
+      }),
+    );
   });
 
-  it("falls back gracefully when edge function fails", async () => {
+  it("does not record a demo-mode email as sent", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
+    mockFunctionsInvoke.mockResolvedValue({ data: { success: true, demo: true }, error: null });
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.success).toBe(true);
+    expect(result.demoOTP).toMatch(/No email or SMS was sent/);
+    expect(mockPatientsUpdate).toHaveBeenLastCalledWith(
+      "p1",
+      expect.objectContaining({
+        portalInvitation: expect.objectContaining({
+          lastStatus: "failed",
+          failureReason: INVITE_NOT_SENT_REASONS.demoMode,
+        }),
+      }),
+    );
+  });
+
+  it("sends SMS through send-sms-reminder with the patient id, never the number", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, email: "" }));
+    mockFunctionsInvoke.mockResolvedValue({ data: { success: true, provider: "termii" }, error: null });
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.success).toBe(true);
+    expect(result.demoOTP).toBeUndefined();
+    expect(mockFunctionsInvoke).toHaveBeenCalledWith("send-sms-reminder", {
+      body: { patientId: "p1", message: expect.stringContaining("/patient/register") },
+    });
+    expect(mockFunctionsInvoke).not.toHaveBeenCalledWith("send-otp-sms", expect.anything());
+    expect(mockPatientsUpdate).toHaveBeenLastCalledWith(
+      "p1",
+      expect.objectContaining({
+        portalInvitation: expect.objectContaining({ lastStatus: "sent" }),
+      }),
+    );
+  });
+
+  it("does not record an SMS as sent without success, or in demo mode", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, email: "" }));
+    mockFunctionsInvoke.mockResolvedValue({ data: { success: true, demo: true }, error: null });
+
+    const demo = await sendPortalInvitation("p1");
+    expect(demo.demoOTP).toMatch(/No email or SMS was sent/);
+
+    mockFunctionsInvoke.mockResolvedValue({ data: null, error: { name: "FunctionsHttpError" } });
+    const failed = await sendPortalInvitation("p1");
+    expect(failed.success).toBe(true);
+    expect(failed.demoOTP).toMatch(/No email or SMS was sent/);
+    expect(mockPatientsUpdate).toHaveBeenLastCalledWith(
+      "p1",
+      expect.objectContaining({
+        portalInvitation: expect.objectContaining({
+          lastStatus: "failed",
+          failureReason: INVITE_NOT_SENT_REASONS.serviceFailed,
+        }),
+      }),
+    );
+  });
+
+  it("falls back to a link (recorded as not sent) when edge function fails", async () => {
     mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
     mockFunctionsInvoke.mockResolvedValue({ error: { message: "fn error" } });
 
@@ -217,6 +383,12 @@ describe("sendPortalInvitation", () => {
 
     expect(result.success).toBe(true);
     expect(result.registrationUrl).toBeDefined();
+    expect(mockPatientsUpdate).toHaveBeenLastCalledWith(
+      "p1",
+      expect.objectContaining({
+        portalInvitation: expect.objectContaining({ lastStatus: "failed" }),
+      }),
+    );
   });
 
   it("enforces rate limit when invite was sent recently", async () => {
@@ -272,6 +444,16 @@ describe("getPortalStatus", () => {
 
     const status = await getPortalStatus("p1");
 
+    expect(status!.canResend).toBe(false);
+  });
+
+  it("reports a change waiting for the server and blocks invitations", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, portalPending: 1 }));
+
+    const status = await getPortalStatus("p1");
+
+    expect(status!.enabled).toBe(true);
+    expect(status!.pending).toBe(true);
     expect(status!.canResend).toBe(false);
   });
 });
@@ -348,6 +530,23 @@ describe("findEligiblePatients", () => {
     expect(result.map((p) => p.id)).toEqual(["p1", "p2"]);
   });
 
+  it("leaves out patients with a change waiting and merged-away records", async () => {
+    const patients = [
+      makePatient({ id: "p1", phone: "080" }),
+      makePatient({ id: "p2", phone: "080", portalPending: 1 }),
+      makePatient({ id: "p3", phone: "080", mergeInto: "p1" }),
+    ];
+    mockPatientsWhere.mockReturnValue({
+      equals: vi.fn().mockReturnValue({
+        toArray: vi.fn().mockResolvedValue(patients),
+      }),
+    });
+
+    const result = await findEligiblePatients();
+
+    expect(result.map((p) => p.id)).toEqual(["p1"]);
+  });
+
   it("filters by contactMethod=email", async () => {
     const patients = [
       makePatient({ id: "p1", phone: "080", email: "" }),
@@ -375,5 +574,51 @@ describe("findEligiblePatients", () => {
     const result = await findEligiblePatients();
 
     expect(result).toEqual([]);
+  });
+});
+
+describe("bulkEnablePortalAccess", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPatientsBulkGet.mockResolvedValue([]);
+  });
+
+  it("queues every patient and counts refusals", async () => {
+    mockPatientsGet.mockImplementation(async (id: string) => makePatient({ id }));
+    mockRequestChange.mockImplementation(async (id: string) =>
+      id === "p2" ? { ok: false, error: "Your role cannot change portal access." } : { ok: true, state: "waiting_for_server" },
+    );
+    mockPatientsBulkGet.mockResolvedValue([makePatient({ id: "p1", portalPending: 1 })]);
+    const onProgress = vi.fn();
+
+    const result = await bulkEnablePortalAccess(["p1", "p2"], { onProgress });
+
+    expect(result.success).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.pending).toBe(1);
+    expect(result.errors).toEqual([
+      { patientId: "p2", error: "Your role cannot change portal access." },
+    ]);
+    expect(result.invitations).toBeUndefined();
+    expect(onProgress).toHaveBeenLastCalledWith(2, 2);
+    expect(mockRequestChange).toHaveBeenCalledWith("p1", true, { reason: "bulk_enable" });
+  });
+
+  it("invites only patients the server has confirmed", async () => {
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
+    mockPatientsGet.mockImplementation(async (id: string) =>
+      id === "p1"
+        ? makePatient({ id, portalEnabled: 1, portalPending: 0 })
+        : makePatient({ id, portalEnabled: 1, portalPending: 1 }),
+    );
+    mockFunctionsInvoke.mockResolvedValue({ data: { success: true }, error: null });
+
+    const result = await bulkEnablePortalAccess(["p1", "p2"], { sendInvitations: true });
+
+    expect(mockDrain).toHaveBeenCalledTimes(1);
+    expect(result.invitations?.sent).toBe(1);
+    expect(result.invitations?.notSent).toHaveLength(1);
+    expect(result.invitations?.notSent[0].patientId).toBe("p2");
+    expect(result.invitations?.notSent[0].error).toMatch(/waiting for the server/);
   });
 });
