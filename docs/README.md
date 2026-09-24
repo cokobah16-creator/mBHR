@@ -43,6 +43,7 @@ app for medical outreach clinics. Start with the [project README](../README.md).
 ## Legal
 
 - [Privacy notice and terms — review status](./legal/README.md)
+- [Legal readiness checklist](./legal/LEGAL_READINESS_CHECKLIST.md) — 20 common legal-readiness items, where mBHR stands on each, and the file-level steps to close each gap
 
 ## Archive
 
