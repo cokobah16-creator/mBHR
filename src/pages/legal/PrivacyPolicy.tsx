@@ -3,6 +3,9 @@
 // Every statement here must stay true to what the code does. If you add a
 // data processor, a tracker or a new category of data, update this page.
 // When the text changes, set PRIVACY_VERSION in ./policyMeta.ts to that day.
+// PrivacyPolicy.test.tsx checks that every service found in the code is
+// named here, and that "Your sharing choices" matches DEFAULT_SHARING_FLAGS
+// in src/features/patient-portal/account/sharingChanges.ts.
 // Pending review by a qualified Nigerian data-protection lawyer (NDPA 2023)
 // — see docs/legal/README.md.
 import { LegalPage, LegalSection } from "./LegalPage";
@@ -70,19 +73,84 @@ export default function PrivacyPolicy() {
             consultations, and pharmacists can dispense medicines.
           </li>
           <li>You, through the patient portal, and any caregiver you add.</li>
+          <li>The service providers listed below, only to run mBHR.</li>
           <li>
-            Service providers who process data for us only to run mBHR:
-            Supabase (database and sign-in), Termii (text messages), Resend
-            (email), and Jitsi Meet (video for televisits you request). If
-            error monitoring is switched on, Sentry receives technical error
-            reports; screen recordings it captures hide all text and images.
-          </li>
-          <li>
-            Other health providers only where you are referred to them or have
-            agreed to share your record in the portal’s data sharing settings.
+            Other health providers where you are referred to them. Other
+            organisations may also ask for a copy of your records. See “Your
+            sharing choices” below.
           </li>
         </ul>
         <p>We do not sell your information or use it for advertising.</p>
+      </LegalSection>
+
+      <LegalSection title="Service providers">
+        <p>These companies handle data for us only to run mBHR.</p>
+        <ul className="list-disc space-y-1 pl-5">
+          <li>Supabase runs our online database, file storage and sign-in.</li>
+          <li>
+            Termii sends our text messages. It receives your phone number and
+            the message. A message can include your name, a medicine, an
+            appointment time or a televisit link.
+          </li>
+          <li>
+            Twilio sends our text messages instead of Termii if Termii is not
+            set up. It then receives the same details.
+          </li>
+          <li>
+            Resend sends our emails. It receives your email address and the
+            message.
+          </li>
+          <li>
+            Vercel hosts the app. When your device loads the app from the
+            internet, Vercel receives your device’s IP address, browser details
+            and the address of the page. Your records do not pass through
+            Vercel.
+          </li>
+          <li>
+            GitHub Actions runs our nightly database backup. The backup file is
+            made on a GitHub computer, then saved in our Supabase account. No
+            copy is kept on GitHub.
+          </li>
+          <li>
+            While the app starts, it may download an outline map of Nigeria
+            from jsDelivr, or from Statically if jsDelivr cannot be reached.
+            That request shows the service your device’s IP address and
+            browser details. No health information is sent.
+          </li>
+          <li>
+            Televisits use the public video service meet.jit.si, run by 8x8,
+            unless the Foundation has set up a different video server. The
+            video service carries the sound and picture of the call and sees
+            your device’s IP address.
+          </li>
+          <li>
+            If error monitoring is switched on, Sentry receives technical error
+            reports; screen recordings it captures hide all text and images.
+          </li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection title="Your sharing choices">
+        <p>
+          In the patient portal, “Manage Data Sharing” lets you choose which
+          other organisations may ask for a copy of your records. Until you
+          save your own choices, they are set like this:
+        </p>
+        <ul className="list-disc space-y-1 pl-5">
+          <li>Other hospitals and clinics treating you: not allowed.</li>
+          <li>
+            Health apps you choose: allowed, so you can connect an app to
+            download a copy of your own records.
+          </li>
+          <li>Health insurance and payment: not allowed.</li>
+          <li>Quality checks and training: not allowed.</li>
+        </ul>
+        <p>
+          You can change these choices there at any time. They are saved as a
+          record of your wishes. Requests are not yet checked against them
+          automatically, so also tell clinic staff if you want sharing
+          stopped.
+        </p>
       </LegalSection>
 
       <LegalSection title="Children">

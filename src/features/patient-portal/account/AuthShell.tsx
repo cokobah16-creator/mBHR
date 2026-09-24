@@ -1,5 +1,10 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { LegalLinks, type LegalLinkTarget } from "@/pages/legal/LegalLinks";
+
+const PORTAL_HOME_LINK: readonly LegalLinkTarget[] = [
+  { to: "/patient", label: "Portal home" },
+];
 
 /**
  * Calm frame for the portal's sign-in and registration screens: brand,
@@ -26,35 +31,11 @@ export function AuthShell({ children }: { children: ReactNode }) {
           {children}
         </div>
 
-        <nav
-          aria-label="Portal links"
-          className="mt-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-label"
-        >
-          <Link
-            to="/patient"
-            className="inline-flex min-h-touch-target items-center rounded-md px-2 text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            Portal home
-          </Link>
-          <span aria-hidden className="text-ink-disabled">
-            ·
-          </span>
-          <Link
-            to="/privacy"
-            className="inline-flex min-h-touch-target items-center rounded-md px-2 text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            Privacy notice
-          </Link>
-          <span aria-hidden className="text-ink-disabled">
-            ·
-          </span>
-          <Link
-            to="/terms"
-            className="inline-flex min-h-touch-target items-center rounded-md px-2 text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            Terms of use
-          </Link>
-        </nav>
+        <LegalLinks
+          label="Portal links"
+          before={PORTAL_HOME_LINK}
+          className="mt-6"
+        />
         <p className="mt-2 text-center text-caption text-ink-muted">
           Med Bridge Health Reach · Secure patient portal
         </p>

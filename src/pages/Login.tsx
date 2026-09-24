@@ -13,6 +13,7 @@ import { isOnlineSyncEnabled } from "@/sync/adapter";
 import { needsFirstRunSetup } from "@/db/firstRun";
 import { setDevicePin } from "@/db/devicePin";
 import type { User } from "@/db";
+import { LegalLinks } from "@/pages/legal/LegalLinks";
 
 /** Mirrors MAX_FAILED_ATTEMPTS in stores/auth.ts; used for display only. */
 const MAX_ATTEMPTS = 5;
@@ -482,6 +483,8 @@ function LoginShell({
         </div>
 
         {children}
+
+        <LegalLinks className="mt-6" />
       </div>
     </div>
   );

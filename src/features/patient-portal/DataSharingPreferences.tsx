@@ -16,6 +16,7 @@ import * as logger from "@/lib/logger";
 import { formatNigerianDateTime } from "@/utils/dateFormat";
 import {
   choiceLabel,
+  DEFAULT_SHARING_FLAGS,
   diffSharing,
   NOTIFY_OPTION,
   purposeLabel,
@@ -59,12 +60,8 @@ type LoadState = "loading" | "ready" | "error";
 function defaultsFor(patientId: string): DataSharingPreferences {
   return {
     patient_id: patientId,
-    allow_ias_access: true,
-    allow_treatment_access: false,
-    allow_payment_access: false,
-    allow_operations_access: false,
+    ...DEFAULT_SHARING_FLAGS,
     blocked_organizations: [],
-    require_notification: true,
   };
 }
 

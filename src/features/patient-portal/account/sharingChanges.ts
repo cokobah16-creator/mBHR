@@ -53,6 +53,20 @@ export const NOTIFY_OPTION: SharingOption = {
 
 export type SharingFlags = Record<SharingFlag, boolean>;
 
+/**
+ * Starting settings before a patient saves any choices. They match the
+ * column defaults on patient_data_sharing_preferences. The privacy notice
+ * (src/pages/legal/PrivacyPolicy.tsx) lists them, and its test checks that
+ * it does: change the notice and PRIVACY_VERSION with them.
+ */
+export const DEFAULT_SHARING_FLAGS: Readonly<SharingFlags> = {
+  allow_ias_access: true,
+  allow_treatment_access: false,
+  allow_payment_access: false,
+  allow_operations_access: false,
+  require_notification: true,
+};
+
 export interface SharingChange {
   key: SharingFlag;
   title: string;
