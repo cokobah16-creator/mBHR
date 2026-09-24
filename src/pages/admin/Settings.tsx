@@ -10,7 +10,10 @@ export default function Settings() {
   return (
     <div>
       <PageHeader
-        breadcrumbs={[{ label: "Administration" }, { label: "Settings" }]}
+        breadcrumbs={[
+          { label: "Administration", to: "/admin" },
+          { label: "Settings" },
+        ]}
         title="Settings"
         description="Administrator settings for this device."
       />

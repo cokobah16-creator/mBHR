@@ -1,364 +1,273 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { db, epochDay, DailyCount } from "@/db";
+import { useEffect, useState, useCallback } from "react";
+import { db } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
 import {
-  ChartBarIcon,
   UsersIcon,
+  UserPlusIcon,
   HeartIcon,
   DocumentTextIcon,
   BeakerIcon,
   ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
 import * as logger from "@/lib/logger";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { StatTile } from "@/features/reports/StatTile";
+import { DataScopeNote } from "@/features/reports/DataScopeNote";
+import { countInRange } from "@/features/reports/localRecords";
+import {
+  addLocalDays,
+  describeChange,
+  startOfLocalDay,
+} from "@/features/reports/reportUtils";
+import { formatNigerianDate, formatTime } from "@/utils/dateFormat";
+
+interface DayCounts {
+  registrations: number;
+  vitals: number;
+  consultations: number;
+  dispenses: number;
+  visits: number;
+}
 
 interface AnalyticsData {
-  today: DailyCount;
-  yesterday: DailyCount;
-  weekTotal: DailyCount;
-  trends: {
-    registrations: number;
-    vitals: number;
-    consultations: number;
-    dispenses: number;
-  };
+  today: DayCounts;
+  yesterday: DayCounts;
+  weekTotal: DayCounts;
+  weekStart: Date;
   bottlenecks: string[];
+  loadedAt: Date;
+}
+
+type Period = "today" | "week";
+
+const REFRESH_MS = 60000;
+
+/**
+ * Counts straight from the stored records for [start, end) in local time.
+ * (The old pre-aggregated daily cache only ever counted registrations and
+ * vitals, so consultations and dispensing read as 0 once it existed.)
+ */
+async function countPeriod(start: Date, end: Date): Promise<DayCounts> {
+  const [registrations, vitals, consultations, dispenses, visits] =
+    await Promise.all([
+      countInRange(db.patients, "createdAt", start, end),
+      countInRange(db.vitals, "takenAt", start, end),
+      countInRange(db.consultations, "createdAt", start, end),
+      countInRange(db.dispenses, "dispensedAt", start, end),
+      countInRange(db.visits, "startedAt", start, end),
+    ]);
+  return { registrations, vitals, consultations, dispenses, visits };
+}
+
+/** Rule of thumb: a stage has recorded under two-thirds of the stage before it. */
+function identifyBottlenecks(todayData: DayCounts): string[] {
+  const bottlenecks: string[] = [];
+  if (todayData.registrations > todayData.vitals * 1.5) {
+    bottlenecks.push("Vitals may be falling behind registration.");
+  }
+  if (todayData.vitals > todayData.consultations * 1.5) {
+    bottlenecks.push("Consultation may be falling behind vitals.");
+  }
+  if (todayData.consultations > todayData.dispenses * 1.5) {
+    bottlenecks.push("Pharmacy may be falling behind consultation.");
+  }
+  return bottlenecks;
 }
 
 export function OfflineAnalytics() {
-  const { currentUser } = useAuthStore();
+  const currentUser = useAuthStore((s) => s.currentUser);
+  // Only admins and leads (export permission) see clinic-wide figures.
+  const canView = !!currentUser && can(currentUser.role, "export");
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedPeriod, setSelectedPeriod] = useState<"today" | "week">(
-    "today",
-  );
-
-  const getDailyCount = useCallback(
-    async (day: number): Promise<DailyCount> => {
-      const existing = await db.dailyCounts.where("day").equals(day).first();
-      if (existing) return existing;
-
-      // Calculate from raw data if no pre-aggregated count exists
-      const dayStart = new Date(day * 86400000);
-      const dayEnd = new Date((day + 1) * 86400000);
-
-      const [registrations, vitals, consultations, dispenses, visits] =
-        await Promise.all([
-          db.patients
-            .where("createdAt")
-            .between(dayStart, dayEnd, true, false)
-            .count(),
-          db.vitals
-            .where("takenAt")
-            .between(dayStart, dayEnd, true, false)
-            .count(),
-          db.consultations
-            .where("createdAt")
-            .between(dayStart, dayEnd, true, false)
-            .count(),
-          db.dispenses
-            .where("dispensedAt")
-            .between(dayStart, dayEnd, true, false)
-            .count(),
-          db.visits
-            .where("startedAt")
-            .between(dayStart, dayEnd, true, false)
-            .count(),
-        ]);
-
-      const count: DailyCount = {
-        day,
-        registrations,
-        vitals,
-        consultations,
-        dispenses,
-        visits,
-      };
-
-      // Cache for future use
-      await db.dailyCounts.add(count).catch(() => {}); // Ignore if already exists
-
-      return count;
-    },
-    [],
-  );
-
-  const getWeekTotal = useCallback(
-    async (startDay: number, endDay: number): Promise<DailyCount> => {
-      const weekCounts = await db.dailyCounts
-        .where("day")
-        .between(startDay, endDay, true, true)
-        .toArray();
-
-      return weekCounts.reduce(
-        (total, day) => ({
-          day: endDay,
-          registrations: total.registrations + day.registrations,
-          vitals: total.vitals + day.vitals,
-          consultations: total.consultations + day.consultations,
-          dispenses: total.dispenses + day.dispenses,
-          visits: total.visits + day.visits,
-        }),
-        {
-          day: endDay,
-          registrations: 0,
-          vitals: 0,
-          consultations: 0,
-          dispenses: 0,
-          visits: 0,
-        },
-      );
-    },
-    [],
-  );
-
-  const calculateTrend = useCallback(
-    (today: number, yesterday: number): number => {
-      if (yesterday === 0) return today > 0 ? 100 : 0;
-      return Math.round(((today - yesterday) / yesterday) * 100);
-    },
-    [],
-  );
-
-  const identifyBottlenecks = useCallback((todayData: DailyCount): string[] => {
-    const bottlenecks: string[] = [];
-
-    // Check for flow imbalances
-    if (todayData.registrations > todayData.vitals * 1.5) {
-      bottlenecks.push("Vitals station may be a bottleneck");
-    }
-    if (todayData.vitals > todayData.consultations * 1.5) {
-      bottlenecks.push("Consultation may be a bottleneck");
-    }
-    if (todayData.consultations > todayData.dispenses * 1.5) {
-      bottlenecks.push("Pharmacy may be a bottleneck");
-    }
-
-    return bottlenecks;
-  }, []);
+  const [failed, setFailed] = useState(false);
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>("today");
 
   const loadAnalyticsData = useCallback(async () => {
     try {
-      const now = new Date();
-      const today = epochDay(now);
-      const yesterday = today - 1;
-      const weekStart = today - 6;
+      const today = startOfLocalDay(new Date());
+      const tomorrow = addLocalDays(today, 1);
+      const yesterday = addLocalDays(today, -1);
+      const weekStart = addLocalDays(today, -6);
 
-      // Get daily counts
       const [todayData, yesterdayData, weekData] = await Promise.all([
-        getDailyCount(today),
-        getDailyCount(yesterday),
-        getWeekTotal(weekStart, today),
+        countPeriod(today, tomorrow),
+        countPeriod(yesterday, today),
+        countPeriod(weekStart, tomorrow),
       ]);
-
-      // Calculate trends (today vs yesterday)
-      const trends = {
-        registrations: calculateTrend(
-          todayData.registrations,
-          yesterdayData.registrations,
-        ),
-        vitals: calculateTrend(todayData.vitals, yesterdayData.vitals),
-        consultations: calculateTrend(
-          todayData.consultations,
-          yesterdayData.consultations,
-        ),
-        dispenses: calculateTrend(todayData.dispenses, yesterdayData.dispenses),
-      };
-
-      // Identify bottlenecks
-      const bottlenecks = identifyBottlenecks(todayData);
 
       setData({
         today: todayData,
         yesterday: yesterdayData,
         weekTotal: weekData,
-        trends,
-        bottlenecks,
+        weekStart,
+        bottlenecks: identifyBottlenecks(todayData),
+        loadedAt: new Date(),
       });
+      setFailed(false);
     } catch (error) {
-      logger.error("Error loading analytics:", error);
+      logger.error(
+        "Error loading analytics:",
+        error instanceof Error ? error.name : error,
+      );
+      setFailed(true);
     } finally {
       setLoading(false);
     }
-  }, [getDailyCount, getWeekTotal, calculateTrend, identifyBottlenecks]);
+  }, []);
 
   useEffect(() => {
+    if (!canView) return;
     loadAnalyticsData();
-    const interval = setInterval(loadAnalyticsData, 60000); // Refresh every minute
+    const interval = setInterval(loadAnalyticsData, REFRESH_MS);
     return () => clearInterval(interval);
-  }, [loadAnalyticsData]);
+  }, [canView, loadAnalyticsData]);
 
-  // Only admins and leads can see analytics
-  if (!currentUser || !can(currentUser.role, "export")) {
+  if (!canView) {
     return null;
   }
 
-  const formatTrend = (trend: number) => {
-    const isPositive = trend > 0;
-    const isNegative = trend < 0;
-
-    return {
-      value: Math.abs(trend),
-      color: isPositive
-        ? "text-green-700"
-        : isNegative
-          ? "text-red-700"
-          : "text-gray-700",
-      icon: isPositive ? "↗" : isNegative ? "↘" : "→",
-    };
-  };
+  const header = (
+    <div className="panel-header flex-wrap">
+      <h2 id="clinic-activity-title" className="panel-title">
+        Clinic activity
+      </h2>
+      <div className="flex gap-1" role="group" aria-label="Period">
+        {(
+          [
+            ["today", "Today"],
+            ["week", "Last 7 days"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setSelectedPeriod(key)}
+            aria-pressed={selectedPeriod === key}
+            className={`min-h-touch-target rounded-md border px-3 text-label transition-colors ${
+              selectedPeriod === key
+                ? "border-primary bg-primary-soft font-semibold text-primary-fg"
+                : "border-line bg-surface text-ink-secondary hover:bg-surface-hover"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
-      <div className="card">
-        <div className="flex items-center space-x-3 mb-4">
-          <ChartBarIcon className="h-6 w-6 text-primary" />
-          <h3 className="text-lg font-semibold text-gray-900">Analytics</h3>
-        </div>
-        <div className="animate-pulse space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-20 bg-gray-200 rounded-lg"></div>
+      <section className="panel" aria-labelledby="clinic-activity-title">
+        {header}
+        <div className="panel-body">
+          <span role="status" className="sr-only">
+            Loading clinic activity
+          </span>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5" aria-hidden>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="panel space-y-2 p-4">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-8 w-14" />
+              </div>
             ))}
           </div>
         </div>
-      </div>
+      </section>
     );
   }
 
-  if (!data) return null;
+  if (!data) {
+    return (
+      <section className="panel" aria-labelledby="clinic-activity-title">
+        {header}
+        <div className="panel-body">
+          <div className="banner banner-danger" role="alert">
+            Clinic activity could not be read from this device. It will try
+            again in a minute.
+          </div>
+        </div>
+      </section>
+    );
+  }
 
-  const displayData = selectedPeriod === "today" ? data.today : data.weekTotal;
+  const isToday = selectedPeriod === "today";
+  const displayData = isToday ? data.today : data.weekTotal;
+  const periodLabel = isToday
+    ? `Today, ${formatNigerianDate(data.loadedAt)}`
+    : `${formatNigerianDate(data.weekStart)} – ${formatNigerianDate(data.loadedAt)}`;
 
-  const metrics = [
-    {
-      name: "Registrations",
-      value: displayData.registrations,
-      icon: UsersIcon,
-      color: "text-blue-600 bg-blue-50",
-      trend: data.trends.registrations,
-    },
-    {
-      name: "Vitals",
-      value: displayData.vitals,
-      icon: HeartIcon,
-      color: "text-green-600 bg-green-50",
-      trend: data.trends.vitals,
-    },
-    {
-      name: "Consultations",
-      value: displayData.consultations,
-      icon: DocumentTextIcon,
-      color: "text-purple-600 bg-purple-50",
-      trend: data.trends.consultations,
-    },
-    {
-      name: "Dispenses",
-      value: displayData.dispenses,
-      icon: BeakerIcon,
-      color: "text-orange-600 bg-orange-50",
-      trend: data.trends.dispenses,
-    },
+  const metrics: {
+    name: string;
+    key: keyof DayCounts;
+    icon: typeof UsersIcon;
+  }[] = [
+    { name: "Visits started", key: "visits", icon: UsersIcon },
+    { name: "New patients registered", key: "registrations", icon: UserPlusIcon },
+    { name: "Vitals recorded", key: "vitals", icon: HeartIcon },
+    { name: "Consultations", key: "consultations", icon: DocumentTextIcon },
+    { name: "Dispensing records", key: "dispenses", icon: BeakerIcon },
   ];
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center space-x-3">
-          <ChartBarIcon className="h-6 w-6 text-primary" />
-          <h3 className="text-lg font-semibold text-gray-900">
-            Clinic Analytics
-          </h3>
+    <section className="panel" aria-labelledby="clinic-activity-title">
+      {header}
+      <div className="panel-body space-y-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          {metrics.map((metric) => (
+            <StatTile
+              key={metric.key}
+              label={metric.name}
+              value={displayData[metric.key].toLocaleString("en-NG")}
+              icon={metric.icon}
+              footer={
+                isToday
+                  ? describeChange(
+                      data.today[metric.key],
+                      data.yesterday[metric.key],
+                      "yesterday",
+                    )
+                  : undefined
+              }
+            />
+          ))}
         </div>
 
-        <div className="flex space-x-2">
-          <button
-            onClick={() => setSelectedPeriod("today")}
-            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              selectedPeriod === "today"
-                ? "bg-primary text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            Today
-          </button>
-          <button
-            onClick={() => setSelectedPeriod("week")}
-            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              selectedPeriod === "week"
-                ? "bg-primary text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            This Week
-          </button>
-        </div>
-      </div>
-
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        {metrics.map((metric) => {
-          const trendInfo = formatTrend(metric.trend);
-          const Icon = metric.icon;
-
-          return (
-            <div key={metric.name} className="p-4 rounded-lg border">
-              <div className="flex items-center justify-between mb-2">
-                <div className={`p-2 rounded-lg ${metric.color}`}>
-                  <Icon className="h-5 w-5" />
-                </div>
-                {selectedPeriod === "today" && (
-                  <div className={`text-xs font-medium ${trendInfo.color}`}>
-                    {trendInfo.icon} {trendInfo.value}%
-                  </div>
-                )}
-              </div>
-              <div className="text-2xl font-bold text-gray-900">
-                {metric.value}
-              </div>
-              <div className="text-sm text-gray-600">{metric.name}</div>
+        {isToday && data.bottlenecks.length > 0 && (
+          <div className="banner banner-warning">
+            <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <div>
+              <p className="font-medium">Possible hold-ups today</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                {data.bottlenecks.map((bottleneck) => (
+                  <li key={bottleneck}>{bottleneck}</li>
+                ))}
+              </ul>
+              <p className="mt-1 text-caption">
+                Rule of thumb: shown when a stage has recorded fewer than
+                two-thirds as many as the stage before it today. Check the
+                queue before moving staff.
+              </p>
             </div>
-          );
-        })}
-      </div>
+          </div>
+        )}
 
-      {/* Bottlenecks Alert */}
-      {data.bottlenecks.length > 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-          <div className="flex items-center space-x-2 mb-2">
-            <ExclamationTriangleIcon className="h-5 w-5 text-yellow-700" />
-            <h4 className="font-medium text-yellow-800">
-              Potential Bottlenecks
-            </h4>
-          </div>
-          <ul className="text-sm text-yellow-700 space-y-1">
-            {data.bottlenecks.map((bottleneck, index) => (
-              <li key={index}>• {bottleneck}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+        {failed && (
+          <p className="text-caption text-danger-fg" role="status">
+            The last refresh failed; these figures are from{" "}
+            {formatTime(data.loadedAt)}.
+          </p>
+        )}
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-        <div className="bg-gray-50 p-3 rounded-lg">
-          <div className="font-medium text-gray-900 mb-1">
-            Patient Flow Efficiency
-          </div>
-          <div className="text-gray-600">
-            {data.today.dispenses > 0 && data.today.registrations > 0
-              ? `${Math.round((data.today.dispenses / data.today.registrations) * 100)}% completion rate`
-              : "No completed flows today"}
-          </div>
-        </div>
-
-        <div className="bg-gray-50 p-3 rounded-lg">
-          <div className="font-medium text-gray-900 mb-1">Data Freshness</div>
-          <div className="text-gray-600">
-            Updated: {new Date().toLocaleTimeString()}
-          </div>
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+          <DataScopeNote period={periodLabel} />
+          <p className="shrink-0 text-caption text-ink-muted">
+            Updated {formatTime(data.loadedAt)} · refreshes every minute
+          </p>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

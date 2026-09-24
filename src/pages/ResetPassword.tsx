@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { supabase, type Session } from "@/lib/supabaseClient";
+import {
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+} from "@heroicons/react/20/solid";
+import { supabase } from "@/lib/supabaseClient";
 import {
   MIN_PASSWORD_LENGTH,
   completePasswordReset,
@@ -16,6 +20,22 @@ type Stage = "checking" | "ready" | "invalid" | "done";
 
 /** How long to wait for supabase-js to turn the link's token into a session. */
 const SESSION_WAIT_MS = 10_000;
+
+const FORGOT_PATH: Record<ResetAudience, string> = {
+  staff: "/forgot-password",
+  patient: "/patient/forgot-password",
+};
+
+// By the time this page loads, Supabase has already used the token in the
+// email, so opening that email link again would not help. supabase-js leaves
+// the token it was handed in the address bar when the exchange fails, so
+// reloading once connected can finish the check.
+const OFFLINE_REASON =
+  "This device is offline, so the reset link could not be checked. Connect to the internet and reload this page. If it still does not work, request a new link.";
+
+function deviceOffline(): boolean {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
 
 /**
  * Landing page for the password-reset email link (/reset-password).
@@ -36,7 +56,7 @@ export default function ResetPassword() {
   const audienceHint = params.get("for");
   const [audience, setAudience] = useState<ResetAudience>(() => parseAudience(audienceHint));
   const loginPath = loginPathFor(audience);
-  const forgotPath = audience === "staff" ? "/forgot-password" : "/patient/forgot-password";
+  const forgotPath = FORGOT_PATH[audience];
 
   const [stage, setStage] = useState<Stage>("checking");
   const [invalidReason, setInvalidReason] = useState<string | null>(null);
@@ -53,7 +73,9 @@ export default function ResetPassword() {
     };
 
     if (!supabase) {
-      fail("Password reset needs an internet connection.");
+      fail(
+        "Password reset is not available here because online accounts are not set up for this app.",
+      );
       return;
     }
     if (landing.error) {
@@ -96,14 +118,25 @@ export default function ResetPassword() {
       };
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) ready(data.session);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (data.session) ready();
+      })
+      .catch(() => {
+        // The timeout below reports the failure.
+      });
 
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
-        fail("This reset link has expired or has already been used. Request a new one.");
+        // Without a connection the token cannot be exchanged at all; saying
+        // the link expired would send the user off to request another one.
+        fail(
+          deviceOffline()
+            ? OFFLINE_REASON
+            : "This reset link has expired or has already been used. Request a new one.",
+        );
       }
     }, SESSION_WAIT_MS);
 
@@ -135,30 +168,54 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 via-white to-green-50">
+    <div className="min-h-screen flex items-center justify-center bg-canvas px-4 py-8 sm:p-6">
       <div className="w-full max-w-md">
-        <div className="bg-white rounded-lg shadow-md border border-gray-100 p-6">
-          <h1 className="text-lg font-semibold text-gray-900 mb-4">Choose a new password</h1>
+        <div className="panel p-6">
+          <h1 className="text-h2 text-ink mb-4">Choose a new password</h1>
 
           {stage === "checking" && (
-            <div className="flex items-center gap-3 text-sm text-gray-600" role="status">
-              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <div
+              className="flex items-center gap-3 text-body text-ink-muted"
+              role="status"
+            >
+              <span
+                className="h-5 w-5 shrink-0 rounded-full border-2 border-primary border-t-transparent animate-spin"
+                aria-hidden
+              />
               Checking your reset link…
             </div>
           )}
 
           {stage === "invalid" && (
             <div className="space-y-4">
-              <div className="p-4 bg-red-50 border border-red-200 rounded-lg" role="alert">
-                <p className="text-sm text-red-800">{invalidReason}</p>
+              <div className="banner banner-danger" role="alert">
+                <ExclamationCircleIcon
+                  className="h-5 w-5 shrink-0 mt-0.5"
+                  aria-hidden
+                />
+                <p>{invalidReason}</p>
               </div>
+              {invalidReason === OFFLINE_REASON && (
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="btn-primary w-full"
+                >
+                  Reload page
+                </button>
+              )}
               <Link
                 to={forgotPath}
-                className="block w-full h-11 leading-[2.75rem] text-center bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
+                className={`${
+                  invalidReason === OFFLINE_REASON ? "btn-secondary" : "btn-primary"
+                } w-full`}
               >
                 Request a new link
               </Link>
-              <Link to={loginPath} className="block text-center text-sm text-blue-600 underline">
+              <Link
+                to={loginPath}
+                className="mx-auto flex min-h-touch-target w-fit items-center rounded-md px-2 text-label text-primary hover:text-primary-hover underline"
+              >
                 Back to sign in
               </Link>
             </div>
@@ -166,8 +223,8 @@ export default function ResetPassword() {
 
           {stage === "ready" && (
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="new-password" className="text-sm font-medium text-gray-900">
+              <div>
+                <label htmlFor="new-password" className="field-label">
                   New password
                 </label>
                 <input
@@ -177,16 +234,17 @@ export default function ResetPassword() {
                   minLength={MIN_PASSWORD_LENGTH}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="input-field h-12 text-base"
+                  aria-describedby="new-password-hint"
                   required
                   disabled={saving}
                 />
-                <span className="text-xs text-gray-500">
+                <p id="new-password-hint" className="field-hint">
                   At least {MIN_PASSWORD_LENGTH} characters.
-                </span>
+                </p>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="confirm-password" className="text-sm font-medium text-gray-900">
+              <div>
+                <label htmlFor="confirm-password" className="field-label">
                   Confirm new password
                 </label>
                 <input
@@ -195,20 +253,24 @@ export default function ResetPassword() {
                   autoComplete="new-password"
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
-                  className="h-12 px-4 text-base bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="input-field h-12 text-base"
                   required
                   disabled={saving}
                 />
               </div>
               {error && (
-                <p className="text-sm text-red-600" role="alert">
-                  {error}
-                </p>
+                <div className="banner banner-danger" role="alert">
+                  <ExclamationCircleIcon
+                    className="h-5 w-5 shrink-0 mt-0.5"
+                    aria-hidden
+                  />
+                  <p>{error}</p>
+                </div>
               )}
               <button
                 type="submit"
                 disabled={saving}
-                className="w-full h-12 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary w-full h-12"
               >
                 {saving ? "Saving…" : "Save new password"}
               </button>
@@ -217,17 +279,20 @@ export default function ResetPassword() {
 
           {stage === "done" && (
             <div className="space-y-4" role="status">
-              <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-sm text-green-800 font-medium mb-1">Password updated</p>
-                <p className="text-sm text-green-700">
-                  You've been signed out on all devices. Sign in again with your new
-                  password.
-                </p>
+              <div className="banner banner-success">
+                <CheckCircleIcon
+                  className="h-5 w-5 shrink-0 mt-0.5"
+                  aria-hidden
+                />
+                <div>
+                  <p className="font-medium mb-1">Password updated</p>
+                  <p className="text-caption">
+                    You've been signed out on all devices. Sign in again with
+                    your new password.
+                  </p>
+                </div>
               </div>
-              <Link
-                to={loginPath}
-                className="block w-full h-11 leading-[2.75rem] text-center bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
-              >
+              <Link to={loginPath} className="btn-primary w-full">
                 Go to sign in
               </Link>
             </div>

@@ -317,7 +317,8 @@ export interface OutboundMessage {
   locale: string;
   templateKey: string;
   payload: Record<string, string | number>;
-  status: "queued" | "sending" | "sent" | "delivered" | "failed";
+  // "cancelled": staff stopped it before it was sent; no sender picks it up.
+  status: "queued" | "sending" | "sent" | "delivered" | "failed" | "cancelled";
   createdAt: Date;
   scheduledFor?: Date;
   attempts: number;

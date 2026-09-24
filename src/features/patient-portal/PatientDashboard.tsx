@@ -1,9 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { HeartIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowPathIcon,
+  ChevronRightIcon,
+  ExclamationCircleIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
+  SignalSlashIcon,
+} from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
 import { PortalHome, type NextAppointment } from "./PortalHome";
 import { PortalSkeleton } from "@/components/ui/Skeleton";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getPatientAppointments } from "@/services/appointments";
 import { useT } from "@/hooks/useT";
 import {
@@ -24,6 +32,18 @@ import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import { getPatientDashboard } from "@/services/patientPortalData";
 import type { PatientDashboardData } from "@/types/patientPortal";
 import * as logger from "@/lib/logger";
+import {
+  formatPortalDate,
+  pickNextAppointment,
+  vitalStatusTone,
+} from "./portalStatus";
+import {
+  clearPortalSession,
+  readActiveProfile,
+  readPortalUser,
+  resolveActivePatientId,
+} from "./portalSession";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,21 +61,15 @@ function tempStatus(temp: number): VitalStatus {
   return "attention";
 }
 
-const statusColors: Record<VitalStatus, string> = {
-  normal: "bg-green-100 text-green-800",
-  monitor: "bg-yellow-100 text-yellow-800",
-  attention: "bg-red-100 text-red-800",
-};
-const statusDot: Record<VitalStatus, string> = {
-  normal: "bg-green-500",
-  monitor: "bg-yellow-500",
-  attention: "bg-red-500",
-};
 const statusLabelKey: Record<VitalStatus, string> = {
   normal: "portal.vital.status.normal",
   monitor: "portal.vital.status.monitor",
   attention: "portal.vital.status.attention",
 };
+
+function errorName(err: unknown): string {
+  return err instanceof Error ? err.name : "unknown";
+}
 
 function VitalCard({
   label,
@@ -65,26 +79,158 @@ function VitalCard({
 }: {
   label: string;
   value: string;
-  unit: string;
-  status: VitalStatus;
+  unit?: string;
+  /** Omitted for readings the portal does not assess (e.g. weight). */
+  status?: VitalStatus;
 }) {
   const { t } = useT();
   return (
-    <div className="bg-gray-50 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-1">
-        <p className="text-sm text-gray-600">{label}</p>
-        <span
-          className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[status]}`}
-        >
-          <span
-            className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${statusDot[status]}`}
-          />
+    <div className="rounded-lg border border-line bg-surface-sunken p-4">
+      <p className="text-label text-ink-secondary">{label}</p>
+      <p className="mt-1 text-h2 tabular-nums text-ink">
+        {value}
+        {unit && (
+          <span className="ml-1 text-caption font-normal text-ink-muted">
+            {unit}
+          </span>
+        )}
+      </p>
+      {status && (
+        <StatusBadge tone={vitalStatusTone(status)} icon className="mt-2">
           {t(statusLabelKey[status])}
-        </span>
-      </div>
-      <p className="text-h2 text-ink">{value}</p>
-      <p className="text-xs text-gray-500">{unit}</p>
+        </StatusBadge>
+      )}
     </div>
+  );
+}
+
+interface VitalsView {
+  takenAt: Date | string;
+  systolic?: number | null;
+  diastolic?: number | null;
+  weightKg?: number | null;
+  tempC?: number | null;
+}
+
+function VitalsPanel({ vitals }: { vitals: VitalsView }) {
+  const { t } = useT();
+  const hasBp = !!vitals.systolic && !!vitals.diastolic;
+  const hasTemp = vitals.tempC != null && vitals.tempC !== 0;
+  const hasWeight = vitals.weightKg != null;
+  if (!hasBp && !hasTemp && !hasWeight) return null;
+
+  const bp = hasBp ? bpStatus(vitals.systolic as number) : null;
+  const temp = hasTemp ? tempStatus(vitals.tempC as number) : null;
+  const anyFlag = (bp && bp !== "normal") || (temp && temp !== "normal");
+
+  return (
+    <section className="panel" aria-labelledby="home-vitals">
+      <div className="panel-header">
+        <h2 id="home-vitals" className="panel-title">
+          {t("portal.section.latestVitals")}
+        </h2>
+        <Link to="/patient/medical-history" className="btn-ghost text-label">
+          {t("portal.viewHistory")}
+          <ChevronRightIcon className="h-4 w-4" aria-hidden />
+        </Link>
+      </div>
+      <div className="panel-body">
+        <p className="mb-3 text-caption text-ink-muted">
+          {t("portal.vital.recordedOn", {
+            date: formatPortalDate(vitals.takenAt),
+          })}
+        </p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {hasBp && bp && (
+            <VitalCard
+              label={t("portal.vital.bloodPressure")}
+              value={`${vitals.systolic}/${vitals.diastolic}`}
+              unit={t("portal.vital.unit.mmHg")}
+              status={bp}
+            />
+          )}
+          {hasWeight && (
+            <VitalCard
+              label={t("portal.vital.weight")}
+              value={`${vitals.weightKg}`}
+              unit={t("portal.vital.unit.kg")}
+            />
+          )}
+          {hasTemp && temp && (
+            <VitalCard
+              label={t("portal.vital.temperature")}
+              value={`${vitals.tempC}°C`}
+              status={temp}
+            />
+          )}
+        </div>
+        {anyFlag && (
+          <p className="mt-3 flex items-start gap-2 text-caption text-ink-secondary">
+            <InformationCircleIcon
+              className="h-4 w-4 shrink-0 text-ink-muted"
+              aria-hidden
+            />
+            {t("portal.vital.flagHint")}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+interface MedicineView {
+  key: string;
+  name: string;
+  dosage?: string | null;
+  directions?: string | null;
+  givenAt: Date | string;
+}
+
+function MedicinesPanel({ medicines }: { medicines: MedicineView[] }) {
+  const { t } = useT();
+  return (
+    <section className="panel" aria-labelledby="home-medicines">
+      <div className="panel-header">
+        <h2 id="home-medicines" className="panel-title">
+          {t("portal.section.recentMedicines")}
+        </h2>
+        {medicines.length > 0 && (
+          <Link to="/patient/prescriptions" className="btn-ghost text-label">
+            {t("portal.viewAll")}
+            <ChevronRightIcon className="h-4 w-4" aria-hidden />
+          </Link>
+        )}
+      </div>
+      {medicines.length > 0 ? (
+        <ul className="divide-y divide-line">
+          {medicines.slice(0, 3).map((med) => (
+            <li key={med.key} className="px-4 py-3">
+              <p className="text-body font-medium text-ink">{med.name}</p>
+              {med.dosage && (
+                <p className="text-body text-ink-secondary">{med.dosage}</p>
+              )}
+              {med.directions && (
+                <p className="text-body text-ink-secondary">
+                  {med.directions}
+                </p>
+              )}
+              <p className="mt-0.5 text-caption text-ink-muted">
+                {t("portal.medicines.givenOn", {
+                  date: formatPortalDate(med.givenAt),
+                })}
+              </p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="panel-body">
+          <p className="text-body text-ink">{t("portal.noMedications")}</p>
+          <p className="mt-1 text-caption text-ink-muted">
+            {t("portal.noMedicationsHint")}
+          </p>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -95,41 +241,46 @@ interface SupabaseDashboardState {
   vitals: Vital[];
   medications: Medication[];
   visits: Visit[];
+  /** True when one of the record lists failed to load. */
+  partial: boolean;
 }
 
 function SupabaseDashboard() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { t } = useT();
+  const online = useOnlineStatus();
   const [state, setState] = useState<SupabaseDashboardState>({
     profile: null,
     vitals: [],
     medications: [],
     visits: [],
+    partial: false,
   });
-  const [nextAppointment, setNextAppointment] = useState<NextAppointment | null | undefined>(undefined);
+  const [nextAppointment, setNextAppointment] = useState<
+    NextAppointment | null | undefined
+  >(undefined);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // Stored as a translation key so the loader does not depend on `t`.
+  const [errorKey, setErrorKey] = useState("");
 
-  useEffect(() => {
-    if (!user) return;
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  const userId = user?.id;
+  const userEmail = user?.email;
 
-  const load = async () => {
-    if (!user) return;
+  const load = useCallback(async () => {
+    if (!userId) return;
     setLoading(true);
-    setError("");
+    setErrorKey("");
     try {
       // Load profile first so we have the patientId for subsequent queries
-      let profileRes = await getPatientProfile(user.id);
+      let profileRes = await getPatientProfile(userId);
       // Fallback: look up by email and auto-link auth_uid when lookup by uid fails
-      if ((profileRes.error || !profileRes.data) && user.email) {
-        profileRes = await getPatientProfileByEmail(user.id, user.email);
+      if ((profileRes.error || !profileRes.data) && userEmail) {
+        profileRes = await getPatientProfileByEmail(userId, userEmail);
       }
       if (profileRes.error || !profileRes.data) {
-        setError(t("portal.error.loadProfile"));
-        setLoading(false);
+        setErrorKey(
+          navigator.onLine ? "portal.error.loadProfile" : "portal.error.offline",
+        );
         return;
       }
 
@@ -143,14 +294,7 @@ function SupabaseDashboard() {
       // Best effort: the home screen still works if appointments fail to load.
       getPatientAppointments(patientId)
         .then((appts) => {
-          const now = Date.now();
-          const next = appts
-            .filter(
-              (a) =>
-                (a.status === "scheduled" || a.status === "confirmed") &&
-                new Date(a.scheduledAt).getTime() >= now,
-            )
-            .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0];
+          const next = pickNextAppointment(appts);
           setNextAppointment(
             next
               ? {
@@ -169,150 +313,137 @@ function SupabaseDashboard() {
         vitals: vitalsResult.data ?? [],
         medications: medsResult.data ?? [],
         visits: visitsResult.data ?? [],
+        partial: !!(
+          vitalsResult.error ||
+          medsResult.error ||
+          visitsResult.error
+        ),
       });
     } catch (err) {
-      logger.error("[PatientDashboard] load error:", err);
-      setError(t("portal.error.loadInfo"));
+      logger.error("[PatientDashboard] load error:", errorName(err));
+      setErrorKey(
+        navigator.onLine ? "portal.error.loadInfo" : "portal.error.offline",
+      );
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId, userEmail]);
 
-  if (loading) return <Spinner />;
-  if (error) return <ErrorCard message={error} />;
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const { profile, vitals, medications, visits } = state;
+  if (authLoading || (loading && !!userId)) return <PortalSkeleton />;
+  if (!userId) return <ErrorCard message={t("portal.error.loadProfile")} />;
+  if (errorKey) {
+    return (
+      <ErrorCard
+        message={t(errorKey)}
+        offline={errorKey === "portal.error.offline"}
+        onRetry={load}
+        retryLabel={t("portal.error.retry")}
+      />
+    );
+  }
+
+  const { profile, vitals, medications, visits, partial } = state;
   if (!profile) return null;
 
   const latest = vitals[0] ?? null;
-  const bpSys = latest?.systolic ?? 0;
-  const bpDia = latest?.diastolic ?? 0;
 
   return (
-    <div>
-      <PortalHome name={profile.givenName} nextAppointment={nextAppointment} />
-      <div className="mx-auto max-w-3xl space-y-5 px-4 pb-8">
-      {/* Vitals */}
-      {latest && (
-        <div className="panel p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-h2 text-ink">
-              {t("portal.section.latestVitals")}
-            </h2>
-            <Link
-              to="/patient/medical-history"
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+    <PortalHome name={profile.givenName} nextAppointment={nextAppointment}>
+      {!online && (
+        <div className="banner banner-warning" role="status">
+          <SignalSlashIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>{t("portal.offline.stale")}</p>
+        </div>
+      )}
+      {partial && (
+        <div className="banner banner-warning" role="status">
+          <ExclamationTriangleIcon
+            className="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1">
+            <p>{t("portal.error.partial")}</p>
+            <button
+              type="button"
+              onClick={load}
+              className="btn-secondary mt-2"
             >
-              {t("portal.viewHistory")} →
-            </Link>
+              <ArrowPathIcon className="h-5 w-5" aria-hidden />
+              {t("portal.error.retry")}
+            </button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {bpSys > 0 && bpDia > 0 && (
-              <VitalCard
-                label={t("portal.vital.bloodPressure")}
-                value={`${bpSys}/${bpDia}`}
-                unit={t("portal.vital.unit.mmHg")}
-                status={bpStatus(bpSys)}
-              />
-            )}
-            {latest.weightKg != null && (
-              <VitalCard
-                label={t("portal.vital.weight")}
-                value={`${latest.weightKg}`}
-                unit={t("portal.vital.unit.kg")}
-                status="normal"
-              />
-            )}
-            {latest.tempC != null && (
-              <VitalCard
-                label={t("portal.vital.temperature")}
-                value={`${latest.tempC}°C`}
-                unit={t("portal.vital.unit.celsius")}
-                status={tempStatus(latest.tempC)}
-              />
-            )}
-          </div>
-          <p className="text-xs text-gray-500 mt-4">
-            {t("portal.recorded")}:{" "}
-            {new Date(latest.takenAt).toLocaleDateString()}
-          </p>
         </div>
       )}
 
-      {/* Medications */}
-      <div className="panel p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-h2 text-ink">
-            {t("portal.section.activeMedications")}
-          </h2>
-          <Link
-            to="/patient/prescriptions"
-            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-          >
-            {t("portal.viewAll")} →
-          </Link>
-        </div>
-        {medications.length > 0 ? (
-          <div className="space-y-3">
-            {medications.slice(0, 3).map((med) => (
-              <div
-                key={med.id}
-                className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg"
-              >
-                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <HeartIcon className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="font-medium text-gray-900">{med.itemName}</p>
-                  <p className="text-sm text-gray-600">{med.dosage}</p>
-                  <p className="text-xs text-gray-500">{med.directions}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-gray-500 text-center py-8">
-            {t("portal.noMedications")}
-          </p>
-        )}
-      </div>
+      {latest && <VitalsPanel vitals={latest} />}
 
-      {/* Recent Visits */}
+      <MedicinesPanel
+        medicines={medications.map((m) => ({
+          key: m.id,
+          name: m.itemName,
+          dosage: m.dosage,
+          directions: m.directions,
+          givenAt: m.dispensedAt,
+        }))}
+      />
+
       {visits.length > 0 && (
-        <div className="panel p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-h2 text-ink">
+        <section className="panel" aria-labelledby="home-visits">
+          <div className="panel-header">
+            <h2 id="home-visits" className="panel-title">
               {t("portal.section.recentVisits")}
             </h2>
-            <Link
-              to="/patient/medical-history"
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-            >
-              {t("portal.viewAll")} →
+            <Link to="/patient/medical-history" className="btn-ghost text-label">
+              {t("portal.viewAll")}
+              <ChevronRightIcon className="h-4 w-4" aria-hidden />
             </Link>
           </div>
-          <div className="space-y-3">
+          <ul className="divide-y divide-line">
             {visits.slice(0, 3).map((v) => (
-              <div key={v.id} className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm font-medium text-gray-900">
-                  {new Date(v.startedAt).toLocaleDateString()}
-                </p>
-                {v.diagnosis && (
-                  <p className="text-xs text-gray-600 mt-1">
-                    {t("portal.diagnosis")}: {v.diagnosis}
-                  </p>
-                )}
-                {v.notes && (
-                  <p className="text-xs text-gray-500 mt-0.5">{v.notes}</p>
-                )}
-              </div>
+              <li key={v.id}>
+                <Link
+                  to={`/patient/visit/${v.id}`}
+                  className="flex min-h-touch-target items-start gap-3 px-4 py-3 transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-body font-medium text-ink">
+                      {formatPortalDate(v.startedAt)}
+                      {v.siteName && (
+                        <span className="font-normal text-ink-muted">
+                          {" "}
+                          · {v.siteName}
+                        </span>
+                      )}
+                    </span>
+                    {v.diagnosis && (
+                      <span className="mt-0.5 block text-body text-ink-secondary line-clamp-2">
+                        <span className="text-ink-muted">
+                          {t("portal.visit.assessment")}:
+                        </span>{" "}
+                        {v.diagnosis}
+                      </span>
+                    )}
+                    {v.notes && (
+                      <span className="mt-0.5 block text-caption text-ink-muted line-clamp-2">
+                        {t("portal.visit.yourConcern")}: {v.notes}
+                      </span>
+                    )}
+                  </span>
+                  <ChevronRightIcon
+                    className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted"
+                    aria-hidden
+                  />
+                </Link>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </section>
       )}
-
-      </div>
-    </div>
+    </PortalHome>
   );
 }
 
@@ -321,46 +452,31 @@ function SupabaseDashboard() {
 function OfflineDashboard() {
   const navigate = useNavigate();
   const { t } = useT();
+  const online = useOnlineStatus();
   const [data, setData] = useState<PatientDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [errorKey, setErrorKey] = useState("");
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setErrorKey("");
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
+      const portalUser = readPortalUser();
+      if (!portalUser) {
         navigate("/patient/login", { replace: true });
         return;
       }
-      const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId || !portalUser.id) {
-        localStorage.removeItem("patient_portal_user");
-        sessionStorage.removeItem("patient_session_token");
+        clearPortalSession();
         navigate("/patient/login", { replace: true });
         return;
       }
-      const activeProfileStr = localStorage.getItem("patient_active_profile");
-      const rawActivePatientId = activeProfileStr
-        ? JSON.parse(activeProfileStr).patientId
-        : portalUser.patientId;
 
       // Validate that the requested patient is owned by this portal user (IDOR guard)
-      const ownedPatientIds: string[] = [
-        portalUser.patientId,
-        ...(portalUser.managedPatients || []).map(
-          (m: { patientId: string }) => m.patientId,
-        ),
-      ];
-      const activePatientId = ownedPatientIds.includes(rawActivePatientId)
-        ? rawActivePatientId
-        : portalUser.patientId;
+      const activePatientId = resolveActivePatientId(
+        portalUser,
+        readActiveProfile(),
+      );
 
       const dashboardData = await getPatientDashboard(
         portalUser.id,
@@ -369,106 +485,131 @@ function OfflineDashboard() {
       if (dashboardData) {
         setData(dashboardData);
       } else {
-        setError(t("portal.error.loadDashboard"));
+        setErrorKey(
+          isSupabaseEnabled && !navigator.onLine
+            ? "portal.error.offline"
+            : "portal.error.loadDashboard",
+        );
       }
     } catch (err) {
-      logger.error("[PatientDashboard offline] load error:", err);
-      setError(t("portal.error.loadInfo"));
+      logger.error("[PatientDashboard offline] load error:", errorName(err));
+      setErrorKey("portal.error.loadInfo");
     } finally {
       setLoading(false);
     }
-  };
+  }, [navigate]);
 
-  if (loading) return <Spinner />;
-  if (error) return <ErrorCard message={error} />;
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading) return <PortalSkeleton />;
+  if (errorKey) {
+    return (
+      <ErrorCard
+        message={t(errorKey)}
+        offline={errorKey === "portal.error.offline"}
+        onRetry={load}
+        retryLabel={t("portal.error.retry")}
+      />
+    );
+  }
   if (!data) return null;
 
   const { patient, upcomingAppointments, recentVitals, activeMedications } =
     data;
 
-  const next = [...upcomingAppointments]
-    .filter((a) => new Date(a.scheduledAt).getTime() >= Date.now())
-    .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0];
+  // Without the online portal the records come from this device, which does
+  // not hold appointments: leave "next appointment" unknown, not "none".
+  const next = pickNextAppointment(upcomingAppointments);
+  const nextAppointment: NextAppointment | null | undefined = isSupabaseEnabled
+    ? next
+      ? { scheduledAt: new Date(next.scheduledAt), type: next.appointmentType }
+      : null
+    : undefined;
 
   return (
-    <div>
-      <PortalHome
-        name={patient.givenName}
-        nextAppointment={next ? { scheduledAt: new Date(next.scheduledAt), type: next.appointmentType } : null}
-        unreadMessages={data.unreadMessages}
-      />
-      <div className="mx-auto max-w-3xl space-y-5 px-4 pb-8">
-        <p className="banner banner-warning text-caption" role="status">
-          {t("portal.offlineMode")}
-        </p>
-      {/* Vitals */}
+    <PortalHome
+      name={patient.givenName}
+      nextAppointment={nextAppointment}
+      unreadMessages={data.unreadMessages}
+    >
+      {!isSupabaseEnabled ? (
+        <div className="banner banner-info" role="status">
+          <InformationCircleIcon
+            className="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden
+          />
+          <p>{t("portal.localData")}</p>
+        </div>
+      ) : (
+        !online && (
+          <div className="banner banner-warning" role="status">
+            <SignalSlashIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>{t("portal.offline.stale")}</p>
+          </div>
+        )
+      )}
+
       {recentVitals && (
-        <div className="panel p-5">
-          <h2 className="text-h2 text-ink mb-4">
-            {t("portal.section.recentVitals")}
-          </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {recentVitals.systolic && recentVitals.diastolic && (
-              <VitalCard
-                label={t("portal.vital.bloodPressure")}
-                value={`${recentVitals.systolic}/${recentVitals.diastolic}`}
-                unit={t("portal.vital.unit.mmHg")}
-                status={bpStatus(recentVitals.systolic)}
-              />
-            )}
-            {recentVitals.tempC && (
-              <VitalCard
-                label={t("portal.vital.temperature")}
-                value={`${recentVitals.tempC}°C`}
-                unit={t("portal.vital.unit.celsius")}
-                status={tempStatus(recentVitals.tempC)}
-              />
-            )}
-          </div>
-        </div>
+        <VitalsPanel
+          vitals={{
+            takenAt: recentVitals.takenAt,
+            systolic: recentVitals.systolic,
+            diastolic: recentVitals.diastolic,
+            weightKg: recentVitals.weightKg,
+            tempC: recentVitals.tempC,
+          }}
+        />
       )}
 
-      {/* Medications */}
-      {activeMedications.length > 0 && (
-        <div className="panel p-5">
-          <h2 className="text-h2 text-ink mb-4">
-            {t("portal.section.activeMedications")}
-          </h2>
-          <div className="space-y-3">
-            {activeMedications.slice(0, 3).map((med, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg"
-              >
-                <HeartIcon className="w-5 h-5 text-blue-600 mt-0.5" />
-                <div>
-                  <p className="font-medium text-gray-900">
-                    {med.medicationName}
-                  </p>
-                  <p className="text-sm text-gray-600">{med.dosage}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      </div>
-    </div>
+      <MedicinesPanel
+        medicines={activeMedications.map((med, i) => ({
+          key: `${med.medicationName}-${i}`,
+          name: med.medicationName,
+          dosage: med.dosage,
+          directions: med.directions,
+          givenAt: med.dispensedAt,
+        }))}
+      />
+    </PortalHome>
   );
 }
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
 
-function Spinner() {
-  return <PortalSkeleton />;
-}
-
-function ErrorCard({ message }: { message: string }) {
+function ErrorCard({
+  message,
+  offline = false,
+  onRetry,
+  retryLabel,
+}: {
+  message: string;
+  offline?: boolean;
+  onRetry?: () => void;
+  retryLabel?: string;
+}) {
+  const Icon = offline ? SignalSlashIcon : ExclamationCircleIcon;
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="banner banner-danger" role="alert">
-        <p>{message}</p>
+    <div className="mx-auto max-w-3xl px-4 py-8">
+      <div
+        className={`banner ${offline ? "banner-warning" : "banner-danger"}`}
+        role="alert"
+      >
+        <Icon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p>{message}</p>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="btn-secondary mt-3"
+            >
+              <ArrowPathIcon className="h-5 w-5" aria-hidden />
+              {retryLabel}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -479,7 +620,7 @@ function ErrorCard({ message }: { message: string }) {
 export function PatientDashboard() {
   const { user, loading } = useAuth();
 
-  if (loading) return <Spinner />;
+  if (loading) return <PortalSkeleton />;
 
   // Use Supabase-backed dashboard when available and user is signed in
   if (isSupabaseEnabled && user) return <SupabaseDashboard />;

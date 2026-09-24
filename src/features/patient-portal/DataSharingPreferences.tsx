@@ -1,14 +1,31 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  ShieldCheckIcon,
-  BuildingOfficeIcon,
+  ArrowPathIcon,
   BellIcon,
-  ExclamationTriangleIcon,
   CheckCircleIcon,
+  ExclamationTriangleIcon,
   InformationCircleIcon,
+  ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
-import { supabase } from "../../lib/supabase";
-import { TEFCA_EXCHANGE_PURPOSES } from "../../services/fhir/tefcaAuth";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonText } from "@/components/ui/Skeleton";
+import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
+import * as logger from "@/lib/logger";
+import { formatNigerianDateTime } from "@/utils/dateFormat";
+import {
+  choiceLabel,
+  diffSharing,
+  NOTIFY_OPTION,
+  purposeLabel,
+  SHARING_OPTIONS,
+  type SharingFlag,
+  type SharingFlags,
+} from "./account/sharingChanges";
+import { ConfirmDialog } from "./account/ConfirmDialog";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { errorName } from "./account/portalSession";
 
 interface DataSharingPreferences {
   id?: string;
@@ -35,8 +52,10 @@ interface Props {
   patientId: string;
 }
 
-export function DataSharingPreferences({ patientId }: Props) {
-  const [preferences, setPreferences] = useState<DataSharingPreferences>({
+type LoadState = "loading" | "ready" | "error";
+
+function defaultsFor(patientId: string): DataSharingPreferences {
+  return {
     patient_id: patientId,
     allow_ias_access: true,
     allow_treatment_access: true,
@@ -44,53 +63,111 @@ export function DataSharingPreferences({ patientId }: Props) {
     allow_operations_access: false,
     blocked_organizations: [],
     require_notification: true,
-  });
+  };
+}
+
+function flagsOf(p: DataSharingPreferences): SharingFlags {
+  return {
+    allow_ias_access: !!p.allow_ias_access,
+    allow_treatment_access: !!p.allow_treatment_access,
+    allow_payment_access: !!p.allow_payment_access,
+    allow_operations_access: !!p.allow_operations_access,
+    require_notification: !!p.require_notification,
+  };
+}
+
+export function DataSharingPreferences({ patientId }: Props) {
+  const isOnline = useOnlineStatus();
+  /** What is stored in the account (or the defaults if nothing is stored yet). */
+  const [saved, setSaved] = useState<DataSharingPreferences>(() =>
+    defaultsFor(patientId),
+  );
+  const [hasStoredRow, setHasStoredRow] = useState(false);
+  /** What the person has ticked on screen. */
+  const [preferences, setPreferences] = useState<DataSharingPreferences>(() =>
+    defaultsFor(patientId),
+  );
   const [accessLogs, setAccessLogs] = useState<AccessLogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [logsFailed, setLogsFailed] = useState(false);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadPreferences();
-    loadAccessLogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId]);
+  const canUseOnline = isSupabaseEnabled && !!patientId;
 
-  const loadPreferences = async () => {
-    const { data } = await supabase
+  const loadPreferences = useCallback(async () => {
+    if (!supabase || !patientId) return;
+    const { data, error: loadError } = await supabase
       .from("patient_data_sharing_preferences")
       .select("*")
       .eq("patient_id", patientId)
       .maybeSingle();
 
-    if (data) {
-      setPreferences(data);
-    }
-    setLoading(false);
-  };
+    if (loadError) throw loadError;
 
-  const loadAccessLogs = async () => {
-    const { data } = await supabase
+    const next = data
+      ? ({ ...defaultsFor(patientId), ...data } as DataSharingPreferences)
+      : defaultsFor(patientId);
+    setSaved(next);
+    setPreferences(next);
+    setHasStoredRow(!!data);
+  }, [patientId]);
+
+  const loadAccessLogs = useCallback(async () => {
+    if (!supabase || !patientId) return;
+    const { data, error: logsError } = await supabase
       .from("tefca_access_logs")
       .select("*")
       .eq("patient_id", patientId)
       .order("created_at", { ascending: false })
       .limit(10);
 
-    if (data) {
-      setAccessLogs(data);
+    if (logsError) {
+      logger.warn("[DataSharing] access history failed:", errorName(logsError));
+      setLogsFailed(true);
+      return;
     }
+    setLogsFailed(false);
+    setAccessLogs((data as AccessLogEntry[] | null) ?? []);
+  }, [patientId]);
+
+  const loadAll = useCallback(async () => {
+    if (!canUseOnline) {
+      setLoadState("ready");
+      return;
+    }
+    setLoadState("loading");
+    try {
+      await loadPreferences();
+      await loadAccessLogs();
+      setLoadState("ready");
+    } catch (err) {
+      logger.error("[DataSharing] load failed:", errorName(err));
+      setLoadState("error");
+    }
+  }, [canUseOnline, loadPreferences, loadAccessLogs]);
+
+  useEffect(() => {
+    void loadAll();
+  }, [loadAll]);
+
+  const changes = diffSharing(flagsOf(saved), flagsOf(preferences));
+
+  const setFlag = (key: SharingFlag, value: boolean) => {
+    setSavedAt(null);
+    setPreferences((p) => ({ ...p, [key]: value }));
   };
 
   const savePreferences = async () => {
+    if (!supabase) return;
     setSaving(true);
     setError(null);
-    setSaved(false);
 
     try {
       if (preferences.id) {
-        const { error: updateError } = await supabase
+        const { data: updatedRows, error: updateError } = await supabase
           .from("patient_data_sharing_preferences")
           .update({
             allow_ias_access: preferences.allow_ias_access,
@@ -100,284 +177,384 @@ export function DataSharingPreferences({ patientId }: Props) {
             blocked_organizations: preferences.blocked_organizations,
             require_notification: preferences.require_notification,
           })
-          .eq("id", preferences.id);
+          .eq("id", preferences.id)
+          .select("id");
 
         if (updateError) throw updateError;
+        // The online account can refuse a change without an error (it then
+        // updates nothing). Never report that as saved.
+        if (!updatedRows || updatedRows.length === 0) {
+          throw new Error("No sharing choices were updated");
+        }
+        setSaved(preferences);
       } else {
-        const { error: insertError } = await supabase
+        const { data: inserted, error: insertError } = await supabase
           .from("patient_data_sharing_preferences")
-          .insert(preferences);
+          .insert(preferences)
+          .select("id")
+          .maybeSingle();
 
         if (insertError) throw insertError;
+        const next = { ...preferences, id: inserted?.id ?? preferences.id };
+        setPreferences(next);
+        setSaved(next);
+        setHasStoredRow(true);
       }
 
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      setSavedAt(new Date());
+      setConfirmOpen(false);
     } catch (err) {
+      logger.error("[DataSharing] save failed:", errorName(err));
       setError(
-        err instanceof Error ? err.message : "Failed to save preferences",
+        "Your changes were not saved. Check your internet connection and try again. If it keeps happening, ask clinic staff for help.",
       );
     } finally {
       setSaving(false);
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  const cancelChanges = () => {
+    setPreferences(saved);
+    setError(null);
   };
 
-  const getPurposeLabel = (purpose: string) => {
-    const purposeInfo =
-      TEFCA_EXCHANGE_PURPOSES[purpose as keyof typeof TEFCA_EXCHANGE_PURPOSES];
-    return purposeInfo?.display || purpose;
-  };
+  const header = (
+    <PageHeader
+      title="Sharing your health records"
+      description="Choose which other organisations may ask for a copy of your health records."
+    />
+  );
 
-  if (loading) {
+  const explainer = (
+    <section className="panel" aria-labelledby="sharing-explainer-title">
+      <div className="panel-header">
+        <h2 id="sharing-explainer-title" className="panel-title">
+          How sharing works
+        </h2>
+      </div>
+      <dl className="panel-body grid gap-4 text-body sm:grid-cols-2">
+        <div>
+          <dt className="font-medium text-ink">Who can always see your record</dt>
+          <dd className="mt-1 text-ink-secondary">
+            The mBHR clinic team that treats you. These choices do not change
+            that, and they do not change the care you receive.
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-ink">What these choices cover</dt>
+          <dd className="mt-1 text-ink-secondary">
+            Requests from other organisations for a copy of your records, such
+            as another hospital, an insurer or a health app you use.
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-ink">For how long</dt>
+          <dd className="mt-1 text-ink-secondary">
+            Each choice stays as you set it until you change it here.
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-ink">How to stop sharing</dt>
+          <dd className="mt-1 text-ink-secondary">
+            Untick the choice and save, and tell clinic staff at your next
+            visit. Your choices are saved as a record of your wishes: requests
+            are not yet checked against them automatically. Copies already
+            sent to an organisation cannot be taken back from here.
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
+
+  if (!isSupabaseEnabled) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <div className="banner banner-info">
+          <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>
+            Sharing choices are kept in your online account. This device is not
+            connected to an online account, so they cannot be shown or changed
+            here.
+          </p>
+        </div>
+        {explainer}
+      </div>
+    );
+  }
+
+  if (!patientId) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>
+            We could not find your patient record. Log out, log in again, then
+            try once more.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadState === "loading") {
+    return (
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <span role="status" className="sr-only">
+          Loading your sharing choices
+        </span>
+        <div className="panel p-5" aria-hidden>
+          <Skeleton className="mb-4 h-5 w-48" />
+          <SkeletonText lines={6} />
+        </div>
+      </div>
+    );
+  }
+
+  if (loadState === "error") {
+    return (
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <div className="space-y-3">
+            <p>
+              {isOnline
+                ? "We could not load your sharing choices. Nothing has been changed."
+                : "You are offline. Connect to the internet to see or change your sharing choices."}
+            </p>
+            <button type="button" onClick={() => void loadAll()} className="btn-secondary">
+              <ArrowPathIcon className="h-5 w-5" aria-hidden />
+              Try again
+            </button>
+          </div>
+        </div>
+        {explainer}
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-            <ShieldCheckIcon className="w-6 h-6 text-green-600" />
-          </div>
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              Data Sharing Preferences
-            </h2>
-            <p className="text-gray-600">
-              Control how your health data is shared
+    <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+      {header}
+      {explainer}
+
+      {!isOnline && (
+        <div className="banner banner-warning" role="status">
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>You are offline. You can look at your choices, but saving needs an internet connection.</p>
+        </div>
+      )}
+
+      <section className="panel" aria-labelledby="sharing-choices-title">
+        <div className="panel-header">
+          <h2 id="sharing-choices-title" className="panel-title">
+            Your sharing choices
+          </h2>
+          {!hasStoredRow && (
+            <StatusBadge tone="neutral" icon>
+              Not saved yet
+            </StatusBadge>
+          )}
+        </div>
+        <div className="panel-body space-y-5">
+          {!hasStoredRow && (
+            <p className="text-body text-ink-secondary">
+              You have not saved any choices yet. The ticks below are the
+              starting settings. Press Save changes to keep them as your own.
             </p>
-          </div>
-        </div>
+          )}
 
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
-          <div className="flex gap-3">
-            <InformationCircleIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-medium text-amber-900">TEFCA Data Sharing</h3>
-              <p className="text-sm text-amber-700 mt-1">
-                These settings control how your health information may be shared
-                through the Trusted Exchange Framework (TEFCA) with other
-                healthcare organizations.
-              </p>
+          <fieldset>
+            <legend className="field-label">Who may ask for a copy of your records</legend>
+            <div className="space-y-2">
+              {SHARING_OPTIONS.map((o) => {
+                const id = `sharing-${o.key}`;
+                const on = preferences[o.key];
+                return (
+                  <label
+                    key={o.key}
+                    htmlFor={id}
+                    className="flex min-h-touch-target cursor-pointer items-start gap-3 rounded-md border border-line p-3 transition-colors hover:bg-surface-hover"
+                  >
+                    <input
+                      id={id}
+                      type="checkbox"
+                      checked={on}
+                      onChange={(e) => setFlag(o.key, e.target.checked)}
+                      disabled={saving}
+                      className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-body font-medium text-ink">{o.title}</span>
+                        <StatusBadge tone={on ? "info" : "neutral"} icon>
+                          {choiceLabel(o.key, on)}
+                        </StatusBadge>
+                      </span>
+                      <span className="mt-0.5 block text-caption text-ink-muted">
+                        {o.description}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
             </div>
-          </div>
-        </div>
+          </fieldset>
 
-        <div className="space-y-4 mb-6">
-          <h3 className="font-medium text-gray-900">Allow data access for:</h3>
-
-          <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+          <label
+            htmlFor="sharing-notify"
+            className="flex min-h-touch-target cursor-pointer items-start gap-3 rounded-md border border-line p-3 transition-colors hover:bg-surface-hover"
+          >
             <input
-              type="checkbox"
-              checked={preferences.allow_ias_access}
-              onChange={(e) =>
-                setPreferences({
-                  ...preferences,
-                  allow_ias_access: e.target.checked,
-                })
-              }
-              className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <div>
-              <span className="font-medium text-gray-900">
-                Individual Access Services (IAS)
-              </span>
-              <p className="text-sm text-gray-600">
-                Allow yourself to access and download your own health records
-                through third-party apps. This is required for personal health
-                record apps.
-              </p>
-            </div>
-          </label>
-
-          <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-            <input
-              type="checkbox"
-              checked={preferences.allow_treatment_access}
-              onChange={(e) =>
-                setPreferences({
-                  ...preferences,
-                  allow_treatment_access: e.target.checked,
-                })
-              }
-              className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <div>
-              <span className="font-medium text-gray-900">Treatment</span>
-              <p className="text-sm text-gray-600">
-                Allow healthcare providers to access your records for treatment
-                purposes. This helps doctors and hospitals provide better care.
-              </p>
-            </div>
-          </label>
-
-          <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-            <input
-              type="checkbox"
-              checked={preferences.allow_payment_access}
-              onChange={(e) =>
-                setPreferences({
-                  ...preferences,
-                  allow_payment_access: e.target.checked,
-                })
-              }
-              className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <div>
-              <span className="font-medium text-gray-900">Payment</span>
-              <p className="text-sm text-gray-600">
-                Allow health plans and clearinghouses to access records for
-                payment activities. This may be needed for insurance claims.
-              </p>
-            </div>
-          </label>
-
-          <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
-            <input
-              type="checkbox"
-              checked={preferences.allow_operations_access}
-              onChange={(e) =>
-                setPreferences({
-                  ...preferences,
-                  allow_operations_access: e.target.checked,
-                })
-              }
-              className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <div>
-              <span className="font-medium text-gray-900">
-                Healthcare Operations
-              </span>
-              <p className="text-sm text-gray-600">
-                Allow access for quality assessment, training, and other
-                healthcare operations. Data is typically de-identified for these
-                purposes.
-              </p>
-            </div>
-          </label>
-        </div>
-
-        <div className="mb-6">
-          <label className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg cursor-pointer">
-            <input
+              id="sharing-notify"
               type="checkbox"
               checked={preferences.require_notification}
-              onChange={(e) =>
-                setPreferences({
-                  ...preferences,
-                  require_notification: e.target.checked,
-                })
-              }
-              className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              onChange={(e) => setFlag(NOTIFY_OPTION.key, e.target.checked)}
+              disabled={saving}
+              className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
             />
-            <div className="flex items-center gap-2">
-              <BellIcon className="w-5 h-5 text-blue-600" />
-              <span className="font-medium text-blue-900">
-                Notify me when my data is accessed
+            <span className="min-w-0">
+              <span className="flex items-center gap-2 text-body font-medium text-ink">
+                <BellIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+                {NOTIFY_OPTION.title}
               </span>
-            </div>
+              <span className="mt-0.5 block text-caption text-ink-muted">
+                {NOTIFY_OPTION.description}
+              </span>
+            </span>
           </label>
-        </div>
 
-        {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-            <ExclamationTriangleIcon className="w-5 h-5 text-red-600" />
-            <p className="text-red-700">{error}</p>
-          </div>
-        )}
-
-        {saved && (
-          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-3">
-            <CheckCircleIcon className="w-5 h-5 text-green-600" />
-            <p className="text-green-700">Your preferences have been saved.</p>
-          </div>
-        )}
-
-        <button
-          onClick={savePreferences}
-          disabled={saving}
-          className="w-full py-4 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-        >
-          {saving ? (
-            <>
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <ShieldCheckIcon className="w-5 h-5" />
-              Save Preferences
-            </>
-          )}
-        </button>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <BuildingOfficeIcon className="w-6 h-6 text-gray-600" />
-          <h3 className="font-semibold text-gray-900">
-            Recent Data Access History
-          </h3>
-        </div>
-
-        {accessLogs.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <ShieldCheckIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-            <p>No external access to your data has been recorded.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {accessLogs.map((log) => (
-              <div
-                key={log.id}
-                className={`p-4 rounded-lg border ${
-                  log.success
-                    ? "bg-gray-50 border-gray-200"
-                    : "bg-red-50 border-red-200"
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">
-                      {log.requesting_organization}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      {getPurposeLabel(log.exchange_purpose)}
-                    </p>
-                  </div>
-                  <span
-                    className={`text-xs px-2 py-1 rounded-full ${
-                      log.success
-                        ? "bg-green-100 text-green-700"
-                        : "bg-red-100 text-red-700"
-                    }`}
-                  >
-                    {log.success ? "Granted" : "Denied"}
-                  </span>
-                </div>
-                <div className="mt-2 flex items-center gap-4 text-sm text-gray-500">
-                  <span>{formatDate(log.created_at)}</span>
-                  <span>{log.resources_returned} records</span>
-                </div>
+          <div aria-live="polite">
+            {savedAt && changes.length === 0 && (
+              <div className="banner banner-success">
+                <CheckCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+                <p>
+                  Saved to your online account at{" "}
+                  {formatNigerianDateTime(savedAt)}.
+                </p>
               </div>
-            ))}
+            )}
+            {changes.length > 0 && (
+              <p className="text-body text-ink-secondary">
+                You have {changes.length} unsaved{" "}
+                {changes.length === 1 ? "change" : "changes"}.
+              </p>
+            )}
           </div>
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            {changes.length > 0 && (
+              <button
+                type="button"
+                onClick={cancelChanges}
+                disabled={saving}
+                className="btn-secondary"
+              >
+                Undo my changes
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setConfirmOpen(true);
+              }}
+              disabled={
+                saving || !isOnline || (hasStoredRow && changes.length === 0)
+              }
+              className="btn-primary"
+            >
+              <ShieldCheckIcon className="h-5 w-5" aria-hidden />
+              Save changes
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel" aria-labelledby="sharing-history-title">
+        <div className="panel-header">
+          <h2 id="sharing-history-title" className="panel-title">
+            Recent requests for your records
+          </h2>
+        </div>
+        {logsFailed ? (
+          <div className="panel-body">
+            <p className="text-body text-ink-secondary">
+              We could not load the list of requests. Try again later.
+            </p>
+          </div>
+        ) : accessLogs.length === 0 ? (
+          <EmptyState
+            icon={ShieldCheckIcon}
+            title="No requests recorded"
+            description="No other organisation has requested your records through this service."
+          />
+        ) : (
+          <ul className="divide-y divide-line">
+            {accessLogs.map((log) => (
+              <li key={log.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-body font-medium text-ink">
+                    {log.requesting_organization}
+                  </p>
+                  <p className="text-caption text-ink-muted">
+                    Reason: {purposeLabel(log.exchange_purpose)} ·{" "}
+                    {formatNigerianDateTime(log.created_at)}
+                  </p>
+                  {log.success && (
+                    <p className="text-caption text-ink-secondary tabular-nums">
+                      {log.resources_returned}{" "}
+                      {log.resources_returned === 1 ? "record" : "records"} shared
+                    </p>
+                  )}
+                </div>
+                <StatusBadge tone={log.success ? "info" : "neutral"} icon>
+                  {log.success ? "Shared" : "Not shared"}
+                </StatusBadge>
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
+      </section>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Save these sharing choices?"
+        confirmLabel="Save changes"
+        cancelLabel="Go back"
+        busyLabel="Saving…"
+        busy={saving}
+        error={error}
+        onConfirm={() => void savePreferences()}
+        onCancel={() => setConfirmOpen(false)}
+      >
+        {changes.length > 0 ? (
+          <>
+            <p>After you save:</p>
+            <ul className="space-y-1.5">
+              {changes.map((c) => (
+                <li key={c.key} className="rounded-md border border-line px-3 py-2">
+                  <span className="block font-medium text-ink">{c.title}</span>
+                  <span className="block">
+                    {choiceLabel(c.key, c.from)} → <strong>{choiceLabel(c.key, c.to)}</strong>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p>Your current choices will be saved to your online account as shown.</p>
+        )}
+        <p>
+          Your choices are saved as a record of your wishes. Requests are not
+          yet checked against them automatically, so tell clinic staff too if
+          you want sharing stopped. You can change your choices again at any
+          time. Copies already sent to an organisation cannot be taken back.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

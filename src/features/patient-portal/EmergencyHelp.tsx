@@ -1,105 +1,160 @@
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   ExclamationTriangleIcon,
   PhoneIcon,
-  BellAlertIcon,
   XMarkIcon,
-  CheckCircleIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
+import { readPortalUser } from "./portalSession";
 
 interface EmergencyHelpProps {
   onClose: () => void;
 }
 
+// Nigeria's national toll-free emergency number.
+const EMERGENCY_NUMBER = "112";
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Emergency help dialog, reachable from every portal page. It only offers
+ * what the phone can really do: place a call. The portal cannot alert a
+ * health worker, so it says so instead of pretending.
+ */
 export function EmergencyHelp({ onClose }: EmergencyHelpProps) {
-  const [alerted, setAlerted] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const callRef = useRef<HTMLAnchorElement>(null);
+  const onCloseRef = useRef(onClose);
 
-  const portalUserStr = localStorage.getItem("patient_portal_user");
-  const portalUser = portalUserStr ? JSON.parse(portalUserStr) : null;
-  const patientId = portalUser?.patientId || "Unknown";
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
-  const alertHealthWorker = () => {
-    const alerts: object[] = JSON.parse(
-      localStorage.getItem("patient_emergency_alerts") || "[]",
-    );
-    alerts.push({
-      patientId,
-      timestamp: new Date().toISOString(),
-      type: "emergency",
-      message: "Patient requested emergency help via portal",
-    });
-    localStorage.setItem("patient_emergency_alerts", JSON.stringify(alerts));
-    setAlerted(true);
-  };
+  // Focus the call button, keep Tab inside the dialog, close on Escape and
+  // hand focus back to whatever opened it.
+  useEffect(() => {
+    const previous =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    callRef.current?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const items = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
+      );
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previous?.focus();
+    };
+  }, []);
+
+  const patientId = readPortalUser()?.patientId || "";
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Emergency Help"
-    >
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="bg-red-600 px-6 py-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <ExclamationTriangleIcon className="w-8 h-8 text-white" />
-              <h2 className="text-2xl font-bold text-white tracking-wide">
-                EMERGENCY HELP
-              </h2>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-white/80 hover:text-white p-1 rounded-lg"
-              aria-label="Close"
-            >
-              <XMarkIcon className="w-6 h-6" />
-            </button>
+    <div className="fixed inset-0 z-[100] flex items-end justify-center p-0 sm:items-center sm:p-4">
+      <div
+        className="absolute inset-0 bg-ink/60"
+        onClick={onClose}
+        aria-hidden
+      />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="emergency-help-title"
+        aria-describedby="emergency-help-desc"
+        className="relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-surface shadow-2xl sm:rounded-2xl"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-danger-line bg-danger-soft px-5 py-3">
+          <div className="flex items-center gap-3">
+            <ExclamationTriangleIcon
+              className="h-7 w-7 shrink-0 text-danger"
+              aria-hidden
+            />
+            <h2 id="emergency-help-title" className="text-h1 text-danger-fg">
+              Emergency help
+            </h2>
           </div>
-        </div>
-
-        {/* Patient ID */}
-        <div className="bg-red-50 border-b border-red-200 px-6 py-4">
-          <p className="text-xs text-red-600 font-medium uppercase tracking-wider">
-            Your Patient ID (share with emergency services)
-          </p>
-          <p className="text-xl font-mono font-bold text-red-800 mt-1 break-all">
-            {patientId}
-          </p>
-        </div>
-
-        {/* Actions */}
-        <div className="px-6 py-6 space-y-4">
-          <a
-            href="tel:0800123HELP"
-            className="flex items-center justify-center gap-3 w-full bg-red-600 hover:bg-red-700 text-white text-lg font-bold py-4 px-6 rounded-xl transition-colors min-h-[60px]"
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn-ghost text-danger-fg hover:text-danger-fg"
+            aria-label="Close emergency help"
           >
-            <PhoneIcon className="w-6 h-6" />
-            Call Emergency Line
-          </a>
+            <XMarkIcon className="h-6 w-6" aria-hidden />
+          </button>
+        </div>
 
-          {alerted ? (
-            <div className="flex items-center gap-3 w-full bg-green-50 border border-green-200 text-green-800 py-4 px-6 rounded-xl">
-              <CheckCircleIcon className="w-6 h-6 text-green-600 flex-shrink-0" />
-              <p className="font-medium">
-                Your health worker will be notified when connected.
+        <div className="space-y-4 px-5 py-5">
+          <p id="emergency-help-desc" className="text-body text-ink">
+            If someone is badly hurt, cannot breathe, or is very unwell right
+            now, call for help or go to the nearest hospital or health centre.
+          </p>
+
+          <div>
+            <a
+              ref={callRef}
+              href={`tel:${EMERGENCY_NUMBER}`}
+              className="btn-danger min-h-[56px] w-full text-h3"
+            >
+              <PhoneIcon className="h-6 w-6" aria-hidden />
+              Call {EMERGENCY_NUMBER}
+            </a>
+            <p className="mt-1.5 text-center text-caption text-ink-muted">
+              {EMERGENCY_NUMBER} is Nigeria&apos;s free emergency number.
+            </p>
+          </div>
+
+          {patientId && (
+            <div className="rounded-lg border border-line bg-surface-sunken p-4">
+              <p className="text-label text-ink-secondary">Your patient ID</p>
+              <p className="mt-1 break-all font-mono text-h3 text-ink">
+                {patientId}
+              </p>
+              <p className="mt-1 text-caption text-ink-muted">
+                Show this to a health worker so they can find your outreach
+                record.
               </p>
             </div>
-          ) : (
-            <button
-              onClick={alertHealthWorker}
-              className="flex items-center justify-center gap-3 w-full bg-orange-500 hover:bg-orange-600 text-white text-lg font-bold py-4 px-6 rounded-xl transition-colors min-h-[60px]"
-            >
-              <BellAlertIcon className="w-6 h-6" />
-              Alert My Health Worker
-            </button>
           )}
 
+          <div className="banner banner-info">
+            <InformationCircleIcon
+              className="mt-0.5 h-5 w-5 shrink-0"
+              aria-hidden
+            />
+            <p>
+              This portal cannot call or alert anyone for you. Messages to the
+              clinic are not checked all the time, so do not use them in an
+              emergency.
+            </p>
+          </div>
+
           <button
+            type="button"
             onClick={onClose}
-            className="w-full border-2 border-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-xl hover:bg-gray-50 transition-colors min-h-[52px]"
+            className="btn-secondary w-full"
           >
             Close
           </button>

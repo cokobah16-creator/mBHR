@@ -1,4 +1,8 @@
 import React, { useState } from "react";
+import {
+  ExclamationCircleIcon,
+  ExclamationTriangleIcon,
+} from "@heroicons/react/20/solid";
 import { useAuthStore } from "@/stores/auth";
 import { findAdminByPin, wipeDevice } from "@/db/deviceReset";
 
@@ -46,8 +50,13 @@ export function DeviceResetPanel() {
       );
       window.location.replace("/login");
     } catch (error) {
-      console.error("Failed to reset local data:", error);
-      setErr("Failed to reset local data. Check console for details.");
+      console.error(
+        "Failed to reset local data:",
+        error instanceof Error ? error.name : error,
+      );
+      setErr(
+        "Could not erase the data on this device. Reload the page and try again.",
+      );
     } finally {
       setPin("");
       setBusy(false);
@@ -57,24 +66,28 @@ export function DeviceResetPanel() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3"
+      className="rounded-lg border border-danger-line bg-surface p-4 space-y-3"
+      aria-labelledby="device-reset-title"
     >
-      <div>
-        <h3 className="text-sm font-semibold text-red-800">
-          Reset this device
-        </h3>
-        <p className="text-xs text-red-700 mt-1">
-          Deletes every patient, visit and staff account stored on this device,
-          including anything not yet synced. An administrator must approve with
-          their PIN.
-        </p>
+      <div className="flex items-start gap-2">
+        <ExclamationTriangleIcon
+          className="h-5 w-5 shrink-0 text-danger mt-0.5"
+          aria-hidden
+        />
+        <div>
+          <h3 id="device-reset-title" className="text-h3 text-danger-fg">
+            Reset this device
+          </h3>
+          <p className="text-caption text-ink-secondary mt-1">
+            Deletes every patient, visit and staff account stored on this
+            device, including anything not yet synced. An administrator must
+            approve with their PIN.
+          </p>
+        </div>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="device-reset-pin"
-          className="text-sm font-medium text-gray-900"
-        >
+      <div>
+        <label htmlFor="device-reset-pin" className="field-label">
           Administrator PIN
         </label>
         <input
@@ -88,18 +101,32 @@ export function DeviceResetPanel() {
           onChange={(e) =>
             setPin(e.target.value.replace(/\D/g, "").slice(0, 6))
           }
-          className="h-11 px-3 text-base bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+          className="input-field text-base tabular-nums sm:max-w-xs"
           placeholder="6-digit admin PIN"
+          aria-invalid={err ? true : undefined}
+          aria-describedby={err ? "device-reset-error" : undefined}
           required
         />
       </div>
 
-      {err && <div className="text-sm text-red-700">{err}</div>}
+      {err && (
+        <p
+          id="device-reset-error"
+          className="flex items-start gap-1.5 text-body text-danger-fg"
+          role="alert"
+        >
+          <ExclamationCircleIcon
+            className="h-5 w-5 shrink-0 mt-0.5"
+            aria-hidden
+          />
+          {err}
+        </p>
+      )}
 
       <button
         type="submit"
         disabled={busy || pin.length !== 6}
-        className="w-full h-10 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+        className="btn-danger w-full sm:w-auto"
       >
         {busy ? "Checking…" : "Erase device data"}
       </button>

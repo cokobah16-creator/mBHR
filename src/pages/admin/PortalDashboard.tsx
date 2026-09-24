@@ -1,429 +1,341 @@
 /**
- * Portal Dashboard - Analytics and Management Interface
+ * Patient portal overview for administrators.
  *
- * Provides overview of patient portal adoption and usage:
- * - Total patients with portal access
- * - Verification and activity statistics
- * - Filtered patient list with portal status
- * - Quick actions for bulk operations
+ * Counts come from the patient records stored on this device:
+ * - patients with portal access, verified contacts and recent portal use
+ * - a searchable, filterable list with each patient's portal status
+ * - links to the bulk enrollment tools
  */
 
-import React, { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   UserGroupIcon,
-  CheckCircleIcon,
-  ClockIcon,
-  ChartBarIcon,
-  CogIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
 import { db, type Patient } from "@/db";
 import { formatNigerianDate } from "@/utils/dateFormat";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { DashboardSkeleton } from "@/components/ui/Skeleton";
+import {
+  PORTAL_FILTERS,
+  PORTAL_STATUS,
+  computePortalStats,
+  filterPortalPatients,
+  isPortalFilter,
+  percentOf,
+  portalStatusOf,
+  type PortalFilter,
+  type PortalStats,
+} from "@/features/admin/portalStats";
 
-interface PortalStats {
-  totalPatients: number;
-  portalEnabled: number;
-  verified: number;
-  active30Days: number;
-  invitationsSent: number;
-  pendingVerification: number;
-}
+const PAGE_LIMIT = 50;
 
-interface PatientWithPortalStatus extends Patient {
-  portalStatusLabel: string;
-  portalStatusColor: string;
+const BREADCRUMBS = [
+  { label: "Administration", to: "/admin" },
+  { label: "Patient portal" },
+];
+
+function pct(part: number, whole: number, suffix: string) {
+  const value = percentOf(part, whole);
+  return value === null ? "No patients to compare yet" : `${value}% ${suffix}`;
 }
 
 export function PortalDashboard() {
-  const [stats, setStats] = useState<PortalStats>({
-    totalPatients: 0,
-    portalEnabled: 0,
-    verified: 0,
-    active30Days: 0,
-    invitationsSent: 0,
-    pendingVerification: 0,
-  });
-  const [patients, setPatients] = useState<PatientWithPortalStatus[]>([]);
-  const [filteredPatients, setFilteredPatients] = useState<
-    PatientWithPortalStatus[]
-  >([]);
-  const [loading, setLoading] = useState(true);
+  const [patients, setPatients] = useState<Patient[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<
-    "all" | "enabled" | "disabled" | "verified" | "pending"
-  >("all");
+  const [statusFilter, setStatusFilter] = useState<PortalFilter>("all");
 
-  useEffect(() => {
-    loadData();
+  const loadData = useCallback(async () => {
+    setLoadError(false);
+    try {
+      setPatients(await db.patients.toArray());
+    } catch (error) {
+      console.error(
+        "Error loading portal dashboard data:",
+        error instanceof Error ? error.name : error,
+      );
+      setLoadError(true);
+      setPatients((prev) => prev ?? []);
+    }
   }, []);
 
   useEffect(() => {
-    filterPatients();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, statusFilter, patients]);
+    loadData();
+  }, [loadData]);
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const allPatients = await db.patients.toArray();
+  const stats: PortalStats | null = useMemo(
+    () => (patients ? computePortalStats(patients) : null),
+    [patients],
+  );
 
-      // Calculate statistics
-      const totalPatients = allPatients.length;
-      const portalEnabled = allPatients.filter(
-        (p) => p.portalEnabled === 1,
-      ).length;
-      const verified = allPatients.filter(
-        (p) => p.contactVerified === 1,
-      ).length;
+  const filteredPatients = useMemo(
+    () => filterPortalPatients(patients ?? [], searchQuery, statusFilter),
+    [patients, searchQuery, statusFilter],
+  );
 
-      // Active in last 30 days
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      const active30Days = allPatients.filter((p) => {
-        if (!p.lastPortalActivity) return false;
-        return new Date(p.lastPortalActivity) > thirtyDaysAgo;
-      }).length;
+  const header = (
+    <PageHeader
+      breadcrumbs={BREADCRUMBS}
+      title="Patient portal overview"
+      description="Portal access for the patients stored on this device. Counts do not include records that have not synced to this device."
+      actions={
+        <>
+          <Link to="/admin/bulk-portal-migration" className="btn-secondary">
+            Create server accounts
+          </Link>
+          <Link to="/admin/portal-migration" className="btn-primary">
+            Enable portal access
+          </Link>
+        </>
+      }
+    />
+  );
 
-      // Count invitations sent
-      const invitationsSent = allPatients.filter(
-        (p) =>
-          p.portalInvitation &&
-          p.portalInvitation.count &&
-          p.portalInvitation.count > 0,
-      ).length;
-
-      // Pending verification
-      const pendingVerification = allPatients.filter(
-        (p) => p.portalEnabled === 1 && p.contactVerified === 0,
-      ).length;
-
-      setStats({
-        totalPatients,
-        portalEnabled,
-        verified,
-        active30Days,
-        invitationsSent,
-        pendingVerification,
-      });
-
-      // Map patients with status labels
-      const patientsWithStatus: PatientWithPortalStatus[] = allPatients.map(
-        (p) => {
-          let statusLabel = "Not Enabled";
-          let statusColor = "gray";
-
-          if (p.portalEnabled === 1) {
-            if (p.contactVerified === 1) {
-              statusLabel = "Verified";
-              statusColor = "green";
-            } else {
-              statusLabel = "Pending Verification";
-              statusColor = "yellow";
-            }
-          }
-
-          return {
-            ...p,
-            portalStatusLabel: statusLabel,
-            portalStatusColor: statusColor,
-          };
-        },
-      );
-
-      setPatients(patientsWithStatus);
-    } catch (error) {
-      console.error("Error loading portal dashboard data:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const filterPatients = () => {
-    let filtered = patients;
-
-    // Apply search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (p) =>
-          p.givenName.toLowerCase().includes(query) ||
-          p.familyName.toLowerCase().includes(query) ||
-          p.email?.toLowerCase().includes(query) ||
-          p.phone?.includes(query),
-      );
-    }
-
-    // Apply status filter
-    if (statusFilter !== "all") {
-      filtered = filtered.filter((p) => {
-        switch (statusFilter) {
-          case "enabled":
-            return p.portalEnabled === 1;
-          case "disabled":
-            return p.portalEnabled === 0;
-          case "verified":
-            return p.contactVerified === 1;
-          case "pending":
-            return p.portalEnabled === 1 && p.contactVerified === 0;
-          default:
-            return true;
-        }
-      });
-    }
-
-    setFilteredPatients(filtered);
-  };
-
-  const getStatusBadge = (patient: PatientWithPortalStatus) => {
-    const colorClasses = {
-      green: "bg-green-100 text-green-800",
-      yellow: "bg-yellow-100 text-yellow-800",
-      gray: "bg-gray-100 text-gray-800",
-    };
-
+  if (patients === null || stats === null) {
     return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colorClasses[patient.portalStatusColor as keyof typeof colorClasses]}`}
-      >
-        {patient.portalStatusLabel}
-      </span>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading portal dashboard...</p>
-        </div>
+      <div>
+        {header}
+        <DashboardSkeleton />
       </div>
     );
   }
 
+  const metrics = [
+    {
+      label: "Patients on this device",
+      value: stats.totalPatients,
+      note: "All registered patients",
+    },
+    {
+      label: "Portal enabled",
+      value: stats.portalEnabled,
+      note: pct(stats.portalEnabled, stats.totalPatients, "of patients"),
+    },
+    {
+      label: "Verified",
+      value: stats.verified,
+      note: pct(stats.verified, stats.portalEnabled, "of portal-enabled patients"),
+    },
+    {
+      label: "Pending verification",
+      value: stats.pendingVerification,
+      note: "Enabled, not yet signed in",
+    },
+    {
+      label: "Active in the last 30 days",
+      value: stats.active30Days,
+      note: pct(stats.active30Days, stats.verified, "of verified patients"),
+    },
+    {
+      label: "Patients invited",
+      value: stats.invitationsSent,
+      note: "Sent at least one invitation",
+    },
+  ];
+
+  const visible = filteredPatients.slice(0, PAGE_LIMIT);
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Patient Portal Dashboard
-          </h1>
-          <p className="text-gray-600">
-            Monitor portal adoption and patient engagement
-          </p>
-        </div>
-        <Link
-          to="/admin/portal-migration"
-          className="btn-primary inline-flex items-center space-x-2"
-        >
-          <CogIcon className="h-5 w-5" />
-          <span>Bulk Migration</span>
-        </Link>
-      </div>
+    <div className="space-y-4">
+      {header}
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <div className="card bg-blue-50 border-blue-200">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-blue-600">Total Patients</p>
-            <UserGroupIcon className="h-6 w-6 text-blue-600" />
-          </div>
-          <p className="text-3xl font-bold text-blue-900">
-            {stats.totalPatients}
-          </p>
-          <p className="text-xs text-blue-800 mt-1">In the system</p>
+      {loadError && (
+        <div className="banner banner-danger" role="alert">
+          <span className="flex-1">
+            Patient records could not be read from this device, so these
+            numbers may be incomplete.
+          </span>
+          <button type="button" onClick={loadData} className="btn-secondary">
+            Try again
+          </button>
         </div>
+      )}
 
-        <div className="card bg-green-50 border-green-200">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-green-600">Portal Enabled</p>
-            <CheckCircleIcon className="h-6 w-6 text-green-600" />
-          </div>
-          <p className="text-3xl font-bold text-green-900">
-            {stats.portalEnabled}
-          </p>
-          <p className="text-xs text-green-800 mt-1">
-            {stats.totalPatients > 0
-              ? `${Math.round((stats.portalEnabled / stats.totalPatients) * 100)}% adoption`
-              : "0% adoption"}
-          </p>
+      <section className="panel" aria-labelledby="portal-stats-title">
+        <div className="panel-header">
+          <h2 id="portal-stats-title" className="panel-title">
+            Portal adoption
+          </h2>
+          <span className="text-caption text-ink-muted">From this device</span>
         </div>
+        <dl className="grid grid-cols-2 gap-px bg-line sm:grid-cols-3">
+          {metrics.map((m) => (
+            <div key={m.label} className="bg-surface px-4 py-4">
+              <dt className="text-caption text-ink-muted">{m.label}</dt>
+              <dd className="mt-1 text-stat text-ink tabular-nums">{m.value}</dd>
+              <dd className="text-caption text-ink-muted">{m.note}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
 
-        <div className="card bg-purple-50 border-purple-200">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-purple-600">
-              Verified Users
-            </p>
-            <CheckCircleIcon className="h-6 w-6 text-purple-600" />
-          </div>
-          <p className="text-3xl font-bold text-purple-900">{stats.verified}</p>
-          <p className="text-xs text-purple-800 mt-1">
-            {stats.portalEnabled > 0
-              ? `${Math.round((stats.verified / stats.portalEnabled) * 100)}% verified`
-              : "0% verified"}
-          </p>
-        </div>
-
-        <div className="card bg-yellow-50 border-yellow-200">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-yellow-600">
-              Pending Verification
-            </p>
-            <ClockIcon className="h-6 w-6 text-yellow-600" />
-          </div>
-          <p className="text-3xl font-bold text-yellow-900">
-            {stats.pendingVerification}
-          </p>
-          <p className="text-xs text-yellow-800 mt-1">Awaiting first login</p>
-        </div>
-
-        <div className="card bg-indigo-50 border-indigo-200">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-indigo-600">
-              Active (30 days)
-            </p>
-            <ChartBarIcon className="h-6 w-6 text-indigo-600" />
-          </div>
-          <p className="text-3xl font-bold text-indigo-900">
-            {stats.active30Days}
-          </p>
-          <p className="text-xs text-indigo-800 mt-1">
-            {stats.verified > 0
-              ? `${Math.round((stats.active30Days / stats.verified) * 100)}% active`
-              : "0% active"}
-          </p>
-        </div>
-
-        <div className="card bg-teal-50 border-teal-200">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-teal-600">
-              Invitations Sent
-            </p>
-            <UserGroupIcon className="h-6 w-6 text-teal-600" />
-          </div>
-          <p className="text-3xl font-bold text-teal-900">
-            {stats.invitationsSent}
-          </p>
-          <p className="text-xs text-teal-800 mt-1">Total sent</p>
-        </div>
-      </div>
-
-      {/* Patient List */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold text-gray-900">
+      <section className="panel" aria-labelledby="portal-patients-title">
+        <div className="panel-header flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+          <h2 id="portal-patients-title" className="panel-title">
             Patients ({filteredPatients.length})
           </h2>
-          <div className="flex items-center space-x-4">
-            <div className="relative">
-              <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative sm:w-64">
+              <label htmlFor="portal-search" className="sr-only">
+                Search patients by name, email or phone
+              </label>
+              <MagnifyingGlassIcon
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted"
+                aria-hidden
+              />
               <input
-                type="text"
-                placeholder="Search patients..."
+                id="portal-search"
+                type="search"
+                placeholder="Search name, email or phone"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                className="input-field pl-9"
               />
             </div>
-            <select
-              value={statusFilter}
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="input-field"
-            >
-              <option value="all">All Status</option>
-              <option value="enabled">Portal Enabled</option>
-              <option value="disabled">Portal Disabled</option>
-              <option value="verified">Verified</option>
-              <option value="pending">Pending Verification</option>
-            </select>
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="portal-filter"
+                className="text-label text-ink-secondary whitespace-nowrap"
+              >
+                Show
+              </label>
+              <select
+                id="portal-filter"
+                value={statusFilter}
+                onChange={(e) => {
+                  const next: string = e.target.value;
+                  if (isPortalFilter(next)) setStatusFilter(next);
+                }}
+                className="input-field"
+              >
+                {PORTAL_FILTERS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
-        {filteredPatients.length === 0 ? (
-          <div className="text-center py-12">
-            <UserGroupIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <p className="text-gray-600">No patients found</p>
-          </div>
+        {patients.length === 0 ? (
+          <EmptyState
+            icon={UserGroupIcon}
+            title="No patients on this device"
+            description="Registered patients appear here with their portal status."
+          />
+        ) : filteredPatients.length === 0 ? (
+          <p className="panel-body text-body text-ink-muted">
+            No patients match this search or filter.
+          </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Name
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Contact
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Portal Status
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Last Activity
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Invitations
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredPatients.slice(0, 50).map((patient) => (
-                  <tr key={patient.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <Link
-                        to={`/patients/${patient.id}`}
-                        className="text-primary hover:underline font-medium"
-                      >
-                        {patient.givenName} {patient.familyName}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-sm">
-                        {patient.phone && (
-                          <div className="text-gray-900">{patient.phone}</div>
-                        )}
-                        {patient.email && (
-                          <div className="text-gray-600">{patient.email}</div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">{getStatusBadge(patient)}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {patient.lastPortalActivity
-                        ? formatNigerianDate(
-                            new Date(patient.lastPortalActivity),
-                          )
-                        : "-"}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {patient.portalInvitation?.count || 0}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link
-                        to={`/patients/${patient.id}`}
-                        className="text-primary hover:underline text-sm font-medium"
-                      >
-                        View Details
-                      </Link>
-                    </td>
+          <>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Contact</th>
+                    <th scope="col">Portal status</th>
+                    <th scope="col">Last portal activity</th>
+                    <th scope="col" className="text-right">
+                      Invitations
+                    </th>
+                    <th scope="col">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {filteredPatients.length > 50 && (
-              <div className="mt-4 text-center text-sm text-gray-600">
-                Showing 50 of {filteredPatients.length} patients
-              </div>
+                </thead>
+                <tbody>
+                  {visible.map((patient) => {
+                    const st = PORTAL_STATUS[portalStatusOf(patient)];
+                    return (
+                      <tr key={patient.id}>
+                        <td className="font-medium text-ink">
+                          {patient.givenName} {patient.familyName}
+                        </td>
+                        <td className="text-caption text-ink-secondary">
+                          {patient.phone && (
+                            <span className="block tabular-nums">{patient.phone}</span>
+                          )}
+                          {patient.email && <span className="block">{patient.email}</span>}
+                          {!patient.phone && !patient.email && (
+                            <span className="text-ink-muted">None recorded</span>
+                          )}
+                        </td>
+                        <td>
+                          <StatusBadge tone={st.tone} icon>
+                            {st.label}
+                          </StatusBadge>
+                        </td>
+                        <td className="text-caption text-ink-muted tabular-nums">
+                          {patient.lastPortalActivity
+                            ? formatNigerianDate(patient.lastPortalActivity)
+                            : "Never"}
+                        </td>
+                        <td className="text-right tabular-nums">
+                          {patient.portalInvitation?.count || 0}
+                        </td>
+                        <td className="text-right">
+                          <Link
+                            to={`/patients/${patient.id}`}
+                            className="btn-ghost"
+                            aria-label={`Open record for ${patient.givenName} ${patient.familyName}`}
+                          >
+                            Open record
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <ul className="divide-y divide-line md:hidden">
+              {visible.map((patient) => {
+                const st = PORTAL_STATUS[portalStatusOf(patient)];
+                return (
+                  <li key={patient.id}>
+                    <Link
+                      to={`/patients/${patient.id}`}
+                      className="flex min-h-touch-target items-center gap-3 px-4 py-3 hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium text-ink">
+                          {patient.givenName} {patient.familyName}
+                        </span>
+                        <span className="block text-caption text-ink-muted">
+                          {patient.lastPortalActivity
+                            ? `Last active ${formatNigerianDate(patient.lastPortalActivity)}`
+                            : "No portal activity"}
+                          {" · "}
+                          {patient.portalInvitation?.count || 0} invitation
+                          {(patient.portalInvitation?.count || 0) === 1 ? "" : "s"}
+                        </span>
+                      </span>
+                      <StatusBadge tone={st.tone} icon>
+                        {st.label}
+                      </StatusBadge>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {filteredPatients.length > PAGE_LIMIT && (
+              <p className="border-t border-line px-4 py-3 text-caption text-ink-muted">
+                Showing {PAGE_LIMIT} of {filteredPatients.length} patients.
+                Search or filter to narrow the list.
+              </p>
             )}
-          </div>
+          </>
         )}
-      </div>
+      </section>
     </div>
   );
 }

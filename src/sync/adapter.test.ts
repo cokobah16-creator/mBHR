@@ -1,8 +1,27 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useOperationsQueue } from "@/stores/operationsQueue";
+
+const { mockFrom } = vi.hoisted(() => ({ mockFrom: vi.fn() }));
+
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: () => ({ from: mockFrom }),
+}));
+
+// The adapter queues conflicts through the conflict service; not under test.
+vi.mock("./queueConflicts", () => ({
+  queueSyncConflicts: vi.fn(),
+}));
 
 vi.mock("@/db", () => ({
   db: {
+    settings: {
+      get: vi.fn(() => Promise.resolve(undefined)),
+      put: vi.fn(() => Promise.resolve(undefined)),
+    },
+    // Runs the callback directly; the real Dexie transaction adds atomicity.
+    transaction: vi.fn((...args: unknown[]) =>
+      (args[args.length - 1] as () => Promise<unknown>)(),
+    ),
     patients: {
       get: vi.fn(),
       update: vi.fn(),
@@ -194,6 +213,67 @@ describe("Sync Adapter - Operations Queue Integration", () => {
 
       expect(localData.givenName).toBe(remoteData.given_name);
       expect(localData.familyName).toBe(remoteData.family_name);
+    });
+  });
+
+  describe("pullChanges", () => {
+    type MockFn = ReturnType<typeof vi.fn>;
+
+    /** select().order().limit() resolving to the given rows. */
+    function selectChain(rows: unknown[]) {
+      const limit = vi.fn().mockResolvedValue({ data: rows, error: null });
+      const order = vi.fn().mockReturnValue({ limit });
+      const gt = vi.fn().mockReturnValue({ order });
+      return { select: vi.fn().mockReturnValue({ gt, order }) };
+    }
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("keeps local rows with unsent changes and lays server rows over clean ones", async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      const patients = db.patients as unknown as { get: MockFn; put: MockFn };
+      patients.get.mockImplementation(async (id: string) =>
+        id === "p1"
+          ? { id: "p1", givenName: "Edited on this device", _dirty: 1 }
+          : { id: "p2", givenName: "Ada", nameKey: "AT-OK", _dirty: 0 },
+      );
+      mockFrom.mockImplementation((table: string) =>
+        selectChain(
+          table === "patients"
+            ? [
+                { id: "p1", given_name: "Server", updated_at: "2024-01-02T00:00:00+00:00" },
+                { id: "p2", given_name: "Adaeze", updated_at: "2024-01-01T00:00:00+00:00" },
+              ]
+            : [],
+        ),
+      );
+
+      // Imported here so the client is created with the stubbed settings.
+      const { pullChanges } = await import("./adapter");
+      const summary = await pullChanges();
+
+      // The row with an unsent edit is not overwritten...
+      expect(patients.put).toHaveBeenCalledTimes(1);
+      expect(summary.keptLocalEdits).toBe(1);
+      expect(summary.applied).toBe(1);
+      // ...the clean row gets the server values and keeps device-only fields...
+      expect(patients.put).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "p2",
+          givenName: "Adaeze",
+          nameKey: "AT-OK",
+          _dirty: 0,
+        }),
+      );
+      // ...and the cursor still moves past both rows.
+      expect(db.settings.put).toHaveBeenCalledWith({
+        key: "sync_cursor:patients",
+        value: "2024-01-02T00:00:00.000Z",
+      });
     });
   });
 });

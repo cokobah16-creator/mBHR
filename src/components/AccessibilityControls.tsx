@@ -1,11 +1,12 @@
 // Accessibility controls for font size, contrast, and motion
-import React, { useState, useEffect } from 'react'
-import { 
+import React, { useState, useEffect, useId, useRef } from 'react'
+import {
   AdjustmentsHorizontalIcon,
   EyeIcon,
   SpeakerWaveIcon,
-  DevicePhoneMobileIcon
+  DevicePhoneMobileIcon,
 } from '@heroicons/react/24/outline'
+import { usePopover } from '@/components/shell/usePopover'
 
 interface AccessibilitySettings {
   fontSize: 'small' | 'normal' | 'large' | 'xlarge'
@@ -23,70 +24,115 @@ const DEFAULT_SETTINGS: AccessibilitySettings = {
   largeTargets: false
 }
 
-export function AccessibilityControls() {
-  const [isOpen, setIsOpen] = useState(false)
-  const [settings, setSettings] = useState<AccessibilitySettings>(DEFAULT_SETTINGS)
+const STORAGE_KEY = 'mbhr-accessibility'
 
-  useEffect(() => {
-    // Load settings from localStorage
-    const saved = localStorage.getItem('mbhr-accessibility')
-    if (saved) {
-      try {
-        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) })
-      } catch (error) {
-        console.warn('Failed to load accessibility settings:', error)
-      }
-    }
-  }, [])
+const FONT_SIZES: { value: AccessibilitySettings['fontSize']; label: string }[] = [
+  { value: 'small', label: 'Small' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'large', label: 'Large' },
+  { value: 'xlarge', label: 'XL' },
+]
+
+function loadSettings(): AccessibilitySettings {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) }
+  } catch (error) {
+    console.warn(
+      'Failed to load accessibility settings:',
+      error instanceof Error ? error.name : error
+    )
+  }
+  return DEFAULT_SETTINGS
+}
+
+function applySettings(settings: AccessibilitySettings) {
+  const root = document.documentElement
+
+  // Font size
+  root.classList.remove('text-sm', 'text-base', 'text-lg', 'text-xl')
+  switch (settings.fontSize) {
+    case 'small':
+      root.classList.add('text-sm')
+      break
+    case 'large':
+      root.classList.add('text-lg')
+      break
+    case 'xlarge':
+      root.classList.add('text-xl')
+      break
+    default:
+      root.classList.add('text-base')
+  }
+
+  // High contrast
+  root.classList.toggle('high-contrast', settings.contrast === 'high')
+
+  // Reduced motion
+  root.classList.toggle('reduce-motion', settings.reducedMotion)
+
+  // Large touch targets
+  root.classList.toggle('large-targets', settings.largeTargets)
+}
+
+interface ToggleRowProps {
+  label: string
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
+  checked: boolean
+  onChange: () => void
+}
+
+/** A full-width switch: the whole row is the 44px touch target. */
+function ToggleRow({ label, icon: Icon, checked, onChange }: ToggleRowProps) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={onChange}
+      className="flex w-full min-h-touch-target items-center justify-between gap-3 rounded-md px-2 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      <span className="flex items-center gap-2 text-body text-ink">
+        <Icon className="h-5 w-5 text-ink-muted" aria-hidden />
+        {label}
+      </span>
+      <span className="flex items-center gap-2" aria-hidden>
+        <span className="w-6 text-right text-caption text-ink-muted">
+          {checked ? 'On' : 'Off'}
+        </span>
+        <span
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            checked ? 'bg-primary' : 'bg-line-strong'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-surface transition-transform ${
+              checked ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </span>
+      </span>
+    </button>
+  )
+}
+
+export function AccessibilityControls() {
+  const { open: isOpen, setOpen: setIsOpen, ref } = usePopover()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [settings, setSettings] = useState<AccessibilitySettings>(loadSettings)
+  const panelId = useId()
 
   useEffect(() => {
     // Apply settings to document
     applySettings(settings)
-    
-    // Save to localStorage
-    localStorage.setItem('mbhr-accessibility', JSON.stringify(settings))
+
+    // Save to localStorage (may be unavailable in private browsing)
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    } catch {
+      // Settings still apply for this visit.
+    }
   }, [settings])
-
-  const applySettings = (settings: AccessibilitySettings) => {
-    const root = document.documentElement
-
-    // Font size
-    root.classList.remove('text-sm', 'text-base', 'text-lg', 'text-xl')
-    switch (settings.fontSize) {
-      case 'small':
-        root.classList.add('text-sm')
-        break
-      case 'large':
-        root.classList.add('text-lg')
-        break
-      case 'xlarge':
-        root.classList.add('text-xl')
-        break
-      default:
-        root.classList.add('text-base')
-    }
-
-    // High contrast
-    if (settings.contrast === 'high') {
-      root.classList.add('high-contrast')
-    } else {
-      root.classList.remove('high-contrast')
-    }
-
-    // Reduced motion
-    if (settings.reducedMotion) {
-      root.classList.add('reduce-motion')
-    } else {
-      root.classList.remove('reduce-motion')
-    }
-
-    // Large touch targets
-    if (settings.largeTargets) {
-      root.classList.add('large-targets')
-    } else {
-      root.classList.remove('large-targets')
-    }
-  }
 
   const updateSetting = <K extends keyof AccessibilitySettings>(
     key: K,
@@ -95,151 +141,109 @@ export function AccessibilityControls() {
     setSettings(prev => ({ ...prev, [key]: value }))
   }
 
+  // usePopover closes on Escape; send focus back to the button that opened it.
+  const onPanelKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') triggerRef.current?.focus()
+  }
+
   return (
-    <div className="relative">
+    <div className="relative" ref={ref}>
       <button
+        ref={triggerRef}
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-target"
-        title="Accessibility Settings"
+        className="inline-flex min-h-touch-target min-w-touch-target items-center justify-center rounded-md border border-line-strong bg-surface text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        title="Accessibility settings"
         aria-label="Open accessibility settings"
         aria-expanded={isOpen}
+        aria-controls={panelId}
       >
-        <AdjustmentsHorizontalIcon className="h-5 w-5 text-gray-600" />
+        <AdjustmentsHorizontalIcon className="h-5 w-5" aria-hidden />
       </button>
 
       {isOpen && (
-        <div className="absolute top-full right-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+        <div
+          id={panelId}
+          role="group"
+          aria-labelledby={`${panelId}-title`}
+          onKeyDown={onPanelKeyDown}
+          className="absolute top-full right-0 z-50 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-line bg-surface shadow-xl"
+        >
           <div className="p-4">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
-              <AdjustmentsHorizontalIcon className="h-5 w-5" />
-              <span>Accessibility</span>
+            <h3
+              id={`${panelId}-title`}
+              className="text-h3 text-ink mb-3 flex items-center gap-2"
+            >
+              <AdjustmentsHorizontalIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+              Accessibility
             </h3>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               {/* Font Size */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Text Size
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(['small', 'normal', 'large', 'xlarge'] as const).map((size) => (
-                    <button
-                      key={size}
-                      type="button"
-                      onClick={() => updateSetting('fontSize', size)}
-                      aria-pressed={settings.fontSize === size}
-                      className={`px-3 py-2 text-xs rounded-lg border transition-colors ${
-                        settings.fontSize === size
-                          ? 'bg-primary text-white border-primary'
-                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      {size === 'xlarge' ? 'XL' : size.charAt(0).toUpperCase() + size.slice(1)}
-                    </button>
-                  ))}
+                <p id={`${panelId}-size`} className="field-label">
+                  Text size
+                </p>
+                <div
+                  role="group"
+                  aria-labelledby={`${panelId}-size`}
+                  className="grid grid-cols-4 gap-1 rounded-md border border-line bg-surface-sunken p-1"
+                >
+                  {FONT_SIZES.map(({ value, label }) => {
+                    const active = settings.fontSize === value
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => updateSetting('fontSize', value)}
+                        aria-pressed={active}
+                        aria-label={value === 'xlarge' ? 'Extra large' : undefined}
+                        className={`min-h-touch-target rounded-md text-label transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                          active
+                            ? 'bg-surface text-ink border border-line-strong shadow-sm'
+                            : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
-              {/* High Contrast */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <EyeIcon className="h-5 w-5 text-gray-600" />
-                  <span className="text-sm font-medium text-gray-700">High Contrast</span>
-                </div>
-                <button
-                  onClick={() => updateSetting('contrast', settings.contrast === 'high' ? 'normal' : 'high')}
-                  type="button"
-                  role="switch"
-                  aria-checked={settings.contrast === 'high'}
-                  aria-label="High contrast"
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    settings.contrast === 'high' ? 'bg-primary' : 'bg-gray-200'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      settings.contrast === 'high' ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* Reduced Motion */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <DevicePhoneMobileIcon className="h-5 w-5 text-gray-600" />
-                  <span className="text-sm font-medium text-gray-700">Reduce Motion</span>
-                </div>
-                <button
-                  onClick={() => updateSetting('reducedMotion', !settings.reducedMotion)}
-                  type="button"
-                  role="switch"
-                  aria-checked={settings.reducedMotion}
-                  aria-label="Reduce motion"
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    settings.reducedMotion ? 'bg-primary' : 'bg-gray-200'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      settings.reducedMotion ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* Audio Enabled */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <SpeakerWaveIcon className="h-5 w-5 text-gray-600" />
-                  <span className="text-sm font-medium text-gray-700">Audio Prompts</span>
-                </div>
-                <button
-                  onClick={() => updateSetting('audioEnabled', !settings.audioEnabled)}
-                  type="button"
-                  role="switch"
-                  aria-checked={settings.audioEnabled}
-                  aria-label="Audio prompts"
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    settings.audioEnabled ? 'bg-primary' : 'bg-gray-200'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      settings.audioEnabled ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* Large Touch Targets */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <DevicePhoneMobileIcon className="h-5 w-5 text-gray-600" />
-                  <span className="text-sm font-medium text-gray-700">Large Buttons</span>
-                </div>
-                <button
-                  onClick={() => updateSetting('largeTargets', !settings.largeTargets)}
-                  type="button"
-                  role="switch"
-                  aria-checked={settings.largeTargets}
-                  aria-label="Large touch targets"
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    settings.largeTargets ? 'bg-primary' : 'bg-gray-200'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      settings.largeTargets ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
+              <div className="-mx-2 space-y-0.5">
+                <ToggleRow
+                  label="High contrast"
+                  icon={EyeIcon}
+                  checked={settings.contrast === 'high'}
+                  onChange={() =>
+                    updateSetting('contrast', settings.contrast === 'high' ? 'normal' : 'high')
+                  }
+                />
+                <ToggleRow
+                  label="Reduce motion"
+                  icon={DevicePhoneMobileIcon}
+                  checked={settings.reducedMotion}
+                  onChange={() => updateSetting('reducedMotion', !settings.reducedMotion)}
+                />
+                <ToggleRow
+                  label="Audio prompts"
+                  icon={SpeakerWaveIcon}
+                  checked={settings.audioEnabled}
+                  onChange={() => updateSetting('audioEnabled', !settings.audioEnabled)}
+                />
+                <ToggleRow
+                  label="Large touch targets"
+                  icon={DevicePhoneMobileIcon}
+                  checked={settings.largeTargets}
+                  onChange={() => updateSetting('largeTargets', !settings.largeTargets)}
+                />
               </div>
             </div>
 
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <p className="text-xs text-gray-500">
-                Settings are saved locally and apply across all pages
+            <div className="mt-3 pt-3 border-t border-line">
+              <p className="text-caption text-ink-muted">
+                Saved on this device and applied to every page.
               </p>
             </div>
           </div>

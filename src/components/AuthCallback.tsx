@@ -11,7 +11,11 @@
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ExclamationCircleIcon } from "@heroicons/react/24/outline";
 import { supabase } from "@/lib/supabaseClient";
+
+const OFFLINE_MESSAGE =
+  "This device is offline, so we could not finish signing you in. Connect to the internet, then sign in with your email and password.";
 
 export function AuthCallback() {
   const navigate   = useNavigate();
@@ -35,16 +39,29 @@ export function AuthCallback() {
 
     // Also check if there's already an active session (e.g. page was refreshed
     // after the exchange already completed)
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) {
-        navigate("/patient/dashboard", { replace: true });
-      }
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (data.session) {
+          navigate("/patient/dashboard", { replace: true });
+        }
+      })
+      .catch(() => {
+        // The timeout below reports the failure.
+      });
 
     // Timeout fallback — if nothing happened in 10 s, show an error
     const timer = setTimeout(() => {
+      // Without a connection the session cannot be set up at all; do not
+      // tell the patient the link expired. Supabase has already confirmed the
+      // email before redirecting here, so signing in is the next step (the
+      // email link itself has been used and would not work a second time).
+      const offline =
+        typeof navigator !== "undefined" && navigator.onLine === false;
       setError(
-        "Could not verify your account. The link may have expired. Please try logging in.",
+        offline
+          ? OFFLINE_MESSAGE
+          : "Could not verify your account. The link may have expired. Please try logging in.",
       );
     }, 10_000);
 
@@ -56,35 +73,48 @@ export function AuthCallback() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="panel p-8 max-w-md w-full text-center">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="text-2xl">✕</span>
+      <main className="min-h-screen bg-canvas flex items-center justify-center p-4">
+        <div className="panel p-6 sm:p-8 max-w-md w-full" role="alert">
+          <div className="flex items-start gap-3">
+            <ExclamationCircleIcon
+              className="h-6 w-6 shrink-0 text-danger mt-0.5"
+              aria-hidden
+            />
+            <div>
+              <h1 className="text-h2 text-ink">
+                {error === OFFLINE_MESSAGE
+                  ? "Could not finish signing in"
+                  : "Verification failed"}
+              </h1>
+              <p className="mt-1 text-body text-ink-secondary">{error}</p>
+            </div>
           </div>
-          <h1 className="text-xl font-bold text-gray-900 mb-2">Verification failed</h1>
-          <p className="text-gray-600 mb-6">{error}</p>
           <button
+            type="button"
             onClick={() => window.location.assign("/patient/login")}
-            className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+            className="btn-primary mt-6 w-full"
           >
             Back to Login
           </button>
         </div>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
-      <div className="panel p-8 max-w-md w-full text-center">
-        <div className="flex justify-center mb-6">
-          <div className="w-14 h-14 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+    <main className="min-h-screen bg-canvas flex items-center justify-center p-4">
+      <div className="panel p-6 sm:p-8 max-w-md w-full text-center" role="status">
+        <div className="flex justify-center mb-4">
+          <span
+            className="h-10 w-10 rounded-full border-4 border-primary border-t-transparent animate-spin"
+            aria-hidden
+          />
         </div>
-        <h1 className="text-xl font-bold text-gray-900 mb-2">Verifying your account…</h1>
-        <p className="text-gray-500 text-sm">
+        <h1 className="text-h2 text-ink mb-1">Verifying your account…</h1>
+        <p className="text-body text-ink-muted">
           Please wait while we confirm your email address.
         </p>
       </div>
-    </div>
+    </main>
   );
 }

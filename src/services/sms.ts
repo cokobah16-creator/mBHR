@@ -1,6 +1,12 @@
 import { supabase } from '../lib/supabase';
 import { composeSms } from './messageTemplates';
 
+/**
+ * Medication reminders stored on the mBHR server (Supabase table
+ * medication_reminders). These need the server to be configured and the
+ * device to be online; reminders saved on this device live in the outbox
+ * (see services/notificationWorker).
+ */
 export interface SMSReminder {
   id?: string;
   dispenseId?: string;
@@ -15,8 +21,58 @@ export interface SMSReminder {
   errorMessage?: string;
 }
 
+export interface ReminderStatusCounts {
+  total: number;
+  pending: number;
+  sent: number;
+  failed: number;
+}
+
+/** Thrown when the server is not configured on this device. */
+export const REMINDER_SERVER_UNAVAILABLE = 'reminder_server_unavailable';
+
+function client() {
+  if (!supabase) {
+    const error = new Error(REMINDER_SERVER_UNAVAILABLE);
+    error.name = 'ReminderServerUnavailable';
+    throw error;
+  }
+  return supabase;
+}
+
+// Row shape returned by select('*') on medication_reminders.
+interface ReminderRow {
+  id: string;
+  dispense_id?: string | null;
+  patient_id: string;
+  medication_name: string;
+  dosage: string;
+  scheduled_at: string;
+  phone_number: string;
+  message: string;
+  status: 'pending' | 'sent' | 'failed';
+  sent_at?: string | null;
+  error_message?: string | null;
+}
+
+function fromRow(r: ReminderRow): SMSReminder {
+  return {
+    id: r.id,
+    dispenseId: r.dispense_id ?? undefined,
+    patientId: r.patient_id,
+    medicationName: r.medication_name,
+    dosage: r.dosage,
+    scheduledAt: new Date(r.scheduled_at),
+    phoneNumber: r.phone_number,
+    message: r.message,
+    status: r.status,
+    sentAt: r.sent_at ? new Date(r.sent_at) : undefined,
+    errorMessage: r.error_message ?? undefined,
+  };
+}
+
 export async function scheduleReminder(reminder: SMSReminder): Promise<string> {
-  const { data, error } = await supabase
+  const { data, error } = await client()
     .from('medication_reminders')
     .insert({
       dispense_id: reminder.dispenseId,
@@ -99,7 +155,7 @@ function parseFrequency(frequency: string): number {
 }
 
 export async function getPendingReminders(): Promise<SMSReminder[]> {
-  const { data, error } = await supabase
+  const { data, error } = await client()
     .from('medication_reminders')
     .select('*')
     .eq('status', 'pending')
@@ -108,25 +164,61 @@ export async function getPendingReminders(): Promise<SMSReminder[]> {
 
   if (error) throw error;
 
-  return data.map(r => ({
-    id: r.id,
-    dispenseId: r.dispense_id,
-    patientId: r.patient_id,
-    medicationName: r.medication_name,
-    dosage: r.dosage,
-    scheduledAt: new Date(r.scheduled_at),
-    phoneNumber: r.phone_number,
-    message: r.message,
-    status: r.status,
-  }));
+  return (data as ReminderRow[]).map(fromRow);
 }
 
-export async function markReminderSent(reminderId: string): Promise<void> {
-  const { error } = await supabase
+/**
+ * Most recent server reminders in every state (newest scheduled first), so
+ * staff can see what was sent and what failed, not only what is due.
+ */
+export async function getRecentReminders(limit = 200): Promise<SMSReminder[]> {
+  const { data, error } = await client()
+    .from('medication_reminders')
+    .select('*')
+    .order('scheduled_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+
+  return ((data ?? []) as ReminderRow[]).map(fromRow);
+}
+
+/**
+ * Count of server reminders per stored status. Uses exact counts: reading
+ * every row would stop at the server's row limit (1000 by default) and
+ * under-count without saying so.
+ */
+export async function getReminderStatusCounts(): Promise<ReminderStatusCounts> {
+  const countWhere = async (status?: SMSReminder['status']): Promise<number> => {
+    const query = client()
+      .from('medication_reminders')
+      .select('id', { count: 'exact', head: true });
+    const { count, error } = await (status ? query.eq('status', status) : query);
+    if (error) throw error;
+    return count ?? 0;
+  };
+
+  const [total, pending, sent, failed] = await Promise.all([
+    countWhere(),
+    countWhere('pending'),
+    countWhere('sent'),
+    countWhere('failed'),
+  ]);
+  return { total, pending, sent, failed };
+}
+
+/**
+ * Records a reminder as sent. `note` is stored in error_message (the table's
+ * only free-text column) when the reminder was not sent by the SMS provider,
+ * e.g. staff recording that the patient got it another way.
+ */
+export async function markReminderSent(reminderId: string, note?: string): Promise<void> {
+  const { error } = await client()
     .from('medication_reminders')
     .update({
       status: 'sent',
       sent_at: new Date().toISOString(),
+      ...(note ? { error_message: note } : {}),
     })
     .eq('id', reminderId);
 
@@ -134,7 +226,7 @@ export async function markReminderSent(reminderId: string): Promise<void> {
 }
 
 export async function markReminderFailed(reminderId: string, errorMessage: string): Promise<void> {
-  const { error } = await supabase
+  const { error } = await client()
     .from('medication_reminders')
     .update({
       status: 'failed',
@@ -146,7 +238,7 @@ export async function markReminderFailed(reminderId: string, errorMessage: strin
 }
 
 export async function getPatientReminders(patientId: string): Promise<SMSReminder[]> {
-  const { data, error } = await supabase
+  const { data, error } = await client()
     .from('medication_reminders')
     .select('*')
     .eq('patient_id', patientId)
@@ -155,17 +247,5 @@ export async function getPatientReminders(patientId: string): Promise<SMSReminde
 
   if (error) throw error;
 
-  return data.map(r => ({
-    id: r.id,
-    dispenseId: r.dispense_id,
-    patientId: r.patient_id,
-    medicationName: r.medication_name,
-    dosage: r.dosage,
-    scheduledAt: new Date(r.scheduled_at),
-    phoneNumber: r.phone_number,
-    message: r.message,
-    status: r.status,
-    sentAt: r.sent_at ? new Date(r.sent_at) : undefined,
-    errorMessage: r.error_message,
-  }));
+  return (data as ReminderRow[]).map(fromRow);
 }

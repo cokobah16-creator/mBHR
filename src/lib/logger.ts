@@ -30,7 +30,9 @@ export const captureError = (
   err: unknown,
   context?: { tag?: string; extra?: Record<string, unknown> },
 ): void => {
-  console.error(context?.tag ?? "[captureError]", err, context?.extra);
+  // Log the error's name only: messages and extra context can carry
+  // patient details, and this runs in production too.
+  console.error(context?.tag ?? "[captureError]", err instanceof Error ? err.name : typeof err);
   try {
     Sentry.captureException(err, {
       tags: context?.tag ? { source: context.tag } : undefined,

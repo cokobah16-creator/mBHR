@@ -10,7 +10,10 @@ import {
   ArrowUturnRightIcon,
   UserPlusIcon,
   ClockIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonText } from "@/components/ui/Skeleton";
 import {
   getPatientTimeline,
   TimelineEvent,
@@ -24,53 +27,58 @@ interface PatientTimelineProps {
   refreshKey?: unknown;
 }
 
+// Patient-flow events carry their stage colour as a small marker; other
+// events are neutral. The icon and title always say what happened.
+const NEUTRAL = "text-ink-secondary bg-surface-sunken";
+const NEUTRAL_RING = "ring-line";
+
 const KIND_META: Record<
   TimelineEventKind,
   { color: string; ring: string; icon: typeof HeartIcon }
 > = {
   registration: {
-    color: "text-blue-600 bg-blue-50",
-    ring: "ring-blue-200",
+    color: "text-stage-registration bg-stage-registration-soft",
+    ring: "ring-stage-registration-line",
     icon: UserPlusIcon,
   },
   visit_start: {
-    color: "text-indigo-600 bg-indigo-50",
-    ring: "ring-indigo-200",
+    color: NEUTRAL,
+    ring: NEUTRAL_RING,
     icon: PlayIcon,
   },
   visit_close: {
-    color: "text-gray-600 bg-gray-50",
-    ring: "ring-gray-200",
+    color: NEUTRAL,
+    ring: NEUTRAL_RING,
     icon: CheckBadgeIcon,
   },
   vitals: {
-    color: "text-emerald-600 bg-emerald-50",
-    ring: "ring-emerald-200",
+    color: "text-stage-vitals bg-stage-vitals-soft",
+    ring: "ring-stage-vitals-line",
     icon: HeartIcon,
   },
   consultation: {
-    color: "text-purple-600 bg-purple-50",
-    ring: "ring-purple-200",
+    color: "text-stage-consult bg-stage-consult-soft",
+    ring: "ring-stage-consult-line",
     icon: DocumentTextIcon,
   },
   referral: {
-    color: "text-rose-600 bg-rose-50",
-    ring: "ring-rose-200",
+    color: NEUTRAL,
+    ring: NEUTRAL_RING,
     icon: ArrowUturnRightIcon,
   },
   dispense: {
-    color: "text-amber-600 bg-amber-50",
-    ring: "ring-amber-200",
+    color: "text-stage-pharmacy bg-stage-pharmacy-soft",
+    ring: "ring-stage-pharmacy-line",
     icon: ClipboardDocumentCheckIcon,
   },
   message: {
-    color: "text-sky-600 bg-sky-50",
-    ring: "ring-sky-200",
+    color: NEUTRAL,
+    ring: NEUTRAL_RING,
     icon: ChatBubbleLeftRightIcon,
   },
   appointment: {
-    color: "text-teal-600 bg-teal-50",
-    ring: "ring-teal-200",
+    color: NEUTRAL,
+    ring: NEUTRAL_RING,
     icon: CalendarDaysIcon,
   },
 };
@@ -91,8 +99,13 @@ export function PatientTimeline({
       })
       .catch((err) => {
         if (!cancelled) {
-          console.error("Patient timeline failed:", err);
-          setError("Could not load timeline.");
+          console.error(
+            "Patient timeline failed:",
+            err instanceof Error ? err.name : err,
+          );
+          setError(
+            "The timeline could not be read from this device. Reload the page to try again.",
+          );
           setEvents([]);
         }
       });
@@ -105,64 +118,66 @@ export function PatientTimeline({
 
   if (events === null) {
     return (
-      <div className="card flex items-center justify-center py-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <div className="card space-y-4" aria-busy="true">
+        <span role="status" className="sr-only">
+          Loading timeline
+        </span>
+        <Skeleton className="h-4 w-32" />
+        <SkeletonText lines={4} />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="card bg-red-50 border border-red-200">
-        <p className="text-sm text-red-800">{error}</p>
+      <div className="banner banner-danger" role="alert">
+        <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+        <span>{error}</span>
       </div>
     );
   }
 
   if (events.length === 0) {
     return (
-      <div className="card text-center py-8">
-        <ClockIcon className="w-10 h-10 mx-auto text-gray-300 mb-2" />
-        <p className="text-sm text-gray-500">
-          No activity recorded for this patient yet.
-        </p>
+      <div className="panel">
+        <EmptyState
+          icon={ClockIcon}
+          title="No activity recorded yet"
+          description="Registration, visits, vital signs, consultations and medicines for this patient will appear here."
+        />
       </div>
     );
   }
 
   return (
     <div className="card">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">
-        Patient Timeline
-      </h3>
+      <h3 className="text-h3 text-ink mb-4">Patient timeline</h3>
 
       <div className="space-y-6">
         {grouped.map(({ dayKey, label, events: dayEvents }) => (
           <div key={dayKey}>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">
-              {label}
-            </div>
-            <ol className="relative border-l border-gray-200 ml-3 space-y-4">
+            <h4 className="section-label mb-3">{label}</h4>
+            <ol className="relative border-l border-line ml-3 space-y-4">
               {dayEvents.map((ev) => {
                 const meta = KIND_META[ev.kind];
                 const Icon = meta.icon;
                 return (
                   <li key={ev.id} className="ml-6">
                     <span
-                      className={`absolute -left-3 flex h-6 w-6 items-center justify-center rounded-full ring-4 ring-white ${meta.color} ${meta.ring}`}
+                      className={`absolute -left-3 flex h-6 w-6 items-center justify-center rounded-full ring-2 ${meta.color} ${meta.ring}`}
                     >
                       <Icon className="h-3.5 w-3.5" aria-hidden />
                     </span>
                     <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
-                      <p className="text-sm font-medium text-gray-900">
+                      <p className="text-body font-medium text-ink">
                         {ev.title}
                       </p>
-                      <span className="text-xs text-gray-500">
+                      <span className="text-caption tabular-nums text-ink-muted">
                         {formatTime(ev.at)}
                       </span>
                     </div>
                     {ev.detail && (
-                      <p className="text-sm text-gray-600 mt-1 break-words">
+                      <p className="text-body text-ink-secondary mt-1 break-words">
                         {ev.detail}
                       </p>
                     )}

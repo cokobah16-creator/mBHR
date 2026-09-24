@@ -227,7 +227,7 @@ export function Consult() {
                   <LabOrderForm
                     patientId={patient.id}
                     visitId={visit.id}
-                    orderedBy={currentUser?.id ?? "unknown"}
+                    orderedBy={currentUser?.id ?? ""}
                   />
                 ) : (
                   <div className="banner banner-warning" role="status">
