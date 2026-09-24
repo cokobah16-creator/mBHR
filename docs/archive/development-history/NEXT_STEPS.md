@@ -1,5 +1,7 @@
 # Next Steps - What to Do Now
 
+> **Archived note:** a real Resend API key was once written in this file. It has been removed; `re_your_api_key` below is a placeholder. Never commit a real key.
+
 ## ✅ What's Been Done
 
 ### 1. Session Management - FIXED
@@ -13,7 +15,7 @@
 
 ### 2. Resend API Key - DOCUMENTED
 
-- ✅ Your API key saved: `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+- ✅ Your API key saved: `re_your_api_key`
 - ✅ Setup instructions created
 - ✅ Helper script created
 - ✅ Edge functions verified (both ACTIVE)
@@ -55,7 +57,7 @@
 1. Go to: https://supabase.com/dashboard/project/dlogqxzejroeyivfmgcv/settings/edge-functions
 2. Click "Add a new secret"
 3. Name: `RESEND_API_KEY`
-4. Value: `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+4. Value: `re_your_api_key`
 5. Click Save
 
 #### Option B: CLI Script (If Supabase CLI installed)
@@ -68,7 +70,7 @@
 #### Option C: Manual CLI Command
 
 ```bash
-npx supabase secrets set RESEND_API_KEY=re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu --project-ref dlogqxzejroeyivfmgcv
+npx supabase secrets set RESEND_API_KEY=re_your_api_key --project-ref dlogqxzejroeyivfmgcv
 ```
 
 **After setting the secret:**

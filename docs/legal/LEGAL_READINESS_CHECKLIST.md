@@ -10,7 +10,7 @@ The findings were produced by reading the code, then checked a second time by op
 
 These two problems are not on the list of 20, but they carry more risk than most items on it.
 
-1. **A Resend API key is committed to the repository.** The same key, starting `re_YFFHp3`, appears 16 times in five files:
+1. **A Resend API key is committed to the repository.** The same key, starting `re_YFFH`, appeared 16 times in five files:
    - `scripts/set-resend-key.sh:8`
    - `docs/guides/QUICK_REFERENCE_CARD.md:22,44,51`
    - `docs/archive/development-history/EMAIL_NOW_WORKING.md:5,37,82`
@@ -18,6 +18,8 @@ These two problems are not on the list of 20, but they carry more risk than most
    - `docs/archive/development-history/NEXT_STEPS.md:16,58,71`
 
    The repository is on GitHub, so treat the key as exposed. Revoke it in the Resend dashboard, issue a new one, and store the new key only as the `RESEND_API_KEY` Edge Function secret. Replace every occurrence in these files with a placeholder such as `re_your_api_key`. Removing the key from git history is optional once it is revoked.
+
+   **Done in the code:** every copy is now the placeholder `re_your_api_key`, and `scripts/set-resend-key.sh` reads the key from `RESEND_API_KEY` or a hidden prompt and never prints it. **Still to do by the Foundation:** revoke the old key in the Resend dashboard and set a new one. It is still in git history.
 
 2. **`send-otp-email` will send any message to any address.** `supabase/functions/send-otp-email/index.ts` checks only an IP rate limit (`:18`). It then accepts `email`, `subject` and `message` from the caller (`:32`) and sends them through the Foundation's Resend account. Anyone holding the public anon key can use it to send mail in the Foundation's name. The message is inserted into the HTML without escaping (`:138`), and so is the code (`:120`). In demo mode it also logs the recipient and the code (`:66`). To fix it:
    1. Require a signed-in staff session for message mode, using `supabase/functions/_shared/security/staffAuth.ts`, which the SMS functions already use.
