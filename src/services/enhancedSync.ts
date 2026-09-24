@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { queryCache } from "@/utils/queryCache";
 import logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
+import { toAllergyActiveFlag } from "@/utils/allergyActive";
 import { mergePulledRow } from "@/sync/pullMerge";
 import { markersAfterUpload } from "@/sync/uploadMarkers";
 import { syncErrorCode } from "@/sync/errorCode";
