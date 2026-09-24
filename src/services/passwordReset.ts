@@ -58,25 +58,26 @@ export function resetRedirectUrl(origin: string, audience: ResetAudience): strin
 /**
  * Fallback for a link that arrived without ?for= (Supabase drops the query
  * string when it falls back to the Site URL). Works out which sign-in page the
- * account behind a recovery session belongs to: staff accounts have a
- * staff_roles row, which RLS lets the account itself read; every other account
- * is a patient-portal account. Anything that stops the lookup (offline, RLS,
- * network) is answered with "patient", which only affects where the "sign in"
- * links point.
+ * account behind a recovery session belongs to, using the same rule as the
+ * database's is_staff(): staff accounts have an app_users row with a role other
+ * than "guest", which RLS (app_users_select_self) lets the account itself read.
+ * Every other account is a patient-portal account. Anything that stops the
+ * lookup (offline, RLS, network) is answered with "patient", which only
+ * affects where the "sign in" links point.
  */
 export async function resolveResetAudience(userId: string): Promise<ResetAudience> {
   if (!supabase || !userId) return "patient";
   try {
     const { data, error } = await supabase
-      .from("staff_roles")
+      .from("app_users")
       .select("role")
-      .eq("auth_user_id", userId)
+      .eq("id", userId)
       .maybeSingle();
     if (error) {
-      console.warn("[passwordReset] staff_roles lookup:", error.message);
+      console.warn("[passwordReset] app_users lookup:", error.message);
       return "patient";
     }
-    return data ? "staff" : "patient";
+    return data && data.role !== "guest" ? "staff" : "patient";
   } catch {
     return "patient";
   }

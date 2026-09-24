@@ -159,13 +159,15 @@ describe("requestPasswordReset", () => {
 describe("resolveResetAudience", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("treats an account with a staff_roles row as staff", async () => {
+  it("treats an account with a non-guest app_users row as staff", async () => {
     maybeSingle.mockResolvedValue({ data: { role: "nurse" }, error: null });
     expect(await resolveResetAudience("user-1")).toBe("staff");
-    expect(from).toHaveBeenCalledWith("staff_roles");
+    expect(from).toHaveBeenCalledWith("app_users");
   });
 
-  it("treats everyone else as a patient", async () => {
+  it("treats guests and everyone without an app_users row as a patient", async () => {
+    maybeSingle.mockResolvedValue({ data: { role: "guest" }, error: null });
+    expect(await resolveResetAudience("user-2")).toBe("patient");
     maybeSingle.mockResolvedValue({ data: null, error: null });
     expect(await resolveResetAudience("user-2")).toBe("patient");
   });

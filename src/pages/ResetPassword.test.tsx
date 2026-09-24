@@ -74,7 +74,7 @@ describe("ResetPassword", () => {
     renderPage();
     await setNewPassword();
 
-    expect(from).toHaveBeenCalledWith("staff_roles");
+    expect(from).toHaveBeenCalledWith("app_users");
     expect(updateUser).toHaveBeenCalledWith({ password: "brand-new-pass" });
     expect(screen.getByRole("link", { name: /go to sign in/i })).toHaveAttribute("href", "/login");
   });
@@ -111,6 +111,6 @@ describe("ResetPassword", () => {
     act(() => handler("PASSWORD_RECOVERY", session));
 
     await setNewPassword();
-    expect(from).toHaveBeenCalledWith("staff_roles");
+    expect(from).toHaveBeenCalledWith("app_users");
   });
 });

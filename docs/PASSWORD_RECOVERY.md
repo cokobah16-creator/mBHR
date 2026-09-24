@@ -6,7 +6,7 @@ staff sign-in (`/login` → Online) and the patient portal (`/patient/login`).
 | Step | Route | What happens |
 | --- | --- | --- |
 | 1. Request | `/forgot-password` (staff), `/patient/forgot-password` (patients), or Patient portal → Account → Security | `supabase.auth.resetPasswordForEmail` sends a one-time link that comes back to `/reset-password?for=staff\|patient`. The confirmation is identical whether or not the address has an account. |
-| 2. Land | `/reset-password` | supabase-js exchanges the link's token for a recovery session. Expired/used links show "Request a new link". A visit without a recovery token in the URL is refused. `?for=` decides where the page's "sign in" links point; a link that lost it (see the Site URL fallback below) gets that from the recovery session instead (staff = has a `staff_roles` row). |
+| 2. Land | `/reset-password` | supabase-js exchanges the link's token for a recovery session. Expired/used links show "Request a new link". A visit without a recovery token in the URL is refused. `?for=` decides where the page's "sign in" links point; a link that lost it (see the Site URL fallback below) gets that from the recovery session instead (staff = has an `app_users` row whose role is not `guest`, the same rule as the database's `is_staff()`). |
 | 3. Set | `/reset-password` | New password (min 8 chars, confirmed) saved with `updateUser`, then `signOut({ scope: "global" })` ends every session for the account. User is sent back to the correct login page. |
 
 Code: `src/services/passwordReset.ts`, `src/pages/ForgotPassword.tsx`,
