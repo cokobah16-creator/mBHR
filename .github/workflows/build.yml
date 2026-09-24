@@ -70,6 +70,51 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------
+  # Clinical logic gate (every PR). A PR that changes a file on the
+  # clinical-logic list in scripts/check-clinical-logic-change.mjs must also
+  # update docs/clinical/CLINICAL_LOGIC_CHANGES.md, or say "No clinical
+  # logic change" in its description (see section 1 of that file).
+  #
+  # Separate job so the other jobs keep their shallow checkout: this one
+  # needs the full history to diff the PR's base and head commits. Plain
+  # Node, no npm install.
+  # ------------------------------------------------------------------
+  clinical-logic-gate:
+    name: Clinical logic gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The description is passed through env, never pasted into the
+      # script, so its text cannot run as shell. The event holds the
+      # description as it was when the run started; the current one is read
+      # too, so "Re-run jobs" sees an edited description.
+      - name: Check clinical logic changes are recorded
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if CURRENT_BODY="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq .body 2>/dev/null)"; then
+            export PR_BODY="$CURRENT_BODY"
+          fi
+          node scripts/check-clinical-logic-change.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
+
+  # ------------------------------------------------------------------
   # Smoke test (every PR). Runs Playwright against the dist/ artifact the
   # build job produced, served locally by the config's webServer block.
   #

@@ -9,6 +9,7 @@ import {
   clearStoredSupabaseAuth,
   isSupabaseAuthKey,
 } from "@/lib/supabaseAuthStorage";
+import { useSyncStore } from "@/stores/syncStore";
 
 interface AuthState {
   currentUser: User | null;
@@ -145,6 +146,29 @@ function startCloudSignOut(): void {
   cloudSignOutInFlight = run;
 }
 
+/**
+ * A PIN opens this device's records only: it must never carry on an online
+ * sign-in, so sync stays off until the person signs in online. Waits for the
+ * last logout's online sign-out if it is still running, then ends any online
+ * sign-in still stored here: one kept when a local session expired while the
+ * app was closed, one whose logout could not finish (app closed straight
+ * after), or another account's (the patient portal shares it). Each sign-out
+ * takes at most CLOUD_SIGN_OUT_TIMEOUT_MS; usually there is nothing to end.
+ * Never throws.
+ */
+async function endLeftoverCloudSignIn(): Promise<void> {
+  if (cloudSignOutInFlight) await cloudSignOutInFlight;
+  if (readStoredCloudSignIn()) {
+    startCloudSignOut();
+    await cloudSignOutInFlight;
+  }
+  // Removing a sign-in from storage directly (offline) sends no sign-out
+  // event, so record it here: the sync status then says to sign in online.
+  if (!readStoredCloudSignIn()) {
+    useSyncStore.getState().setCloudSession("signed_out");
+  }
+}
+
 /** Values that mean "switched off" in an app_users flag column. */
 const OFF = new Set(["false", "0", "f", "no"]);
 const ON = new Set(["true", "1", "t", "yes"]);
@@ -250,6 +274,10 @@ export const useAuthStore = create<AuthState>()(
             user.pinSalt &&
             (await verifyPin(pin, user.pinHash, user.pinSalt))
           ) {
+            // Offline sign-in never gives a cloud session: end any online
+            // sign-in left on this device before opening the workspace.
+            await endLeftoverCloudSignIn();
+
             const session: Session = {
               id: generateId(),
               userId: user.id,

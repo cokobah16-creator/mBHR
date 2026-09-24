@@ -56,6 +56,18 @@ mBHR has been transformed from a basic health record system into a **comprehensi
 
 ## ✅ Innovation #3: Smart Medication Management
 
+> **Later change (2026-09-24): this feature no longer exists.**
+> `src/features/pharmacy/SmartMedicationDashboard.tsx` was deleted in commit
+> `6f3ffee` (it had no route) and `src/services/smartMedication.ts` was
+> deleted after it, because nothing used it and its interaction, dosing and
+> adherence rules could be mistaken for authoritative ones. The app has no
+> drug interaction checker, dose calculator or adherence prediction. Allergy
+> warnings at prescribing and dispensing come from
+> `src/utils/allergyMatch.ts` and `src/utils/allergyActive.ts`. The text below
+> is kept as a historical record only. The BNF and Micromedex references were
+> removed from the code as unsupported (commit `c973fd2`), and nothing in the
+> repository measured the detection rates quoted below.
+
 **Status:** Complete
 **Files:** 2 core files
 **Documentation:** This document
