@@ -29,6 +29,7 @@ export const ALL_ROLES: Role[] = [
   "nurse",
   "pharmacist",
   "volunteer",
+  "registration_lead",
   "guest",
   "auditor",
   "lead_clinician",

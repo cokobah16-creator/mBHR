@@ -794,7 +794,7 @@ export async function notifyPatientTelevisitScheduled(
         },
         // No phone number: the server sends to the number on the patient's
         // record (patient.phone above is only used to skip a pointless call).
-        body: JSON.stringify({ patientId: visit.patientId, message }),
+        body: JSON.stringify({ purpose: "patient_message", patientId: visit.patientId, message }),
       },
     );
 

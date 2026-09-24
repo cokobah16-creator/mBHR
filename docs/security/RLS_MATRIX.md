@@ -7,17 +7,20 @@ Migrations (apply in order, all new):
 
 | File | What it does |
 | --- | --- |
+| `20260924105900_portal_access_backfill.sql` | Runs first. One-off portal access backfill: turns `portal_enabled` on only for records with a verified portal account already linked to them, and logs each record in the append-only `portal_access_backfill_log` (see section 4) |
 | `20260924110000_rls_permission_helpers.sql` | Permission helpers, the server copy of the matrix, a trigger for locked columns, and migration-only helpers |
 | `20260924110100_rls_clinical_core.sql` | Clinical record, queue, labs, pharmacy and stock, scheduling, audit log. Also fixes the FHIR version-history trigger |
 | `20260924110200_rls_staff_conflicts_messaging.sql` | Staff accounts, conflict review, staff messaging (Palaver), organisation-scoped clinical tables |
 | `20260924110300_rls_patient_portal.sql` | Portal tables, storage buckets, legacy RPC grants, and new portal RPCs |
 | `20260924110400_rls_verify_phi_lockdown.sql` | Stops the deploy if any PHI table below lets anon in or has an always-true rule. Drops the migration-only helpers |
-| `20260925100000_sync_authority_foundation.sql` | **Latest definition of `public.app_role_has_permission`**: adds the `queue`, `portal_manage`, `merge_patients` and `lab_release` permission keys. Later migrations (`20260925100100` to `20260925100500`) use them. Also: server clock and `row_version` on patients, queue, prescriptions and pharmacy tables; `command_receipts`; server-owned patient columns (`merged_*`, `portal_enabled_changed_*`) and `canonical_patient_id()`; `app_portal_patient_ids()` skips merged-away records |
+| `20260925100000_sync_authority_foundation.sql` | Previous definition of `public.app_role_has_permission`: adds the `queue`, `portal_manage`, `merge_patients` and `lab_release` permission keys. Later migrations (`20260925100100` to `20260925100500`) use them. Also: server clock and `row_version` on patients, queue, prescriptions and pharmacy tables; `command_receipts`; server-owned patient columns (`merged_*`, `portal_enabled_changed_*`) and `canonical_patient_id()`; `app_portal_patient_ids()` skips merged-away records |
 | `20260925100100_portal_access_authoritative.sql` | Portal access decided by the server: `set_patient_portal_access()`, `portal_access_status()`, the append-only `patient_portal_access_events`, auto-enrolment on insert only |
 | `20260925100200_queue_tickets_authoritative.sql` | Queue tickets numbered by the server (`queue_tickets`, leases, counters, `issue_queue_ticket()`, `lease_ticket_block()`); an upload cannot change a queue row's status or stage (status changes arrive as `queue_transitions`, applied by the server); queue writes need `queue` |
 | `20260925100300_patient_merge_authoritative.sql` | Patient merges through `merge_patients()` only; `patient_merges` becomes an immutable history readable by `merge_patients` / `audit_access` holders; late writes for a merged-away record land on the kept one |
 | `20260925100400_pharmacy_stock_ledger.sql` | Pharmacy stock ledger: balances written only by the `rx_*` RPCs, append-only `stock_movements`, `stock_discrepancies`, one opening-stock device per site; prescriptions inserted by prescribers only |
 | `20260925100500_lab_results_release.sql` | Lab results reach the portal only after review **and** release (`lab_review_result`, `lab_release_result`, `lab_withhold_result`); patients read them only through `portal_my_lab_results()` |
+| `20260925100600_registration_lead_portal_invite.sql` | **Latest definition of `public.app_role_has_permission`**: adds the `registration_lead` role (register, queue, portal_manage, portal_invite; no vitals) and the `portal_invite` permission (registration_lead, lead_clinician, admin). `app_users.role` accepts `registration_lead` (enum label, or a widened `app_users_role_check` on the text schema). `app_is_staff()` counts it. `queue_transitions` uploads now need the `queue` permission instead of a list of role names (same roles, plus registration_lead). New append-only `portal_invitation_events`. `portal_invitation_begin()` / `portal_invitation_finish()` (service role only) check and record every invitation that `send-sms-reminder` and `send-otp-email` send. Changing `patients.portal_invited_at` needs `portal_invite` |
+| `20260925100700_patient_document_ownership.sql` | patient_documents: the server stamps `upload_source` / `uploaded_by_user_id`; soft delete (`deleted_at` / `deleted_by`); `portal_remove_document()` RPC; clinic records are never deleted or soft-deleted through the API; a document's file path cannot change; patient-documents storage rules keep the files of documents |
 
 The migrations were run against a local PostgreSQL 16 with Supabase-style
 `auth`, `storage` and roles. They were tested with both the column types in
@@ -35,6 +38,9 @@ re-run the section 7 checks on a staging project before release.
 The Wave B migrations (`20260925100100` to `20260925100500`) have pgTAP
 tests in `supabase/tests/` (portal access, patient merges, pharmacy ledger,
 lab release; run with `supabase test db`, see `supabase/tests/README.md`).
+`20260924105900`, `20260925100600` and `20260925100700` have them too:
+`portal_access_backfill.test.sql`, `registration_lead_portal_invite.test.sql`
+and `patient_document_ownership.test.sql`.
 Their statements were checked against a local PostgreSQL 16 with every
 migration applied, using a small stand-in for the pgTAP functions because
 pgTAP was not installed there. They have not yet been run under
@@ -46,7 +52,7 @@ file yet.
 | Where | What |
 | --- | --- |
 | `src/auth/roles.ts` → `ROLE_PERMISSIONS` | App (UI and action checks) |
-| `public.app_role_has_permission(role, permission)` | Database (every policy below). The latest definition is in `supabase/migrations/20260925100000_sync_authority_foundation.sql`; it replaces the one in `20260924110000_rls_permission_helpers.sql` |
+| `public.app_role_has_permission(role, permission)` | Database (every policy below). The latest definition is in `supabase/migrations/20260925100600_registration_lead_portal_invite.sql`; it replaces the ones in `20260925100000_sync_authority_foundation.sql` and `20260924110000_rls_permission_helpers.sql` |
 
 **Any change to a role's permissions must change both in the same pull
 request.** Reviewers: if a diff touches one and not the other, block it.
@@ -62,35 +68,52 @@ Also mirrored in the database:
 
 Current matrix (✓ = granted). `lab_review` is new (owner decision #2).
 `queue`, `portal_manage`, `merge_patients` and `lab_release` were added in
-`20260925100000_sync_authority_foundation.sql` (and in `roles.ts`):
-`queue` = station staff who move patients through the queue (register
-holders plus pharmacists), `portal_manage` = register holders,
-`merge_patients` = resolve_conflicts holders, `lab_release` = lab_review
-holders.
+`20260925100000_sync_authority_foundation.sql`. The `registration_lead` role
+and `portal_invite` were added in
+`20260925100600_registration_lead_portal_invite.sql` (and in `roles.ts`).
 
-| Permission | admin | doctor | nurse | volunteer | pharmacist | auditor | lead_clinician | guest |
-| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| register | ✓ | ✓ | ✓ | ✓ | | | ✓ | |
-| vitals | ✓ | ✓ | ✓ | ✓ | | | ✓ | |
-| consult | ✓ | ✓ | | | | | ✓ | |
-| dispense | ✓ | | | | ✓ | | | |
-| inventory | ✓ | | | | ✓ | | | |
-| export | ✓ | | | | | ✓ | ✓ | |
-| users | ✓ | | | | | | | |
-| approve_phi_conflicts | ✓ | | | | | ✓ | ✓ | |
-| audit_access | ✓ | | | | | ✓ | ✓ | |
-| resolve_conflicts | ✓ | ✓ | ✓ | | | ✓ | ✓ | |
-| lab_review | ✓ | ✓ | | | | | ✓ | |
-| queue | ✓ | ✓ | ✓ | ✓ | ✓ | | ✓ | |
-| portal_manage | ✓ | ✓ | ✓ | ✓ | | | ✓ | |
-| merge_patients | ✓ | ✓ | ✓ | | | ✓ | ✓ | |
-| lab_release | ✓ | ✓ | | | | | ✓ | |
+Confirmed role policy:
+- `queue` = station staff who move patients through the queue: volunteer,
+  registration_lead, nurse, doctor, lead_clinician and admin, plus
+  pharmacists.
+- `portal_manage` = register holders (they turn portal access on at
+  registration).
+- `merge_patients` = resolve_conflicts holders. This includes auditor and
+  excludes volunteer and registration_lead.
+- `lab_release` = the lab_review holders: doctor, lead_clinician, admin.
+- `registration_lead` = register, queue, portal_manage and portal_invite. It
+  has **no vitals**. Owner decision: the role is registration-focused, not
+  clinical. It has the normal registration capabilities plus portal_invite,
+  and vitals stay with staff explicitly assigned to that workflow.
+- `portal_invite` = sending a patient portal invitation by SMS or email:
+  registration_lead, lead_clinician and admin only. Volunteer, nurse,
+  doctor, pharmacist, auditor and guest cannot send invitations. Volunteers
+  still turn access on (`portal_manage`).
+
+| Permission | admin | doctor | nurse | volunteer | registration_lead | pharmacist | auditor | lead_clinician | guest |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| register | ✓ | ✓ | ✓ | ✓ | ✓ | | | ✓ | |
+| vitals | ✓ | ✓ | ✓ | ✓ | | | | ✓ | |
+| consult | ✓ | ✓ | | | | | | ✓ | |
+| dispense | ✓ | | | | | ✓ | | | |
+| inventory | ✓ | | | | | ✓ | | | |
+| export | ✓ | | | | | | ✓ | ✓ | |
+| users | ✓ | | | | | | | | |
+| approve_phi_conflicts | ✓ | | | | | | ✓ | ✓ | |
+| audit_access | ✓ | | | | | | ✓ | ✓ | |
+| resolve_conflicts | ✓ | ✓ | ✓ | | | | ✓ | ✓ | |
+| lab_review | ✓ | ✓ | | | | | | ✓ | |
+| queue | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | ✓ | |
+| portal_manage | ✓ | ✓ | ✓ | ✓ | ✓ | | | ✓ | |
+| merge_patients | ✓ | ✓ | ✓ | | | | ✓ | ✓ | |
+| lab_release | ✓ | ✓ | | | | | | ✓ | |
+| portal_invite | ✓ | | | | ✓ | | | ✓ | |
 
 ## 2. Who the database thinks you are
 
 | Caller | How it is identified | Helper |
 | --- | --- | --- |
-| Staff | `app_users.id = auth.uid()`. The role is `app_users.role`. A row flagged inactive (`is_active` false or 0, `active` false, `disabled`, `deactivated`, `deactivated_at`, `disabled_at`) counts as no role | `app_current_role()`, `app_has_permission(p)`, `app_has_any_permission(ps)`, `app_is_staff()` |
+| Staff | `app_users.id = auth.uid()`. The role is `app_users.role`. A row flagged inactive (`is_active` false or 0, `active` false, `disabled`, `deactivated`, `deactivated_at`, `disabled_at`) counts as no role | `app_current_role()`, `app_has_permission(p)`, `app_has_any_permission(ps)`, `app_is_staff()`. `app_is_staff()` lists the staff roles by name; since `20260925100600` the list includes `registration_lead`. |
 | "Station staff" | Any of register, vitals, consult, dispense | `app_is_station_staff()` |
 | Portal patient | `patients.auth_uid = auth.uid()`, or `patient_portal_users.id` = `auth.uid()`, the `app_metadata.portal_user_id`, or the verified phone claim. **In every case the portal account must be active and staff must have enabled portal access for the patient (`patients.portal_enabled`).** Since `20260925100000`, a record merged into another one (`merged_into` set) is never a portal patient | `app_portal_patient_ids()`, `app_portal_user_ids()` |
 | Organisation member | `user_org_sites.user_id = auth.uid()` | `app_org_ids()` |
@@ -164,7 +187,7 @@ visibility. Visit dispensing (no prescription) is unchanged.
 | Table | SELECT | INSERT | UPDATE | DELETE |
 | --- | --- | --- | --- | --- |
 | queue | staff | P(queue) | P(queue) (an upload cannot change status or stage, lower the priority or set the ticket, see server-owned columns) | P(queue) |
-| queue_transitions | P(audit_access) | P(queue), `uploaded_by` = caller; the server applies each row to its queue row and records `applied` / `reject_reason` | none (append-only trigger) | none (append-only trigger, also TRUNCATE) |
+| queue_transitions | P(audit_access) | P(queue), and `uploaded_by = auth.uid()` (since `20260925100600`; before that it was a has_role list of the same roles without registration_lead); the server applies each row to its queue row and records `applied` / `reject_reason` | none (append-only trigger) | none (append-only trigger, also TRUNCATE) |
 | queue_tickets | staff | none (only `issue_queue_ticket()`) | none | none |
 | queue_ticket_leases | P(queue) | none (only `lease_ticket_block()`) | none | none |
 | queue_ticket_counters | none | none | none | none |
@@ -206,6 +229,43 @@ provider accepted it; `failed` with a code otherwise) and returns 409
 `already_sent` for a reminder already marked sent. Devices no longer write
 reminder status when sending. Staff "mark sent / mark failed" actions still
 need `dispense`.
+
+**Portal invitations and SMS purposes (`20260925100600`).** `send-sms-reminder`
+takes a `purpose`:
+- `medication_reminder` needs a stored `reminderId`.
+- `patient_message` needs a `patientId` and no `reminderId`.
+- `portal_invitation` needs a `patientId`; a `reminderId` is refused
+  (`purpose_mismatch`).
+
+Requests with no purpose (older app versions) get the purpose their ids
+imply. Reminders and patient messages need a role in `SMS_SENDER_ROLES`
+(pharmacist, doctor, nurse, lead_clinician, admin). A portal invitation needs
+`portal_invite` instead.
+
+`public.portal_invitation_begin()` checks three things: the sender's active
+`app_users` role, the patient (on the server, not merged away, portal access
+on) and the stored phone (or, for email, the stored email). It records the
+request before anything is sent. If the check cannot run, nothing is sent.
+`portal_invitation_finish()` records `sent` or `not_sent` with a code:
+demo_mode, provider_rejected, sms_not_configured, invalid_recipient,
+rate_limited or rate_limit_unavailable.
+
+The function builds the invitation's text and link from the patient record.
+Free text containing the registration link (`/patient/register`) is refused
+as a patient message (`use_portal_invitation`). So a medication-reminder
+sender cannot send an invitation, and a registration lead cannot send
+reminders or free text.
+
+`send-otp-email` sends invitation emails the same way:
+`purpose: "portal_invitation"`, the stored `patients.email`, per-user and
+per-recipient limits that fail closed, and the same audit rows. Its old
+unauthenticated free-text mode (`{email, subject, message}`) is refused
+(`message_mode_removed`). Only the fixed-template verification code mode
+remains.
+
+Optional secret: `PORTAL_APP_ORIGIN` (the address used in invitation links).
+Without it, the app's own origin is used when it is listed in
+`ALLOWED_ORIGINS`, otherwise `https://mbhr.app`.
 
 ### Staff, conflicts, messaging, organisations
 
@@ -267,7 +327,7 @@ doctor.
 | patient_messages (legacy) | staff; own | P(consult) as 'staff'; own as 'patient' | P(consult); own (flags only) | P(consult) |
 | patient_notifications | staff; own | P(register) | P(register); own (read flags only) | none |
 | patient_appointment_requests | staff; own | own, `pending`, unreviewed | P(register); own `pending` → `cancelled` | none |
-| patient_documents | staff; own | P(register \| vitals \| consult); own | P(register \| vitals \| consult) | P(consult \| users); **own**⁶ |
+| patient_documents | staff (removed rows included); own, not removed | P(register \| vitals \| consult), stamped `staff`; own, stamped `patient`, file must be in the patient's own folder (`<patient_id>/...`) (the trigger sets `upload_source` and `uploaded_by_user_id` from the caller) | P(register \| vitals \| consult); `file_path` / `storage_path` cannot change; soft delete of **patient uploads only** with P(consult \| users); own: **none** (use `portal_remove_document()`)⁶ | P(consult \| users), **patient uploads only** (the trigger refuses `staff` rows for every API caller, service_role included); own: none |
 | patient_consent_records | staff; own | P(register); own | P(register) (revocation) | none |
 | patient_data_sharing_preferences | staff; own | P(register); own | P(register); own | none |
 | tefca_access_logs | P(audit_access); own | staff | none | none |
@@ -275,23 +335,46 @@ doctor.
 | record_visibility_log | staff | P(vitals \| consult \| dispense) | none | none |
 | portal_enrollment_settings | staff | P(users) | P(users) | none |
 | patient_portal_access_events (portal access history) | P(portal_manage \| audit_access) | none (only `set_patient_portal_access()`, the auto-enrolment trigger, `merge_patients()` and migrations) | none (trigger refuses, even for the owner) | none (trigger refuses, even for the owner) |
+| portal_invitation_events (portal invitation history) | P(portal_invite \| audit_access) | none (only `portal_invitation_begin()` / `portal_invitation_finish()`, called by the service role from `send-sms-reminder` and `send-otp-email`) | none (trigger refuses, even for the owner) | none (trigger refuses DELETE and TRUNCATE, even for the owner) |
+| portal_access_backfill_log (one-off portal access backfill) | P(audit_access). The policy is created by `20260925100100` section 8, or by the backfill itself when it runs after the permission helpers exist. service_role reads it; anon does not | none (only `20260924105900_portal_access_backfill.sql`, run as the table owner) | none (a trigger refuses it, even for the owner) | none (a trigger refuses it, even for the owner; TRUNCATE is refused too) |
 | patient_lab_results (legacy copy, unused) | staff (portal read removed in `20260925100500`) | **P(lab_review)** | P(lab_review) | P(users) |
 | patient_medical_conditions | staff; own | P(consult); own | P(consult) | P(consult) |
 | patient_referrals | staff; own | P(consult) | P(consult) | none |
 | otp_rate_limits | none | none | none | none |
 
-⁶ **patient_documents decision.** The product lets a patient delete their own
-uploads (`DocumentUpload.tsx` has a delete action), so a portal patient may
-delete document rows and files for their own record. No column in every
-schema version reliably marks "uploaded by the patient", so a patient can also
-delete a staff-uploaded file in their folder. See Follow-ups.
+⁶ **patient_documents ownership (`20260925100700`).** Owner decision: "add
+uploaded_by_user_id + upload_source = patient|staff; patients may only
+soft-delete their own uploads; never delete staff-uploaded clinical records."
+- The server decides who uploaded a document. On insert, the trigger
+  `patient_documents_ownership` sets `uploaded_by_user_id = auth.uid()`. It
+  sets `upload_source` to `staff` when the caller has register, vitals or
+  consult, and to `patient` otherwise; values sent by the client are
+  ignored. Every row that existed before this migration is `staff`. Neither
+  column can change afterwards, not even through the service role.
+- A document's file (`file_path` / `storage_path`) cannot be changed by a
+  signed-in caller. Otherwise a clinic row could be pointed at another path,
+  and its file would become deletable.
+- A patient removes a document with `portal_remove_document(uuid)`, which
+  soft-deletes (sets `deleted_at` and `deleted_by` for) a document the
+  patient uploaded to their own record. It returns `clinic_document` for a
+  clinic document and `not_found` for another patient's document. Patients
+  have no UPDATE or DELETE rule on the table.
+- Clinic (`staff`) documents cannot be deleted or soft-deleted by any API
+  caller (conservative: no app screen needs it). A clinic document filed on
+  the wrong patient is corrected by the service role or the database owner
+  as a support task. Staff with P(consult \| users) may soft-delete or
+  hard-delete a patient upload. The server stamps when and by whom, and a
+  soft delete cannot be undone by a signed-in caller (the service role can,
+  for support).
+- Deleting a whole patient record still cascades to all of its documents,
+  clinic ones included, because foreign-key cascades run as the table owner.
 
 ### Storage
 
 | Bucket | SELECT | INSERT | UPDATE | DELETE |
 | --- | --- | --- | --- | --- |
 | photos | staff | P(register \| vitals \| consult) | P(register \| vitals \| consult) | P(register \| users) |
-| patient-documents (`<patient_id>/...`) | staff; own folder | P(register \| vitals \| consult); own folder | none | P(consult \| users); own folder |
+| patient-documents (`<patient_id>/...`) | staff; own folder, except files of removed documents | P(register \| vitals \| consult); own folder | none | only files **that no document row points to**: P(consult \| users); a patient may delete only a file they uploaded to their own folder (clean-up after a failed save). The files of documents, active or removed, are never deleted through the API |
 
 ### Locked columns (trigger `app_guard_immutable_columns`)
 
@@ -311,6 +394,13 @@ columns. The service role and `SECURITY DEFINER` functions are exempt.
 | user_org_sites | users | user_id, org_id, site_id |
 | lab_results | none | id, order_id, result_value, result_unit, reference_range, result_date, created_at |
 | conflict_resolutions | none | id, patient_id, conflict_type, entity_type, entity_id, candidate_ids, phi_sensitivity, required_approver_role, conflict_details, site_id, created_at |
+
+`patients.portal_invited_at` additionally needs `portal_invite`. The trigger
+`app_guard_patient_portal_invited_at` (`BEFORE UPDATE OF portal_invited_at`,
+runs `app_guard_immutable_columns('portal_invite', 'portal_invited_at')`)
+refuses the change with 42501 for register holders who cannot send
+invitations (volunteer, nurse, doctor). Device sync does not upload this
+column.
 
 ### Server-owned columns (Wave B triggers)
 
@@ -347,7 +437,11 @@ expected to turn it off before returning. `rx_dispense` and
 
 Immutable history (UPDATE and DELETE raise 42501 for every role, the owner
 included): `patient_portal_access_events`, `patient_merges` (also
-TRUNCATE), `stock_movements`, `queue_transitions` (also TRUNCATE).
+TRUNCATE), `stock_movements`, `queue_transitions` (also TRUNCATE),
+`portal_invitation_events` (also TRUNCATE), `portal_access_backfill_log`
+(also TRUNCATE). `portal_access_backfill_log` and `portal_invitation_events`
+are also in `app_merge_excluded_tables()` (`20260925100300`): their history
+keeps the original patient id, and a merge does not move it.
 `lab_result_release_log` and `command_receipts` have no client write
 privilege but no trigger.
 
@@ -357,6 +451,8 @@ privilege but no trigger.
 | --- | --- | --- |
 | `portal_session_check(token, extend_until?)` | anon, authenticated | Validates or refreshes one portal session by its token. Returns no row for an unknown token. Deactivates a session more than 5 minutes past expiry. Caps extensions at 24 hours |
 | `portal_session_end(token)` | anon, authenticated | Portal logout |
+| `app_portal_access_backfill()` | Table owner only. EXECUTE is revoked from PUBLIC, anon, authenticated and service_role | Runs the one-off portal access backfill (see section 4) and returns the number of records turned on. It exists so `supabase/tests/portal_access_backfill.test.sql` runs the same code. Drop it once the release is verified |
+| `portal_remove_document(p_document_id)` | authenticated (own records only) | A portal patient removes (soft-deletes) a document they uploaded to their own record (`20260925100700`, see ⁶). Returns `{outcome: "applied", already_removed, ...}` or `{outcome: "rejected", reason: "clinic_document" \| "not_found"}` |
 | `portal_link_patient_record(dob, given?, family?, phone?)` | authenticated | Links the signed-in portal account to its clinic record using only an email or phone that Supabase Auth has **verified**, plus a matching date of birth, and only when staff have enabled portal access. With no match it creates a self-registered record, but only for an account with a verified email or phone (status `contact_not_verified` otherwise), and it stores only the verified phone. Returns `{status, patient_id?}` |
 
 The legacy `SECURITY DEFINER` functions `create_patient_notification`,
@@ -411,8 +507,10 @@ Internal, not executable by `anon` or `authenticated` (service role and the
 `app_merge_reassign_children` (moves the merged-away record's rows; used by
 `merge_patients()` and the migration backfill), `app_merge_child_tables`,
 `app_merge_single_tables`, `app_merge_excluded_tables`,
-`app_lab_release_apply`, `app_lab_result_state`, `app_lab_release_log`, and
-the trigger functions.
+`app_lab_release_apply`, `app_lab_result_state`, `app_lab_release_log`,
+`app_staff_role_of(uuid)`, `portal_invitation_begin(uuid, text, text)`,
+`portal_invitation_finish(uuid, text, text, text, text)`, and the trigger
+functions.
 
 ## 4. Changes and reasons
 
@@ -558,6 +656,73 @@ final migration fails the deploy if any PHI table:
   patient. Release is now a separate, audited step, and patients read
   results only through `portal_my_lab_results()`.
 
+### Portal access backfill (`20260924105900`, runs before the RLS reconcile)
+
+Until `20260924110300`, no database rule read `patients.portal_enabled`, so a
+patient who had signed up for the portal could read their records whatever
+the flag said. From `20260924110300` on, portal data is visible only while
+`portal_enabled` is true (`app_portal_patient_ids()`), and `20260925100100`
+makes the flag server-owned. Patients who use the portal today with the flag
+false or NULL would lose access.
+
+`20260924105900_portal_access_backfill.sql` runs first. It turns the flag on
+(false or NULL to true) only where a **verified portal account is already
+linked to that exact record**:
+- `patients.auth_uid` is a Supabase Auth account with a confirmed email or
+  phone that is not deleted, banned or anonymous; or
+- a `patient_portal_users` row for that record is `active` with
+  `phone_verified` or `email_verified` true.
+
+Nothing is matched on phone or email text. `patients.contact_verified` is not
+used: it describes the record's contact details, not a portal account.
+
+These records are never turned on:
+- records whose `auth_uid` is a staff account (a row in `app_users`),
+  whatever other evidence they have. Turning them on would open the portal
+  path to that staff account;
+- opted-out, merged-away or soft-deleted records;
+- records with a `suspended` portal account;
+- records already backfilled once (the log's `patient_id` is unique);
+- records already on (left untouched);
+- on a late run, records whose access was turned off by anything other than
+  the `20260925100100` `state_at_migration` snapshot
+  (`portal_enabled_changed_by` set, or another applied "off" access event).
+
+Each record turned on gets a row in `portal_access_backfill_log` (patient
+id, auth_uid and/or patient_portal_users id, which confirmations were seen,
+previous value, migration name, time). `audit_logs` gets one summary row
+with counts only.
+
+In the normal order, `20260925100100` section 6 then stamps the backfilled
+records as enabled server decisions. A later staff disable through
+`set_patient_portal_access` always wins, and device backfill enables are
+rejected. On a late run (after `20260925100100`), the backfill also sets
+`portal_enabled_changed_at` and writes a `portal_account_backfill` access
+event (source `migration`), so devices download the change. A second run
+turns nothing on and logs nothing.
+
+### Registration lead and portal invitations (`20260925100600`)
+
+Owner decision: sending a portal invitation is a separate permission
+(`portal_invite`) from turning access on (`portal_manage`). Volunteers keep
+enabling access at registration but no longer send invitations. The new
+`registration_lead` role is registration-focused, not clinical: it can
+register patients, move them through the queue, manage portal access and
+send invitations. It cannot record vital signs; vitals stay with staff
+explicitly assigned to that workflow. Nurses and doctors lose the ability to
+send invitations; lead clinicians and admins keep it.
+
+The rule is enforced in three places: the app (`can(role, "portal_invite")`
+in the services and screens), the database (`portal_invitation_begin()` and
+the `portal_invited_at` lock) and both sending functions. `queue_transitions`
+uploads now follow the `queue` permission, so a registration lead's queue
+history syncs.
+
+Deploy order: apply the migration before the app build that offers the
+role, because `app_users` refuses a staff account saved with role
+`registration_lead` until the migration has committed. Then redeploy
+`send-sms-reminder` and `send-otp-email`.
+
 ## 5. What the app must change
 
 These are also listed in the change report.
@@ -644,8 +809,32 @@ These are also listed in the change report.
   `patient_lab_results` is kept: patients can no longer read it, nothing
   writes it, and `app_merge_child_tables()` still lists it. Export and review
   any rows it holds, then drop it in a later migration.
-- Add an "uploaded by patient" marker to `patient_documents` so patients can
-  delete only their own uploads.
+- ~~Add an "uploaded by patient" marker to `patient_documents` so patients
+  can delete only their own uploads.~~ Done in `20260925100700`
+  (`upload_source`, `uploaded_by_user_id`, soft delete,
+  `portal_remove_document()`). The legacy `uploaded_by_patient` flag is not
+  trusted and not backfilled.
+- [ ] Deleting a patient (the `users` permission, or the service role)
+  cascades to its clinic documents. Decide whether patient deletion should
+  be blocked while clinic documents exist, or replaced by archiving.
+- ~~**Merge lists.** Add `portal_access_backfill_log` to
+  `app_merge_excluded_tables()` in `20260925100300`.~~ Done:
+  `portal_access_backfill_log` and `portal_invitation_events` are both in
+  the list, so that migration's coverage check no longer warns about them.
+  Their history keeps the id it was written for, like
+  `patient_portal_access_events`, and a merge does not move it.
+- **Review what the backfill trusted** (`20260924105900`). It trusts
+  existing links and does not re-check how they were made.
+  - `phone_verified` could be set by the removed client-side demo OTP flow.
+  - Until `20260924110300`, anonymous callers could write
+    `patient_portal_users` rows (the anon `register` / `verify` policies,
+    last re-created by `20260520000000`) and flip them to `active`.
+  - The pre-Wave-B sign-up linked `auth_uid` on a typed email, or on phone
+    plus date of birth.
+  - The review queries are in the production checklist.
+- **`locked` portal accounts** are not backfilled, because only `active`
+  counts. No code sets `locked` today.
+- **Drop `app_portal_access_backfill()`** once the release is verified.
 - `organizations`, `sites`, `outreach_events`, `event_staff_assignments`,
   `prescription_templates`, `protocol_library`, `site_formulary`,
   `doctor_analytics`: not PHI, and left unchanged. Any organisation member can

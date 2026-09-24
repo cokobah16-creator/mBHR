@@ -10,6 +10,7 @@ export const ROLES = [
   "doctor",
   "admin",
   "lead_clinician",
+  "registration_lead",
   "auditor",
   "guest",
 ] as const;
@@ -27,7 +28,8 @@ export const PERMISSIONS = {
   viewReports: ["doctor", "admin"] as Role[],
   manageStaff: ["admin"] as Role[],
   manageSites: ["admin"] as Role[],
-  viewQueue: ["volunteer", "nurse", "doctor", "admin"] as Role[],
+  // registration_lead: registration desk access (queue included), no vitals.
+  viewQueue: ["volunteer", "registration_lead", "nurse", "doctor", "admin"] as Role[],
   manageQueue: ["nurse", "doctor", "admin"] as Role[],
 } as const;
 

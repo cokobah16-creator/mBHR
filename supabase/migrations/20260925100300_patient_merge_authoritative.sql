@@ -176,6 +176,7 @@ AS $$
   SELECT ARRAY[
     'patient_merges', 'queue_transitions', 'queue_tickets',
     'patient_portal_access_events', 'patient_portal_access_logs',
+    'portal_access_backfill_log', 'portal_invitation_events',
     'record_visibility_log', 'tefca_access_logs', 'conflict_resolutions',
     'oauth_authorization_codes', 'fhir_resources', 'command_receipts',
     'consultation_reviews', 'follow_up_schedules', 'patient_flags', 'referrals'

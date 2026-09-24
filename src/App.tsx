@@ -628,7 +628,7 @@ function App() {
                         path="/staff/patients"
                         element={
                           <RequireRoles
-                            roles={["doctor", "nurse", "admin", "volunteer"]}
+                            roles={["doctor", "nurse", "admin", "volunteer", "registration_lead"]}
                           >
                             <StaffPatientDashboard />
                           </RequireRoles>
@@ -716,7 +716,7 @@ function App() {
                       <Route
                         path="/inv/prizes"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "pharmacist", "admin"]}>
+                          <RequireRoles roles={["volunteer", "registration_lead", "nurse", "pharmacist", "admin"]}>
                             <PrizeShop />
                           </RequireRoles>
                         }
@@ -757,7 +757,7 @@ function App() {
                         path="/tickets/issue"
                         element={
                           <RequireRoles
-                            roles={["volunteer", "nurse", "doctor", "admin"]}
+                            roles={["volunteer", "registration_lead", "nurse", "doctor", "admin"]}
                           >
                             <TicketIssuer />
                           </RequireRoles>
@@ -766,7 +766,7 @@ function App() {
                       <Route
                         path="/inv/leaderboard"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "pharmacist", "admin"]}>
+                          <RequireRoles roles={["volunteer", "registration_lead", "nurse", "pharmacist", "admin"]}>
                             <Leaderboard />
                           </RequireRoles>
                         }
@@ -775,7 +775,7 @@ function App() {
                       <Route
                         path="/games/queue-maestro"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                          <RequireRoles roles={["volunteer", "registration_lead", "nurse", "admin"]}>
                             <QueueMaestro />
                           </RequireRoles>
                         }
@@ -784,7 +784,7 @@ function App() {
                       <Route
                         path="/games/vitals-precision"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                          <RequireRoles roles={["volunteer", "registration_lead", "nurse", "admin"]}>
                             <VitalsPrecisionGame />
                           </RequireRoles>
                         }
@@ -792,7 +792,7 @@ function App() {
                       <Route
                         path="/games/knowledge-blitz"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                          <RequireRoles roles={["volunteer", "registration_lead", "nurse", "admin"]}>
                             <KnowledgeBlitz />
                           </RequireRoles>
                         }
@@ -937,7 +937,7 @@ function App() {
                         path="/appointments"
                         element={
                           <RequireRoles
-                            roles={["doctor", "nurse", "volunteer", "admin"]}
+                            roles={["doctor", "nurse", "volunteer", "registration_lead", "admin"]}
                           >
                             <AppointmentCalendar createdBy="" />
                           </RequireRoles>

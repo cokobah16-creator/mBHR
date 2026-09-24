@@ -9,7 +9,8 @@
  * - Last login date
  * - Invitation history
  * - Send/resend invitation button with rate limiting, and an honest
- *   message when no email or SMS could be sent
+ *   message when no email or SMS could be sent. Only roles with the
+ *   portal_invite permission see it; others are told why
  *
  * Portal access belongs to the server. A change made here is saved on this
  * device, queued, and shown as waiting until the server answers; the card
@@ -40,7 +41,7 @@ import { describePortalAccess } from "@/services/portalAccessRules";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useToast } from "@/stores/toast";
 import { useAuthStore } from "@/stores/auth";
-import { can } from "@/auth/roles";
+import { can, portalInviteRefusal } from "@/auth/roles";
 import { db, generateId } from "@/db";
 import { getErrorMessage } from "@/utils/errors";
 import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
@@ -94,6 +95,9 @@ export function PortalStatusCard({
   // Turning portal access on or off needs the portal_manage permission
   // (checked again where the change is saved).
   const canEdit = !!role && can(role, "portal_manage");
+  // Sending an invitation is separate: portal_invite (checked again by the
+  // service and by the server).
+  const canInvite = !!role && can(role, "portal_invite");
   const server = useServerStatus();
   const firstName = patientName.split(" ")[0];
   const titleId = `portal-card-${patientId}`;
@@ -229,12 +233,12 @@ export function PortalStatusCard({
   };
 
   const handleSendInvitation = async () => {
-    if (!canEdit) {
+    if (!canInvite) {
       pushToast({
         id: generateId(),
         tone: "error",
         title: "Not allowed",
-        body: "Your role cannot send portal invitations.",
+        body: portalInviteRefusal(),
       });
       return;
     }
@@ -588,7 +592,7 @@ export function PortalStatusCard({
         {enabled && (
           <div className="space-y-3 border-t border-line pt-4">
             {status.contactMethod ? (
-              canEdit && (
+              canInvite ? (
                 <div className="space-y-1">
                   <button
                     type="button"
@@ -623,6 +627,8 @@ export function PortalStatusCard({
                     )
                   )}
                 </div>
+              ) : (
+                <p className="text-caption text-ink-muted">{portalInviteRefusal()}</p>
               )
             ) : (
               <div className="banner banner-warning">

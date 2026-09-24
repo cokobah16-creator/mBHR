@@ -23,7 +23,7 @@ import {
 } from "@/services/portalEnrollment";
 import { listPortalAccessCommandsFor } from "@/services/portalAccess";
 import { summarizeBulkAccess } from "@/services/portalAccessRules";
-import { can } from "@/auth/roles";
+import { can, portalInviteRefusal } from "@/auth/roles";
 import { NIGERIAN_STATES } from "@/utils/nigeria";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useAuthStore } from "@/stores/auth";
@@ -96,6 +96,9 @@ export function PortalMigration() {
   const role = useAuthStore((s) => s.currentUser?.role);
   // Page rule (administrators) and the portal_manage permission.
   const canRun = canManagePortalEnrollment(role) && !!role && can(role, "portal_manage");
+  // "Enable and send invitations" also needs portal_invite (checked again by
+  // the service and by the server).
+  const canInvite = canRun && !!role && can(role, "portal_invite");
   const server = useServerStatus();
 
   const [filters, setFilters] = useState<MigrationFilters>({
@@ -196,7 +199,7 @@ export function PortalMigration() {
 
   const handleStartMigration = async (sendInvitations: boolean) => {
     setConfirming(null);
-    if (!canRun) return;
+    if (!canRun || (sendInvitations && !canInvite)) return;
     const targets: BulkRunTarget[] = eligiblePatients
       .filter((p) => selectedPatients.has(p.id))
       .map((p) => ({ id: p.id, name: patientName(p) }));
@@ -379,10 +382,12 @@ export function PortalMigration() {
         <StatusBadge tone={SERVER_TONE[server.state]} icon>
           {server.label}
         </StatusBadge>
-        <span className="text-caption text-ink-muted">
-          {server.available
-            ? "Invitations are sent by email, or by SMS when a patient has no email."
-            : "Invitations need the server and an internet connection. You can still ask for access now; it is sent at the next sync, and invitations can go out from each patient's record once the server confirms."}
+        <span id="migration-invite-hint" className="text-caption text-ink-muted">
+          {canRun && !canInvite
+            ? portalInviteRefusal()
+            : server.available
+              ? "Invitations are sent by email, or by SMS when a patient has no email."
+              : "Invitations need the server and an internet connection. You can still ask for access now; it is sent at the next sync, and invitations can go out from each patient's record once the server confirms."}
         </span>
       </div>
 
@@ -591,8 +596,9 @@ export function PortalMigration() {
               type="button"
               onClick={() => setConfirming({ sendInvitations: true })}
               disabled={
-                !canRun || selectedCount === 0 || running || !server.available
+                !canInvite || selectedCount === 0 || running || !server.available
               }
+              aria-describedby="migration-invite-hint"
               className="btn-primary"
             >
               Enable and send invitations

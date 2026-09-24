@@ -14,7 +14,7 @@ import {
   requestPortalAccessChange,
 } from "./portalAccess";
 import { portalRejectionMessage } from "./portalAccessRules";
-import { can, type Role } from "@/auth/roles";
+import { can, portalInviteRefusal, type Role } from "@/auth/roles";
 import { useAuthStore } from "@/stores/auth";
 
 export interface EnrollmentResult {
@@ -248,13 +248,17 @@ export async function enrollPatientInPortal(
  * No email or SMS is sent from here (none is wired up), so the result always
  * has `invitationSent: false`. Use services/portalEnrollment
  * sendPortalInvitation to actually send one.
+ *
+ * Needs portal_invite (registration lead, lead clinician, admin), like
+ * sending one; the database refuses anyone else's change to
+ * patients.portal_invited_at.
  */
 export async function sendPortalInvitation(
   patientId: string,
 ): Promise<EnrollmentResult> {
   const role = useAuthStore.getState().currentUser?.role as Role | undefined;
-  if (!role || !can(role, "portal_manage")) {
-    return { success: false, error: "Your role cannot send portal invitations." };
+  if (!role || !can(role, "portal_invite")) {
+    return { success: false, error: portalInviteRefusal() };
   }
   if (!supabase) {
     return {

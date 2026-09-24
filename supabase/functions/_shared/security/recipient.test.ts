@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
+  maskEmail,
   maskMsisdn,
   normalizeNigerianMsisdn,
   redactNumbers,
   toE164,
+  validEmail,
   validId,
   validMessageText,
   validOtp,
@@ -109,5 +111,40 @@ describe("input validation", () => {
     expect(validId("a,b")).toBeNull();
     expect(validId("x".repeat(65))).toBeNull();
     expect(validId(12)).toBeNull();
+  });
+});
+
+describe("validEmail", () => {
+  it("accepts ordinary addresses, trimmed", () => {
+    expect(validEmail(" ada.obi@example.org ")).toBe("ada.obi@example.org");
+    expect(validEmail("ada+portal@mail.example.com.ng")).toBe("ada+portal@mail.example.com.ng");
+  });
+
+  it("rejects anything that could carry a second address or markup", () => {
+    for (const raw of [
+      "",
+      "ada",
+      "ada@example",
+      "ada@@example.org",
+      "ada@example.org, eve@example.org",
+      "Ada <ada@example.org>",
+      "ada @example.org",
+      "ada@example.org;eve@example.org",
+      undefined,
+      null,
+      42,
+    ]) {
+      expect(validEmail(raw)).toBeNull();
+    }
+    expect(validEmail(`${"a".repeat(250)}@example.org`)).toBeNull();
+  });
+});
+
+describe("maskEmail", () => {
+  it("keeps the first letter and the domain only", () => {
+    expect(maskEmail("ada.obi@example.org")).toBe("a***@example.org");
+    expect(maskEmail("")).toBe("(none)");
+    expect(maskEmail(null)).toBe("(none)");
+    expect(maskEmail("no-at-sign")).toBe("***");
   });
 });

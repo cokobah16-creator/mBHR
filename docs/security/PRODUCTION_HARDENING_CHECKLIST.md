@@ -45,7 +45,7 @@ Dashboard for `Med Bridge Health Reach` (project ref `dlogqxzejroeyivfmgcv`).
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| RLS reconcile: database rules follow the app's role and permission matrix | 🟡 code done, **not yet verified on a live database** | Migrations `20260924110000` to `20260924110400` (RLS matrix) and `20260925100000` to `20260925100500` (sync authority; the latest `app_role_has_permission`, with the `queue`, `portal_manage`, `merge_patients` and `lab_release` keys, is in `20260925100000_sync_authority_foundation.sql`). See `docs/security/RLS_MATRIX.md`. |
+| RLS reconcile: database rules follow the app's role and permission matrix | 🟡 code done, **not yet verified on a live database** | Migrations `20260924110000` to `20260924110400` (RLS matrix) and `20260925100000` to `20260925100500` (sync authority; `20260925100000_sync_authority_foundation.sql` added the `queue`, `portal_manage`, `merge_patients` and `lab_release` keys), then `20260925100600` and `20260925100700`. The latest `app_role_has_permission`, which adds the `registration_lead` role and the `portal_invite` key, is in `20260925100600_registration_lead_portal_invite.sql`. `20260924105900_portal_access_backfill.sql` runs before all of them. See `docs/security/RLS_MATRIX.md`. |
 | SMS hardening: server-only sending, staff sign-in, recipient from the patient record, rate limits, no double texts | 🟡 code done, **not yet deployed** | `send-sms-reminder` and `send-otp-sms` require a staff access token and an SMS role (pharmacist, doctor, nurse, lead_clinician, admin), send only to the number on the server record (Nigerian mobiles only), limit 30/min per user and 5/hour per number, return 409 `already_sent` for a reminder already sent, and record reminder outcomes with the service role. The app sends `{ patientId, message }` or `{ reminderId }` with the user's token. See `docs/deployment/SMS_SETUP_TERMII.md`. |
 
 ### Pre-release verification (do all of these before release)
@@ -81,6 +81,81 @@ Dashboard for `Med Bridge Health Reach` (project ref `dlogqxzejroeyivfmgcv`).
       files, git history, or Vercel/Netlify build settings): revoke it in the
       Termii dashboard, set the new key with `supabase secrets set`, and
       delete the old `VITE_` variable from every environment.
+- [ ] **Rotate the Resend API key that was committed in plaintext.** It has
+      been removed from the current tree but is still in the git history, so
+      treat it as public: revoke it in the Resend dashboard, create a new key
+      and set it only as a Supabase secret (`RESEND_API_KEY`), then redeploy
+      `send-otp-email`. Whether to purge it from history is the owner's
+      decision; see `docs/security/CREDENTIAL_HISTORY_REVIEW.md`. *Who:
+      owner.*
+- [ ] **Make "Clinical logic gate" a required status check** in the branch
+      protection rules for `mainone` (and any other branch pull requests
+      merge into). Until it is required, a failing gate does not block a
+      merge (see `docs/clinical/CLINICAL_LOGIC_CHANGES.md`, section 1).
+      *Who: repository admin.*
+- [ ] **Apply the portal access backfill before the RLS migrations.**
+      `20260924105900_portal_access_backfill.sql` must run before
+      `20260924110000` to `20260924110400`. Otherwise patients who use the
+      portal today with `portal_enabled` false or NULL see an empty portal
+      from `20260924110300` on. Nothing is deleted; they lose access.
+  - First run `supabase migration list --linked` to see what the production
+    database has applied.
+  - **Normal case** (no `20260924*` or later migration on the remote): a
+    plain `supabase db push` applies the files in filename order, backfill
+    first.
+  - **If production already applied `20260924110000` or later**:
+    `supabase db push` refuses the older file ("Found local migration files
+    to be inserted before the last migration on remote database"). Use one
+    of these:
+    - run `supabase db push --include-all`; or
+    - run the file by hand first with
+      `psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 --single-transaction -f supabase/migrations/20260924105900_portal_access_backfill.sql`,
+      then `supabase migration repair --status applied 20260924105900 --linked`.
+      Re-applying it is harmless: a record is never turned on twice.
+  - **What a late run means**:
+    - From the moment `20260924110300` was applied until the backfill runs,
+      those patients saw an empty portal, and their messages and uploads
+      were refused.
+    - If `20260925100100` was also applied, it recorded their "off" as a
+      'state_at_migration' server decision, and devices showed access off.
+    - The late backfill turns them on, stamps a new decision time and writes
+      a `portal_account_backfill` access event. Devices pick it up at their
+      next sync.
+    - A staff disable made in between is kept.
+  - *Who: release owner.*
+- [ ] **Deploy in a quiet window.** Until `20260925100000`/`20260925100100`
+      are applied, an upload from an older app version can still write
+      `portal_enabled` and undo a backfilled value. Deploy when no device is
+      syncing. *Who: release owner, with site leads.*
+- [ ] **After the deploy, check the backfill** (SQL editor):
+  - `SELECT count(*) FROM public.portal_access_backfill_log;` should match
+    the count in the `audit_logs` row with
+    `action = 'portal_access_backfill'` (the count is in its `entity_id`
+    text; there is no such row when nothing was turned on).
+  - Backfilled records that are off again:
+    `SELECT l.patient_id FROM public.portal_access_backfill_log l JOIN public.patients p ON p.id::text = l.patient_id WHERE NOT COALESCE(p.portal_enabled, false);`
+    Expect none, unless staff turned them off through the app
+    (`set_patient_portal_access`).
+  - *Who: release owner.*
+- [ ] **Review the links the backfill trusted** with a clinic lead.
+  - (a) Rows with `portal_user_id` set: `phone_verified` may have been set
+    by the removed demo OTP flow.
+  - (b) Linked accounts whose confirmed email is not the record's email (the
+    old sign-up linked on phone plus date of birth):
+    `SELECT l.patient_id FROM public.portal_access_backfill_log l JOIN public.patients p ON p.id::text = l.patient_id JOIN auth.users u ON u.id::text = l.auth_uid WHERE lower(COALESCE(u.email, '')) IS DISTINCT FROM lower(COALESCE(p.email, ''));`
+  - Turn off any that look wrong from the app.
+  - A staff "disable" made in an app version before Wave B was never
+    recorded by the server, so the backfill cannot see it. Re-disable those
+    patients where needed.
+  - *Who: owner, with data protection.*
+- [ ] **Registration lead deploy order.** Apply
+      `20260925100600_registration_lead_portal_invite.sql` before the app
+      build that offers the `registration_lead` role (`app_users` refuses
+      that role until the migration has committed), then redeploy
+      `send-sms-reminder` and `send-otp-email`. Optionally set
+      `PORTAL_APP_ORIGIN` for invitation links (see
+      `docs/security/RLS_MATRIX.md`, "Portal invitations and SMS purposes").
+      *Who: release owner.*
 
 ## Wave B — server-authoritative clinical state (September 2026)
 
@@ -178,6 +253,14 @@ review").
       merges) raise PT409 and are retried forever (at most every 30
       minutes), holding that patient's later commands. Decide whether they
       should give up and be shown for review. *Who: owner.*
+- [ ] **Backfill skips.** The backfill (`20260924105900`) does not turn on:
+  - records whose `patient_portal_users` account is `suspended` (even with a
+    confirmed Supabase account linked);
+  - records whose `auth_uid` is a staff (`app_users`) account (even with a
+    verified portal row);
+  - `locked` portal accounts.
+
+  Confirm these conservative choices. *Who: owner.*
 
 #### Queue
 
@@ -240,6 +323,22 @@ review").
       notification is created on release. Decide whether to add one. *Who:
       owner.*
 
+#### Patient documents
+
+- [ ] **Decide retention for removed patient documents (owner task).** Since
+      `20260925100700`, removing a patient document is a soft delete. The
+      `patient_documents` row (with `deleted_at` / `deleted_by`) and its
+      file in the `patient-documents` bucket are both kept. The patient can
+      no longer see them, staff still can, and no API caller can delete the
+      file. Decide how long removed documents are kept. Then run the
+      clean-up with the service role or the database owner: delete the
+      files through the storage API with the service key, then delete the
+      rows as the owner, not through PostgREST. Clinic (`staff`) rows are
+      clinical records and follow the medical-record retention policy. Also
+      decide whether orphan files (no document row, for example from an
+      interrupted upload whose clean-up failed) should be swept regularly.
+      *Who: owner.*
+
 #### Messaging
 
 - [ ] **Two devices can send the same reminder** if they start within about
@@ -269,6 +368,28 @@ review").
       most older tables (for example `patients`, `vitals` and
       `lab_results`). PostgREST cannot send TRUNCATE, so the API cannot
       reach it; revoke it everywhere. *Who: database owner.*
+
+### Found in the offline-PIN review (fix before release)
+
+- [ ] **Expired session on app start keeps the online sign-in.** In
+      `src/stores/auth.ts`, the `onRehydrateStorage` branch for a session
+      past its grace period clears the local session but leaves the stored
+      online (Supabase) sign-in in place. It should end that online sign-in
+      too, as a PIN sign-in does. *Who: release owner.*
+- [ ] **Record sync must run as the signed-in staff member.** Record sync
+      (`syncNow` in `src/sync/adapter.ts`, and `enhancedSync`) should
+      require the online account to be the signed-in staff member
+      (`currentCommandSender()`, as the command outbox does), not any
+      online sign-in stored on the device. *Who: release owner.*
+- [ ] **Online sign-in can reactivate a staff record deactivated on this
+      device (decision 4 gap, for the owner of PR #126).** Online sign-in in
+      `src/stores/auth.ts` looks up the local record with
+      `isActive === 1`, so a deactivated record is not found; it then writes
+      a fresh, active user record with the same id (`db.users.put`) over the
+      deactivated one, bypassing the admin review. *Who: owner of PR #126.*
+- [ ] **Delete the dead `src/services/supabaseSync.ts`.** Nothing imports
+      it, and its `syncAll` is not gated on the signed-in staff member.
+      *Who: release owner.*
 
 ## Phase B — Observability + CI/CD ✅
 

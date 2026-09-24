@@ -22,6 +22,8 @@ interface PatientFormProps {
 }
 
 export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
+  // Sending an invitation is a separate permission from enabling access.
+  const canSendInvite = can(useAuthStore((st) => st.currentUser?.role), "portal_invite");
   const { t } = useTranslation();
   const { addPatient } = usePatientsStore();
   const [loading, setLoading] = useState(false);
@@ -649,6 +651,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                       </p>
                     )}
 
+                    {canSendInvite ? (
                     <div className="flex items-start ml-6">
                       <input
                         {...register("sendInviteNow")}
@@ -669,6 +672,13 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                         </span>
                       </label>
                     </div>
+                    ) : (
+                      <p className="field-hint ml-6">
+                        A registration lead, lead clinician or administrator
+                        sends the portal invitation from the patient&apos;s
+                        record.
+                      </p>
+                    )}
                   </>
                 )}
               </div>

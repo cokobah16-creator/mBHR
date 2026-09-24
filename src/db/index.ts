@@ -6,7 +6,14 @@ import { metaphone } from "metaphone";
 export interface User {
   id: string;
   fullName: string;
-  role: "admin" | "doctor" | "nurse" | "pharmacist" | "volunteer" | "guest";
+  role:
+    | "admin"
+    | "doctor"
+    | "nurse"
+    | "pharmacist"
+    | "volunteer"
+    | "registration_lead"
+    | "guest";
   email?: string;
   phone?: string;
   // Device-local offline credential (src/db/devicePin.ts). Never uploaded

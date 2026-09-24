@@ -200,6 +200,7 @@ async function sendSMS(
         // No phone number: the server uses the one on the reminder or the
         // patient record.
         body: JSON.stringify({
+          purpose: target.reminderId ? "medication_reminder" : "patient_message",
           message,
           reminderId: target.reminderId,
           patientId: target.patientId,

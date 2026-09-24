@@ -1056,7 +1056,8 @@ describe("televisits service", () => {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       // The server looks up the number on the patient's record.
       expect(body).not.toHaveProperty("to");
-      expect(Object.keys(body).sort()).toEqual(["message", "patientId"]);
+      expect(Object.keys(body).sort()).toEqual(["message", "patientId", "purpose"]);
+      expect(body.purpose).toBe("patient_message");
       expect(body.patientId).toBe("p1");
       expect(body.message).toContain("https://meet.jit.si/mbhr-room");
       expect(body.message).toContain("Dr. Bello");

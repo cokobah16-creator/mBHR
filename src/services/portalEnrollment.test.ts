@@ -36,8 +36,9 @@ const { mockRequestChange, mockDrain } = vi.hoisted(() => ({
   mockDrain: vi.fn().mockResolvedValue(null),
 }));
 
+// Default: a registration lead (portal_manage and portal_invite).
 const authState = vi.hoisted(() => ({
-  currentUser: { id: "nurse-1", role: "nurse" } as { id: string; role: string } | null,
+  currentUser: { id: "lead-1", role: "registration_lead" } as { id: string; role: string } | null,
 }));
 vi.mock("@/stores/auth", () => ({
   useAuthStore: { getState: () => authState },
@@ -114,7 +115,10 @@ function makeChain(
 }
 
 describe("enablePortalAccess", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.currentUser = { id: "lead-1", role: "registration_lead" };
+  });
 
   it("returns error when patient not found", async () => {
     mockPatientsGet.mockResolvedValue(undefined);
@@ -187,6 +191,23 @@ describe("enablePortalAccess", () => {
     expect(result.success).toBe(false);
   });
 
+  it("turns access on for a volunteer but does not invite (no portal_invite)", async () => {
+    authState.currentUser = { id: "vol-1", role: "volunteer" };
+    mockPatientsGet.mockResolvedValue(makePatient());
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
+
+    const result = await enablePortalAccess("p1", {
+      termsAccepted: true,
+      sendInviteNow: true,
+    });
+
+    expect(result).toMatchObject({ success: true, pending: true, inviteDeferred: true });
+    expect(result.inviteError).toMatch(/cannot send portal invitations/);
+    expect(mockRequestChange).toHaveBeenCalledWith("p1", true, { reason: "staff_choice" });
+    expect(mockDrain).not.toHaveBeenCalled();
+    expect(mockFunctionsInvoke).not.toHaveBeenCalled();
+  });
+
   it("does not invite while the server has not confirmed access", async () => {
     mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, portalPending: 1 }));
     mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server" });
@@ -238,21 +259,35 @@ describe("disablePortalAccess", () => {
 describe("sendPortalInvitation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authState.currentUser = { id: "nurse-1", role: "nurse" };
+    authState.currentUser = { id: "lead-1", role: "registration_lead" };
     mockFrom.mockReturnValue(makeChain());
     mockFunctionsInvoke.mockResolvedValue({ error: null });
   });
 
-  it("refuses a role without portal_manage before any write or message", async () => {
-    authState.currentUser = { id: "ph-1", role: "pharmacist" };
+  it("refuses every role without portal_invite before any write or message", async () => {
     mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
 
-    const result = await sendPortalInvitation("p1");
-
-    expect(result.success).toBe(false);
-    expect(result.error).toMatch(/cannot send portal invitations/);
+    for (const role of ["volunteer", "nurse", "doctor", "pharmacist", "auditor", "guest"]) {
+      authState.currentUser = { id: `${role}-1`, role };
+      const result = await sendPortalInvitation("p1");
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/cannot send portal invitations/);
+      expect(result.error).toMatch(/Registration lead/);
+    }
     expect(mockPatientsUpdate).not.toHaveBeenCalled();
     expect(mockFunctionsInvoke).not.toHaveBeenCalled();
+  });
+
+  it("lets lead clinicians and admins send invitations", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
+    mockFunctionsInvoke.mockResolvedValue({ data: { success: true }, error: null });
+
+    for (const role of ["lead_clinician", "admin"]) {
+      authState.currentUser = { id: `${role}-1`, role };
+      const result = await sendPortalInvitation("p1");
+      expect(result.success).toBe(true);
+    }
+    expect(mockFunctionsInvoke).toHaveBeenCalledTimes(2);
   });
 
   it("refuses when nobody is signed in", async () => {
@@ -300,12 +335,12 @@ describe("sendPortalInvitation", () => {
 
     expect(result.success).toBe(true);
     expect(result.demoOTP).toBeUndefined();
-    expect(mockFunctionsInvoke).toHaveBeenCalledWith(
-      "send-otp-email",
-      expect.objectContaining({
-        body: expect.objectContaining({ email: "ada@example.com" }),
-      }),
-    );
+    // Purpose and patient id only: the server looks up the address and
+    // builds the text.
+    expect(mockFunctionsInvoke).toHaveBeenCalledWith("send-otp-email", {
+      body: { purpose: "portal_invitation", patientId: "p1", appOrigin: expect.any(String) },
+    });
+    expect(JSON.stringify(mockFunctionsInvoke.mock.calls)).not.toContain("ada@example.com");
     expect(mockPatientsUpdate).toHaveBeenLastCalledWith(
       "p1",
       expect.objectContaining({
@@ -333,7 +368,7 @@ describe("sendPortalInvitation", () => {
     );
   });
 
-  it("sends SMS through send-sms-reminder with the patient id, never the number", async () => {
+  it("sends SMS through send-sms-reminder as a portal invitation, never the number or text", async () => {
     mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1, email: "" }));
     mockFunctionsInvoke.mockResolvedValue({ data: { success: true, provider: "termii" }, error: null });
 
@@ -342,8 +377,9 @@ describe("sendPortalInvitation", () => {
     expect(result.success).toBe(true);
     expect(result.demoOTP).toBeUndefined();
     expect(mockFunctionsInvoke).toHaveBeenCalledWith("send-sms-reminder", {
-      body: { patientId: "p1", message: expect.stringContaining("/patient/register") },
+      body: { purpose: "portal_invitation", patientId: "p1", appOrigin: expect.any(String) },
     });
+    expect(JSON.stringify(mockFunctionsInvoke.mock.calls)).not.toContain("08012345678");
     expect(mockFunctionsInvoke).not.toHaveBeenCalledWith("send-otp-sms", expect.anything());
     expect(mockPatientsUpdate).toHaveBeenLastCalledWith(
       "p1",
@@ -580,7 +616,21 @@ describe("findEligiblePatients", () => {
 describe("bulkEnablePortalAccess", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.currentUser = { id: "lead-1", role: "registration_lead" };
     mockPatientsBulkGet.mockResolvedValue([]);
+  });
+
+  it("refuses enable-and-invite for a role without portal_invite, changing nothing", async () => {
+    authState.currentUser = { id: "nurse-1", role: "nurse" };
+
+    const result = await bulkEnablePortalAccess(["p1", "p2"], { sendInvitations: true });
+
+    expect(result.success).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(result.errors.map((e) => e.patientId)).toEqual(["p1", "p2"]);
+    expect(result.errors[0].error).toMatch(/cannot send portal invitations/);
+    expect(mockRequestChange).not.toHaveBeenCalled();
+    expect(mockFunctionsInvoke).not.toHaveBeenCalled();
   });
 
   it("queues every patient and counts refusals", async () => {

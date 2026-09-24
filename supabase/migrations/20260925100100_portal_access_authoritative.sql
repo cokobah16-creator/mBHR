@@ -43,6 +43,9 @@
 --      override an opt-out or an earlier disable.
 --   7. Defensive drops of the old anonymous patients policies (already
 --      removed by 20260924110100's policy reset).
+--   8. Audit readers (audit_access) may read portal_access_backfill_log,
+--      written by 20260924105900_portal_access_backfill.sql before the
+--      permission helpers existed.
 --
 -- Idempotent: every statement can be re-run.
 --
@@ -57,6 +60,8 @@
 --     this if the device app is rolled back too);
 --   DROP TABLE public.patient_portal_access_events;
 --   DROP FUNCTION public.tg_portal_access_events_immutable();
+--   DROP POLICY portal_access_backfill_log_select_audit ON public.portal_access_backfill_log;
+--   REVOKE SELECT ON public.portal_access_backfill_log FROM authenticated;
 --   portal_enabled_changed_at values written by section 6 can stay.
 -- ============================================================================
 
@@ -530,6 +535,9 @@ GRANT EXECUTE ON FUNCTION public.portal_access_status() TO authenticated, servic
 -- devices apply the server value and device backfill enables cannot
 -- override an opt-out or that earlier disable. Runs as the
 -- migration owner; the flag makes the intent explicit for the guard.
+-- Records with a verified portal account linked to them were already turned
+-- on by 20260924105900_portal_access_backfill.sql, so they are stamped here
+-- as on; the linked records still off are the ones that backfill refused.
 DO $$
 BEGIN
   IF to_regclass('public.patients') IS NULL THEN
@@ -566,5 +574,25 @@ END $$;
 DROP POLICY IF EXISTS "Allow anonymous patient lookup for portal registration" ON public.patients;
 DROP POLICY IF EXISTS "Allow anonymous patient registration" ON public.patients;
 DROP POLICY IF EXISTS "Patients can view own record" ON public.patients;
+
+-- ----------------------------------------------------------------------------
+-- 8. Portal access backfill log: audit readers
+-- ----------------------------------------------------------------------------
+-- 20260924105900_portal_access_backfill.sql runs before the permission
+-- helpers exist, so it leaves its log readable only by the service role.
+-- Same rule as its own late-run branch: audit_access holders read it; no
+-- client writes (the log's triggers refuse UPDATE, DELETE and TRUNCATE).
+DO $$
+BEGIN
+  IF to_regclass('public.portal_access_backfill_log') IS NULL THEN
+    RETURN;
+  END IF;
+  GRANT SELECT ON public.portal_access_backfill_log TO authenticated;
+  DROP POLICY IF EXISTS portal_access_backfill_log_select_audit
+    ON public.portal_access_backfill_log;
+  CREATE POLICY portal_access_backfill_log_select_audit
+    ON public.portal_access_backfill_log FOR SELECT TO authenticated
+    USING ((SELECT public.app_has_permission('audit_access')));
+END $$;
 
 -- End of migration.

@@ -252,7 +252,7 @@ export function Layout({ children }: LayoutProps) {
               { key: "labs", name: "Labs", href: "/labs", icon: DocumentMagnifyingGlassIcon },
             ]
           : []),
-        ...(hasRole("doctor", "nurse", "volunteer", "admin")
+        ...(hasRole("doctor", "nurse", "volunteer", "registration_lead", "admin")
           ? [{ key: "appointments", name: "Appointments", href: "/appointments", icon: CalendarDaysIcon }]
           : []),
         ...(hasRole("doctor", "nurse", "admin")
@@ -265,7 +265,7 @@ export function Layout({ children }: LayoutProps) {
     {
       label: "Outreach operations",
       items: [
-        ...(hasRole("volunteer", "nurse", "doctor", "admin")
+        ...(hasRole("volunteer", "registration_lead", "nurse", "doctor", "admin")
           ? [{ key: "tickets", name: t("nav.issue_tickets"), href: "/tickets/issue", icon: TicketIcon }]
           : []),
         { key: "inventory", name: t("nav.inventory"), href: "/inventory", icon: CubeIcon },

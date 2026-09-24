@@ -39,7 +39,11 @@ vi.mock("@/db", () => ({
   },
 }));
 
-import { bulkEnrollPatients, enrollPatientInPortal } from "./unifiedPortalEnrollment";
+import {
+  bulkEnrollPatients,
+  enrollPatientInPortal,
+  sendPortalInvitation,
+} from "./unifiedPortalEnrollment";
 
 describe("bulkEnrollPatients", () => {
   beforeEach(() => {
@@ -256,5 +260,60 @@ describe("enrollPatientInPortal", () => {
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/role cannot/);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("sendPortalInvitation (portal_invite)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("refuses a volunteer, who may still enable portal access", async () => {
+    authState.currentUser = { id: "vol-1", role: "volunteer" };
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/cannot send portal invitations/);
+    expect(result.error).toMatch(/Registration lead/);
+    expect(mockFrom).not.toHaveBeenCalled();
+
+    vi.stubGlobal("navigator", { onLine: false });
+    mockRequestChange.mockResolvedValue({ ok: true, state: "waiting_for_server", commandId: "c1" });
+    const enrolled = await enrollPatientInPortal({
+      patientId: "p1",
+      givenName: "Ada",
+      familyName: "Obi",
+      dob: "1990-01-01",
+      phone: "08012345678",
+    });
+    expect(enrolled.success).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("refuses a nurse and a pharmacist", async () => {
+    for (const role of ["nurse", "pharmacist", "doctor"]) {
+      authState.currentUser = { id: `${role}-1`, role };
+      const result = await sendPortalInvitation("p1");
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/cannot send portal invitations/);
+    }
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it("lets a registration lead through to the server", async () => {
+    authState.currentUser = { id: "rl-1", role: "registration_lead" };
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: null, error: { code: "PGRST116" } }),
+        }),
+      }),
+    });
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(mockFrom).toHaveBeenCalledWith("patients");
+    expect(result).toMatchObject({ success: false, error: "Patient not found" });
   });
 });

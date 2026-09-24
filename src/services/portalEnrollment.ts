@@ -8,6 +8,11 @@
  * this device straight away as "waiting for the server" and is sent with
  * the command outbox. Invitations wait until the server has confirmed that
  * access is on.
+ *
+ * Sending an invitation needs the portal_invite permission (registration
+ * lead, lead clinician, admin); turning access on needs only portal_manage.
+ * The server functions check the same rule, look up the patient's stored
+ * email or phone, build the text and record who sent the invitation.
  */
 
 import { db, type Patient, type PortalInvitation } from "@/db";
@@ -21,7 +26,7 @@ import {
   type PortalAccessReason,
 } from "./portalAccess";
 import { drainServerCommands } from "@/sync/adapter";
-import { can, type Role } from "@/auth/roles";
+import { can, portalInviteRefusal, type Role } from "@/auth/roles";
 import { useAuthStore } from "@/stores/auth";
 
 const RATE_LIMIT_MS = Number(import.meta.env.VITE_INVITE_RATE_MS || 60000); // Default 60 seconds
@@ -117,6 +122,10 @@ export async function enablePortalAccess(
     );
 
     if (options.sendInviteNow) {
+      // Access is saved either way; the invitation needs portal_invite.
+      if (!canSendInvitations()) {
+        return { ...outcome, inviteDeferred: true, inviteError: portalInviteRefusal() };
+      }
       // The server must confirm access before an invitation goes out.
       if (outcome.pending) await drainServerCommands().catch(() => null);
       const invite = await sendPortalInvitation(patientId);
@@ -191,6 +200,12 @@ function isDemoReply(data: unknown): boolean {
   return !!data && typeof data === "object" && !!(data as FunctionReply).demo;
 }
 
+/** The signed-in person may send portal invitations (portal_invite). */
+function canSendInvitations(): boolean {
+  const role = useAuthStore.getState().currentUser?.role as Role | undefined;
+  return !!role && can(role, "portal_invite");
+}
+
 /**
  * Send portal invitation to a patient
  */
@@ -200,11 +215,11 @@ export async function sendPortalInvitation(patientId: string): Promise<{
   demoOTP?: string;
   registrationUrl?: string;
 }> {
-  // Sending an invitation writes the patient record and contacts the
-  // patient: portal_manage work, checked here and not only in the screens.
-  const role = useAuthStore.getState().currentUser?.role as Role | undefined;
-  if (!role || !can(role, "portal_manage")) {
-    return { success: false, error: "Your role cannot send portal invitations." };
+  // Sending an invitation contacts the patient: portal_invite work (not
+  // portal_manage), checked here and not only in the screens. The server
+  // checks it again before anything is sent.
+  if (!canSendInvitations()) {
+    return { success: false, error: portalInviteRefusal() };
   }
 
   try {
@@ -257,38 +272,33 @@ export async function sendPortalInvitation(patientId: string): Promise<{
       _dirty: 1,
     });
 
-    // Build a pre-filled registration URL so patients land with their contact ready
+    // Build a pre-filled registration URL so patients land with their contact
+    // ready (shown to staff to share; the server builds the one it sends).
     const origin = appLinkOrigin();
     const registrationUrl = patient.email
       ? `${origin}/patient/register?email=${encodeURIComponent(patient.email)}`
       : patient.phone
         ? `${origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
         : `${origin}/patient/register`;
-    const loginUrl = `${origin}/patient/login`;
 
     let notSentReason: string = INVITE_NOT_SENT_REASONS.noServer;
 
     // --- Send via Supabase edge function (email preferred, SMS fallback) ---
+    // The device sends only the patient id and the purpose: the server
+    // checks portal_invite and that access is on, looks up the stored email
+    // or phone, builds the text and link, and records who sent it.
     if (supabase) {
       notSentReason = INVITE_NOT_SENT_REASONS.serviceFailed;
+      const request = {
+        purpose: "portal_invitation",
+        patientId,
+        appOrigin: origin,
+      };
       try {
         if (patient.email) {
           const { data, error: fnError } = await supabase.functions.invoke(
             "send-otp-email",
-            {
-              body: {
-                email: patient.email,
-                subject: "Your mBHR Patient Portal is Ready",
-                message:
-                  `Hi ${patient.givenName},\n\n` +
-                  `Your patient portal has been set up by your healthcare provider.\n\n` +
-                  `Click the link below to create your account — your email will be pre-filled:\n\n` +
-                  `${registrationUrl}\n\n` +
-                  `You will be asked to enter your date of birth to complete registration.\n\n` +
-                  `Already registered? Log in here: ${loginUrl}\n\n` +
-                  `Med Bridge Health Reach`,
-              },
-            },
+            { body: request },
           );
 
           if (!fnError && reallySent(data)) {
@@ -307,18 +317,9 @@ export async function sendPortalInvitation(patientId: string): Promise<{
             fnError ? safeErrorLabel(fnError) : isDemoReply(data) ? "demo mode" : "no confirmation",
           );
         } else if (patient.phone) {
-          // The server looks up the phone number from the patient record;
-          // the device sends only the patient id and the text.
           const { data, error: fnError } = await supabase.functions.invoke(
             "send-sms-reminder",
-            {
-              body: {
-                patientId,
-                message:
-                  `Hi ${patient.givenName}, your mBHR patient portal is ready. ` +
-                  `Register at: ${registrationUrl} — use your phone number and date of birth.`,
-              },
-            },
+            { body: request },
           );
 
           if (!fnError && reallySent(data)) {
@@ -603,7 +604,8 @@ export interface BulkEnableResult {
  *
  * Every change is queued first; with `sendInvitations`, queued changes are
  * sent to the server once, and invitations go only to patients whose access
- * the server confirmed.
+ * the server confirmed. `sendInvitations` needs portal_invite: without it
+ * nothing is changed and every patient is reported with the refusal.
  */
 export async function bulkEnablePortalAccess(
   patientIds: string[],
@@ -622,6 +624,17 @@ export async function bulkEnablePortalAccess(
     deviceOnly: 0,
   };
   const saved: string[] = [];
+
+  // "Enable and invite" needs portal_invite: refuse the whole run before
+  // changing anything, rather than enabling access and quietly inviting no one.
+  if (options.sendInvitations && !canSendInvitations()) {
+    const refusal = portalInviteRefusal();
+    return {
+      ...results,
+      failed: patientIds.length,
+      errors: patientIds.map((patientId) => ({ patientId, error: refusal })),
+    };
+  }
 
   for (let i = 0; i < patientIds.length; i += batchSize) {
     const batch = patientIds.slice(i, i + batchSize);

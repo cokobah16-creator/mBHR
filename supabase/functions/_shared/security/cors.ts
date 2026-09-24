@@ -29,6 +29,14 @@ function allowlist(): string[] | null {
     .filter(Boolean);
 }
 
+/**
+ * The exact origins in ALLOWED_ORIGINS, or null when it is unset. Trusted
+ * app addresses (for example for links in patient invitations).
+ */
+export function allowedOrigins(): string[] | null {
+  return allowlist();
+}
+
 let warnedMissing = false;
 
 export function corsHeadersFor(req: Request): Record<string, string> {
