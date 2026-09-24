@@ -20,7 +20,8 @@ interface AuthState {
   lastActivityAt: number | null;
 
   // Actions
-  login: (pin: string) => Promise<boolean>;
+  /** Offline sign-in: the chosen account's PIN on this device. */
+  login: (userId: string, pin: string) => Promise<boolean>;
   loginOnline: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   setCurrentUser: (user: User | null) => void;
@@ -150,6 +151,18 @@ const ON = new Set(["true", "1", "t", "yes"]);
 const flag = (value: unknown) =>
   value === null || value === undefined ? null : String(value).toLowerCase();
 
+/** True when an app_users row marks the account as switched off. */
+export function isDeactivatedAppUser(row: Record<string, unknown>): boolean {
+  return (
+    OFF.has(flag(row.is_active) ?? "") ||
+    OFF.has(flag(row.active) ?? "") ||
+    ON.has(flag(row.disabled) ?? "") ||
+    ON.has(flag(row.deactivated) ?? "") ||
+    (row.deactivated_at !== null && row.deactivated_at !== undefined) ||
+    (row.disabled_at !== null && row.disabled_at !== undefined)
+  );
+}
+
 /**
  * The access an app_users row (public.app_users, id = online user id) gives,
  * following the database's own rule (public.app_current_role): an unknown
@@ -163,13 +176,7 @@ export function accessFromAppUser(row: Record<string, unknown> | null | undefine
   if (!row) return { role: "guest" };
   const fullName =
     typeof row.full_name === "string" && row.full_name.trim() ? row.full_name.trim() : undefined;
-  const deactivated =
-    OFF.has(flag(row.is_active) ?? "") ||
-    OFF.has(flag(row.active) ?? "") ||
-    ON.has(flag(row.disabled) ?? "") ||
-    ON.has(flag(row.deactivated) ?? "") ||
-    (row.deactivated_at !== null && row.deactivated_at !== undefined) ||
-    (row.disabled_at !== null && row.disabled_at !== undefined);
+  const deactivated = isDeactivatedAppUser(row);
   const knownRoles = Object.keys(rolePermissionMatrix().roles);
   const role = typeof row.role === "string" && knownRoles.includes(row.role) ? (row.role as Role) : "guest";
   return { role: deactivated ? "guest" : role, fullName };
@@ -218,7 +225,7 @@ export const useAuthStore = create<AuthState>()(
       sessionExpiresAt: null,
       lastActivityAt: null,
 
-      login: async (pin: string) => {
+      login: async (userId: string, pin: string) => {
         const state = get();
 
         // Check lockout
@@ -232,46 +239,43 @@ export const useAuthStore = create<AuthState>()(
         }
 
         try {
-          // Get all active users
-          const users = await db.users
-            .filter((u) => u.isActive === 1)
-            .toArray();
+          // Only the chosen person's PIN is checked, so two people who
+          // happen to pick the same PIN are never mistaken for each other.
+          const user = await db.users.get(userId);
 
-          for (const user of users) {
-            if (user.pinHash && user.pinSalt) {
-              const isValid = await verifyPin(pin, user.pinHash, user.pinSalt);
+          if (
+            user &&
+            user.isActive === 1 &&
+            user.pinHash &&
+            user.pinSalt &&
+            (await verifyPin(pin, user.pinHash, user.pinSalt))
+          ) {
+            const session: Session = {
+              id: generateId(),
+              userId: user.id,
+              createdAt: new Date(),
+              deviceKey: generateId(),
+              lastSeenAt: new Date(),
+            };
 
-              if (isValid) {
-                // Create session
-                const session: Session = {
-                  id: generateId(),
-                  userId: user.id,
-                  createdAt: new Date(),
-                  deviceKey: generateId(),
-                  lastSeenAt: new Date(),
-                };
+            await db.sessions.add(session);
 
-                await db.sessions.add(session);
+            const now = Date.now();
+            const expiresAt = now + STAFF_SESSION_DURATION;
 
-                const now = Date.now();
-                const expiresAt = now + STAFF_SESSION_DURATION;
+            set({
+              currentUser: user,
+              currentSession: session,
+              isAuthenticated: true,
+              failedAttempts: 0,
+              lockoutUntil: null,
+              sessionExpiresAt: expiresAt,
+              lastActivityAt: now,
+            });
 
-                set({
-                  currentUser: user,
-                  currentSession: session,
-                  isAuthenticated: true,
-                  failedAttempts: 0,
-                  lockoutUntil: null,
-                  sessionExpiresAt: expiresAt,
-                  lastActivityAt: now,
-                });
-
-                return true;
-              }
-            }
+            return true;
           }
 
-          // PIN not found - increment failed attempts
           state.incrementFailedAttempts();
           return false;
         } catch (error) {

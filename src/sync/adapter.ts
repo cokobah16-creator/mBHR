@@ -14,6 +14,7 @@ import type {
 } from "../components/ConflictResolutionModal";
 import { findFieldConflicts } from "./fieldCompare";
 import { mergePulledRow } from "./pullMerge";
+import { staffFromServerRow } from "./staffRoster";
 import { markersAfterUpload } from "./uploadMarkers";
 import { namedSyncError, syncErrorCode } from "./errorCode";
 import { queueSyncConflicts } from "./queueConflicts";
@@ -92,6 +93,8 @@ const VERSIONED: ReadonlySet<Tbl> = new Set<Tbl>(["patients", "queue"]);
 
 /** Uploaded columns (this device's field -> server column). */
 const mapToDB: Record<Tbl, Record<string, string>> = {
+  // Never add pinHash, pinSalt or pinEnrolledAt here: a staff PIN is a
+  // device-only credential and must not reach the server.
   app_users: {
     id: "id",
     fullName: "full_name",
@@ -338,6 +341,11 @@ const QUEUE_KEEP_WHEN_EMPTY = [
 
 /** Server row -> this device's shape, including server-only rules. */
 function transformPulled(t: Tbl, raw: Row, mapped: Row): Row {
+  if (t === "app_users") {
+    // Identity, role and active status only: the device-only PIN fields are
+    // never part of a staff download (see src/sync/staffRoster.ts).
+    return { ...staffFromServerRow(raw) };
+  }
   if (t === "patients") {
     // Portal access counts as a server decision only once the server has
     // recorded one (portal_enabled_changed_at). Before that the server

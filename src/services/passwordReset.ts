@@ -23,6 +23,7 @@
  * clinic.
  */
 import { supabase } from "@/lib/supabaseClient";
+import { appLinkOrigin } from "@/config/canonicalOrigin";
 
 export type ResetAudience = "staff" | "patient";
 
@@ -153,7 +154,9 @@ export interface RequestResetResult {
 export async function requestPasswordReset(
   email: string,
   audience: ResetAudience,
-  origin: string = typeof window !== "undefined" ? window.location.origin : "",
+  // Reset links always return to the canonical address (mbhr.app), where
+  // this browser's staff data lives, not a preview or deployment URL.
+  origin: string = appLinkOrigin(),
 ): Promise<RequestResetResult> {
   const address = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {

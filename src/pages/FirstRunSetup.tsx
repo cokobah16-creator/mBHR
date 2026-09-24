@@ -7,6 +7,7 @@ import {
   needsFirstRunSetup,
 } from "@/db/firstRun";
 import { useAuthStore } from "@/stores/auth";
+import { isOnlineSyncEnabled } from "@/sync/adapter";
 import * as logger from "@/lib/logger";
 
 /**
@@ -16,6 +17,11 @@ import * as logger from "@/lib/logger";
  * usable PIN onto a freshly installed device. It refuses to run once any user
  * exists, which keeps it from being a way to mint an admin on a provisioned
  * device.
+ *
+ * Builds with online sign-in never offer it: the organisation's staff live on
+ * the server, and a new device is set up by an authorised person signing in
+ * online (which brings the staff directory down and enrolls their PIN), not
+ * by inventing a local administrator.
  */
 export default function FirstRunSetup() {
   const [checking, setChecking] = useState(true);
@@ -32,6 +38,10 @@ export default function FirstRunSetup() {
     let cancelled = false;
 
     (async () => {
+      if (isOnlineSyncEnabled()) {
+        navigate("/login", { replace: true });
+        return;
+      }
       try {
         const needed = await needsFirstRunSetup();
         if (cancelled) return;
@@ -61,8 +71,9 @@ export default function FirstRunSetup() {
     setErr(null);
     setSaving(true);
 
+    let admin: Awaited<ReturnType<typeof createFirstAdmin>>;
     try {
-      await createFirstAdmin({ fullName, pin, confirmPin });
+      admin = await createFirstAdmin({ fullName, pin, confirmPin });
     } catch (ex) {
       logger.error(
         "[setup] first admin creation failed",
@@ -78,7 +89,7 @@ export default function FirstRunSetup() {
     // fall back to the login form with the PIN they just chose.
     let signedIn = false;
     try {
-      signedIn = await login(pin);
+      signedIn = await login(admin.id, pin);
     } catch (ex) {
       logger.error(
         "[setup] sign-in after setup failed",
