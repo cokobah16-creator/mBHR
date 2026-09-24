@@ -40,7 +40,8 @@ const result = await sendPortalInvitation("test_patient_001");
 if (result.success) {
   console.log("✅ Invitation sent successfully!");
   if (result.demoOTP) {
-    console.log("🔧 Demo OTP:", result.demoOTP);
+    // No email or SMS went out; this holds the link to share by hand.
+    console.warn(result.demoOTP);
   }
 } else {
   console.error("❌ Failed to send invitation:", result.error);
@@ -186,7 +187,7 @@ You'll know everything is working when:
 1. ✅ Email Diagnostics shows "Email Sent Successfully"
 2. ✅ Test email arrives in inbox
 3. ✅ Portal invitation email arrives for Kristopher
-4. ✅ Kristopher can login with OTP from email
+4. ✅ Kristopher registers from the invitation link, then logs in with his email and password
 5. ✅ Kristopher sees patient dashboard after login
 
 ---

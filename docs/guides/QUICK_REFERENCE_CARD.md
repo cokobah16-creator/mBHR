@@ -12,7 +12,7 @@
 
 **Fix:** Add API key to Supabase Edge Functions
 **Time:** 2 minutes
-**Result:** Real OTP emails sent to patients
+**Result:** Portal invitation emails are sent when a staff member signed in online sends them
 
 ---
 
@@ -75,10 +75,10 @@ https://supabase.com/dashboard/project/dlogqxzejroeyivfmgcv/settings/edge-functi
 
 ### Patient Portal Test
 
-1. Go to `/patient/login`
-2. Enter email
-3. ✅ Receive OTP code
-4. Enter code
+1. Signed in online, open a patient record with an email, turn on portal access and send a portal invitation
+2. ✅ The patient receives an email with a registration link
+3. The patient opens the link and registers with their date of birth and a password
+4. The patient logs in at `/patient/login` with their email and password (no emailed code)
 5. ✅ Access dashboard
 
 ---
@@ -151,7 +151,7 @@ npx supabase secrets list --project-ref dlogqxzejroeyivfmgcv
 **Email Working:**
 
 - No "demo mode" warnings in UI
-- OTP codes received via email
+- Portal invitation emails arrive
 - Test emails arrive in inbox
 - Resend dashboard shows deliveries
 
