@@ -125,6 +125,83 @@ async function endCloudSignIn(): Promise<void> {
   }
 }
 
+const STAFF_ROLES: ReadonlyArray<User["role"]> = [
+  "admin",
+  "doctor",
+  "nurse",
+  "pharmacist",
+  "volunteer",
+  "guest",
+];
+
+function asStaffRole(value: unknown): User["role"] | undefined {
+  return STAFF_ROLES.find((role) => role === value);
+}
+
+interface StaffProfile {
+  fullName?: string;
+  role?: User["role"];
+  adminAccess?: boolean;
+  adminPermanent?: boolean;
+}
+
+/**
+ * What the server knows about a staff member, for a device that has no local
+ * record of them yet. `app_users` is the staff directory (its id is the
+ * Supabase auth user id and every staff member can read it); `staff_roles`
+ * only holds the role and is kept as a fallback for accounts that predate
+ * the directory. Best effort: a failed read just leaves the field unset.
+ */
+async function readStaffProfile(
+  client: NonNullable<typeof supabase>,
+  authUserId: string,
+): Promise<StaffProfile> {
+  const profile: StaffProfile = {};
+
+  try {
+    const { data } = await client
+      .from("app_users")
+      .select("full_name, role, admin_access, admin_permanent")
+      .eq("id", authUserId)
+      .maybeSingle();
+    if (data) {
+      if (typeof data.full_name === "string" && data.full_name.trim()) {
+        profile.fullName = data.full_name.trim();
+      }
+      profile.role = asStaffRole(data.role);
+      if (typeof data.admin_access === "boolean") {
+        profile.adminAccess = data.admin_access;
+      }
+      if (typeof data.admin_permanent === "boolean") {
+        profile.adminPermanent = data.admin_permanent;
+      }
+    }
+  } catch (error) {
+    logger.warn(
+      "[Auth] Could not read the staff directory:",
+      error instanceof Error ? error.name : typeof error,
+    );
+  }
+
+  if (!profile.role) {
+    try {
+      const { data } = await client
+        .from("staff_roles")
+        .select("role")
+        .eq("auth_user_id", authUserId)
+        .maybeSingle();
+      profile.role = asStaffRole(data?.role);
+    } catch (error) {
+      logger.warn(
+        "[Auth] Could not read the staff role:",
+        error instanceof Error ? error.name : typeof error,
+      );
+    }
+  }
+
+  return profile;
+}
+
 /** The online sign-out started by the last logout, while it is still running. */
 let cloudSignOutInFlight: Promise<void> | null = null;
 
@@ -254,26 +331,26 @@ export const useAuthStore = create<AuthState>()(
             )
             .first();
 
-          // If not found locally, build a minimal user record from Supabase data
+          // Not on this device yet (a new device, or a colleague's tablet):
+          // create the local record from the staff directory so the person
+          // can work here. They have no PIN on this device until they choose
+          // one (the login page offers that right after this sign-in).
           if (!user) {
-            const { data: staffRow } = await supabase
-              .from("staff_roles")
-              .select("role, full_name")
-              .eq("auth_user_id", data.user.id)
-              .maybeSingle();
+            const profile = await readStaffProfile(supabase, data.user.id);
+            const role = profile.role ?? "volunteer";
 
             const newUser: User = {
               id: data.user.id,
               fullName:
-                staffRow?.full_name ??
+                profile.fullName ??
                 data.user.user_metadata?.full_name ??
                 email.split("@")[0],
-              role: (staffRow?.role as User["role"]) ?? "volunteer",
+              role,
               email: data.user.email ?? email,
               pinHash: "",
               pinSalt: "",
-              adminAccess: staffRow?.role === "admin",
-              adminPermanent: false,
+              adminAccess: profile.adminAccess ?? role === "admin",
+              adminPermanent: profile.adminPermanent ?? false,
               isActive: 1,
               createdAt: new Date(),
               updatedAt: new Date(),
