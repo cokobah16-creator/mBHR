@@ -28,7 +28,10 @@ export function staffFromServerRow(raw: Row): Partial<User> & { id: string } {
   const out: Partial<User> & { id: string } = {
     id: String(raw.id),
     role: role as User["role"],
-    isActive: isDeactivatedAppUser(raw) ? 0 : 1,
+    // Same rule as the database (public.app_current_role / app_is_staff):
+    // a switched-off row or a role the app does not know gives no access,
+    // so that person cannot sign in offline on this device either.
+    isActive: isDeactivatedAppUser(raw) || role === "guest" ? 0 : 1,
     adminAccess: raw.admin_access === true || role === "admin",
     adminPermanent: raw.admin_permanent === true,
   };

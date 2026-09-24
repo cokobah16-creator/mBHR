@@ -69,6 +69,11 @@ describe("staffFromServerRow", () => {
   it("marks a switched-off account inactive", () => {
     expect(staffFromServerRow({ id: "u1", role: "nurse", is_active: false }).isActive).toBe(0);
   });
+
+  it("marks an account with no known role inactive, as the database does", () => {
+    expect(staffFromServerRow({ id: "u1", role: "guest" }).isActive).toBe(0);
+    expect(staffFromServerRow({ id: "u1", role: "janitor" }).isActive).toBe(0);
+  });
 });
 
 describe("pullStaffRoster", () => {
