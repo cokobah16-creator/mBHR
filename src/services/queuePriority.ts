@@ -90,6 +90,40 @@ export function orderAfterInsert<T extends { id: string; position: number }>(
 }
 
 /**
+ * Where "Move to front" (and the automatic long-wait escalation) puts a
+ * waiting ticket: ahead of every ticket of the same or lower priority, but
+ * never ahead of a waiting ticket with a higher priority. An urgent ticket
+ * goes to the very front; a normal or low ticket stops right behind the
+ * last waiting ticket that outranks it, so it can never jump urgent
+ * patients. It never moves a ticket back.
+ *
+ * Returns the new 1-based position, or null when the ticket is already as
+ * far forward as its priority allows (or is not in `waiting`).
+ */
+export function promotionPosition<T extends WaitingRow & { id: string }>(
+  waiting: T[],
+  id: string,
+): number | null {
+  const sorted = [...waiting].sort((a, b) => a.position - b.position);
+  const index = sorted.findIndex((w) => w.id === id);
+  if (index === -1) return null;
+  const rank = PRIORITY_RANK[normalisePriority(sorted[index].priority)];
+  let lastHigher = -1;
+  sorted.forEach((w, i) => {
+    if (w.id !== id && PRIORITY_RANK[normalisePriority(w.priority)] > rank) {
+      lastHigher = i;
+    }
+  });
+  // Target index among the others (the ticket itself removed).
+  const others = sorted.filter((w) => w.id !== id);
+  const lastHigherAmongOthers =
+    lastHigher === -1 ? -1 : others.findIndex((w) => w.id === sorted[lastHigher].id);
+  const target = lastHigherAmongOthers + 1; // 0-based slot in the final order
+  if (target >= index) return null;
+  return target + 1;
+}
+
+/**
  * The clinical permission that also lets a role move tickets at a stage.
  * Moving patients is operational: "register" (queue staff) covers every
  * stage; a role may also move tickets at its own clinical stage (e.g. a
@@ -109,6 +143,10 @@ export function mayMoveQueue(
 ): boolean {
   if (!role) return false;
   const r = role as Role;
+  // "queue" is the server's rule for queue changes (it includes the
+  // pharmacist); within it, a role moves tickets at every stage with
+  // "register", or at its own clinical stage.
+  if (!can(r, "queue")) return false;
   return can(r, "register") || can(r, STAGE_PERMISSION[stage]);
 }
 

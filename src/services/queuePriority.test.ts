@@ -9,6 +9,7 @@ import {
   normalisePriority,
   normaliseReason,
   orderAfterInsert,
+  promotionPosition,
 } from "./queuePriority";
 
 describe("normalisePriority", () => {
@@ -100,6 +101,48 @@ describe("orderAfterInsert", () => {
       { id: "b", position: 2 },
     ];
     expect(orderAfterInsert(waiting, "b", 1)).toEqual(["b", "a"]);
+  });
+});
+
+describe("promotionPosition (Move to front / long-wait escalation)", () => {
+  const line = (...ps: Array<[string, string | undefined]>) =>
+    ps.map(([id, priority], i) => ({ id, position: i + 1, priority }));
+
+  it("never moves a normal ticket ahead of waiting urgent tickets", () => {
+    const waiting = line(["u1", "urgent"], ["u2", "urgent"], ["n1", "normal"], ["n2", "normal"]);
+    // n2 goes right behind the last urgent ticket, ahead of n1.
+    expect(promotionPosition(waiting, "n2")).toBe(3);
+  });
+
+  it("moves an urgent ticket to the very front", () => {
+    const waiting = line(["n1", "normal"], ["u1", "urgent"], ["u2", "urgent"]);
+    expect(promotionPosition(waiting, "u2")).toBe(1);
+  });
+
+  it("lets a normal ticket pass normal and low tickets when nobody urgent waits", () => {
+    const waiting = line(["n1", "normal"], ["l1", "low"], ["n2", undefined]);
+    expect(promotionPosition(waiting, "n2")).toBe(1);
+  });
+
+  it("keeps a low ticket behind normal ones", () => {
+    const waiting = line(["n1", "normal"], ["l1", "low"], ["l2", "low"]);
+    expect(promotionPosition(waiting, "l2")).toBe(2);
+    // Already right behind the last normal ticket: nothing to do.
+    const mixed = line(["n1", "normal"], ["l1", "low"], ["n2", "normal"], ["l2", "low"]);
+    expect(promotionPosition(mixed, "l2")).toBeNull();
+  });
+
+  it("returns null when the ticket is already as far forward as it may go", () => {
+    expect(promotionPosition(line(["u1", "urgent"], ["n1", "normal"]), "n1")).toBeNull();
+    expect(promotionPosition(line(["n1", "normal"]), "n1")).toBeNull();
+    expect(promotionPosition(line(["n1", "normal"]), "missing")).toBeNull();
+  });
+
+  it("stops behind an urgent ticket even when an older order put a normal one ahead of it", () => {
+    // Line saved by an older app version: n1 ahead of an urgent ticket.
+    const waiting = line(["n1", "normal"], ["u1", "urgent"], ["n2", "normal"], ["n3", "normal"]);
+    expect(promotionPosition(waiting, "n3")).toBe(3);
+    expect(promotionPosition(waiting, "n2")).toBeNull();
   });
 });
 

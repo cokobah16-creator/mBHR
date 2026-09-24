@@ -13,6 +13,8 @@ const {
   mockTransitionsAdd,
   mockTransaction,
   authState,
+  syncState,
+  leaseState,
 } = vi.hoisted(() => ({
   mockQueueAdd: vi.fn(),
   mockQueueUpdate: vi.fn().mockResolvedValue(undefined),
@@ -33,6 +35,12 @@ const {
       role: "nurse",
     } as { id: string; fullName: string; role: string } | null,
   },
+  // Cloud sync on/off for ticket numbering.
+  syncState: { enabled: false },
+  // This device's leased number blocks (db.ticketLeases).
+  leaseState: {
+    leases: [] as Array<Record<string, unknown> & { id: string }>,
+  },
 }));
 
 vi.mock("@/db", () => ({
@@ -44,6 +52,20 @@ vi.mock("@/db", () => ({
       where: mockQueueWhere,
     },
     queueTransitions: { add: mockTransitionsAdd },
+    ticketLeases: {
+      where: () => ({
+        equals: (day: string) => ({
+          toArray: async () =>
+            leaseState.leases.filter((l) => l.serviceDate === day).map((l) => ({ ...l })),
+        }),
+      }),
+      put: async (lease: Record<string, unknown> & { id: string }) => {
+        leaseState.leases = [
+          ...leaseState.leases.filter((l) => l.id !== lease.id),
+          { ...lease },
+        ];
+      },
+    },
     patients: { get: mockPatientsGet },
     visits: { where: vi.fn(), update: vi.fn() },
     settings: {
@@ -61,6 +83,16 @@ vi.mock("@/stores/auth", () => ({
 }));
 
 vi.mock("@/lib/supabase", () => ({ supabase: null }));
+
+vi.mock("@/lib/supabaseClient", () => ({
+  supabase: null,
+  get isSupabaseEnabled() {
+    return syncState.enabled;
+  },
+}));
+
+// The sync participant registers itself on import; not under test here.
+vi.mock("@/sync/queueSync", () => ({}));
 
 vi.mock("@/lib/logger", () => ({
   default: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -113,6 +145,8 @@ describe("QueueManagement", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authState.currentUser = { id: "u-nurse", fullName: "Staff Nurse", role: "nurse" };
+    syncState.enabled = false;
+    leaseState.leases = [];
     qm = new QueueManagement();
     mockQueueAdd.mockResolvedValue(undefined);
     mockQueueUpdate.mockResolvedValue(undefined);
@@ -277,9 +311,14 @@ describe("QueueManagement", () => {
   // ── skipQueue ─────────────────────────────────────────────────────────────────
 
   describe("skipQueue", () => {
-    it("moves patient to position 1", async () => {
+    it("moves patient to position 1 when nobody urgent is waiting", async () => {
+      const item = { id: "q1", stage: "vitals", position: 2, status: "waiting" };
       mockQueueWhere.mockReturnValue(
-        makeQueueChain({ id: "q1", stage: "vitals" }, [], []),
+        makeQueueChain(
+          item,
+          [{ id: "q0", stage: "vitals", position: 1, status: "waiting", priority: "normal" }, item],
+          [],
+        ),
       );
 
       await qm.skipQueue("p1");
@@ -288,6 +327,52 @@ describe("QueueManagement", () => {
         "q1",
         expect.objectContaining({ position: 1, _dirty: 1 }),
       );
+      expect(mockQueueUpdate).toHaveBeenCalledWith(
+        "q0",
+        expect.objectContaining({ position: 2 }),
+      );
+    });
+
+    it("never moves a normal ticket ahead of waiting urgent tickets", async () => {
+      const item = { id: "n2", stage: "vitals", position: 3, status: "waiting", priority: "normal" };
+      mockQueueWhere.mockReturnValue(
+        makeQueueChain(
+          item,
+          [
+            { id: "u1", stage: "vitals", position: 1, status: "waiting", priority: "urgent" },
+            { id: "n1", stage: "vitals", position: 2, status: "waiting", priority: "normal" },
+            item,
+          ],
+          [],
+        ),
+      );
+
+      await qm.skipQueue("p1", "Manual priority");
+
+      expect(mockQueueUpdate).toHaveBeenCalledWith(
+        "n2",
+        expect.objectContaining({ position: 2 }),
+      );
+      expect(mockQueueUpdate).toHaveBeenCalledWith(
+        "n1",
+        expect.objectContaining({ position: 3 }),
+      );
+      expect(mockQueueUpdate).not.toHaveBeenCalledWith("u1", expect.anything());
+    });
+
+    it("refuses when the ticket is already as far forward as its priority allows", async () => {
+      const item = { id: "n1", stage: "vitals", position: 2, status: "waiting", priority: "normal" };
+      mockQueueWhere.mockReturnValue(
+        makeQueueChain(
+          item,
+          [{ id: "u1", stage: "vitals", position: 1, status: "waiting", priority: "urgent" }, item],
+          [],
+        ),
+      );
+
+      await expect(qm.skipQueue("p1")).rejects.toBeInstanceOf(QueueValidationError);
+      expect(mockQueueUpdate).not.toHaveBeenCalled();
+      expect(mockTransitionsAdd).not.toHaveBeenCalled();
     });
 
     it("throws when patient not in waiting queue", async () => {
@@ -443,8 +528,11 @@ describe("QueueManagement", () => {
       });
       mockQueueWhere.mockReturnValue(
         makeQueueChain(
-          { id: "q1", stage: "vitals", patientId: "p1", status: "waiting" },
-          [],
+          { id: "q1", stage: "vitals", patientId: "p1", status: "waiting", position: 2 },
+          [
+            { id: "q0", stage: "vitals", status: "waiting", position: 1 },
+            { id: "q1", stage: "vitals", patientId: "p1", status: "waiting", position: 2 },
+          ],
           [],
         ),
       );
@@ -503,7 +591,15 @@ describe("QueueManagement", () => {
         position: 3,
         updatedAt: old,
       };
-      mockQueueWhere.mockReturnValue(makeQueueChain(stale, [stale], []));
+      const ahead = {
+        id: "q0",
+        patientId: "p0",
+        stage: "vitals",
+        status: "waiting",
+        position: 1,
+        updatedAt: new Date(),
+      };
+      mockQueueWhere.mockReturnValue(makeQueueChain(stale, [ahead, stale], []));
 
       await qm.checkStaleQueues();
 
@@ -515,6 +611,158 @@ describe("QueueManagement", () => {
       expect(mockQueueUpdate).toHaveBeenCalledWith(
         "q1",
         expect.objectContaining({ position: 1 }),
+      );
+    });
+  });
+
+  // ── long-wait escalation stays within priority ──────────────────────────────
+
+  describe("checkStaleQueues", () => {
+    it("never puts a long-waiting normal ticket ahead of waiting urgent ones", async () => {
+      const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const urgent = {
+        id: "u1",
+        patientId: "p-urgent",
+        stage: "vitals",
+        status: "waiting",
+        position: 1,
+        priority: "urgent",
+        updatedAt: new Date(),
+      };
+      const stale = {
+        id: "n1",
+        patientId: "p1",
+        stage: "vitals",
+        status: "waiting",
+        position: 2,
+        priority: "normal",
+        updatedAt: old,
+      };
+      mockQueueWhere.mockReturnValue(makeQueueChain(stale, [urgent, stale], []));
+
+      await qm.checkStaleQueues();
+
+      // Already right behind the urgent ticket: nothing is written.
+      expect(mockQueueUpdate).not.toHaveBeenCalled();
+      expect(mockTransitionsAdd).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── ticket numbers ───────────────────────────────────────────────────────────
+
+  describe("ticket numbers", () => {
+    it("stamps a new ticket with its site and Lagos service day", async () => {
+      mockPatientsGet.mockResolvedValue(PATIENT);
+      mockQueueWhere.mockReturnValue(makeQueueChain(undefined, [], []));
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // 00:30 in Lagos on the 24th is still the 23rd in UTC.
+      vi.setSystemTime(new Date("2026-09-23T23:30:00Z"));
+      try {
+        const item = (await qm.addToQueue("p1", "registration"));
+        expect(item.serviceDate).toBe("2026-09-24");
+        expect(item.siteKey).toBe("mobile-clinic");
+        expect(item.ticketNumber).toBe("Q-001");
+        expect(mockSettingsPut).toHaveBeenCalledWith({
+          key: "queue:ticketSeq:2026-09-24",
+          value: "1",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps the patient's ticket when they move to the next stage", async () => {
+      mockPatientsGet.mockResolvedValue(PATIENT);
+      const current = {
+        id: "q1",
+        stage: "vitals",
+        patientId: "p1",
+        status: "in_progress",
+        ticketId: "t-1",
+        ticketNumber: "Q-014",
+        ticketProvisional: 0,
+        ticketPending: 0,
+        siteKey: "mobile-clinic",
+        serviceDate: "2026-09-23",
+        queuedAt: new Date(),
+        updatedAt: new Date(),
+      };
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-09-23T10:00:00Z"));
+      let callIndex = 0;
+      mockQueueWhere.mockImplementation(() => {
+        callIndex++;
+        if (callIndex === 1) return makeQueueChain(current, [], []);
+        // The patient's rows for the day (ticket lookup).
+        if (callIndex === 4) return makeQueueChain(undefined, [current], []);
+        return makeQueueChain(undefined, [], []);
+      });
+      try {
+        await qm.moveToNextStage("p1");
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const added = mockQueueAdd.mock.calls[0]?.[0];
+      expect(added).toMatchObject({
+        stage: "consult",
+        ticketId: "t-1",
+        ticketNumber: "Q-014",
+      });
+      expect(transitionRows()[0]).toMatchObject({ kind: "send_on" });
+    });
+
+    it("uses this device's leased block, then a temporary number when it runs out", async () => {
+      syncState.enabled = true;
+      mockPatientsGet.mockResolvedValue(PATIENT);
+      mockQueueWhere.mockReturnValue(makeQueueChain(undefined, [], []));
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-09-23T10:00:00Z"));
+      try {
+        // Device id comes from settings (mocked empty): "dev_" + generated id.
+        const { getDeviceId } = await import("./queueAudit");
+        const deviceId = await getDeviceId();
+        leaseState.leases = [
+          {
+            id: "lease-1",
+            siteKey: "mobile-clinic",
+            serviceDate: "2026-09-23",
+            deviceId,
+            startSeq: 21,
+            endSeq: 21,
+            nextSeq: 21,
+            createdAt: 0,
+          },
+        ];
+
+        const first = (await qm.addToQueue("p1", "registration"));
+        expect(first).toMatchObject({
+          ticketNumber: "Q-021",
+          ticketProvisional: 0,
+          ticketPending: 1,
+        });
+        expect(leaseState.leases[0].nextSeq).toBe(22);
+
+        const second = (await qm.addToQueue("p2", "registration"));
+        expect(second.ticketNumber).toMatch(/^[A-HJ-NPR-Z2-9]{2}-001$/);
+        expect(second).toMatchObject({ ticketProvisional: 1, ticketPending: 1 });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── status changes wait for the server's transition log ─────────────────────
+
+  describe("transition holds", () => {
+    it("marks a called ticket as waiting for its transition to reach the server", async () => {
+      mockQueueGet.mockResolvedValue({ id: "q1", stage: "vitals", status: "waiting" });
+
+      await qm.startService("q1");
+
+      expect(mockQueueUpdate).toHaveBeenCalledWith(
+        "q1",
+        expect.objectContaining({ status: "in_progress", transitionPending: 1 }),
       );
     });
   });

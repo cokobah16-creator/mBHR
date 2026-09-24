@@ -1,20 +1,28 @@
-// Pure helpers for the staff ticket screens (QueueBoard, TicketIssuer).
+// Pure helpers for the staff ticket screens (QueueBoard, TicketIssuer,
+// the Queue page).
 import { can, type Role } from "@/auth/roles";
 import {
   FLOW_STAGES,
   FLOW_STAGE_LABELS,
   type FlowStage,
 } from "@/services/patientFlow";
+import {
+  normalisePriority,
+  promotionPosition,
+} from "@/services/queuePriority";
+import { ticketSyncState, type QueueRow } from "@/services/queueTickets";
 
 /**
- * roles.ts has no dedicated queue permission. Issuing, calling and finishing
- * tickets is front-desk logistics, so it is gated by the same permission as
- * registering patients (volunteer, nurse, doctor, lead clinician, admin).
+ * Issuing, calling and finishing tickets at every stage is front-desk
+ * logistics: the same people who register patients (volunteer, nurse,
+ * doctor, lead clinician, admin). They all also hold the "queue"
+ * permission the server checks. (A pharmacist holds "queue" too, but only
+ * moves tickets at pharmacy; see mayMoveQueue in services/queuePriority.)
  */
 export const QUEUE_PERMISSION = "register" as const;
 
 export function canManageQueue(role: Role | null | undefined): boolean {
-  return !!role && can(role, QUEUE_PERMISSION);
+  return !!role && can(role, QUEUE_PERMISSION) && can(role, "queue");
 }
 
 export function isFlowStage(value: string): value is FlowStage {
@@ -159,4 +167,77 @@ export function savedNote(syncEnabled: boolean): string {
   return syncEnabled
     ? "Saved on this device. Waiting to sync."
     : "Saved on this device.";
+}
+
+/** A badge describing a ticket number's state with the server, or null. */
+export interface TicketStateBadge {
+  tone: "info" | "warning";
+  label: string;
+  /** One sentence for staff: what it means and what to do. */
+  hint: string;
+}
+
+/**
+ * Staff-facing state of a ticket number. Nothing is shown for a confirmed
+ * number or on a device without cloud sync (numbers are per device there,
+ * and the screens already say so).
+ */
+export function ticketStateBadge(
+  row: Pick<QueueRow, "ticketPending" | "ticketProvisional" | "ticketRelabelledFrom" | "ticketNumber">,
+  syncEnabled: boolean,
+): TicketStateBadge | null {
+  switch (ticketSyncState(row, syncEnabled)) {
+    case "provisional":
+      return {
+        tone: "warning",
+        label: "Temporary number",
+        hint: "Issued without internet from this device's own series. It is kept when this device syncs, unless the patient already had a ticket today.",
+      };
+    case "pending":
+      return {
+        tone: "info",
+        label: "Not confirmed yet",
+        hint: "Reserved for this device. It is confirmed with the other devices when this device syncs.",
+      };
+    case "changed":
+      return {
+        tone: "warning",
+        label: `Changed from ${row.ticketRelabelledFrom}`,
+        hint: "The server gave this patient a different number. Tell the patient their new number.",
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether "Move to front" can move this waiting ticket (it only moves a
+ * ticket ahead of tickets of the same or lower priority).
+ */
+export function canMoveForward(
+  waiting: { id: string; position: number; priority?: string | null }[],
+  id: string,
+): boolean {
+  return promotionPosition(waiting, id) !== null;
+}
+
+/** Button text for moving a waiting ticket forward. */
+export function moveForwardLabel(priority: string | null | undefined): string {
+  return normalisePriority(priority) === "urgent" ? "Move to front" : "Move up";
+}
+
+/** Accessible description of what moving forward does for this priority. */
+export function moveForwardDescription(
+  name: string,
+  priority: string | null | undefined,
+): string {
+  // Starts with the visible button text, so voice-control users can say
+  // what they see (WCAG 2.5.3, label in name).
+  const p = normalisePriority(priority);
+  const label = moveForwardLabel(p);
+  if (p === "urgent") return `${label}: ${name}, to the front of the queue`;
+  if (p === "low") {
+    return `${label}: ${name}, ahead of other low-priority tickets. Urgent and normal tickets stay ahead.`;
+  }
+  return `${label}: ${name}, ahead of other normal and low-priority tickets. Urgent tickets stay ahead.`;
 }
