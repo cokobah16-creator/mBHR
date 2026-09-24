@@ -68,17 +68,15 @@ function refusalError(reason: SignInRefusal): LoginError {
       };
 }
 
-const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
+// Spelled out rather than Intl: "en-GB" gives "Sept" in newer ICU data.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** "23 Sep 2026", or null when the person has never signed in online here. */
 function lastVerifiedLabel(value: Date | string | undefined): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : DATE_FORMAT.format(date);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
 const firstName = (fullName: string) => fullName.trim().split(/\s+/)[0] || fullName;
