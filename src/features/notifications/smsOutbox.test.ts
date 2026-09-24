@@ -541,7 +541,7 @@ describe("reminders not sent because the patient opted out", () => {
       "outbox",
     );
     expect(explainState(item, ctx())).toBe(
-      `Cancelled before sending. ${REMINDER_SKIP_MESSAGE.opted_out}`,
+      "Cancelled before sending. When mBHR went to send it, the patient had turned off this type of SMS reminder.",
     );
     const byStaff = fromDeviceMessage(deviceMsg({ status: "cancelled" }), "outbox");
     expect(explainState(byStaff, ctx())).toBe("Cancelled. It will not be sent.");
@@ -549,7 +549,7 @@ describe("reminders not sent because the patient opted out", () => {
 
   it("says why a server reminder is marked failed", () => {
     expect(describeFailure(REMINDER_SKIP_MESSAGE.opted_out)).toBe(
-      `${REMINDER_SKIP_MESSAGE.opted_out} It was not sent.`,
+      "When mBHR went to send it, the patient had turned off this type of SMS reminder, so it was not sent.",
     );
     const item = fromServerReminder({
       id: "r1",
@@ -562,7 +562,16 @@ describe("reminders not sent because the patient opted out", () => {
       status: "failed",
       errorMessage: REMINDER_SKIP_MESSAGE.opted_out,
     });
-    expect(explainState(item, ctx())).toMatch(/turned off this type of SMS reminder/);
+    expect(explainState(item, ctx())).toMatch(/patient had turned off this type of SMS reminder/);
+  });
+
+  it("describes the opt-out in the past tense, since the patient may turn reminders back on", () => {
+    const cancelled = fromDeviceMessage(
+      deviceMsg({ status: "cancelled", errorMessage: REMINDER_SKIP_MESSAGE.opted_out }),
+      "outbox",
+    );
+    expect(explainState(cancelled, ctx())).not.toMatch(/has turned off/);
+    expect(describeFailure(REMINDER_SKIP_MESSAGE.opted_out)).not.toMatch(/has turned off/);
   });
 
   it("says when the reminder settings could not be read", () => {

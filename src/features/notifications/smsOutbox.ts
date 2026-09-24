@@ -147,6 +147,15 @@ export function isOptOutSkip(error: string | undefined): boolean {
 }
 
 /**
+ * Why an opt-out skip was not sent, in the past tense. Staff see it on the
+ * record for as long as it is kept, and the patient may turn reminders back
+ * on later, so it says what was true when the send was tried. The stored
+ * error keeps REMINDER_SKIP_MESSAGE.opted_out, which isOptOutSkip matches.
+ */
+const OPT_OUT_SKIP_REASON =
+  "When mBHR went to send it, the patient had turned off this type of SMS reminder";
+
+/**
  * Stored in error_message when staff record that a server reminder reached
  * the patient another way (the table has no other column for it).
  */
@@ -561,7 +570,7 @@ export function describeFailure(error: string | undefined): string {
     const reason = (error || "").slice(STAFF_FAILURE_PREFIX.length).trim();
     return reason ? `Marked as failed by staff: ${reason}` : "Marked as failed by staff.";
   }
-  if (isOptOutSkip(error)) return `${REMINDER_SKIP_MESSAGE.opted_out} It was not sent.`;
+  if (isOptOutSkip(error)) return `${OPT_OUT_SKIP_REASON}, so it was not sent.`;
   if (/preference_check_failed/.test(e))
     return "The patient's reminder settings could not be read on this device, so it was not sent. Try again.";
   if (/demo/.test(e))
@@ -600,7 +609,7 @@ export function explainState(item: OutboxItem, ctx: SendingContext): string {
 
   if (item.state === "cancelled") {
     return isOptOutSkip(item.errorMessage)
-      ? `Cancelled before sending. ${REMINDER_SKIP_MESSAGE.opted_out}`
+      ? `Cancelled before sending. ${OPT_OUT_SKIP_REASON}.`
       : "Cancelled. It will not be sent.";
   }
 
