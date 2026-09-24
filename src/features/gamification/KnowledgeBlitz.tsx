@@ -41,7 +41,9 @@ interface QuizQuestion {
   explanation: string;
 }
 
-// Practice questions (in production, these would come from the database).
+// Training questions only (not clinical guidance for patient care). Any
+// change to medication storage, dosing, triage or vital-sign content must be
+// reviewed by a qualified clinician (see docs/clinical/CLINICAL_LOGIC_CHANGES.md).
 const QUESTION_BANK: QuizQuestion[] = [
   {
     id: "1",
@@ -56,26 +58,28 @@ const QUESTION_BANK: QuizQuestion[] = [
     id: "2",
     topic: "medication",
     difficulty: "medium",
-    stem: "Which medication should be stored in a cool, dry place?",
+    // Reviewed for storage accuracy: unopened insulin is refrigerated, not
+    // kept in a generic "cool, dry place". Follow the product label.
+    stem: "How should unopened insulin vials and pens be stored?",
     choices: [
-      "Paracetamol tablets",
-      "Insulin vials",
-      "Cough syrup",
-      "All of the above",
+      "In a refrigerator at 2–8 °C, never frozen",
+      "In the freezer, so it keeps for longer",
+      "On a shelf at room temperature until the expiry date",
+      "In a sunny window so it stays warm before injection",
     ],
-    answerIndex: 3,
+    answerIndex: 0,
     explanation:
-      "All medications should be stored properly to maintain efficacy.",
+      "Unopened insulin is kept in a refrigerator at 2–8 °C and must never be frozen; do not use insulin that has frozen. A vial or pen in use may be kept at room temperature (below about 30 °C), away from heat and sunlight, for the limited number of days stated on the product label. Always follow the label for the specific product.",
   },
   {
     id: "3",
     topic: "infection_control",
     difficulty: "easy",
-    stem: "How long should you wash your hands with soap?",
+    stem: "When washing hands with soap and water, what is the minimum time to scrub before rinsing?",
     choices: ["5 seconds", "10 seconds", "20 seconds", "30 seconds"],
     answerIndex: 2,
     explanation:
-      "Proper handwashing requires at least 20 seconds with soap and water.",
+      "Scrub all surfaces of the hands for at least 20 seconds before rinsing. The whole handwash, from wetting to drying, takes about 40–60 seconds.",
   },
   {
     id: "4",

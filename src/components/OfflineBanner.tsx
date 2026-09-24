@@ -8,6 +8,7 @@ import {
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
 import { countUnsyncedRecords, isOnlineSyncEnabled } from "@/sync/adapter";
+import { useCloudSession } from "@/lib/cloudSession";
 
 function changes(n: number): string {
   return `${n} change${n === 1 ? "" : "s"}`;
@@ -27,6 +28,9 @@ export function OfflineBanner() {
   const isOnline = useSyncStore((s) => s.isOnline);
   const status = useSyncStore((s) => s.status);
   const syncEnabled = isOnlineSyncEnabled();
+  // After logout or a PIN unlock there is no online sign-in, and nothing
+  // uploads when the connection returns: do not promise that it will.
+  const noSession = useCloudSession() === "signed_out";
   const [dismissedOffline, setDismissedOffline] = useState(false);
   const [dismissedError, setDismissedError] = useState(false);
 
@@ -70,14 +74,21 @@ export function OfflineBanner() {
       title: "You're offline.",
       detail: !syncEnabled
         ? "Records are saved on this device."
-        : pending > 0
-          ? `${changes(pending)} saved on this device, waiting to sync. Sync starts again when the connection returns.`
-          : "New records are saved on this device. Sync starts again when the connection returns.",
+        : noSession
+          ? pending > 0
+            ? `${changes(pending)} saved on this device. Sign in online to sync them.`
+            : "New records are saved on this device. Sign in online to sync them."
+          : pending > 0
+            ? `${changes(pending)} saved on this device, waiting to sync. Sync starts again when the connection returns.`
+            : "New records are saved on this device. Sync starts again when the connection returns.",
       onDismiss: () => setDismissedOffline(true),
     };
   } else if (
     isOnline &&
     syncEnabled &&
+    // Without an online sign-in the header explains why sync cannot run;
+    // "choose Sync now" would not help here.
+    !noSession &&
     status === "error" &&
     !dismissedError
   ) {

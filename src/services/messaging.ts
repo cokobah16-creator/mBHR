@@ -1,4 +1,4 @@
-import { outboxDb, MessageQueue, OutboundMessage } from "@/db/outbox";
+import { MessageQueue, OutboundMessage } from "@/db/outbox";
 import { db } from "@/db";
 import { getPatientPreference } from "./preferences";
 import { ReminderSkippedError, reminderSkipReason } from "./reminderEligibility";
@@ -20,68 +20,16 @@ export interface SMSGateway {
   ): Promise<{ success: boolean; messageId?: string; error?: string }>;
 }
 
-// Termii SMS Gateway (popular in Nigeria).
-// SECURITY: this sends the Termii API key from the browser, so anyone using
-// the app can read it. The server function send-sms-reminder (used by
-// services/notificationWorker) keeps the key in server secrets instead.
-export class TermiiGateway implements SMSGateway {
-  constructor(
-    private apiKey: string,
-    private senderId: string = "MBHR",
-  ) {}
+// There is deliberately no browser gateway that talks to an SMS provider.
+// Provider keys (TERMII_API_KEY, TERMII_SENDER_ID) live only in Supabase
+// function secrets. SMS is sent by the send-sms-reminder server function,
+// which checks that the caller is signed-in staff allowed to send SMS; the
+// notification worker (services/notificationWorker) calls it for queued
+// messages.
 
-  async send(
-    message: OutboundMessage,
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    try {
-      // Get template and render message
-      const template = await outboxDb.messageTemplates
-        .where("[key+locale]")
-        .equals([message.templateKey, message.locale])
-        .first();
-
-      if (!template) {
-        return { success: false, error: "Template not found" };
-      }
-
-      const renderedMessage = MessageQueue.renderTemplate(
-        template.body,
-        message.payload,
-      );
-
-      const response = await fetch("https://api.ng.termii.com/api/sms/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          to: message.to,
-          from: this.senderId,
-          sms: renderedMessage,
-          type: "plain",
-          api_key: this.apiKey,
-          channel: "generic",
-        }),
-      });
-
-      const result = await response.json();
-
-      if (response.ok && result.message_id) {
-        return { success: true, messageId: result.message_id };
-      } else {
-        return { success: false, error: result.message || "SMS send failed" };
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Network error",
-      };
-    }
-  }
-}
-
-// Stand-in used when no SMS provider is set up. It never sends anything, so
-// it never reports success: a message it is given stays unsent.
+// The browser's gateway. It never sends anything, so it never reports
+// success: a message it is given stays unsent, and MessageService leaves
+// queued messages for the notification worker to send through the server.
 export class MockGateway implements SMSGateway {
   readonly configured = false;
 
@@ -241,27 +189,20 @@ export class MessageService {
 // Default service instance
 let messageService: MessageService | null = null;
 
-export function selectGateway(
-  termiiKey?: string,
-  termiiSender?: string,
-): SMSGateway {
-  if (termiiKey) {
-    return new TermiiGateway(termiiKey, termiiSender);
-  }
-  logger.warn(
-    "[MessageService] VITE_TERMII_API_KEY not set — this service will not send SMS itself. Queued reminders stay queued for the notification worker, which sends them through the send-sms-reminder server function when it is set up.",
+/**
+ * Gateway used by the app's MessageService. Always the non-sending
+ * MockGateway: the browser never holds SMS provider keys.
+ */
+export function selectGateway(): SMSGateway {
+  logger.info(
+    "[MessageService] SMS is sent by the send-sms-reminder server function; reminders queued here wait for the notification worker.",
   );
   return new MockGateway();
 }
 
 export function getMessageService(): MessageService {
   if (!messageService) {
-    messageService = new MessageService(
-      selectGateway(
-        import.meta.env.VITE_TERMII_API_KEY as string | undefined,
-        import.meta.env.VITE_TERMII_SENDER_ID as string | undefined,
-      ),
-    );
+    messageService = new MessageService(selectGateway());
   }
   return messageService;
 }

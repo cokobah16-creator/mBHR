@@ -22,8 +22,13 @@ import {
  *
  * Honesty rules: a message is only marked "sent" when the provider accepted
  * it, never "delivered" (that needs a delivery receipt). When the server is
- * not configured or the device is offline nothing is attempted, so queued
- * messages stay queued on this device.
+ * not configured, the device is offline or nobody is signed in online,
+ * nothing is attempted, so queued messages stay queued on this device.
+ *
+ * Security: this device never holds SMS provider keys and never chooses the
+ * phone number. It sends the signed-in staff member's access token plus a
+ * reminder id or patient id; the server checks the staff role, looks up the
+ * number and applies rate limits.
  */
 
 interface SMSResult {
@@ -32,6 +37,26 @@ interface SMSResult {
   provider?: string;
   error?: string;
   demo?: boolean;
+  /**
+   * The server did not try to send it (signed out, role not allowed, or a
+   * send limit was hit). The message keeps its attempts and stays queued.
+   */
+  hold?: SendHold;
+}
+
+interface SendHold {
+  /** Stop this run: every further send would be refused the same way. */
+  stopRun: boolean;
+  /** Earliest time to try again, from the server's Retry-After. */
+  retryAfterMs?: number;
+}
+
+/** Who the server should send to. The server looks up the number. */
+interface SendTarget {
+  /** A medication_reminders row on the server. */
+  reminderId?: string;
+  /** A patient on the server; their registered phone number is used. */
+  patientId?: string;
 }
 
 export interface ProcessResult {
@@ -53,7 +78,14 @@ const BATCH_SIZE = 10;
 export const SMS_DEMO_MODE_ERROR =
   "sms_demo_mode: the server logged this message but did not send it";
 const NOT_CONFIGURED_ERROR = "sms_not_configured";
+/** Stored when nobody is signed in online on this device. */
+export const SMS_NOT_SIGNED_IN_ERROR =
+  "not_authenticated: sign in online with a staff account to send SMS";
 const TEMPLATE_ERROR = "message text could not be prepared";
+/** Wait after the server could not check the account or send limit. */
+const SERVER_BUSY_RETRY_MS = 60_000;
+/** Wait for a sync when the patient is not on the server yet. */
+const NOT_SYNCED_RETRY_MS = 5 * 60_000;
 
 let isProcessing = false;
 let processingInterval: ReturnType<typeof setInterval> | null = null;
@@ -81,10 +113,36 @@ export function getSmsSendingBlocker(): SendingBlocker | null {
   return null;
 }
 
+/**
+ * Access token of the staff member signed in online, or null. A PIN unlock
+ * of an offline workspace has no online session, so it cannot send SMS.
+ */
+async function staffAccessToken(): Promise<string | null> {
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token ?? null;
+  } catch (error) {
+    console.warn("Could not read the online session:", errorName(error));
+    return null;
+  }
+}
+
+function retryAfterMs(response: Response, body: { retry_after_seconds?: unknown }): number {
+  const fromBody = Number(body?.retry_after_seconds);
+  const fromHeader = Number(response.headers?.get?.("Retry-After"));
+  const seconds =
+    Number.isFinite(fromBody) && fromBody > 0
+      ? fromBody
+      : Number.isFinite(fromHeader) && fromHeader > 0
+        ? fromHeader
+        : 60;
+  return seconds * 1000;
+}
+
 async function sendSMS(
-  to: string,
+  target: SendTarget,
   message: string,
-  reminderId?: string,
 ): Promise<SMSResult> {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -94,31 +152,87 @@ async function sendSMS(
     return { success: false, error: NOT_CONFIGURED_ERROR };
   }
 
+  const token = await staffAccessToken();
+  if (!token) {
+    return {
+      success: false,
+      error: SMS_NOT_SIGNED_IN_ERROR,
+      hold: { stopRun: true },
+    };
+  }
+
   try {
     const response = await fetch(
       `${supabaseUrl}/functions/v1/send-sms-reminder`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${supabaseKey}`,
+          Authorization: `Bearer ${token}`,
+          apikey: supabaseKey,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ to, message, reminderId }),
+        // No phone number: the server uses the one on the reminder or the
+        // patient record.
+        body: JSON.stringify({
+          message,
+          reminderId: target.reminderId,
+          patientId: target.patientId,
+        }),
       },
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      // The body can echo the phone number; log the status only.
+      // Log the status only; bodies never carry the number, but keep logs lean.
       console.error("SMS API error: HTTP", response.status);
-      let error = errorText;
+      let parsed: { error?: string; message?: string; scope?: string; retry_after_seconds?: unknown } = {};
       try {
-        const parsed = JSON.parse(errorText) as { error?: string };
-        if (parsed?.error) error = parsed.error;
+        parsed = JSON.parse(errorText) ?? {};
       } catch {
         // plain-text body
       }
-      if (response.status === 429) error = `rate limited (429): ${error}`;
+      const code = parsed.error || `HTTP ${response.status}`;
+      const error = parsed.message ? `${code}: ${parsed.message}` : parsed.error || errorText.slice(0, 200) || code;
+
+      if (response.status === 401 || response.status === 403) {
+        return { success: false, error, hold: { stopRun: true } };
+      }
+      // The server refused before trying the provider because it could not
+      // check the account, the record or the send limit: nothing was sent,
+      // so keep the attempts and try again shortly.
+      if (
+        response.status === 503 &&
+        (parsed.error === "rate_limit_unavailable" ||
+          parsed.error === "staff_lookup_failed" ||
+          parsed.error === "lookup_failed")
+      ) {
+        return {
+          success: false,
+          error,
+          hold: { stopRun: true, retryAfterMs: SERVER_BUSY_RETRY_MS },
+        };
+      }
+      // Patient not on the server yet (device not synced): not attempted.
+      // Wait for a sync instead of using up retries.
+      if (response.status === 404 && parsed.error === "patient_not_found") {
+        return {
+          success: false,
+          error,
+          hold: { stopRun: false, retryAfterMs: NOT_SYNCED_RETRY_MS },
+        };
+      }
+      if (response.status === 429) {
+        return {
+          success: false,
+          error: `rate limited (429): ${error}`,
+          hold: {
+            // A per-user limit applies to every message; a per-recipient
+            // limit only to this patient.
+            stopRun: parsed.scope !== "recipient",
+            retryAfterMs: retryAfterMs(response, parsed),
+          },
+        };
+      }
       return { success: false, error };
     }
 
@@ -136,13 +250,20 @@ interface SendOutcome {
   ok: boolean;
   error?: string;
   messageId?: string;
+  /** Not attempted by the server; keep the message queued as it was. */
+  hold?: SendHold;
 }
 
 /** Only a real (non-demo) acceptance counts as sent. */
 function outcome(result: SMSResult): SendOutcome {
   if (result.success && !result.demo) return { ok: true, messageId: result.messageId };
   if (result.success && result.demo) return { ok: false, error: SMS_DEMO_MODE_ERROR };
-  return { ok: false, error: result.error || "Send failed" };
+  return { ok: false, error: result.error || "Send failed", hold: result.hold };
+}
+
+/** When a held message may be tried again (ISO), or undefined for "now". */
+function heldUntil(hold: SendHold): Date | undefined {
+  return hold.retryAfterMs ? new Date(Date.now() + hold.retryAfterMs) : undefined;
 }
 
 /**
@@ -162,9 +283,18 @@ function acceptedPayload(
   return next;
 }
 
-async function processOutboundMessage(msg: OutboundMessage): Promise<boolean> {
+/** Result of one device message: sent, and whether to stop this run. */
+interface MessageRun {
+  sent: boolean;
+  stopRun?: boolean;
+}
+
+async function processOutboundMessage(msg: OutboundMessage): Promise<MessageRun> {
   const result = outcome(
-    await sendSMS(msg.to, (msg.payload.message as string) || "", msg.id),
+    await sendSMS(
+      { patientId: msg.patientId },
+      (msg.payload.message as string) || "",
+    ),
   );
 
   if (result.ok) {
@@ -182,7 +312,19 @@ async function processOutboundMessage(msg: OutboundMessage): Promise<boolean> {
       );
     }
 
-    return true;
+    return { sent: true };
+  }
+
+  if (result.hold) {
+    // The server did not try to send it: back to the queue, attempts kept.
+    await db.outboundMessages.update(msg.id, {
+      status: "queued",
+      lastAttemptAt: new Date(),
+      errorMessage: result.error,
+      scheduledFor: heldUntil(result.hold) ?? msg.scheduledFor,
+      _dirty: 1,
+    });
+    return { sent: false, stopRun: result.hold.stopRun };
   }
 
   const newAttempts = msg.attempts + 1;
@@ -210,7 +352,7 @@ async function processOutboundMessage(msg: OutboundMessage): Promise<boolean> {
     );
   }
 
-  return false;
+  return { sent: false };
 }
 
 async function processMedicationReminders(): Promise<{
@@ -230,9 +372,21 @@ async function processMedicationReminders(): Promise<{
   let failed = 0;
 
   for (const reminder of reminders) {
+    // The server sends to the number stored on the reminder.
     const result = outcome(
-      await sendSMS(reminder.phone_number, reminder.message, reminder.id),
+      await sendSMS(
+        { reminderId: reminder.id, patientId: reminder.patient_id },
+        reminder.message,
+      ),
     );
+
+    if (result.hold) {
+      // Not attempted (signed out, not permitted or a send limit): the
+      // reminder stays pending on the server.
+      failed++;
+      if (result.hold.stopRun) break;
+      continue;
+    }
 
     if (result.ok) {
       await supabase
@@ -288,9 +442,10 @@ async function processOutboundQueue(): Promise<{
       .and((m) => m.status === "queued")
       .modify({ status: "sending", lastAttemptAt: new Date() });
     if (!claimed) continue;
-    const success = await processOutboundMessage(msg);
-    if (success) sent++;
+    const run = await processOutboundMessage(msg);
+    if (run.sent) sent++;
     else failed++;
+    if (run.stopRun) break;
   }
 
   return { sent, failed };
@@ -339,8 +494,23 @@ async function processDeviceOutbox(): Promise<{ sent: number; failed: number }> 
 
     const text = await composeOutboxMessageText(msg).catch(() => null);
     const result: SendOutcome = text
-      ? outcome(await sendSMS(msg.to, text, msg.id))
+      ? outcome(await sendSMS({ patientId: msg.patientId }, text))
       : { ok: false, error: TEMPLATE_ERROR };
+
+    if (result.hold) {
+      // The server did not try to send it: back to the queue, attempts kept.
+      const until = heldUntil(result.hold);
+      await outboxDb.outboundMessages.update(msg.id, {
+        status: "queued",
+        lastAttemptAt: new Date().toISOString(),
+        errorMessage: result.error,
+        scheduledFor: until ? until.toISOString() : msg.scheduledFor,
+        _dirty: 1,
+      });
+      failed++;
+      if (result.hold.stopRun) break;
+      continue;
+    }
 
     if (result.ok) {
       await outboxDb.outboundMessages.update(msg.id, {
@@ -514,9 +684,15 @@ export async function queueSMS(
  * reminder is only marked sent when the provider accepted it.
  * `recordUpdated` is false when the SMS outcome could not be written back to
  * the server record (so the list may still show the old state).
+ *
+ * The server sends to the number stored on the reminder (or, without an id,
+ * the patient's registered number); `phoneNumber` is not sent. When the
+ * server refuses without trying (signed out, role not allowed, send limit)
+ * the reminder is left as it was, not marked failed.
  */
 export async function sendReminderNow(reminder: {
   id?: string;
+  patientId?: string;
   phoneNumber: string;
   message: string;
 }): Promise<{
@@ -534,9 +710,21 @@ export async function sendReminderNow(reminder: {
 
   isProcessing = true;
   try {
+    if (!reminder.id && !reminder.patientId) {
+      return {
+        ok: false,
+        error: "recipient_required: this reminder has no server record or patient to send to",
+      };
+    }
+
     const result = outcome(
-      await sendSMS(reminder.phoneNumber, reminder.message, reminder.id),
+      await sendSMS(
+        { reminderId: reminder.id, patientId: reminder.patientId },
+        reminder.message,
+      ),
     );
+
+    if (result.hold) return { ok: false, error: result.error };
 
     let recordUpdated = true;
     if (reminder.id) {

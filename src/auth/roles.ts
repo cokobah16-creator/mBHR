@@ -20,9 +20,36 @@ export type Permission =
   | "users" // Manage users
   | "approve_phi_conflicts" // Approve high-sensitivity PHI conflict resolutions
   | "audit_access" // Access audit logs and compliance reports
-  | "resolve_conflicts"; // Resolve data conflicts
+  | "resolve_conflicts" // Resolve data conflicts
+  /**
+   * Mark lab results reviewed (the clinical review of a result, including
+   * abnormal and critical ones). Kept separate from "consult" so it can be
+   * granted to other authorised professionals (for example lab scientists
+   * or senior nurses) without granting consultations.
+   *
+   * Which roles hold it must follow DIOF's clinical policy, and must match
+   * public.app_role_has_permission(..., 'lab_review') in the database, which
+   * enforces the same rule on the server. Change both together.
+   */
+  | "lab_review"
+  /**
+   * Move patients through the queue and issue queue tickets. Station staff:
+   * register holders, plus pharmacists (they finish the pharmacy stage).
+   * Same list as the server's queue and queue_transitions rules.
+   */
+  | "queue"
+  /** Turn a patient's portal access on or off (register holders). */
+  | "portal_manage"
+  /** Merge duplicate patient records (resolve_conflicts holders). */
+  | "merge_patients"
+  /** Release a reviewed lab result to the patient portal (lab_review holders). */
+  | "lab_release";
 
-// Role permission matrix
+// Role permission matrix. lab_review is granted to doctor, lead_clinician
+// and admin for now; that list must follow DIOF clinical policy and match
+// public.app_role_has_permission in the database (latest definition:
+// supabase/migrations/20260925100000_sync_authority_foundation.sql).
+// src/auth/roleMatrixParity.test.ts fails when the two differ.
 const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
   volunteer: {
     register: true,
@@ -35,6 +62,11 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: false,
+    lab_review: false,
+    queue: true,
+    portal_manage: true,
+    merge_patients: false,
+    lab_release: false,
   },
   nurse: {
     register: true,
@@ -47,6 +79,11 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: true,
+    lab_review: false,
+    queue: true,
+    portal_manage: true,
+    merge_patients: true,
+    lab_release: false,
   },
   doctor: {
     register: true,
@@ -59,6 +96,11 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: true,
+    lab_review: true,
+    queue: true,
+    portal_manage: true,
+    merge_patients: true,
+    lab_release: true,
   },
   pharmacist: {
     register: false,
@@ -71,6 +113,11 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: false,
+    lab_review: false,
+    queue: true,
+    portal_manage: false,
+    merge_patients: false,
+    lab_release: false,
   },
   admin: {
     register: true,
@@ -83,6 +130,11 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: true,
     audit_access: true,
     resolve_conflicts: true,
+    lab_review: true,
+    queue: true,
+    portal_manage: true,
+    merge_patients: true,
+    lab_release: true,
   },
   guest: {
     register: false,
@@ -95,6 +147,11 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: false,
     audit_access: false,
     resolve_conflicts: false,
+    lab_review: false,
+    queue: false,
+    portal_manage: false,
+    merge_patients: false,
+    lab_release: false,
   },
   auditor: {
     register: false,
@@ -107,6 +164,11 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: true,
     audit_access: true,
     resolve_conflicts: true,
+    lab_review: false,
+    queue: false,
+    portal_manage: false,
+    merge_patients: true,
+    lab_release: false,
   },
   lead_clinician: {
     register: true,
@@ -119,11 +181,44 @@ const ROLE_PERMISSIONS: Record<Role, Record<Permission, boolean>> = {
     approve_phi_conflicts: true,
     audit_access: true,
     resolve_conflicts: true,
+    lab_review: true,
+    queue: true,
+    portal_manage: true,
+    merge_patients: true,
+    lab_release: true,
   },
 };
 
 export function can(role: Role, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role]?.[permission] ?? false;
+}
+
+/**
+ * Every role with the permissions it holds (and, under `all`, every
+ * permission the app knows). Used to check this matrix against the database
+ * copy (src/auth/roleMatrixParity.test.ts).
+ */
+export function rolePermissionMatrix(): {
+  roles: Record<Role, Permission[]>;
+  all: Permission[];
+} {
+  const roles = {} as Record<Role, Permission[]>;
+  const all = new Set<Permission>();
+  for (const [role, grants] of Object.entries(ROLE_PERMISSIONS) as [
+    Role,
+    Record<Permission, boolean>,
+  ][]) {
+    const held: Permission[] = [];
+    for (const [permission, granted] of Object.entries(grants) as [
+      Permission,
+      boolean,
+    ][]) {
+      all.add(permission);
+      if (granted) held.push(permission);
+    }
+    roles[role] = held;
+  }
+  return { roles, all: [...all] };
 }
 
 export function getRoleColor(role: Role): string {

@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { checkCloudSession } from "@/lib/cloudSession";
 import { db } from "@/db";
 import { queryCache } from "@/utils/queryCache";
 import logger from "@/lib/logger";
@@ -133,51 +134,15 @@ export class EnhancedSync {
     return this.syncing;
   }
 
+  /**
+   * Tables this engine syncs. patients and queue are not here: the shared
+   * sync adapter (src/sync/adapter.ts) alone uploads and downloads them,
+   * with server row versions and the server-owned fields (portal access,
+   * merge links, queue tickets). Two engines uploading the same table with
+   * different column sets would overwrite each other's changes.
+   */
   private getTableConfig(): TableSyncConfig[] {
     return [
-      {
-        localTable: "patients",
-        remoteTable: "patients",
-        hasDirtyFlag: true,
-        localToRemote: (p) => ({
-          id: p.id,
-          given_name: p.givenName,
-          family_name: p.familyName,
-          sex: p.sex,
-          dob: p.dob,
-          phone: p.phone,
-          address: p.address,
-          state: p.state,
-          lga: p.lga,
-          photo_url: p.photoUrl,
-          family_id: p.familyId,
-          created_at:
-            p.createdAt instanceof Date
-              ? p.createdAt.toISOString()
-              : p.createdAt,
-          updated_at:
-            p.updatedAt instanceof Date
-              ? p.updatedAt.toISOString()
-              : p.updatedAt,
-        }),
-        remoteToLocal: (r) => ({
-          id: r.id,
-          givenName: r.given_name,
-          familyName: r.family_name,
-          sex: r.sex,
-          dob: r.dob,
-          phone: r.phone,
-          address: r.address,
-          state: r.state,
-          lga: r.lga,
-          photoUrl: r.photo_url,
-          familyId: r.family_id,
-          createdAt: new Date(r.created_at),
-          updatedAt: new Date(r.updated_at),
-          _dirty: 0,
-          _syncedAt: new Date().toISOString(),
-        }),
-      },
       {
         localTable: "visits",
         remoteTable: "visits",
@@ -336,32 +301,6 @@ export class EnhancedSync {
           unit: r.unit,
           onHandQty: r.on_hand_qty,
           reorderThreshold: r.reorder_threshold,
-          updatedAt: new Date(r.updated_at),
-          _dirty: 0,
-          _syncedAt: new Date().toISOString(),
-        }),
-      },
-      {
-        localTable: "queue",
-        remoteTable: "queue",
-        hasDirtyFlag: true,
-        localToRemote: (q) => ({
-          id: q.id,
-          patient_id: q.patientId,
-          stage: q.stage,
-          position: q.position,
-          status: q.status,
-          updated_at:
-            q.updatedAt instanceof Date
-              ? q.updatedAt.toISOString()
-              : q.updatedAt,
-        }),
-        remoteToLocal: (r) => ({
-          id: r.id,
-          patientId: r.patient_id,
-          stage: r.stage,
-          position: r.position,
-          status: r.status,
           updatedAt: new Date(r.updated_at),
           _dirty: 0,
           _syncedAt: new Date().toISOString(),
@@ -810,6 +749,10 @@ export class EnhancedSync {
         ...emptyResult("Already syncing or not initialized"),
         failedTables: [],
       };
+    }
+    // Never sync without an online sign-in (e.g. after a PIN unlock).
+    if (!(await checkCloudSession())) {
+      return { ...emptyResult("NoCloudSession"), failedTables: [] };
     }
 
     this.syncing = true;

@@ -4,6 +4,7 @@ import { db, User, Session, generateId } from "@/db";
 import { verifyPin } from "@/utils/pin";
 import * as logger from "@/lib/logger";
 import { supabase } from "@/lib/supabase";
+import { rolePermissionMatrix, type Role } from "@/auth/roles";
 import {
   clearStoredSupabaseAuth,
   isSupabaseAuthKey,
@@ -218,6 +219,69 @@ function startCloudSignOut(): void {
       if (cloudSignOutInFlight === run) cloudSignOutInFlight = null;
     });
   cloudSignOutInFlight = run;
+}
+
+/** Values that mean "switched off" in an app_users flag column. */
+const OFF = new Set(["false", "0", "f", "no"]);
+const ON = new Set(["true", "1", "t", "yes"]);
+const flag = (value: unknown) =>
+  value === null || value === undefined ? null : String(value).toLowerCase();
+
+/**
+ * The access an app_users row (public.app_users, id = online user id) gives,
+ * following the database's own rule (public.app_current_role): an unknown
+ * role, a missing row or a deactivated account gives no access ("guest"),
+ * never a default clinical role.
+ */
+export function accessFromAppUser(row: Record<string, unknown> | null | undefined): {
+  role: Role;
+  fullName?: string;
+} {
+  if (!row) return { role: "guest" };
+  const fullName =
+    typeof row.full_name === "string" && row.full_name.trim() ? row.full_name.trim() : undefined;
+  const deactivated =
+    OFF.has(flag(row.is_active) ?? "") ||
+    OFF.has(flag(row.active) ?? "") ||
+    ON.has(flag(row.disabled) ?? "") ||
+    ON.has(flag(row.deactivated) ?? "") ||
+    (row.deactivated_at !== null && row.deactivated_at !== undefined) ||
+    (row.disabled_at !== null && row.disabled_at !== undefined);
+  const knownRoles = Object.keys(rolePermissionMatrix().roles);
+  const role = typeof row.role === "string" && knownRoles.includes(row.role) ? (row.role as Role) : "guest";
+  return { role: deactivated ? "guest" : role, fullName };
+}
+
+type ServerStaffAccount =
+  | { status: "found"; role: Role; fullName?: string }
+  | { status: "missing" }
+  | { status: "error" };
+
+/**
+ * The signed-in person's staff record on the server (their own app_users
+ * row, which the database uses for every access decision). Never throws.
+ */
+async function readServerStaffAccount(authUserId: string): Promise<ServerStaffAccount> {
+  if (!supabase) return { status: "error" };
+  try {
+    const { data, error } = await supabase
+      .from("app_users")
+      .select("*")
+      .eq("id", authUserId)
+      .maybeSingle();
+    if (error) {
+      logger.error("[Auth] Could not read the staff record:", error.code ?? "unknown");
+      return { status: "error" };
+    }
+    if (!data) return { status: "missing" };
+    return { status: "found", ...accessFromAppUser(data as Record<string, unknown>) };
+  } catch (error) {
+    logger.error(
+      "[Auth] Could not read the staff record:",
+      error instanceof Error ? error.name : typeof error,
+    );
+    return { status: "error" };
+  }
 }
 
 export const useAuthStore = create<AuthState>()(
