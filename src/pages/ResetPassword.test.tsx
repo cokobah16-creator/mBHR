@@ -19,7 +19,7 @@ const getSession = vi.fn();
 const updateUser = vi.fn();
 const signOut = vi.fn();
 const maybeSingle = vi.fn();
-const from = vi.fn(() => ({
+const from = vi.fn((_table: string) => ({
   select: () => ({ eq: () => ({ maybeSingle: () => maybeSingle() }) }),
 }));
 
@@ -31,7 +31,7 @@ vi.mock("@/lib/supabaseClient", () => ({
       updateUser: (...a: unknown[]) => updateUser(...a),
       signOut: (...a: unknown[]) => signOut(...a),
     },
-    from: (...a: unknown[]) => from(...a),
+    from: (table: string) => from(table),
   },
   isSupabaseEnabled: true,
 }));
