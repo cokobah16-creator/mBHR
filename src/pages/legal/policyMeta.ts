@@ -9,7 +9,44 @@
 export const TERMS_VERSION = "2026-09-22";
 
 /** Version of src/pages/legal/PrivacyPolicy.tsx. */
-export const PRIVACY_VERSION = "2026-09-22";
+export const PRIVACY_VERSION = "2026-09-24";
+
+/**
+ * What a patient accepted when creating a portal account. It is recorded
+ * only when all three sign-up boxes were ticked: the terms of use, the
+ * privacy notice, and portal access to their health records.
+ */
+export interface PolicyAcceptance {
+  termsVersion: string;
+  privacyVersion: string;
+  /** When the boxes were submitted, as an ISO timestamp. */
+  acceptedAt: string;
+}
+
+/** Shown when an account would be created without all three boxes ticked. */
+export const ACCEPTANCE_REQUIRED_MESSAGE =
+  "Please tick all three boxes to create your account.";
+
+/** The acceptance to record for a patient who ticks the boxes now. */
+export function currentPolicyAcceptance(now: Date = new Date()): PolicyAcceptance {
+  return {
+    termsVersion: TERMS_VERSION,
+    privacyVersion: PRIVACY_VERSION,
+    acceptedAt: now.toISOString(),
+  };
+}
+
+/** True when every part of an acceptance is filled in. */
+export function isCompleteAcceptance(
+  acceptance: PolicyAcceptance | null | undefined,
+): acceptance is PolicyAcceptance {
+  return (
+    !!acceptance &&
+    !!acceptance.termsVersion &&
+    !!acceptance.privacyVersion &&
+    !!acceptance.acceptedAt
+  );
+}
 
 const MONTHS = [
   "January",

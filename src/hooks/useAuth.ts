@@ -2,7 +2,9 @@
  * useAuth – Supabase auth hook for the patient portal.
  *
  * Wraps signInWithPassword, signUp (auto-creates the patients row),
- * signOut, and exposes live user/session state.
+ * signOut, and exposes live user/session state. signUp saves the versions
+ * of the terms of use and privacy notice the patient accepted, and when,
+ * in the new account's user metadata.
  * Safe to call when Supabase is not configured — all operations no-op
  * gracefully so offline mode keeps working.
  */
@@ -10,6 +12,11 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import type { Session, User } from "@/lib/supabaseClient";
 import { normalizePhone } from "@/utils/phone";
+import {
+  ACCEPTANCE_REQUIRED_MESSAGE,
+  isCompleteAcceptance,
+  type PolicyAcceptance,
+} from "@/pages/legal/policyMeta";
 
 export interface AuthError {
   message: string;
@@ -22,6 +29,11 @@ export interface SignUpData {
   familyName: string;
   phone?: string;
   dob?: string;
+  /**
+   * What the patient ticked on the sign-up form. Saved with the account;
+   * sign-up is refused without it.
+   */
+  acceptance: PolicyAcceptance;
 }
 
 export interface UseAuthReturn {
@@ -88,13 +100,24 @@ export function useAuth(): UseAuthReturn {
           message: "Supabase is not configured — running in offline mode.",
         };
 
-      // 1. Create the Supabase auth user
+      if (!isCompleteAcceptance(data.acceptance)) {
+        return { message: ACCEPTANCE_REQUIRED_MESSAGE };
+      }
+
+      // 1. Create the Supabase auth user. The accepted versions go in the
+      //    user metadata, so they are recorded with the account even when
+      //    there is no session yet (email confirmation still pending).
       const { data: authData, error: signUpError } = await supabase.auth.signUp(
         {
           email: data.email,
           password: data.password,
           options: {
-            data: { full_name: `${data.givenName} ${data.familyName}`.trim() },
+            data: {
+              full_name: `${data.givenName} ${data.familyName}`.trim(),
+              terms_version: data.acceptance.termsVersion,
+              privacy_version: data.acceptance.privacyVersion,
+              accepted_at: data.acceptance.acceptedAt,
+            },
           },
         },
       );

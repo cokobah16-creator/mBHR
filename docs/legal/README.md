@@ -1,8 +1,15 @@
 # Privacy notice and terms of use — review status
 
 The app serves a privacy notice at `/privacy` (`src/pages/legal/PrivacyPolicy.tsx`)
-and terms of use at `/terms` (`src/pages/legal/TermsOfUse.tsx`). Patients
-accept both when they create a portal account.
+and terms of use at `/terms` (`src/pages/legal/TermsOfUse.tsx`). Their
+current versions are the dates in `src/pages/legal/policyMeta.ts`.
+
+To create a portal account, a patient ticks three separate boxes: they
+agree to the terms of use, confirm they have read the privacy notice, and
+consent to portal access to their health records. The account keeps the
+two versions they accepted and the time. Online this is stored with the
+sign-in account (Supabase user metadata); offline it is stored with the
+account on the device. Nothing is written to `patient_consent_records` yet.
 
 Both were written to describe what the code actually does. **Neither has
 been reviewed by a lawyer.** Before relying on them, have a qualified

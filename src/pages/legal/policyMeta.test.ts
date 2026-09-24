@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { PRIVACY_VERSION, TERMS_VERSION, formatPolicyDate } from "./policyMeta";
+import {
+  PRIVACY_VERSION,
+  TERMS_VERSION,
+  currentPolicyAcceptance,
+  formatPolicyDate,
+  isCompleteAcceptance,
+} from "./policyMeta";
 
 describe("policyMeta", () => {
   it("keeps both versions as ISO dates", () => {
@@ -16,5 +22,26 @@ describe("policyMeta", () => {
     expect(formatPolicyDate("22 September 2026")).toBe("22 September 2026");
     expect(formatPolicyDate("2026-13-01")).toBe("2026-13-01");
     expect(formatPolicyDate("2026-09-00")).toBe("2026-09-00");
+  });
+
+  it("records the current versions and the time of acceptance", () => {
+    const acceptance = currentPolicyAcceptance(
+      new Date("2026-09-24T10:00:00.000Z"),
+    );
+    expect(acceptance).toEqual({
+      termsVersion: TERMS_VERSION,
+      privacyVersion: PRIVACY_VERSION,
+      acceptedAt: "2026-09-24T10:00:00.000Z",
+    });
+    expect(isCompleteAcceptance(acceptance)).toBe(true);
+  });
+
+  it("treats a missing or partly empty acceptance as not given", () => {
+    const acceptance = currentPolicyAcceptance();
+    expect(isCompleteAcceptance(undefined)).toBe(false);
+    expect(isCompleteAcceptance(null)).toBe(false);
+    expect(isCompleteAcceptance({ ...acceptance, termsVersion: "" })).toBe(false);
+    expect(isCompleteAcceptance({ ...acceptance, privacyVersion: "" })).toBe(false);
+    expect(isCompleteAcceptance({ ...acceptance, acceptedAt: "" })).toBe(false);
   });
 });

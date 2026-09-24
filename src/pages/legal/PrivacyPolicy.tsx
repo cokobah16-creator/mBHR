@@ -31,9 +31,11 @@ export default function PrivacyPolicy() {
             and medicines prescribed and dispensed.
           </li>
           <li>
-            If you use the patient portal: your login details, appointment and
-            prescription-refill requests, televisit requests, messages you send
-            to staff, forms you complete and documents you upload.
+            If you use the patient portal: your login details, which versions
+            of the terms of use and this notice you accepted and when,
+            appointment and prescription-refill requests, televisit requests,
+            messages you send to staff, forms you complete and documents you
+            upload.
           </li>
         </ul>
       </LegalSection>

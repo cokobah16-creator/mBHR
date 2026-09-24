@@ -17,6 +17,9 @@ type LocalUser = {
   sessionToken?: string;
   sessionExpiresAt?: string;
   createdAt: string;
+  termsAcceptedVersion?: string;
+  privacyAcceptedVersion?: string;
+  acceptedAt?: string;
 };
 
 vi.mock("@/db", () => ({
@@ -54,6 +57,13 @@ vi.stubGlobal("localStorage", {
 const { registerPatientPortalAccount, loginPatientPortal, logout } =
   await import("./patientPortalAuth");
 
+// What PatientRegister passes once all three sign-up boxes are ticked.
+const ACCEPTED = {
+  termsVersion: "2026-09-22",
+  privacyVersion: "2026-09-24",
+  acceptedAt: "2026-09-24T10:00:00.000Z",
+};
+
 function seedStore(user: LocalUser) {
   store["mbhr_portal_users"] = JSON.stringify([user]);
 }
@@ -88,6 +98,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "123456",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/phone number or email/i);
@@ -101,6 +112,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "123456",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/date of birth/i);
@@ -114,6 +126,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "123",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/6-digit PIN/i);
@@ -127,6 +140,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "abc123",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/6-digit PIN/i);
@@ -147,6 +161,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "654321",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/already exists/i);
@@ -160,6 +175,7 @@ describe("patientPortalAuth", () => {
         "Chidi",
         "Eze",
         "112233",
+        ACCEPTED,
       );
       expect(r.success).toBe(true);
       expect(r.sessionToken).toBeTruthy();
@@ -170,6 +186,47 @@ describe("patientPortalAuth", () => {
       expect(saved[0].email).toBe("new@test.com");
       // PIN should be hashed, not stored in plaintext
       expect(saved[0].pin).not.toBe("112233");
+    });
+
+    it("stores the accepted versions and time with the account", async () => {
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "new@test.com",
+        "1995-05-10",
+        "Chidi",
+        "Eze",
+        "112233",
+        ACCEPTED,
+      );
+      expect(r.success).toBe(true);
+
+      const saved = JSON.parse(store["mbhr_portal_users"] ?? "[]");
+      expect(saved[0].termsAcceptedVersion).toBe("2026-09-22");
+      expect(saved[0].privacyAcceptedVersion).toBe("2026-09-24");
+      expect(saved[0].acceptedAt).toBe("2026-09-24T10:00:00.000Z");
+
+      expect(r.portalUser?.consentGiven).toBe(true);
+      expect(r.portalUser?.termsAcceptedVersion).toBe("2026-09-22");
+      expect(r.portalUser?.privacyAcceptedVersion).toBe("2026-09-24");
+      expect(r.portalUser?.consentGivenAt?.toISOString()).toBe(
+        "2026-09-24T10:00:00.000Z",
+      );
+    });
+
+    it("refuses to create an account without a complete acceptance", async () => {
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "new@test.com",
+        "1995-05-10",
+        "Chidi",
+        "Eze",
+        "112233",
+        { ...ACCEPTED, privacyVersion: "" },
+      );
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/tick all three boxes/i);
+      expect(store["mbhr_portal_users"]).toBeUndefined();
+      expect(mockPatients.add).not.toHaveBeenCalled();
     });
   });
 
@@ -198,6 +255,35 @@ describe("patientPortalAuth", () => {
       });
       const r = await loginPatientPortal("ada@test.com", "999999", "pin");
       expect(r.success).toBe(false);
+    });
+
+    it("reports no consent for an account that never accepted", async () => {
+      seedStore({
+        id: "u1",
+        email: "ada@test.com",
+        dob: "1990-01-01",
+        createdAt: new Date().toISOString(),
+      });
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+      expect(r.success).toBe(true);
+      expect(r.portalUser?.consentGiven).toBe(false);
+      expect(r.portalUser?.termsAcceptedVersion).toBeUndefined();
+    });
+
+    it("reports the stored acceptance when logging back in", async () => {
+      seedStore({
+        id: "u1",
+        email: "ada@test.com",
+        dob: "1990-01-01",
+        createdAt: new Date().toISOString(),
+        termsAcceptedVersion: ACCEPTED.termsVersion,
+        privacyAcceptedVersion: ACCEPTED.privacyVersion,
+        acceptedAt: ACCEPTED.acceptedAt,
+      });
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+      expect(r.success).toBe(true);
+      expect(r.portalUser?.consentGiven).toBe(true);
+      expect(r.portalUser?.privacyAcceptedVersion).toBe("2026-09-24");
     });
 
     it("returns error for expired session", async () => {

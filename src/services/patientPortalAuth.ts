@@ -11,6 +11,11 @@ import { normalizePhone } from "@/utils/phone";
 import * as logger from "@/lib/logger";
 import { derivePinHash, newSaltB64, verifyPin } from "@/utils/pin";
 import type { PatientPortalAuthResponse } from "@/types/patientPortal";
+import {
+  ACCEPTANCE_REQUIRED_MESSAGE,
+  isCompleteAcceptance,
+  type PolicyAcceptance,
+} from "@/pages/legal/policyMeta";
 
 const PORTAL_USERS_KEY = "mbhr_portal_users";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -41,6 +46,15 @@ export interface LocalPortalUser {
   managedPatients?: ManagedPatient[];
   failedLoginAttempts?: number;
   lockedUntil?: string;
+  /**
+   * Set only when the patient registered here and ticked all three boxes:
+   * the terms of use, the privacy notice and portal access to their
+   * records. Accounts created any other way have none of these.
+   */
+  termsAcceptedVersion?: string;
+  privacyAcceptedVersion?: string;
+  /** ISO timestamp of that acceptance. */
+  acceptedAt?: string;
 }
 
 function getLocalPortalUsers(): LocalPortalUser[] {
@@ -69,6 +83,8 @@ async function hashPINWithSalt(
 }
 
 function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
+  // Report consent only when this account stored an acceptance.
+  const acceptedAt = user.acceptedAt ? new Date(user.acceptedAt) : undefined;
   return {
     success: true,
     sessionToken: user.sessionToken,
@@ -81,7 +97,11 @@ function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
       emailVerified: !!user.email,
       accountStatus: "active",
       failedLoginAttempts: 0,
-      consentGiven: true,
+      consentGiven: !!acceptedAt,
+      consentGivenAt: acceptedAt,
+      termsAcceptedVersion: user.termsAcceptedVersion,
+      termsAcceptedAt: acceptedAt,
+      privacyAcceptedVersion: user.privacyAcceptedVersion,
       createdAt: new Date(user.createdAt),
       updatedAt: new Date(),
     },
@@ -98,6 +118,9 @@ function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
 /**
  * Register a new patient portal account.
  * Creates a Dexie patient record and a local portal user, and starts a session.
+ * `acceptance` is what the patient ticked on the sign-up form (terms of use,
+ * privacy notice and portal access to records). It is stored with the
+ * account, and registration is refused without it.
  */
 export async function registerPatientPortalAccount(
   phone: string | undefined,
@@ -106,6 +129,7 @@ export async function registerPatientPortalAccount(
   givenName: string,
   familyName: string,
   pin: string,
+  acceptance: PolicyAcceptance,
 ): Promise<PatientPortalAuthResponse> {
   try {
     if (!phone && !email) {
@@ -119,6 +143,12 @@ export async function registerPatientPortalAccount(
     }
     if (!pin || !/^\d{6}$/.test(pin)) {
       return { success: false, error: "A 6-digit PIN is required." };
+    }
+    if (!isCompleteAcceptance(acceptance)) {
+      return {
+        success: false,
+        error: ACCEPTANCE_REQUIRED_MESSAGE,
+      };
     }
 
     const users = getLocalPortalUsers();
@@ -273,6 +303,9 @@ export async function registerPatientPortalAccount(
       sessionExpiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       createdAt: now.toISOString(),
       managedPatients: [],
+      termsAcceptedVersion: acceptance.termsVersion,
+      privacyAcceptedVersion: acceptance.privacyVersion,
+      acceptedAt: acceptance.acceptedAt,
     };
 
     users.push(portalUser);
