@@ -4,7 +4,7 @@ import {
   CheckCircleIcon,
   ExclamationCircleIcon,
 } from "@heroicons/react/20/solid";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, type Session } from "@/lib/supabaseClient";
 import {
   MIN_PASSWORD_LENGTH,
   completePasswordReset,
@@ -121,7 +121,7 @@ export default function ResetPassword() {
     supabase.auth
       .getSession()
       .then(({ data }) => {
-        if (data.session) ready();
+        if (data.session) ready(data.session);
       })
       .catch(() => {
         // The timeout below reports the failure.
