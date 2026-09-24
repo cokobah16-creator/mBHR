@@ -6,6 +6,7 @@ import { queueManagement, QueueStage } from "@/services/queueManagement";
 import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
 import { useAuthStore } from "@/stores/auth";
 import { recordStageEvent } from "@/services/stageEvents";
+import { canManageQueue } from "@/features/tickets/queueBoardModel";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -143,16 +144,20 @@ export function Queue() {
     (max, i) => Math.max(max, minutesSince(i.queuedAt ?? i.updatedAt, now)),
     0,
   );
-  const canIssueTickets =
-    !!role && ["volunteer", "nurse", "doctor", "admin"].includes(role);
+  const canIssueTickets = canManageQueue(role);
 
   const run = async (id: string, fn: () => Promise<unknown>) => {
+    // Checked here, not only by hiding buttons: these write the queue.
+    if (!canManageQueue(role)) {
+      setActionError("Your role can view the queue but cannot call or move patients.");
+      return;
+    }
     setBusyId(id);
     setActionError("");
     try {
       await fn();
     } catch (err) {
-      console.error("Queue action failed:", err);
+      console.error("Queue action failed:", err instanceof Error ? err.name : "unknown");
       setActionError("That change was not saved. Try again.");
     } finally {
       setBusyId(null);

@@ -1,316 +1,532 @@
-import React, { useEffect, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, QueueItem } from "@/db";
+import { db, generateId, type Patient, type QueueItem, type User } from "@/db";
 import { queueManagement } from "@/services/queueManagement";
 import { useAuthStore } from "@/stores/auth";
+import { useToast, type ToastTone } from "@/stores/toast";
 import { recordStageEvent } from "@/services/stageEvents";
 import { patientStatusFromQueue } from "@/services/patientStatus";
 import {
-  QueueListIcon,
-  PlayIcon,
+  FLOW_STAGES,
+  FLOW_STAGE_LABELS,
+  type FlowStage,
+} from "@/services/patientFlow";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { QueueSkeleton } from "@/components/ui/Skeleton";
+import { Tabs } from "@/components/ui/Tabs";
+import { panelId, tabId } from "@/components/ui/tabIds";
+import {
+  ArrowTopRightOnSquareIcon,
   CheckIcon,
-  ClockIcon,
-} from "@heroicons/react/24/outline";
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
+  PlayIcon,
+  TicketIcon,
+} from "@heroicons/react/20/solid";
+import { QueueListIcon } from "@heroicons/react/24/outline";
+import {
+  canManageQueue,
+  countByStage,
+  formatWait,
+  isFlowStage,
+  longestWaitMinutes,
+  minutesSince,
+  nextStageOf,
+  savedNote,
+  splitStage,
+  ticketLabel,
+} from "./queueBoardModel";
+import { STAGE_MARKER_CLASS } from "./stageStyles";
+import { useNow } from "./useNow";
 
-const STAGES: Array<"registration" | "vitals" | "consult" | "pharmacy"> = [
-  "registration",
-  "vitals",
-  "consult",
-  "pharmacy",
-];
+/** The board lists this many waiting tickets; the full list is on /queue. */
+const WAITING_LIMIT = 10;
+/** Waits longer than this are flagged for the stage lead. */
+const LONG_WAIT_MINUTES = 30;
+const TABS_ID = "queue-board";
 
-const AVG_SERVICE_SEC = 240;
-
-const asArray = <T,>(v: T[] | undefined | null): T[] =>
-  Array.isArray(v) ? v : [];
+function PriorityBadge({ priority }: { priority?: QueueItem["priority"] }) {
+  if (priority === "urgent") return <StatusBadge tone="danger">Urgent</StatusBadge>;
+  if (priority === "low") return <StatusBadge tone="neutral">Low priority</StatusBadge>;
+  return null;
+}
 
 export default function QueueBoard() {
-  const { currentUser } = useAuthStore();
-  const [selectedStage, setSelectedStage] =
-    useState<(typeof STAGES)[number]>("vitals");
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const canManage = canManageQueue(currentUser?.role);
+  const { push } = useToast();
+  const [selectedStage, setSelectedStage] = useState<FlowStage>("vitals");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  // Guards against a double click firing two writes before the button
+  // re-renders as disabled.
+  const busyRef = useRef(false);
+  const [actionError, setActionError] = useState("");
+  const now = useNow(30_000);
 
-  const allQueue = asArray(
-    useLiveQuery(() => db.queue.toArray(), [], [] as QueueItem[]),
+  // One live query drives every number on the board so counts never drift
+  // from the lists.
+  const allQueue = useLiveQuery(() => db.queue.toArray(), []);
+  const counts = useMemo(() => countByStage(allQueue ?? [], now), [allQueue, now]);
+  const { waiting, inService } = useMemo(
+    () => splitStage<QueueItem>(allQueue ?? [], selectedStage),
+    [allQueue, selectedStage],
   );
-  const stageQueue = asArray(
-    useLiveQuery(
-      () => db.queue.where("stage").equals(selectedStage).toArray(),
-      [selectedStage],
-      [] as QueueItem[],
-    ),
+
+  const patientIds = useMemo(
+    () => [...new Set([...inService, ...waiting].map((q) => q.patientId))],
+    [inService, waiting],
   );
+  const patients = useLiveQuery(
+    () => db.patients.bulkGet(patientIds),
+    [patientIds.join(",")],
+  );
+  const patientById = useMemo(() => {
+    const map = new Map<string, Patient>();
+    (patients ?? []).forEach((p: Patient | undefined) => p && map.set(p.id, p));
+    return map;
+  }, [patients]);
 
-  const waiting = stageQueue
-    .filter((q) => q.status === "waiting")
-    .sort((a, b) => a.position - b.position);
-  const inProgress = stageQueue.find((q) => q.status === "in_progress");
+  if (allQueue === undefined) {
+    return (
+      <div>
+        <PageHeader title="Queue management" />
+        <QueueSkeleton />
+      </div>
+    );
+  }
 
-  const [patientNames, setPatientNames] = useState<
-    Record<string, { givenName: string; familyName: string }>
-  >({});
+  const stageLabel = FLOW_STAGE_LABELS[selectedStage];
+  const nextStage = nextStageOf(selectedStage);
+  const summary = counts[selectedStage];
+  const longest = longestWaitMinutes(waiting, now);
+  const nextUp = waiting[0];
 
-  useEffect(() => {
-    const ids = Array.from(new Set(stageQueue.map((q) => q.patientId)));
-    if (ids.length === 0) {
-      setPatientNames({});
+  const patientName = (item: QueueItem) => {
+    const p = patientById.get(item.patientId);
+    if (p) return `${p.givenName} ${p.familyName}`;
+    return patients === undefined ? "Loading name…" : "Unknown patient";
+  };
+
+  const notify = (tone: ToastTone, title: string, body?: string) =>
+    push({ id: generateId(), tone, title, body });
+
+  // Every write checks the session and the role here, not only by hiding
+  // the buttons.
+  const run = async (id: string, fn: (user: User) => Promise<void>) => {
+    if (busyRef.current) return;
+    if (!currentUser) {
+      setActionError("Your session has ended. Sign in again to change the queue.");
       return;
     }
-    let cancelled = false;
-    db.patients
-      .where("id")
-      .anyOf(ids)
-      .toArray()
-      .then((patients) => {
-        if (cancelled) return;
-        const map: Record<string, { givenName: string; familyName: string }> =
-          {};
-        for (const p of patients) {
-          map[p.id] = { givenName: p.givenName, familyName: p.familyName };
-        }
-        setPatientNames(map);
-      })
-      .catch((err) => console.error("Failed to load patient names:", err));
-    return () => {
-      cancelled = true;
-    };
-  }, [stageQueue]);
-
-  const etaTail = waiting.length * Math.round(AVG_SERVICE_SEC / 60);
-
-  const handleCallNext = async () => {
-    const next = waiting[0];
-    if (!next) return;
-    await queueManagement.startService(
-      next.id,
-      currentUser ? { id: currentUser.id, name: currentUser.fullName } : undefined,
-    );
-    await recordStageEvent({
-      stage: selectedStage,
-      kind: "start",
-      patientId: next.patientId,
-      actorId: currentUser?.id,
-    });
-  };
-
-  const handleCompleteCurrent = async () => {
-    if (!inProgress) return;
-    await queueManagement.completeService(inProgress.id);
-    await recordStageEvent({
-      stage: selectedStage,
-      kind: "finish",
-      patientId: inProgress.patientId,
-      actorId: currentUser?.id,
-    });
-  };
-
-  const getStageColor = (stage: string) => {
-    switch (stage) {
-      case "registration":
-        return "bg-blue-100 text-blue-800 border-blue-200";
-      case "vitals":
-        return "bg-green-100 text-green-800 border-green-200";
-      case "consult":
-        return "bg-purple-100 text-purple-800 border-purple-200";
-      case "pharmacy":
-        return "bg-orange-100 text-orange-800 border-orange-200";
-      default:
-        return "bg-gray-100 text-gray-800 border-gray-200";
+    if (!canManageQueue(currentUser.role)) {
+      setActionError("Your role can view the queue but cannot call or finish tickets.");
+      return;
+    }
+    busyRef.current = true;
+    setBusyId(id);
+    setActionError("");
+    try {
+      await fn(currentUser);
+    } catch (err) {
+      console.error(
+        "Queue board action failed:",
+        err instanceof Error ? err.name : err,
+      );
+      setActionError(
+        "That change may not have been saved. Check the queue below before trying again.",
+      );
+    } finally {
+      busyRef.current = false;
+      setBusyId(null);
     }
   };
 
-  const getPriorityColor = (priority: string | undefined) => {
-    return priority === "urgent" ? "text-red-600" : "text-gray-600";
+  const callNext = () => {
+    if (!nextUp || inService.length > 0) return;
+    const item = nextUp;
+    const label = ticketLabel(item);
+    return run(item.id, async (user) => {
+      await queueManagement.startService(item.id, {
+        id: user.id,
+        name: user.fullName,
+      });
+      await recordStageEvent({
+        stage: item.stage,
+        kind: "start",
+        patientId: item.patientId,
+        actorId: user.id,
+      });
+      notify("success", `${label} called to ${stageLabel}`, savedNote(isSupabaseEnabled));
+    });
   };
 
-  const labelForItem = (q: QueueItem) =>
-    q.ticketNumber ?? `#${q.position.toString().padStart(3, "0")}`;
-  const patientNameFor = (q: QueueItem) => {
-    const p = patientNames[q.patientId];
-    return p ? `${p.givenName} ${p.familyName}` : "Patient";
+  const sendOn = (item: QueueItem) => {
+    const label = ticketLabel(item);
+    return run(item.id, async (user) => {
+      await queueManagement.moveToNextStage(item.patientId);
+      await recordStageEvent({
+        stage: item.stage,
+        kind: "finish",
+        patientId: item.patientId,
+        actorId: user.id,
+      });
+      notify(
+        "success",
+        nextStage
+          ? `${label} sent to ${FLOW_STAGE_LABELS[nextStage]}`
+          : `${label}: visit finished`,
+        savedNote(isSupabaseEnabled),
+      );
+    });
   };
+
+  const endHere = (item: QueueItem) => {
+    const label = ticketLabel(item);
+    return run(item.id, async (user) => {
+      await queueManagement.completeService(item.id);
+      await recordStageEvent({
+        stage: item.stage,
+        kind: "finish",
+        patientId: item.patientId,
+        actorId: user.id,
+      });
+      notify(
+        "success",
+        `${label} ended at ${stageLabel}`,
+        `Not added to another queue. ${savedNote(isSupabaseEnabled)}`,
+      );
+    });
+  };
+
+  const callBlockedReason = !canManage
+    ? ""
+    : inService.length > 0
+      ? `Finish ${ticketLabel(inService[0])} before calling the next ticket.`
+      : "";
 
   return (
-    <div className="p-4 space-y-6">
-      <div className="flex items-center space-x-3">
-        <QueueListIcon className="h-8 w-8 text-primary" />
-        <h2 className="text-2xl font-bold text-gray-900">Queue Management</h2>
-      </div>
-
-      {/* Stage Selector */}
-      <div className="flex space-x-2 overflow-x-auto">
-        {STAGES.map((stage) => {
-          const stageCount = allQueue.filter(
-            (q) => q.stage === stage && q.status !== "done",
-          ).length;
-          return (
-            <button
-              key={stage}
-              onClick={() => setSelectedStage(stage)}
-              className={`px-4 py-2 rounded-lg border font-medium capitalize whitespace-nowrap ${
-                selectedStage === stage
-                  ? getStageColor(stage)
-                  : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
-              }`}
+    <div>
+      <PageHeader
+        title="Queue management"
+        description="Call the next ticket, then send it on when this stage is finished."
+        actions={
+          <>
+            {canManage && (
+              <Link to="/tickets/issue" className="btn-secondary">
+                <TicketIcon className="h-4 w-4" aria-hidden />
+                Issue ticket
+              </Link>
+            )}
+            <Link
+              to="/display"
+              target="_blank"
+              rel="noopener"
+              className="btn-secondary"
             >
-              {stage} ({stageCount})
-            </button>
-          );
-        })}
-      </div>
+              <ArrowTopRightOnSquareIcon className="h-4 w-4" aria-hidden />
+              Waiting-room display
+              <span className="sr-only"> (opens in a new tab)</span>
+            </Link>
+          </>
+        }
+      />
 
-      {/* Queue Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="card bg-blue-50 border-blue-200">
-          <div className="text-sm text-blue-600">Waiting</div>
-          <div className="text-2xl font-bold text-blue-800">
-            {waiting.length}
-          </div>
-        </div>
-        <div className="card bg-yellow-50 border-yellow-200">
-          <div className="text-sm text-yellow-600">In Progress</div>
-          <div className="text-2xl font-bold text-yellow-800">
-            {inProgress ? "1" : "0"}
-          </div>
-        </div>
-        <div className="card bg-green-50 border-green-200">
-          <div className="text-sm text-green-600">Avg Service Time</div>
-          <div className="text-2xl font-bold text-green-800">
-            {Math.round(AVG_SERVICE_SEC / 60)}m
-          </div>
-        </div>
-        <div className="card bg-purple-50 border-purple-200">
-          <div className="text-sm text-purple-600">ETA for Last</div>
-          <div className="text-2xl font-bold text-purple-800">{etaTail}m</div>
-        </div>
-      </div>
+      <Tabs
+        tabs={FLOW_STAGES.map((s) => ({
+          id: s,
+          label: (
+            <span className="inline-flex items-center gap-2">
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${STAGE_MARKER_CLASS[s]}`}
+                aria-hidden
+              />
+              {FLOW_STAGE_LABELS[s]}
+            </span>
+          ),
+          badge: counts[s].waiting + counts[s].inService,
+        }))}
+        active={selectedStage}
+        onChange={(id) => {
+          if (isFlowStage(id)) setSelectedStage(id);
+        }}
+        idPrefix={TABS_ID}
+        label="Care stage"
+      />
 
-      {/* Queue Controls */}
-      <div className="flex space-x-4">
-        <button
-          className="btn-primary flex items-center space-x-2"
-          onClick={handleCallNext}
-          disabled={waiting.length === 0 || !!inProgress}
-        >
-          <PlayIcon className="h-5 w-5" />
-          <span>Call Next</span>
-        </button>
-        <button
-          className="btn-secondary flex items-center space-x-2"
-          onClick={handleCompleteCurrent}
-          disabled={!inProgress}
-        >
-          <CheckIcon className="h-5 w-5" />
-          <span>Complete Current</span>
-        </button>
-      </div>
-
-      {/* Current Patient */}
-      <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Now Serving
-        </h3>
-        {inProgress ? (
-          <div className="flex items-center space-x-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="w-12 h-12 bg-yellow-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
-              {inProgress.position}
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xl font-bold text-gray-900">
-                  {labelForItem(inProgress)}
-                </span>
-                {(() => {
-                  const s = patientStatusFromQueue(inProgress);
-                  return (
-                    <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
-                    >
-                      {s.label}
-                    </span>
-                  );
-                })()}
-              </div>
-              <div className="text-sm text-gray-600">
-                {patientNameFor(inProgress)} •
-                <span className={getPriorityColor(inProgress.priority)}>
-                  {" "}
-                  {inProgress.priority ?? "normal"} priority
-                </span>
-              </div>
-            </div>
+      <section
+        role="tabpanel"
+        id={panelId(TABS_ID, selectedStage)}
+        aria-labelledby={tabId(TABS_ID, selectedStage)}
+        className="mt-4 space-y-4"
+      >
+        {/* Real counts only: no estimated service times. */}
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line lg:grid-cols-4">
+          <div className="bg-surface px-4 py-3">
+            <dt className="text-caption text-ink-muted">Waiting</dt>
+            <dd className="text-stat text-ink">{summary.waiting}</dd>
           </div>
-        ) : (
-          <div className="text-center py-8 text-gray-500">
-            <ClockIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>No patient currently being served</p>
+          <div className="bg-surface px-4 py-3">
+            <dt className="text-caption text-ink-muted">Being served</dt>
+            <dd className="text-stat text-ink">{summary.inService}</dd>
+          </div>
+          <div className="bg-surface px-4 py-3">
+            <dt className="text-caption text-ink-muted">Longest wait</dt>
+            <dd className="flex flex-wrap items-center gap-2">
+              <span className="text-stat text-ink">
+                {waiting.length > 0 ? formatWait(longest) : "None"}
+              </span>
+              {longest >= LONG_WAIT_MINUTES && (
+                <StatusBadge tone="warning">Over {LONG_WAIT_MINUTES} min</StatusBadge>
+              )}
+            </dd>
+          </div>
+          <div className="bg-surface px-4 py-3">
+            <dt className="text-caption text-ink-muted">Finished here today</dt>
+            <dd className="text-stat text-ink">{summary.doneToday}</dd>
+          </div>
+        </dl>
+
+        {!canManage && (
+          <div className="banner banner-info" role="status">
+            <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <span>
+              You can view the queue. Calling and finishing tickets needs
+              registration access; ask a nurse, doctor or administrator.
+            </span>
           </div>
         )}
-      </div>
 
-      {/* Waiting Queue */}
-      <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Waiting Queue ({waiting.length})
-        </h3>
-
-        {waiting.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <p>No patients waiting in {selectedStage}</p>
+        {actionError && (
+          <div className="banner banner-danger" role="alert">
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <span>{actionError}</span>
           </div>
-        ) : (
-          <div className="space-y-2">
-            {waiting.slice(0, 10).map((item, index) => (
-              <div
-                key={item.id}
-                className={`flex items-center justify-between p-3 border rounded-lg ${
-                  index === 0
-                    ? "border-green-200 bg-green-50"
-                    : "border-gray-200"
-                }`}
-              >
-                <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                    {index + 1}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-gray-900">
-                        {labelForItem(item)}
-                      </span>
-                      {(() => {
-                        const s = patientStatusFromQueue(item);
-                        return (
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.classes}`}
-                          >
-                            {s.label}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      {patientNameFor(item)} •
-                      <span className={getPriorityColor(item.priority)}>
-                        {" "}
-                        {item.priority ?? "normal"} priority
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="text-sm text-gray-500">
-                  {index === 0 ? "Next" : `~${(index * AVG_SERVICE_SEC) / 60}m`}
-                </div>
-              </div>
-            ))}
+        )}
 
-            {waiting.length > 10 && (
-              <div className="text-center text-sm text-gray-500 py-2">
-                ... and {waiting.length - 10} more patients
-              </div>
+        {/* Now serving */}
+        <div className="panel">
+          <div className="panel-header flex-wrap">
+            <h2 className="panel-title">Now serving · {stageLabel}</h2>
+            {canManage && nextUp && (
+              <button
+                type="button"
+                onClick={callNext}
+                disabled={busyId !== null || inService.length > 0}
+                aria-describedby={callBlockedReason ? "queue-board-call-hint" : undefined}
+                className="btn-primary"
+              >
+                <PlayIcon className="h-4 w-4" aria-hidden />
+                Call {ticketLabel(nextUp)}
+              </button>
             )}
           </div>
-        )}
-      </div>
+          {callBlockedReason && nextUp && (
+            <p id="queue-board-call-hint" className="px-4 pt-3 field-hint">
+              {callBlockedReason}
+            </p>
+          )}
+
+          {inService.length === 0 ? (
+            <p className="panel-body text-body text-ink-muted">
+              Nobody is being served at {stageLabel.toLowerCase()}.
+              {nextUp && canManage ? ` Call ${ticketLabel(nextUp)} when you are ready.` : ""}
+            </p>
+          ) : (
+            <>
+              <ul className="divide-y divide-line">
+                {inService.map((item) => {
+                  const label = ticketLabel(item);
+                  const status = patientStatusFromQueue(item);
+                  return (
+                    <li
+                      key={item.id}
+                      className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center"
+                    >
+                      <span className="w-24 shrink-0 font-mono text-h2 text-ink">
+                        {label}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <Link
+                            to={`/patients/${item.patientId}`}
+                            className="truncate text-h3 text-ink hover:underline"
+                          >
+                            {patientName(item)}
+                          </Link>
+                          <span className={`badge ${status.classes}`}>{status.label}</span>
+                          <PriorityBadge priority={item.priority} />
+                        </span>
+                        <span className="block text-caption text-ink-muted">
+                          Being served for {formatWait(minutesSince(item.updatedAt, now))}
+                          {item.assignedName ? ` · called by ${item.assignedName}` : ""}
+                        </span>
+                      </span>
+                      {canManage && (
+                        <span className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => sendOn(item)}
+                            disabled={busyId !== null}
+                            className="btn-primary"
+                          >
+                            <CheckIcon className="h-4 w-4" aria-hidden />
+                            {busyId === item.id
+                              ? "Saving…"
+                              : nextStage
+                                ? `Send to ${FLOW_STAGE_LABELS[nextStage]}`
+                                : "Finish visit"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => endHere(item)}
+                            disabled={busyId !== null}
+                            aria-label={`End here: ${label} at ${stageLabel}, not sent on`}
+                            className="btn-secondary"
+                          >
+                            End here
+                          </button>
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              {canManage && (
+                <p className="border-t border-line px-4 py-2 field-hint">
+                  {nextStage
+                    ? `Send to ${FLOW_STAGE_LABELS[nextStage]} adds the ticket to that queue. `
+                    : "Finish visit closes the patient's visit. "}
+                  End here marks the ticket done at {stageLabel.toLowerCase()}{" "}
+                  without adding it to another queue.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Waiting */}
+        <div className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">Waiting ({waiting.length})</h2>
+            {waiting.length > 0 && (
+              <span className="text-caption text-ink-muted">
+                Longest wait {formatWait(longest)}
+              </span>
+            )}
+          </div>
+
+          {waiting.length === 0 ? (
+            <EmptyState
+              icon={QueueListIcon}
+              title={`No one waiting for ${stageLabel.toLowerCase()}`}
+              description={
+                summary.doneToday > 0
+                  ? `${summary.doneToday} ticket${summary.doneToday === 1 ? "" : "s"} finished this stage today.`
+                  : "Tickets appear here when they are issued or sent on from the previous stage."
+              }
+            />
+          ) : (
+            <>
+              {/* Tablet / desktop table */}
+              <table className="data-table hidden md:table">
+                <thead>
+                  <tr>
+                    <th scope="col" className="w-12">
+                      <span aria-hidden>#</span>
+                      <span className="sr-only">Place in line</span>
+                    </th>
+                    <th scope="col">Ticket</th>
+                    <th scope="col">Patient</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Priority</th>
+                    <th scope="col">Waiting</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {waiting.slice(0, WAITING_LIMIT).map((item, index) => {
+                    const mins = minutesSince(item.queuedAt ?? item.updatedAt, now);
+                    const status = patientStatusFromQueue(item);
+                    return (
+                      <tr key={item.id}>
+                        <td className="tabular-nums text-ink-muted">{index + 1}</td>
+                        <td className="font-mono">{ticketLabel(item)}</td>
+                        <td>
+                          <Link
+                            to={`/patients/${item.patientId}`}
+                            className="font-medium text-ink hover:underline"
+                          >
+                            {patientName(item)}
+                          </Link>
+                        </td>
+                        <td>
+                          <span className={`badge ${status.classes}`}>{status.label}</span>
+                        </td>
+                        <td>
+                          {item.priority === "urgent" || item.priority === "low" ? (
+                            <PriorityBadge priority={item.priority} />
+                          ) : (
+                            <span className="text-ink-muted">Normal</span>
+                          )}
+                        </td>
+                        <td>
+                          {mins >= LONG_WAIT_MINUTES ? (
+                            <StatusBadge tone="warning">{formatWait(mins)}</StatusBadge>
+                          ) : (
+                            <span className="text-ink-secondary">{formatWait(mins)}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {/* Phone list */}
+              <ol className="divide-y divide-line md:hidden">
+                {waiting.slice(0, WAITING_LIMIT).map((item) => {
+                  const mins = minutesSince(item.queuedAt ?? item.updatedAt, now);
+                  return (
+                    <li key={item.id} className="flex items-start gap-3 px-4 py-3">
+                      <span className="w-16 shrink-0 font-mono text-label text-ink">
+                        {ticketLabel(item)}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <Link
+                          to={`/patients/${item.patientId}`}
+                          className="flex min-h-touch-target items-center font-medium text-ink hover:underline"
+                        >
+                          <span className="truncate">{patientName(item)}</span>
+                        </Link>
+                        <span className="mt-1 flex flex-wrap items-center gap-2 text-caption text-ink-muted">
+                          {mins >= LONG_WAIT_MINUTES ? (
+                            <StatusBadge tone="warning">Waiting {formatWait(mins)}</StatusBadge>
+                          ) : (
+                            <span>Waiting {formatWait(mins)}</span>
+                          )}
+                          <PriorityBadge priority={item.priority} />
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+
+              {waiting.length > WAITING_LIMIT && (
+                <p className="border-t border-line px-4 py-3 text-caption text-ink-muted">
+                  Showing the first {WAITING_LIMIT} of {waiting.length}.{" "}
+                  <Link to="/queue" className="font-medium text-primary-fg hover:underline">
+                    See the full queue
+                  </Link>
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

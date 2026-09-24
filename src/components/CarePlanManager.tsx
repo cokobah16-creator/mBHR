@@ -45,7 +45,7 @@ export function CarePlanManager({ patientId, className = "" }) {
       });
       setTasks(updatedTasks);
     } catch (error) {
-      console.error("Error loading care tasks:", error);
+      console.error("Error loading care tasks:", error instanceof Error ? error.name : "unknown");
     } finally {
       setLoading(false);
     }
@@ -81,7 +81,7 @@ export function CarePlanManager({ patientId, className = "" }) {
             task.dueDate,
           );
         } catch (error) {
-          console.warn("Failed to queue reminder:", error);
+          console.warn("Failed to queue reminder:", error instanceof Error ? error.name : "unknown");
         }
       }
       await loadCareTasks();
@@ -93,7 +93,7 @@ export function CarePlanManager({ patientId, className = "" }) {
         dueDate: new Date().toISOString().split("T")[0],
       });
     } catch (error) {
-      console.error("Error adding care task:", error);
+      console.error("Error adding care task:", error instanceof Error ? error.name : "unknown");
     }
   };
   const completeTask = async (taskId) => {
@@ -105,7 +105,7 @@ export function CarePlanManager({ patientId, className = "" }) {
       });
       await loadCareTasks();
     } catch (error) {
-      console.error("Error completing task:", error);
+      console.error("Error completing task:", error instanceof Error ? error.name : "unknown");
     }
   };
   const getTaskIcon = (type) => {

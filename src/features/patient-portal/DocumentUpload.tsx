@@ -1,13 +1,24 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/lib/supabase";
+import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
+  ArrowPathIcon,
+  CheckCircleIcon,
   DocumentArrowUpIcon,
   DocumentTextIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonText } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "./account/ConfirmDialog";
+import { formatFileSize } from "./account/displayStatus";
+import { errorName, readPortalUser } from "./account/portalSession";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface Document {
   id: string;
@@ -19,35 +30,58 @@ interface Document {
   description?: string;
 }
 
+const MAX_BYTES = 10 * 1024 * 1024;
+
+const DOCUMENT_TYPES = [
+  { value: "medical_record", label: "Medical record" },
+  { value: "lab_result", label: "Test result" },
+  { value: "imaging", label: "Scan or X-ray" },
+  { value: "prescription", label: "Prescription" },
+  { value: "insurance", label: "Insurance document" },
+  { value: "other", label: "Other" },
+];
+
+function documentTypeLabel(value: string): string {
+  return (
+    DOCUMENT_TYPES.find((t) => t.value === value)?.label ??
+    value.replace(/_/g, " ")
+  );
+}
+
 export function DocumentUpload() {
   const navigate = useNavigate();
+  const isOnline = useOnlineStatus();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(isSupabaseEnabled);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadData, setUploadData] = useState({
     documentType: "medical_record",
     description: "",
   });
+  const [toDelete, setToDelete] = useState<Document | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadDocuments();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadDocuments = async () => {
+  const loadDocuments = useCallback(async () => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    setError("");
+    setLoadFailed(false);
 
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
+      const portalUser = readPortalUser();
+      if (!portalUser) {
         navigate("/patient/login", { replace: true });
         return;
       }
-
-      const portalUser = JSON.parse(portalUserStr);
 
       const { data, error: docsError } = await supabase
         .from("patient_documents")
@@ -59,34 +93,45 @@ export function DocumentUpload() {
 
       setDocuments(data || []);
     } catch (err) {
-      logger.error("Error loading documents:", err);
-      setError("Failed to load documents");
+      logger.error("[DocumentUpload] load failed:", errorName(err));
+      setLoadFailed(true);
     } finally {
       setLoading(false);
+      setHasLoaded(true);
     }
-  };
+  }, [navigate]);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  useEffect(() => {
+    void loadDocuments();
+  }, [loadDocuments]);
 
-    if (file.size > 10 * 1024 * 1024) {
-      setError("File size must be less than 10MB");
+  const handleFileChosen = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    setError("");
+    setSuccess("");
+    if (file && file.size > MAX_BYTES) {
+      setError("This file is larger than 10 MB. Choose a smaller file.");
+      setSelectedFile(null);
+      e.target.value = "";
       return;
     }
+    setSelectedFile(file);
+  };
+
+  const handleFileUpload = async () => {
+    const file = selectedFile;
+    if (!file || !supabase) return;
 
     setUploading(true);
     setError("");
     setSuccess("");
 
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
+      const portalUser = readPortalUser();
+      if (!portalUser) {
         navigate("/patient/login", { replace: true });
         return;
       }
-
-      const portalUser = JSON.parse(portalUserStr);
 
       const fileExt = file.name.split(".").pop();
       const fileName = `${portalUser.patientId}/${Date.now()}.${fileExt}`;
@@ -109,193 +154,318 @@ export function DocumentUpload() {
           storage_path: fileName,
         });
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        // Do not leave an unlisted copy of a private file in storage.
+        await supabase.storage
+          .from("patient-documents")
+          .remove([fileName])
+          .catch(() => undefined);
+        throw insertError;
+      }
 
-      setSuccess("Document uploaded successfully");
+      setSuccess(`${file.name} was uploaded to your online account.`);
       setUploadData({ documentType: "medical_record", description: "" });
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       await loadDocuments();
     } catch (err) {
-      logger.error("Error uploading document:", err);
-      setError("Failed to upload document");
+      logger.error("[DocumentUpload] upload failed:", errorName(err));
+      setError(
+        "The document was not uploaded. Check your internet connection and try again. If it keeps happening, bring a paper copy to your next visit.",
+      );
     } finally {
       setUploading(false);
     }
   };
 
-  const deleteDocument = async (doc: Document) => {
-    if (!confirm(`Delete ${doc.file_name}?`)) return;
+  const deleteDocument = async () => {
+    const doc = toDelete;
+    if (!doc || !supabase) return;
+    setDeleting(true);
+    setDeleteError(null);
 
     try {
-      const { error: deleteError } = await supabase
+      const { data: removed, error: deleteErr } = await supabase
         .from("patient_documents")
         .delete()
-        .eq("id", doc.id);
+        .eq("id", doc.id)
+        .select("id");
 
-      if (deleteError) throw deleteError;
+      if (deleteErr) throw deleteErr;
 
-      setSuccess("Document deleted successfully");
+      // The online record can refuse a removal without an error (it then
+      // removes nothing). Only say "removed" when it really was.
+      if (!removed || removed.length === 0) {
+        setDeleteError(
+          "This document was not removed. Your account cannot remove documents online. Ask clinic staff to remove it for you.",
+        );
+        return;
+      }
+
+      setToDelete(null);
+      setSuccess(`${doc.file_name} was removed from your documents.`);
       await loadDocuments();
     } catch (err) {
-      logger.error("Error deleting document:", err);
-      setError("Failed to delete document");
+      logger.error("[DocumentUpload] delete failed:", errorName(err));
+      setDeleteError(
+        "The document was not removed. Check your internet connection and try again.",
+      );
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-  };
+  const header = (
+    <PageHeader
+      title="Your documents"
+      description="Keep copies of letters, test results or scans in your online account."
+    />
+  );
 
-  if (loading) {
+  if (!isSupabaseEnabled) {
     return (
-      <div className="min-h-screen bg-gray-50 px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading documents...</p>
-          </div>
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <div className="banner banner-info">
+          <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>
+            Documents are stored in your online account. This device is not
+            connected to one, so documents cannot be uploaded or shown here.
+            Bring paper copies to your next clinic visit instead.
+          </p>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50 px-4 py-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Document Upload</h1>
-          <p className="mt-2 text-gray-600">
-            Upload and manage your medical documents
-          </p>
+  if (loading && !hasLoaded) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <span role="status" className="sr-only">
+          Loading your documents
+        </span>
+        <div className="panel p-5" aria-hidden>
+          <Skeleton className="mb-4 h-5 w-40" />
+          <SkeletonText lines={4} />
         </div>
+      </div>
+    );
+  }
 
+  const canUpload = isOnline && !uploading && !!selectedFile;
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+      {header}
+
+      <div aria-live="polite" className="space-y-3">
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-800">{error}</p>
+          <div className="banner banner-danger" role="alert">
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>{error}</p>
           </div>
         )}
-
         {success && (
-          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <p className="text-sm text-green-800">{success}</p>
+          <div className="banner banner-success">
+            <CheckCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>{success}</p>
           </div>
         )}
+        {uploading && (
+          <p role="status" className="flex items-center gap-2 text-body text-ink-secondary">
+            <span
+              className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent"
+              aria-hidden
+            />
+            Uploading {selectedFile?.name}…
+          </p>
+        )}
+      </div>
 
-        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-4">Upload New Document</h2>
+      {!isOnline && (
+        <div className="banner banner-warning" role="status">
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>You are offline. Connect to the internet to upload or remove documents.</p>
+        </div>
+      )}
 
-          <div className="space-y-4">
+      <section className="panel" aria-labelledby="doc-upload-title">
+        <div className="panel-header">
+          <h2 id="doc-upload-title" className="panel-title">
+            Upload a document
+          </h2>
+        </div>
+        <div className="panel-body space-y-4">
+          <p className="flex items-start gap-2 text-caption text-ink-muted">
+            <InformationCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
+            Documents you upload are private health information. They are saved
+            to your online account.
+          </p>
+
+          <div>
+            <label htmlFor="doc-file" className="field-label">
+              File
+            </label>
+            <input
+              ref={fileInputRef}
+              id="doc-file"
+              type="file"
+              onChange={handleFileChosen}
+              disabled={uploading}
+              accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+              aria-describedby="doc-file-hint"
+              className="block w-full min-h-touch-target rounded-md border border-line-strong bg-surface px-3 py-2 text-body text-ink file:mr-3 file:rounded-md file:border-0 file:bg-surface-hover file:px-3 file:py-2 file:text-label file:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            />
+            <p id="doc-file-hint" className="field-hint">
+              PDF, JPG, PNG, DOC or DOCX. Up to 10 MB.
+              {selectedFile ? ` Chosen: ${selectedFile.name} (${formatFileSize(selectedFile.size)}).` : ""}
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Document Type
+              <label htmlFor="doc-type" className="field-label">
+                What kind of document is it?
               </label>
               <select
+                id="doc-type"
                 value={uploadData.documentType}
                 onChange={(e) =>
                   setUploadData({ ...uploadData, documentType: e.target.value })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={uploading}
+                className="input-field"
               >
-                <option value="medical_record">Medical Record</option>
-                <option value="lab_result">Lab Result</option>
-                <option value="imaging">Imaging/X-Ray</option>
-                <option value="prescription">Prescription</option>
-                <option value="insurance">Insurance Document</option>
-                <option value="other">Other</option>
+                {DOCUMENT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description (Optional)
+              <label htmlFor="doc-description" className="field-label">
+                Short description (optional)
               </label>
               <input
+                id="doc-description"
                 type="text"
                 value={uploadData.description}
                 onChange={(e) =>
                   setUploadData({ ...uploadData, description: e.target.value })
                 }
-                placeholder="Brief description of the document"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Select File (Max 10MB)
-              </label>
-              <input
-                type="file"
-                onChange={handleFileUpload}
                 disabled={uploading}
-                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                placeholder="For example: blood test from General Hospital"
+                className="input-field"
               />
-              <p className="mt-1 text-xs text-gray-500">
-                Accepted formats: PDF, JPG, PNG, DOC, DOCX
-              </p>
             </div>
+          </div>
 
-            {uploading && (
-              <div className="flex items-center gap-2 text-blue-600">
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                <span>Uploading...</span>
-              </div>
-            )}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => void handleFileUpload()}
+              disabled={!canUpload}
+              className="btn-primary"
+            >
+              <DocumentArrowUpIcon className="h-5 w-5" aria-hidden />
+              {uploading ? "Uploading…" : "Upload document"}
+            </button>
           </div>
         </div>
+      </section>
 
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          {documents.length === 0 ? (
-            <div className="p-12 text-center">
-              <DocumentArrowUpIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                No documents uploaded
-              </h3>
-              <p className="text-gray-600">
-                Your uploaded documents will appear here
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-200">
-              {documents.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="p-4 flex items-center justify-between hover:bg-gray-50"
-                >
-                  <div className="flex items-center gap-3 flex-1">
-                    <DocumentTextIcon className="h-10 w-10 text-gray-400" />
-                    <div>
-                      <h3 className="font-medium text-gray-900">
-                        {doc.file_name}
-                      </h3>
-                      <div className="flex items-center gap-3 mt-1 text-sm text-gray-600">
-                        <span className="capitalize">
-                          {doc.document_type.replace("_", " ")}
-                        </span>
-                        <span>{formatFileSize(doc.file_size)}</span>
-                        <span>{formatNigerianDate(doc.upload_date)}</span>
-                      </div>
-                      {doc.description && (
-                        <p className="text-sm text-gray-600 mt-1">
-                          {doc.description}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => deleteDocument(doc)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded-md"
-                  >
-                    <TrashIcon className="h-5 w-5" />
-                  </button>
-                </div>
-              ))}
-            </div>
+      <section className="panel" aria-labelledby="doc-list-title">
+        <div className="panel-header">
+          <h2 id="doc-list-title" className="panel-title">
+            Uploaded documents
+          </h2>
+          {!loadFailed && (
+            <span className="text-caption text-ink-muted tabular-nums">
+              {documents.length}
+            </span>
           )}
         </div>
-      </div>
+        {loadFailed ? (
+          <div className="panel-body">
+            <div className="banner banner-danger" role="alert">
+              <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <div className="space-y-3">
+                <p>We could not load your documents. Nothing has been changed.</p>
+                <button
+                  type="button"
+                  onClick={() => void loadDocuments()}
+                  className="btn-secondary"
+                >
+                  <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                  Try again
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : documents.length === 0 ? (
+          <EmptyState
+            icon={DocumentArrowUpIcon}
+            title="No documents uploaded"
+            description="Documents you upload will be listed here."
+          />
+        ) : (
+          <ul className="divide-y divide-line">
+            {documents.map((doc) => (
+              <li key={doc.id} className="flex items-start gap-3 px-4 py-3">
+                <DocumentTextIcon className="mt-0.5 h-6 w-6 shrink-0 text-ink-muted" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-body font-medium text-ink">
+                    {doc.file_name}
+                  </p>
+                  <p className="text-caption text-ink-muted">
+                    {documentTypeLabel(doc.document_type)}
+                    {" · "}
+                    {formatFileSize(doc.file_size)}
+                    {" · "}
+                    {formatNigerianDate(doc.upload_date)}
+                  </p>
+                  {doc.description && (
+                    <p className="mt-1 text-body text-ink-secondary">{doc.description}</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteError(null);
+                    setToDelete(doc);
+                  }}
+                  disabled={!isOnline}
+                  aria-label={`Remove ${doc.file_name}`}
+                  className="btn-ghost min-w-touch-target text-danger-fg hover:text-danger-fg"
+                >
+                  <TrashIcon className="h-5 w-5" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <ConfirmDialog
+        open={!!toDelete}
+        destructive
+        title={toDelete ? `Remove ${toDelete.file_name}?` : ""}
+        confirmLabel="Remove document"
+        cancelLabel="Keep document"
+        busyLabel="Removing…"
+        busy={deleting}
+        error={deleteError}
+        onConfirm={() => void deleteDocument()}
+        onCancel={() => setToDelete(null)}
+      >
+        <p>
+          It will be removed from your list of documents. This cannot be undone
+          from the portal.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

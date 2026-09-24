@@ -4,6 +4,8 @@ import { StepperForm } from "@/components/StepperForm";
 import { PatientDedupeModal } from "@/components/PatientDedupeModal";
 import { VisualNumberInput } from "@/components/VisualNumberInput";
 import { usePatientsStore } from "@/stores/patients";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG } from "@/utils/nigeria";
 import {
   UserIcon,
@@ -11,6 +13,7 @@ import {
   PhoneIcon,
   MapPinIcon,
   IdentificationIcon,
+  CheckCircleIcon,
 } from "@heroicons/react/24/outline";
 
 interface SimplePatientFormProps {
@@ -26,6 +29,10 @@ export function SimplePatientForm({
 }: SimplePatientFormProps) {
   const { t } = useT();
   const { addPatient } = usePatientsStore();
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const mayRegister = !!role && can(role, "register");
+  const refuseRegistration = () =>
+    alert("Your role cannot register patients. Ask a registration volunteer, nurse, doctor or administrator.");
 
   const [dedupeData, setDedupeData] = useState<{
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,6 +100,10 @@ export function SimplePatientForm({
   };
 
   const handleComplete = async () => {
+    if (!mayRegister) {
+      refuseRegistration();
+      return;
+    }
     setLoading(true);
     try {
       const dob = calculateDOB(formData.age);
@@ -137,25 +148,28 @@ export function SimplePatientForm({
               <img
                 src={formData.photo}
                 alt="Patient"
-                className="w-32 h-32 rounded-full object-cover border-4 border-gray-200"
+                className="w-32 h-32 rounded-full object-cover border-4 border-line"
               />
             ) : (
-              <div className="w-32 h-32 rounded-full bg-gray-100 flex items-center justify-center border-4 border-gray-200">
-                <UserIcon className="h-16 w-16 text-gray-400" />
+              <div className="w-32 h-32 rounded-full bg-surface-sunken flex items-center justify-center border-4 border-line">
+                <UserIcon className="h-16 w-16 text-ink-disabled" aria-hidden />
               </div>
             )}
-            <label className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-3 cursor-pointer hover:bg-primary/90 transition-colors touch-target-large shadow-lg">
-              <CameraIcon className="h-6 w-6" />
+            <label className="absolute bottom-0 right-0 flex items-center justify-center bg-primary text-white rounded-full p-3 cursor-pointer hover:bg-primary-hover transition-colors touch-target-large focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2">
+              <CameraIcon className="h-6 w-6" aria-hidden />
+              <span className="sr-only">
+                {formData.photo ? "Change photo" : "Take a photo"}
+              </span>
               <input
                 type="file"
                 accept="image/*"
                 capture="user"
                 onChange={handlePhotoCapture}
-                className="hidden"
+                className="sr-only"
               />
             </label>
           </div>
-          <p className="text-lg text-gray-600">
+          <p className="text-lg text-ink-secondary">
             {t("simple.tapCameraToAddPhoto")}
           </p>
         </div>
@@ -169,11 +183,12 @@ export function SimplePatientForm({
       component: (
         <div className="space-y-6">
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3 flex items-center space-x-2">
-              <IdentificationIcon className="h-6 w-6 text-primary" />
+            <label htmlFor="simple-givenName" className="text-lg font-medium text-ink-secondary mb-3 flex items-center space-x-2">
+              <IdentificationIcon className="h-6 w-6 text-ink-muted" aria-hidden />
               <span>{t("patient.givenName")} *</span>
             </label>
             <input
+              id="simple-givenName"
               type="text"
               value={formData.givenName}
               onChange={(e) =>
@@ -186,11 +201,12 @@ export function SimplePatientForm({
           </div>
 
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3 flex items-center space-x-2">
-              <IdentificationIcon className="h-6 w-6 text-primary" />
+            <label htmlFor="simple-familyName" className="text-lg font-medium text-ink-secondary mb-3 flex items-center space-x-2">
+              <IdentificationIcon className="h-6 w-6 text-ink-muted" aria-hidden />
               <span>{t("patient.familyName")} *</span>
             </label>
             <input
+              id="simple-familyName"
               type="text"
               value={formData.familyName}
               onChange={(e) =>
@@ -210,49 +226,39 @@ export function SimplePatientForm({
       isValid: !!(formData.sex && formData.age > 0),
       component: (
         <div className="space-y-8">
-          <div>
-            <label className="block text-lg font-medium text-gray-700 mb-4 text-center">
+          <fieldset>
+            <legend className="block w-full text-lg font-medium text-ink-secondary mb-4 text-center">
               {t("patient.sex")} *
-            </label>
+            </legend>
             <div className="grid grid-cols-3 gap-4">
               {[
-                {
-                  value: "male",
-                  label: t("patient.male"),
-                  icon: "👨",
-                  color: "bg-blue-100 border-blue-300 text-blue-800",
-                },
-                {
-                  value: "female",
-                  label: t("patient.female"),
-                  icon: "👩",
-                  color: "bg-pink-100 border-pink-300 text-pink-800",
-                },
-                {
-                  value: "other",
-                  label: t("patient.other"),
-                  icon: "👤",
-                  color: "bg-gray-100 border-gray-300 text-gray-800",
-                },
+                { value: "male", label: t("patient.male") },
+                { value: "female", label: t("patient.female") },
+                { value: "other", label: t("patient.other") },
               ].map((option) => (
                 <button
                   key={option.value}
                   type="button"
+                  aria-pressed={formData.sex === option.value}
                   onClick={() =>
                     setFormData((prev) => ({ ...prev, sex: option.value }))
                   }
-                  className={`p-6 rounded-xl border-2 transition-all touch-target-large ${
+                  className={`flex flex-col items-center justify-center gap-2 p-6 rounded-lg border-2 transition-colors touch-target-large ${
                     formData.sex === option.value
-                      ? `${option.color} ring-2 ring-primary/20`
-                      : "bg-white border-gray-200 hover:border-gray-300"
+                      ? "border-primary bg-primary-soft text-primary-fg"
+                      : "bg-surface border-line text-ink hover:bg-surface-hover"
                   }`}
                 >
-                  <div className="text-4xl mb-2">{option.icon}</div>
-                  <div className="text-lg font-medium">{option.label}</div>
+                  {formData.sex === option.value ? (
+                    <CheckCircleIcon className="h-8 w-8" aria-hidden />
+                  ) : (
+                    <UserIcon className="h-8 w-8 text-ink-muted" aria-hidden />
+                  )}
+                  <span className="text-lg font-medium">{option.label}</span>
                 </button>
               ))}
             </div>
-          </div>
+          </fieldset>
 
           <VisualNumberInput
             value={formData.age}
@@ -274,11 +280,12 @@ export function SimplePatientForm({
       component: (
         <div className="space-y-6">
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3 flex items-center space-x-2">
-              <PhoneIcon className="h-6 w-6 text-primary" />
+            <label htmlFor="simple-phone" className="text-lg font-medium text-ink-secondary mb-3 flex items-center space-x-2">
+              <PhoneIcon className="h-6 w-6 text-ink-muted" aria-hidden />
               <span>{t("patient.phone")} *</span>
             </label>
             <input
+              id="simple-phone"
               type="tel"
               value={formData.phone}
               onChange={(e) =>
@@ -286,18 +293,20 @@ export function SimplePatientForm({
               }
               className="input-field text-xl"
               placeholder="08012345678"
+              aria-describedby="simple-phone-hint"
             />
-            <p className="text-sm text-gray-600 mt-2">
+            <p id="simple-phone-hint" className="field-hint">
               {t("simple.phoneExample")}
             </p>
           </div>
 
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3 flex items-center space-x-2">
-              <MapPinIcon className="h-6 w-6 text-primary" />
+            <label htmlFor="simple-address" className="text-lg font-medium text-ink-secondary mb-3 flex items-center space-x-2">
+              <MapPinIcon className="h-6 w-6 text-ink-muted" aria-hidden />
               <span>{t("patient.address")}</span>
             </label>
             <textarea
+              id="simple-address"
               value={formData.address}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, address: e.target.value }))
@@ -318,10 +327,11 @@ export function SimplePatientForm({
       component: (
         <div className="space-y-6">
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3">
+            <label htmlFor="simple-state" className="block text-lg font-medium text-ink-secondary mb-3">
               {t("patient.state")} *
             </label>
             <select
+              id="simple-state"
               value={formData.state}
               onChange={(e) => {
                 setFormData((prev) => ({
@@ -342,15 +352,16 @@ export function SimplePatientForm({
           </div>
 
           <div>
-            <label className="block text-lg font-medium text-gray-700 mb-3">
+            <label htmlFor="simple-lga" className="block text-lg font-medium text-ink-secondary mb-3">
               {t("patient.lga")} *
             </label>
             <select
+              id="simple-lga"
               value={formData.lga}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, lga: e.target.value }))
               }
-              className={`input-field text-xl ${!formData.state ? "bg-gray-100 cursor-not-allowed" : ""}`}
+              className={`input-field text-xl ${!formData.state ? "bg-surface-sunken cursor-not-allowed" : ""}`}
               disabled={
                 !formData.state ||
                 (LGAS_BY_STATE[formData.state] || []).length === 0
@@ -371,7 +382,7 @@ export function SimplePatientForm({
             </select>
             {formData.state &&
               (LGAS_BY_STATE[formData.state] || []).length > 0 && (
-                <p className="text-gray-500 text-sm mt-2">
+                <p className="field-hint">
                   {(LGAS_BY_STATE[formData.state] || []).length} LGAs available
                 </p>
               )}
@@ -392,6 +403,10 @@ export function SimplePatientForm({
       return;
     }
     if (action === "create_new" && pending) {
+      if (!mayRegister) {
+        refuseRegistration();
+        return;
+      }
       try {
         const patientId = await addPatient(
           { ...pending.patient, photoUrl: formData.photo || undefined },

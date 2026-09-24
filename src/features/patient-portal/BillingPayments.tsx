@@ -1,15 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
-  CreditCardIcon,
-  DocumentTextIcon,
-  CheckCircleIcon,
-  ClockIcon,
-  ExclamationCircleIcon,
   BanknotesIcon,
-  ArrowDownTrayIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
 import * as logger from "@/lib/logger";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonText } from "@/components/ui/Skeleton";
+import { billStatusDisplay, formatNaira } from "./account/displayStatus";
+import { errorName, readPortalUser } from "./account/portalSession";
 
 interface Bill {
   id: string;
@@ -23,352 +25,183 @@ interface Bill {
   createdAt: Date;
 }
 
-interface Payment {
-  id: string;
-  billId: string;
-  amount: number;
-  paymentMethod: "cash" | "card" | "bank_transfer" | "mobile_money";
-  referenceNumber: string;
-  paidAt: Date;
-  status: "completed" | "pending" | "failed";
-}
-
+/**
+ * Bills recorded for the patient. There is no online payment in the portal:
+ * a bill only shows as paid when the stored record says so.
+ */
 export function BillingPayments() {
   const [bills, setBills] = useState<Bill[]>([]);
-  const [, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<string>("card");
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [processing, setProcessing] = useState(false);
+  const [noPatient, setNoPatient] = useState(false);
 
-  useEffect(() => {
-    loadBillingData();
-  }, []);
-
-  const loadBillingData = async () => {
+  const loadBillingData = useCallback(async () => {
     setLoading(true);
     try {
-      const portalUser = JSON.parse(
-        localStorage.getItem("patient_portal_user") || "{}",
-      );
-      if (!portalUser.patientId) {
+      const portalUser = readPortalUser();
+      if (!portalUser?.patientId) {
         logger.error("No patient ID found");
+        setNoPatient(true);
         return;
       }
 
+      // No billing source is connected to the portal yet, so there are no
+      // bills to show. Never invent bills or payment states here.
       setBills([]);
-      setPayments([]);
     } catch (err) {
-      logger.error("Error loading billing data:", err);
+      logger.error("[BillingPayments] load failed:", errorName(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const getStatusColor = (status: Bill["status"]) => {
-    switch (status) {
-      case "paid":
-        return "bg-green-100 text-green-800";
-      case "partial":
-        return "bg-yellow-100 text-yellow-800";
-      case "pending":
-        return "bg-blue-100 text-blue-800";
-      case "overdue":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
-  const getStatusIcon = (status: Bill["status"]) => {
-    switch (status) {
-      case "paid":
-        return <CheckCircleIcon className="w-5 h-5" />;
-      case "overdue":
-        return <ExclamationCircleIcon className="w-5 h-5" />;
-      default:
-        return <ClockIcon className="w-5 h-5" />;
-    }
-  };
-
-  const handlePayNow = (bill: Bill) => {
-    setSelectedBill(bill);
-    const remainingAmount = bill.amount - bill.amountPaid;
-    setPaymentAmount(remainingAmount.toString());
-    setShowPaymentModal(true);
-  };
-
-  const handleSubmitPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedBill) return;
-
-    setProcessing(true);
-    try {
-      // Mock payment processing - replace with actual payment gateway integration
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Update bill status
-      const updatedBills = bills.map((bill) => {
-        if (bill.id === selectedBill.id) {
-          const newAmountPaid = bill.amountPaid + parseFloat(paymentAmount);
-          return {
-            ...bill,
-            amountPaid: newAmountPaid,
-            status:
-              newAmountPaid >= bill.amount
-                ? ("paid" as const)
-                : ("partial" as const),
-          };
-        }
-        return bill;
-      });
-
-      setBills(updatedBills);
-      setShowPaymentModal(false);
-      setSelectedBill(null);
-      setPaymentAmount("");
-
-      alert("Payment successful!");
-    } catch (err) {
-      logger.error("Payment error:", err);
-      alert("Payment failed. Please try again.");
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const handleDownloadReceipt = (billId: string) => {
-    logger.info("Downloading receipt for bill:", billId);
-    alert("Receipt download will be implemented with PDF generation");
-  };
+  useEffect(() => {
+    void loadBillingData();
+  }, [loadBillingData]);
 
   const totalOutstanding = bills.reduce(
-    (sum, bill) => sum + (bill.amount - bill.amountPaid),
+    (sum, bill) => sum + Math.max(0, bill.amount - bill.amountPaid),
     0,
+  );
+  const paidCount = bills.filter((b) => b.status === "paid").length;
+  const unpaidCount = bills.length - paidCount;
+
+  const header = (
+    <PageHeader
+      title="Bills and payments"
+      description="Charges from your clinic visits and what has been paid."
+    />
   );
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <span role="status" className="sr-only">
+          Loading your bills
+        </span>
+        <div className="panel p-5" aria-hidden>
+          <Skeleton className="mb-4 h-5 w-40" />
+          <SkeletonText lines={3} />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <h1 className="text-3xl font-bold text-gray-900">Bills & Payments</h1>
-        <p className="text-gray-600 mt-2">View and manage your medical bills</p>
+    <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+      {header}
+
+      <div className="banner banner-info">
+        <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+        <p>
+          You cannot pay bills in the portal. To pay, or to ask about a charge,
+          speak to the clinic desk and ask for a receipt.
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
-              <BanknotesIcon className="w-6 h-6 text-red-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Total Outstanding</p>
-              <p className="text-2xl font-bold text-gray-900">
-                ₦{totalOutstanding.toLocaleString()}
-              </p>
-            </div>
-          </div>
+      {noPatient && (
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <p>
+            We could not find your patient record. Log out, log in again, then
+            try once more.
+          </p>
         </div>
+      )}
 
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <CheckCircleIcon className="w-6 h-6 text-green-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Paid Bills</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {bills.filter((b) => b.status === "paid").length}
-              </p>
-            </div>
-          </div>
+      {bills.length === 0 ? (
+        <div className="panel">
+          <EmptyState
+            icon={BanknotesIcon}
+            title="No bills to show"
+            description="Clinic bills are not shown in the portal yet. Ask at the clinic desk about any charges from your visits."
+          />
         </div>
-
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-              <DocumentTextIcon className="w-6 h-6 text-yellow-600" />
+      ) : (
+        <>
+          <section className="panel" aria-labelledby="billing-summary-title">
+            <div className="panel-header">
+              <h2 id="billing-summary-title" className="panel-title">
+                Summary
+              </h2>
             </div>
-            <div>
-              <p className="text-sm text-gray-600">Pending Bills</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {bills.filter((b) => b.status !== "paid").length}
-              </p>
+            <dl className="panel-body grid gap-4 sm:grid-cols-3">
+              <div>
+                <dt className="text-label text-ink-muted">Still to pay</dt>
+                <dd className="text-stat text-ink tabular-nums">
+                  {formatNaira(totalOutstanding)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-label text-ink-muted">Paid bills</dt>
+                <dd className="text-stat text-ink tabular-nums">{paidCount}</dd>
+              </div>
+              <div>
+                <dt className="text-label text-ink-muted">Not fully paid</dt>
+                <dd className="text-stat text-ink tabular-nums">{unpaidCount}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="panel" aria-labelledby="billing-list-title">
+            <div className="panel-header">
+              <h2 id="billing-list-title" className="panel-title">
+                Your bills
+              </h2>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900">Recent Bills</h2>
-        </div>
-
-        <div className="divide-y divide-gray-200">
-          {bills.map((bill) => (
-            <div
-              key={bill.id}
-              className="p-6 hover:bg-gray-50 transition-colors"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    {getStatusIcon(bill.status)}
-                    <h3 className="font-semibold text-gray-900">
-                      {bill.description}
-                    </h3>
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(bill.status)}`}
-                    >
-                      {bill.status.charAt(0).toUpperCase() +
-                        bill.status.slice(1)}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600 mt-3">
-                    <div>
-                      <p className="font-medium text-gray-500">Visit Date</p>
-                      <p>{formatNigerianDate(bill.visitDate)}</p>
+            <ul className="divide-y divide-line">
+              {bills.map((bill) => {
+                const status = billStatusDisplay(bill.status);
+                const balance = Math.max(0, bill.amount - bill.amountPaid);
+                return (
+                  <li key={bill.id} className="px-4 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-h3 text-ink">{bill.description}</h3>
+                      <StatusBadge tone={status.tone} icon>
+                        {status.label}
+                      </StatusBadge>
                     </div>
-                    <div>
-                      <p className="font-medium text-gray-500">Total Amount</p>
-                      <p className="font-semibold text-gray-900">
-                        ₦{bill.amount.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-500">Amount Paid</p>
-                      <p className="font-semibold text-green-600">
-                        ₦{bill.amountPaid.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-500">Balance</p>
-                      <p className="font-semibold text-red-600">
-                        ₦{(bill.amount - bill.amountPaid).toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-4 mt-4">
+                    <dl className="mt-3 grid grid-cols-2 gap-3 text-body sm:grid-cols-4">
+                      <div>
+                        <dt className="text-caption text-ink-muted">Visit date</dt>
+                        <dd className="text-ink tabular-nums">
+                          {formatNigerianDate(bill.visitDate)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-caption text-ink-muted">Total</dt>
+                        <dd className="font-medium text-ink tabular-nums">
+                          {formatNaira(bill.amount)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-caption text-ink-muted">Paid</dt>
+                        <dd className="text-ink tabular-nums">
+                          {formatNaira(bill.amountPaid)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-caption text-ink-muted">Balance</dt>
+                        <dd className="font-medium text-ink tabular-nums">
+                          {formatNaira(balance)}
+                        </dd>
+                      </div>
+                    </dl>
                     {bill.status !== "paid" && (
-                      <button
-                        onClick={() => handlePayNow(bill)}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-                      >
-                        Pay Now
-                      </button>
+                      <p className="mt-2 text-caption text-ink-muted">
+                        Pay at the clinic desk
+                        {bill.dueDate
+                          ? ` by ${formatNigerianDate(bill.dueDate)}`
+                          : ""}
+                        .
+                      </p>
                     )}
-                    <button
-                      onClick={() => handleDownloadReceipt(bill.id)}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium flex items-center gap-2"
-                    >
-                      <ArrowDownTrayIcon className="w-4 h-4" />
-                      Download Receipt
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {showPaymentModal && selectedBill && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">
-              Make Payment
-            </h2>
-
-            <div className="bg-gray-50 rounded-lg p-4 mb-6">
-              <p className="text-sm text-gray-600">Bill Description</p>
-              <p className="font-semibold text-gray-900">
-                {selectedBill.description}
-              </p>
-              <p className="text-sm text-gray-600 mt-2">Amount Due</p>
-              <p className="text-2xl font-bold text-gray-900">
-                ₦
-                {(
-                  selectedBill.amount - selectedBill.amountPaid
-                ).toLocaleString()}
-              </p>
-            </div>
-
-            <form onSubmit={handleSubmitPayment} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Payment Amount (₦)
-                </label>
-                <input
-                  type="number"
-                  value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
-                  min="1"
-                  max={selectedBill.amount - selectedBill.amountPaid}
-                  required
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Payment Method
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="card">Debit/Credit Card</option>
-                  <option value="bank_transfer">Bank Transfer</option>
-                  <option value="mobile_money">Mobile Money</option>
-                  <option value="cash">Cash (Pay at Facility)</option>
-                </select>
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowPaymentModal(false);
-                    setSelectedBill(null);
-                  }}
-                  disabled={processing}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={processing}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {processing ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <CreditCardIcon className="w-5 h-5" />
-                      Pay Now
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        </>
       )}
     </div>
   );

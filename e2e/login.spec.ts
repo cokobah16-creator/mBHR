@@ -132,12 +132,38 @@ async function openLoginWithSeededUser(page: Page): Promise<void> {
 }
 
 test.describe("First-run setup", () => {
-  test("sends a device with no staff account to setup", async ({ page }) => {
+  test("offers setup from the login page on a device with no staff account", async ({
+    page,
+  }) => {
     await bootApp(page, "/login");
+
+    // No PIN can work on an empty device, so the page says so and offers
+    // first-run setup instead of bouncing there: someone with an existing
+    // account still needs the page to sign in online.
+    await expect(
+      page.getByText("No staff account is stored on this device yet."),
+    ).toBeVisible({ timeout: BOOT_TIMEOUT });
+    await expect(page).toHaveURL(/\/login$/);
+
+    await page.getByRole("link", { name: "Set up this device" }).click();
 
     await expect(page).toHaveURL(/\/setup$/, { timeout: BOOT_TIMEOUT });
     await expect(
       page.getByRole("heading", { name: "Set up this device" }),
+    ).toBeVisible();
+  });
+
+  test("links back to sign-in from setup", async ({ page }) => {
+    await bootApp(page, "/setup");
+    await expect(page.locator(NAME_FIELD)).toBeVisible({
+      timeout: BOOT_TIMEOUT,
+    });
+
+    await page.getByRole("link", { name: "Sign in instead" }).click();
+
+    await expect(page).toHaveURL(/\/login$/, { timeout: BOOT_TIMEOUT });
+    await expect(
+      page.getByRole("heading", { name: "Staff Sign In" }),
     ).toBeVisible();
   });
 

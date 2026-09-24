@@ -1,4 +1,6 @@
 import { db, createAuditLog } from "../../db";
+import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import type { FHIRResource, FHIRBundle } from "./types";
 import {
   adaptDexiePatient,
@@ -13,6 +15,7 @@ import {
   validateBundle,
   type BundleValidationResult,
 } from "./uscore-validator";
+import { bulkExportOutcome } from "./bulkExportOutcome";
 
 export interface FHIRExportAuditLog {
   id: string;
@@ -29,12 +32,24 @@ export interface FHIRExportAuditLog {
   dataSource: "dexie-offline";
   success: boolean;
   errorMessage?: string;
+  /** Role of whoever ran the export ("patient" for portal self-export). */
+  actorRole?: string;
+  /** Bulk exports: patients whose records are in the files. */
+  patientsExported?: number;
+  /** Bulk exports: patients whose records could not be exported. */
+  patientsFailed?: number;
 }
 
-async function logFHIRExport(auditLog: FHIRExportAuditLog): Promise<void> {
+/** Actor recorded for exports when no role is given (portal self-export). */
+const DEFAULT_EXPORT_ACTOR = "patient";
+
+async function logFHIRExport(
+  auditLog: FHIRExportAuditLog,
+  actorRole: string = DEFAULT_EXPORT_ACTOR,
+): Promise<void> {
   try {
     await createAuditLog(
-      "patient",
+      actorRole,
       `fhir_export_${auditLog.exportType}`,
       auditLog.patientId ? "patient" : "system",
       auditLog.patientId || "bulk",
@@ -43,7 +58,7 @@ async function logFHIRExport(auditLog: FHIRExportAuditLog): Promise<void> {
     const existingLogs = await db.meta.get("fhir_export_audit_logs");
     const logs: FHIRExportAuditLog[] =
       (existingLogs?.value as FHIRExportAuditLog[]) || [];
-    logs.unshift(auditLog);
+    logs.unshift({ ...auditLog, actorRole });
 
     const trimmedLogs = logs.slice(0, 100);
 
@@ -53,7 +68,10 @@ async function logFHIRExport(auditLog: FHIRExportAuditLog): Promise<void> {
       updatedAt: Date.now(),
     });
   } catch (error) {
-    console.error("Failed to log FHIR export:", error);
+    console.error(
+      "Failed to log FHIR export:",
+      error instanceof Error ? error.name : error,
+    );
   }
 }
 
@@ -98,7 +116,12 @@ export interface ExportResult {
 
 export interface BulkExportProgress {
   totalPatients: number;
+  /** Patients attempted so far, exported or not (drives the progress bar). */
   processedPatients: number;
+  /** Patients whose records are in the export files. */
+  exportedPatients: number;
+  /** Patients whose export failed; their records are NOT in the files. */
+  failedPatients: number;
   currentPatientId?: string;
   status: "pending" | "in-progress" | "completed" | "error";
   startedAt: string;
@@ -112,6 +135,25 @@ export interface BulkExportResult {
   manifest: Record<string, unknown>;
   progress: BulkExportProgress;
   validation?: BundleValidationResult;
+  /** Local ids of patients left out of the files because their export failed. */
+  failedPatientIds?: string[];
+  /** Set when some patients were left out of an otherwise finished export. */
+  warning?: string;
+}
+
+/**
+ * How a single-patient export was started. Portal self-exports leave it out;
+ * a bulk export passes the staff role and asks for a full export that does
+ * not move the patient's own incremental-export point.
+ */
+export interface PatientExportContext {
+  /** Recorded in the audit log. Defaults to "patient". */
+  actorRole?: string;
+  /**
+   * Part of a bulk export: export everything (or from `options.since` only),
+   * ignore the patient's last-export time and leave it unchanged.
+   */
+  partOfBulk?: boolean;
 }
 
 const META_KEY_LAST_EXPORT = "fhir_last_export_";
@@ -163,6 +205,7 @@ async function setLastExportTimestamp(
 export async function exportPatientEHI(
   patientId: string,
   options: ExportOptions = {},
+  context: PatientExportContext = {},
 ): Promise<ExportResult> {
   const {
     includePatient = true,
@@ -176,13 +219,19 @@ export async function exportPatientEHI(
     validate = false,
     format = "fhir-bundle",
   } = options;
+  const actorRole = context.actorRole || DEFAULT_EXPORT_ACTOR;
+  const partOfBulk = context.partOfBulk === true;
 
   try {
     const resources: FHIRResource[] = [];
     const resourceCounts: Record<string, number> = {};
     const dateRangeStart = getDateRangeStart(dateRange);
 
-    const effectiveSince = since || (await getLastExportTimestamp(patientId));
+    // A bulk export is a full export unless a `since` was asked for: the
+    // patient's own last-export time must not silently trim it.
+    const effectiveSince = partOfBulk
+      ? since
+      : since || (await getLastExportTimestamp(patientId));
     const sinceDate = effectiveSince ? new Date(effectiveSince) : null;
 
     const patient = await db.patients.get(patientId);
@@ -320,14 +369,43 @@ export async function exportPatientEHI(
     }
 
     const newSinceToken = new Date().toISOString();
-    await setLastExportTimestamp(patientId, newSinceToken);
+    // A bulk export by staff must not move the point the patient's next
+    // incremental export starts from.
+    if (!partOfBulk) {
+      await setLastExportTimestamp(patientId, newSinceToken);
+    }
 
     let validation: BundleValidationResult | undefined;
     if (validate) {
       validation = validateBundle(resources);
     }
 
+    const validationStatus: FHIRExportAuditLog["validationStatus"] = validate
+      ? validation?.valid
+        ? "passed"
+        : "failed"
+      : "skipped";
+
     if (format === "ndjson") {
+      await logFHIRExport(
+        {
+          id: `export-${Date.now()}`,
+          timestamp: newSinceToken,
+          exportType: "single-patient",
+          patientId,
+          resourceTypes: Object.keys(resourceCounts),
+          resourceCount: resources.length,
+          format,
+          validationStatus,
+          validationErrors: validation?.summary.errors,
+          validationWarnings: validation?.summary.warnings,
+          since: effectiveSince,
+          dataSource: "dexie-offline",
+          success: true,
+        },
+        actorRole,
+      );
+
       return {
         success: true,
         ndjson: generateNDJSON(resources),
@@ -351,25 +429,24 @@ export async function exportPatientEHI(
       baseUrl: `urn:uuid:mbhr-patient-${patientId}`,
     });
 
-    await logFHIRExport({
-      id: `export-${Date.now()}`,
-      timestamp: newSinceToken,
-      exportType: "single-patient",
-      patientId,
-      resourceTypes: Object.keys(resourceCounts),
-      resourceCount: resources.length,
-      format,
-      validationStatus: validate
-        ? validation?.valid
-          ? "passed"
-          : "failed"
-        : "skipped",
-      validationErrors: validation?.summary.errors,
-      validationWarnings: validation?.summary.warnings,
-      since: effectiveSince,
-      dataSource: "dexie-offline",
-      success: true,
-    });
+    await logFHIRExport(
+      {
+        id: `export-${Date.now()}`,
+        timestamp: newSinceToken,
+        exportType: "single-patient",
+        patientId,
+        resourceTypes: Object.keys(resourceCounts),
+        resourceCount: resources.length,
+        format,
+        validationStatus,
+        validationErrors: validation?.summary.errors,
+        validationWarnings: validation?.summary.warnings,
+        since: effectiveSince,
+        dataSource: "dexie-offline",
+        success: true,
+      },
+      actorRole,
+    );
 
     return {
       success: true,
@@ -389,19 +466,22 @@ export async function exportPatientEHI(
     const errorMessage =
       error instanceof Error ? error.message : "Unknown export error";
 
-    await logFHIRExport({
-      id: `export-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      exportType: "single-patient",
-      patientId,
-      resourceTypes: [],
-      resourceCount: 0,
-      format,
-      validationStatus: "skipped",
-      dataSource: "dexie-offline",
-      success: false,
-      errorMessage,
-    });
+    await logFHIRExport(
+      {
+        id: `export-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        exportType: "single-patient",
+        patientId,
+        resourceTypes: [],
+        resourceCount: 0,
+        format,
+        validationStatus: "skipped",
+        dataSource: "dexie-offline",
+        success: false,
+        errorMessage,
+      },
+      actorRole,
+    );
 
     return {
       success: false,
@@ -417,6 +497,15 @@ export async function exportPatientEHI(
   }
 }
 
+/**
+ * Exports every (non-merged) patient on this device as FHIR NDJSON files.
+ *
+ * Only a signed-in user whose role may export data can run it; the role is
+ * recorded in the audit log. It is a full export (from `since` only when one
+ * is given) and does not change any patient's incremental-export point.
+ * A patient whose export fails is left out of the files and counted in
+ * `progress.failedPatients` (and `failedPatientIds`), never as exported.
+ */
 export async function exportBulkEHI(
   options: ExportOptions & {
     batchSize?: number;
@@ -428,12 +517,42 @@ export async function exportBulkEHI(
   const progress: BulkExportProgress = {
     totalPatients: 0,
     processedPatients: 0,
+    exportedPatients: 0,
+    failedPatients: 0,
     status: "pending",
     startedAt: new Date().toISOString(),
   };
 
   const files = new Map<string, string>();
   const resourcesByType = new Map<string, FHIRResource[]>();
+  const failedPatientIds: string[] = [];
+
+  // Permission is checked here, not only by hiding the button.
+  const actorRole = useAuthStore.getState().currentUser?.role;
+  if (!actorRole || !can(actorRole, "export")) {
+    progress.status = "error";
+    progress.error = "Your role cannot export data. Ask an administrator.";
+    progress.completedAt = new Date().toISOString();
+    onProgress?.(progress);
+
+    await logFHIRExport(
+      {
+        id: `bulk-export-${Date.now()}`,
+        timestamp: progress.completedAt,
+        exportType: "bulk",
+        resourceTypes: [],
+        resourceCount: 0,
+        format: "ndjson",
+        validationStatus: "skipped",
+        dataSource: "dexie-offline",
+        success: false,
+        errorMessage: "not permitted",
+      },
+      actorRole || "unknown",
+    );
+
+    return { success: false, files, manifest: {}, progress, failedPatientIds };
+  }
 
   try {
     const patients = await db.patients.filter((p) => !p.mergeInto).toArray();
@@ -450,23 +569,66 @@ export async function exportBulkEHI(
         progress.processedPatients++;
         onProgress?.(progress);
 
-        const result = await exportPatientEHI(patient.id, {
-          ...exportOptions,
-          format: "fhir-bundle",
-        });
+        const result = await exportPatientEHI(
+          patient.id,
+          {
+            ...exportOptions,
+            format: "fhir-bundle",
+          },
+          { actorRole, partOfBulk: true },
+        );
 
-        if (result.success && result.bundle?.entry) {
-          for (const entry of result.bundle.entry) {
-            if (entry.resource) {
-              const type = entry.resource.resourceType;
-              if (!resourcesByType.has(type)) {
-                resourcesByType.set(type, []);
-              }
-              resourcesByType.get(type)!.push(entry.resource);
+        if (!result.success) {
+          progress.failedPatients++;
+          failedPatientIds.push(patient.id);
+          continue;
+        }
+
+        progress.exportedPatients++;
+        for (const entry of result.bundle?.entry ?? []) {
+          if (entry.resource) {
+            const type = entry.resource.resourceType;
+            if (!resourcesByType.has(type)) {
+              resourcesByType.set(type, []);
             }
+            resourcesByType.get(type)!.push(entry.resource);
           }
         }
       }
+    }
+
+    const outcome = bulkExportOutcome(progress);
+    if (!outcome.success) {
+      progress.status = "error";
+      progress.error = outcome.error;
+      progress.completedAt = new Date().toISOString();
+      onProgress?.(progress);
+
+      await logFHIRExport(
+        {
+          id: `bulk-export-${Date.now()}`,
+          timestamp: progress.completedAt,
+          exportType: "bulk",
+          resourceTypes: [],
+          resourceCount: 0,
+          format: "ndjson",
+          validationStatus: "skipped",
+          dataSource: "dexie-offline",
+          success: false,
+          errorMessage: progress.error,
+          patientsExported: progress.exportedPatients,
+          patientsFailed: progress.failedPatients,
+        },
+        actorRole,
+      );
+
+      return {
+        success: false,
+        files,
+        manifest: {},
+        progress,
+        failedPatientIds,
+      };
     }
 
     const output: Array<{ type: string; url: string; count: number }> = [];
@@ -490,6 +652,14 @@ export async function exportBulkEHI(
       requiresAccessToken: false,
       output,
       error: [],
+      // Bulk Data manifests reserve `extension` for server-specific facts.
+      // Whoever opens the ZIP can see whether patients were left out.
+      extension: {
+        patientsTotal: progress.totalPatients,
+        patientsExported: progress.exportedPatients,
+        patientsFailed: progress.failedPatients,
+        ...(outcome.warning ? { warning: outcome.warning } : {}),
+      },
     };
 
     let validation: BundleValidationResult | undefined;
@@ -509,23 +679,28 @@ export async function exportBulkEHI(
       validation = validateBundle(allResources);
     }
 
-    await logFHIRExport({
-      id: `bulk-export-${Date.now()}`,
-      timestamp: progress.completedAt!,
-      exportType: "bulk",
-      resourceTypes,
-      resourceCount: totalResourceCount,
-      format: "ndjson",
-      validationStatus: options.validate
-        ? validation?.valid
-          ? "passed"
-          : "failed"
-        : "skipped",
-      validationErrors: validation?.summary.errors,
-      validationWarnings: validation?.summary.warnings,
-      dataSource: "dexie-offline",
-      success: true,
-    });
+    await logFHIRExport(
+      {
+        id: `bulk-export-${Date.now()}`,
+        timestamp: progress.completedAt!,
+        exportType: "bulk",
+        resourceTypes,
+        resourceCount: totalResourceCount,
+        format: "ndjson",
+        validationStatus: options.validate
+          ? validation?.valid
+            ? "passed"
+            : "failed"
+          : "skipped",
+        validationErrors: validation?.summary.errors,
+        validationWarnings: validation?.summary.warnings,
+        dataSource: "dexie-offline",
+        success: true,
+        patientsExported: progress.exportedPatients,
+        patientsFailed: progress.failedPatients,
+      },
+      actorRole,
+    );
 
     return {
       success: true,
@@ -533,6 +708,8 @@ export async function exportBulkEHI(
       manifest,
       progress,
       validation,
+      failedPatientIds,
+      warning: outcome.warning,
     };
   } catch (error) {
     progress.status = "error";
@@ -540,24 +717,30 @@ export async function exportBulkEHI(
     progress.completedAt = new Date().toISOString();
     onProgress?.(progress);
 
-    await logFHIRExport({
-      id: `bulk-export-${Date.now()}`,
-      timestamp: progress.completedAt,
-      exportType: "bulk",
-      resourceTypes: [],
-      resourceCount: 0,
-      format: "ndjson",
-      validationStatus: "skipped",
-      dataSource: "dexie-offline",
-      success: false,
-      errorMessage: progress.error,
-    });
+    await logFHIRExport(
+      {
+        id: `bulk-export-${Date.now()}`,
+        timestamp: progress.completedAt,
+        exportType: "bulk",
+        resourceTypes: [],
+        resourceCount: 0,
+        format: "ndjson",
+        validationStatus: "skipped",
+        dataSource: "dexie-offline",
+        success: false,
+        errorMessage: progress.error,
+        patientsExported: progress.exportedPatients,
+        patientsFailed: progress.failedPatients,
+      },
+      actorRole,
+    );
 
     return {
       success: false,
       files,
       manifest: {},
       progress,
+      failedPatientIds,
     };
   }
 }

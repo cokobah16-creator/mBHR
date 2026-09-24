@@ -1,9 +1,7 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import * as Sentry from "@sentry/react";
-import {
-  ExclamationTriangleIcon,
-  ArrowPathIcon,
-} from "@heroicons/react/24/outline";
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon } from "@heroicons/react/20/solid";
 
 interface Props {
   children: ReactNode;
@@ -16,6 +14,12 @@ interface State {
   errorInfo: ErrorInfo | null;
 }
 
+/**
+ * Outermost safety net (wraps the router in main.tsx and the whole app in
+ * App.tsx). It renders outside the router, so it uses plain buttons rather
+ * than links. Technical details appear only in development builds; the
+ * production screen shows no error text, which could contain patient data.
+ */
 export class GlobalErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
@@ -34,7 +38,12 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error("GlobalErrorBoundary caught error:", error, errorInfo);
+    // Error messages can embed record data, so production logs carry only
+    // the error's name.
+    console.error(
+      "GlobalErrorBoundary caught error:",
+      error instanceof Error ? error.name : error,
+    );
 
     this.setState({ error, errorInfo });
 
@@ -78,93 +87,98 @@ export class GlobalErrorBoundary extends Component<Props, State> {
         return this.props.fallback;
       }
 
+      const { error, errorInfo } = this.state;
+
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-          <div className="max-w-2xl w-full bg-white rounded-xl shadow-lg border border-gray-200 p-8">
-            {/* Icon */}
-            <div className="flex justify-center mb-6">
-              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
-                <ExclamationTriangleIcon className="h-10 w-10 text-red-600" />
+        <main className="min-h-screen flex items-center justify-center bg-canvas px-4 py-8">
+          <div
+            className="panel w-full max-w-lg p-6"
+            role="alert"
+            aria-labelledby="global-error-title"
+          >
+            <div className="flex items-start gap-3">
+              <ExclamationTriangleIcon
+                className="h-6 w-6 shrink-0 text-danger mt-1"
+                aria-hidden
+              />
+              <div className="min-w-0">
+                <h1 id="global-error-title" className="text-h1 text-ink">
+                  Something went wrong
+                </h1>
+                <p className="mt-2 text-body text-ink-secondary">
+                  The app hit an unexpected error and stopped this screen.
+                  Records that were already saved are still stored on this
+                  device. Anything you were typing on this screen may not have
+                  been saved.
+                </p>
               </div>
             </div>
 
-            {/* Title */}
-            <h1 className="text-2xl font-bold text-gray-900 text-center mb-2">
-              Something went wrong
-            </h1>
+            <div className="mt-5 rounded-md border border-line bg-surface-sunken p-4">
+              <p className="section-label mb-2">What to do next</p>
+              <ol className="list-decimal space-y-1 pl-5 text-body text-ink-secondary">
+                <li>Choose Try again to reopen the screen.</li>
+                <li>
+                  If the error comes back, choose Reload the app. This fixes
+                  most problems.
+                </li>
+                <li>
+                  If it keeps happening, tell your site administrator what you
+                  were doing when it appeared.
+                </li>
+              </ol>
+            </div>
 
-            <p className="text-gray-600 text-center mb-8">
-              The application encountered an unexpected error. Your data is
-              safe.
-            </p>
-
-            {/* Error Message (non-PHI, dev only) */}
-            {import.meta.env.DEV && this.state.error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm font-mono text-red-900 break-words">
-                  {this.state.error.message}
+            {import.meta.env.DEV && error && (
+              <details className="mt-4 rounded-md border border-danger-line bg-danger-soft p-3">
+                <summary className="cursor-pointer text-label text-danger-fg">
+                  Technical details (development build only)
+                </summary>
+                <p className="mt-2 font-mono text-caption text-danger-fg break-words">
+                  {error.name}: {error.message}
                 </p>
-                {this.state.error.stack && (
-                  <details className="mt-2">
-                    <summary className="text-xs text-red-700 cursor-pointer hover:text-red-900">
-                      Show stack trace
-                    </summary>
-                    <pre className="mt-2 text-xs text-red-800 overflow-x-auto whitespace-pre-wrap">
-                      {this.state.error.stack}
-                    </pre>
-                  </details>
+                {error.stack && (
+                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-caption text-danger-fg">
+                    {error.stack}
+                  </pre>
                 )}
-              </div>
+                {errorInfo?.componentStack && (
+                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-caption text-ink-secondary">
+                    {errorInfo.componentStack}
+                  </pre>
+                )}
+              </details>
             )}
 
-            {/* Actions */}
-            <div className="flex gap-3 justify-center">
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
-                onClick={this.handleRestart}
-                className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
-              >
-                <ArrowPathIcon className="h-5 w-5" />
-                Restart Application
-              </button>
-
-              <button
+                type="button"
                 onClick={this.handleReset}
-                className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+                className="btn-secondary"
               >
-                Try Again
+                Try again
+              </button>
+              <button
+                type="button"
+                onClick={this.handleRestart}
+                className="btn-primary"
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Reload the app
               </button>
             </div>
 
-            {/* Help Text */}
-            <div className="mt-8 pt-6 border-t border-gray-200">
-              <p className="text-sm text-gray-600 text-center">
-                If this problem persists, please contact your system
-                administrator.
+            {!import.meta.env.DEV && (
+              <p className="mt-4 text-caption text-ink-muted">
+                Changes waiting to sync stay on this device and are not lost by
+                reloading.
               </p>
-              {!import.meta.env.DEV && (
-                <p className="text-xs text-gray-500 text-center mt-2">
-                  Your offline data is preserved and will sync when the
-                  application restarts.
-                </p>
-              )}
-            </div>
+            )}
           </div>
-        </div>
+        </main>
       );
     }
 
     return this.props.children;
   }
-}
-
-export function useErrorReport() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const reportError = (error: Error, context?: Record<string, any>) => {
-    console.error("Error reported:", error, context);
-    if (import.meta.env.VITE_SENTRY_DSN) {
-      Sentry.captureException(error, { extra: context });
-    }
-  };
-
-  return { reportError };
 }

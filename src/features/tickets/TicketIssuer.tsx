@@ -1,381 +1,574 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { db } from "@/db";
-import type { Patient } from "@/db";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db, generateId } from "@/db";
+import type { Patient, QueueItem } from "@/db";
 import { queueManagement } from "@/services/queueManagement";
-import type { QueueStage, QueuePriority } from "@/services/queueManagement";
 import { PatientSearch } from "@/components/PatientSearch";
 import {
-  TicketIcon,
-  UserIcon,
-  CheckCircleIcon,
   ExclamationTriangleIcon,
+  InformationCircleIcon,
+  PrinterIcon,
+  QueueListIcon,
+  UserIcon,
 } from "@heroicons/react/24/outline";
 import { useAuthStore } from "@/stores/auth";
 import { usePatientsStore } from "@/stores/patients";
+import { useToast } from "@/stores/toast";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { useActiveSite } from "@/hooks/useActiveSite";
+import { DEFAULT_SITE_NAME } from "@/services/activeSite";
+import {
+  FLOW_STAGES,
+  FLOW_STAGE_LABELS,
+  type FlowStage,
+} from "@/services/patientFlow";
+import { formatNigerianDate } from "@/utils/dateFormat";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Skeleton } from "@/components/ui/Skeleton";
+import {
+  canManageQueue,
+  countByStage,
+  isFlowStage,
+  isTicketPriority,
+  issueErrorMessage,
+  savedNote,
+  ticketLabel,
+  type TicketPriority,
+} from "./queueBoardModel";
+import { STAGE_CHIP_CLASS, STAGE_MARKER_CLASS } from "./stageStyles";
+import { printTicket } from "./ticketPrint";
 
-const stages: QueueStage[] = ["registration", "vitals", "consult", "pharmacy"];
+const STAGE_OPTION_LABEL: Record<FlowStage, string> = {
+  registration: "Registration",
+  vitals: "Vitals (recommended)",
+  consult: "Consultation",
+  pharmacy: "Pharmacy",
+};
+
+// Urgent tickets are not always placed first (see queueManagement
+// calculatePosition), so the hint must not promise the front of the line.
+const PRIORITY_HINT: Record<TicketPriority, string> = {
+  urgent:
+    "The ticket is flagged urgent. It is not always placed first: to call the patient next, use Move to front on the queue page.",
+  normal: "The patient is added to the end of the queue.",
+  low: "For non-critical cases. The patient is added to the end of the queue.",
+};
+
+const STAGE_NEXT: Record<FlowStage, string> = {
+  registration:
+    "The patient joins the registration queue and waits to be registered.",
+  vitals:
+    "The patient joins the vitals queue. After vitals are recorded they move to consultation automatically.",
+  consult:
+    "The patient joins the consultation queue and appears in the Doctor Station straight away.",
+  pharmacy:
+    "The patient joins the pharmacy queue and waits for their medicines.",
+};
+
+interface IssuedTicket {
+  queueItemId: string;
+  ticketNumber: string;
+  stage: FlowStage;
+  priority: TicketPriority;
+  position: number;
+  patientName: string;
+  issuedAt: Date;
+}
 
 export default function TicketIssuer() {
-  const navigate = useNavigate();
-  const { currentUser } = useAuthStore();
-  const { loadPatients } = usePatientsStore();
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const canIssue = canManageQueue(currentUser?.role);
+  const loadPatients = usePatientsStore((s) => s.loadPatients);
+  const { push } = useToast();
+  const { site } = useActiveSite();
+  const siteName = site?.name ?? DEFAULT_SITE_NAME;
+
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [stage, setStage] = useState<QueueStage>("vitals");
-  const [priority, setPriority] = useState<QueuePriority>("normal");
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [stage, setStage] = useState<FlowStage>("vitals");
+  const [priority, setPriority] = useState<TicketPriority>("normal");
+  const [saving, setSaving] = useState(false);
+  // A second click can land before React re-renders the disabled button;
+  // this ref makes sure only one ticket is created.
+  const savingRef = useRef(false);
   const [error, setError] = useState("");
-  const [queuePosition, setQueuePosition] = useState<number | null>(null);
+  const [lastIssued, setLastIssued] = useState<IssuedTicket | null>(null);
+  const [printError, setPrintError] = useState("");
 
   useEffect(() => {
-    loadPatients().catch((err) => {
-      console.error("Failed to load patients:", err);
-      setError("Failed to load patient data. Please refresh the page.");
+    loadPatients().catch((err: unknown) => {
+      console.error(
+        "Failed to load patients:",
+        err instanceof Error ? err.name : err,
+      );
+      setError("The patient list could not be loaded. Reload the page and try again.");
     });
   }, [loadPatients]);
 
-  async function handleAddToQueue() {
-    if (!selectedPatient) {
-      setError("Please select a patient");
-      return;
-    }
+  const selectedId = selectedPatient?.id;
+  // Warn before issuing a second ticket for someone already queued.
+  const activeTicket: QueueItem | undefined = useLiveQuery(
+    () =>
+      selectedId
+        ? db.queue
+            .where("patientId")
+            .equals(selectedId)
+            .and((q: QueueItem) => q.status !== "done")
+            .first()
+        : undefined,
+    [selectedId],
+  );
 
-    if (!currentUser) {
-      setError("User session expired. Please log in again.");
-      return;
-    }
+  // Real sync state of the last ticket: the row stays dirty until the sync
+  // adapter has uploaded it.
+  const issuedId = lastIssued?.queueItemId;
+  const issuedRow: QueueItem | undefined = useLiveQuery(
+    () => (issuedId ? db.queue.get(issuedId) : undefined),
+    [issuedId],
+  );
+  // useLiveQuery keeps the previous result until the new query answers, so
+  // only trust a row that belongs to the ticket on screen.
+  const issuedSyncText =
+    !isSupabaseEnabled || !issuedRow || issuedRow.id !== issuedId
+      ? ""
+      : issuedRow._dirty
+        ? " Waiting to sync."
+        : " Queue entry synced.";
 
-    setLoading(true);
-    setSuccess(false);
+  // The Issue button disappears when the form resets; move focus to the
+  // result so keyboard and screen-reader users are not dropped at the top
+  // of the page.
+  const issuedHeadingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (issuedId) issuedHeadingRef.current?.focus();
+  }, [issuedId]);
+
+  const choosePatient = (patient: Patient | null) => {
+    setSelectedPatient(patient);
     setError("");
-    setQueuePosition(null);
+  };
+
+  async function handleIssue() {
+    if (savingRef.current) return;
+    if (!selectedPatient) {
+      setError("Choose a patient first.");
+      return;
+    }
+    if (!currentUser) {
+      setError("Your session has ended. Sign in again to issue tickets.");
+      return;
+    }
+    if (!canManageQueue(currentUser.role)) {
+      setError("Your role cannot issue tickets. Ask a registration volunteer, nurse or doctor.");
+      return;
+    }
+
+    const patient = selectedPatient;
+    const chosenStage = stage;
+    const chosenPriority = priority;
+    savingRef.current = true;
+    setSaving(true);
+    setError("");
+    setPrintError("");
 
     try {
-      const queueItem = await queueManagement.addToQueue(
-        selectedPatient.id,
-        stage,
-        priority,
+      const item = await queueManagement.addToQueue(
+        patient.id,
+        chosenStage,
+        chosenPriority,
         currentUser.id,
       );
-
-      setQueuePosition(queueItem.position);
-      setSuccess(true);
-
-      setTimeout(() => {
-        setSuccess(false);
-        setSelectedPatient(null);
-        setError("");
-        setQueuePosition(null);
-        setPriority("normal");
-        setStage("vitals");
-      }, 3000);
+      const issued: IssuedTicket = {
+        queueItemId: item.id,
+        ticketNumber: ticketLabel(item),
+        stage: chosenStage,
+        priority: chosenPriority,
+        position: item.position,
+        patientName: `${patient.givenName} ${patient.familyName}`,
+        issuedAt: new Date(),
+      };
+      setLastIssued(issued);
+      push({
+        id: generateId(),
+        tone: "success",
+        title: `Ticket ${issued.ticketNumber} issued`,
+        body: `Added to the ${FLOW_STAGE_LABELS[chosenStage].toLowerCase()} queue at position ${item.position}. ${savedNote(isSupabaseEnabled)}`,
+      });
+      // Ready for the next patient straight away.
+      setSelectedPatient(null);
+      setStage("vitals");
+      setPriority("normal");
     } catch (err) {
-      console.error("Error adding to queue:", err);
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : "Failed to add patient to queue. Please try again.";
-      setError(errorMessage);
+      console.error(
+        "Could not issue ticket:",
+        err instanceof Error ? err.name : err,
+      );
+      setError(issueErrorMessage(err));
     } finally {
-      setLoading(false);
+      savingRef.current = false;
+      setSaving(false);
     }
   }
 
+  const handlePrint = () => {
+    if (!lastIssued) return;
+    setPrintError("");
+    try {
+      printTicket({
+        ticketNumber: lastIssued.ticketNumber,
+        destination: FLOW_STAGE_LABELS[lastIssued.stage],
+        siteName,
+        issuedAt: lastIssued.issuedAt,
+      });
+    } catch (err) {
+      console.error(
+        "Could not open the print dialog:",
+        err instanceof Error ? err.name : err,
+      );
+      setPrintError("This browser could not open printing. Write the ticket number down for the patient instead.");
+    }
+  };
+
+  // While saving, the new row can appear in the live query before the form
+  // resets; do not flash "already in the queue" for the ticket being issued.
+  // Also ignore a result left over from the previously selected patient.
+  const alreadyQueued =
+    !saving &&
+    !!selectedPatient &&
+    !!activeTicket &&
+    activeTicket.patientId === selectedPatient.id;
+
   return (
-    <div className="p-4 space-y-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <TicketIcon className="h-8 w-8 text-blue-600" />
-          <h2 className="text-2xl font-bold text-gray-900">
-            Add Patient to Queue
-          </h2>
-        </div>
-        <button
-          onClick={() => navigate("/queue")}
-          className="btn-secondary text-sm"
-        >
-          View Queue
-        </button>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="Issue ticket"
+        description="Find the patient, choose where they go first, and give them the ticket number."
+        actions={
+          <Link to="/queue" className="btn-secondary">
+            <QueueListIcon className="h-4 w-4" aria-hidden />
+            View queue
+          </Link>
+        }
+      />
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-red-800 text-sm">{error}</p>
-        </div>
-      )}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        {/* Not a <form>: choosing a PatientSearch result must never submit
+            (and issue) a ticket, whatever type its buttons have. */}
+        <section className="panel self-start" aria-labelledby="ticket-form-title">
+          <div className="panel-header">
+            <h2 id="ticket-form-title" className="panel-title">
+              New ticket
+            </h2>
+          </div>
+          <div className="panel-body space-y-5">
+            {!canIssue && (
+              <div className="banner banner-warning" role="status">
+                <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                <span>
+                  Your role can view this page but cannot issue tickets.
+                </span>
+              </div>
+            )}
 
-      {success ? (
-        <div className="bg-white rounded-lg shadow-sm p-8 text-center">
-          <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-gray-900 mb-2">
-            Patient Added to Queue
-          </h3>
-          <p className="text-gray-600 mb-2">
-            {selectedPatient?.givenName} {selectedPatient?.familyName} has been
-            added to the {stage} queue
-          </p>
-          {queuePosition !== null && (
-            <p className="text-lg font-semibold text-blue-600">
-              Queue Position: #{queuePosition}
-            </p>
-          )}
-          {priority === "urgent" && (
-            <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 bg-red-100 text-red-800 rounded-full text-sm font-medium">
-              <ExclamationTriangleIcon className="h-4 w-4" />
-              Marked as Urgent
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="space-y-6">
-            {/* Patient Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Patient *
-              </label>
+            {error && (
+              <div className="banner banner-danger" role="alert">
+                <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {/* Patient */}
+            <div role="group" aria-labelledby="ticket-patient-label">
+              <p id="ticket-patient-label" className="field-label">
+                Patient
+              </p>
               {selectedPatient ? (
-                <div className="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex items-center space-x-3">
+                <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface-sunken p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-center gap-3">
                     {selectedPatient.photoUrl ? (
                       <img
                         src={selectedPatient.photoUrl}
-                        alt={`${selectedPatient.givenName} ${selectedPatient.familyName}`}
-                        className="w-12 h-12 rounded-full object-cover"
+                        alt=""
+                        className="h-12 w-12 shrink-0 rounded-full object-cover"
                       />
                     ) : (
-                      <div className="w-12 h-12 rounded-full bg-green-200 flex items-center justify-center">
-                        <UserIcon className="h-6 w-6 text-green-700" />
-                      </div>
+                      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-surface-hover">
+                        <UserIcon className="h-6 w-6 text-ink-muted" aria-hidden />
+                      </span>
                     )}
-                    <div>
-                      <div className="font-semibold text-gray-900">
+                    <div className="min-w-0">
+                      <p className="truncate text-h3 text-ink">
                         {selectedPatient.givenName} {selectedPatient.familyName}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {selectedPatient.sex} • {selectedPatient.dob}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {selectedPatient.phone}
-                      </div>
+                      </p>
+                      <p className="text-caption text-ink-muted">
+                        <span className="capitalize">{selectedPatient.sex}</span>
+                        {selectedPatient.dob
+                          ? ` · Born ${formatNigerianDate(selectedPatient.dob)}`
+                          : ""}
+                        {selectedPatient.phone ? ` · ${selectedPatient.phone}` : ""}
+                      </p>
                     </div>
                   </div>
                   <button
-                    onClick={() => {
-                      setSelectedPatient(null);
-                      setError("");
-                    }}
-                    className="btn-secondary text-sm"
+                    type="button"
+                    onClick={() => choosePatient(null)}
+                    className="btn-secondary"
+                    aria-label={`Change patient (currently ${selectedPatient.givenName} ${selectedPatient.familyName})`}
                   >
-                    Change
+                    Change patient
                   </button>
                 </div>
               ) : (
-                <div>
+                <>
                   <PatientSearch
-                    onPatientSelect={(patient) => {
-                      setSelectedPatient(patient);
-                      setError("");
-                    }}
-                    placeholder="Search by name or phone..."
+                    onPatientSelect={(patient) => choosePatient(patient)}
+                    placeholder="Search by name or phone"
+                    labelledBy="ticket-patient-label"
                   />
-                  <p className="text-sm text-gray-500 mt-1">
-                    Start typing to search for a patient
+                  <p className="field-hint">
+                    Start typing to search patients on this device. Not
+                    registered yet?{" "}
+                    <Link to="/register" className="font-medium text-primary-fg hover:underline">
+                      Register the patient
+                    </Link>
+                    .
                   </p>
-                </div>
+                </>
               )}
             </div>
 
-            {/* Stage Selection */}
-            {selectedPatient && (
+            {alreadyQueued && activeTicket && (
+              <div className="banner banner-warning" role="status">
+                <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                <span>
+                  Already in the queue: ticket{" "}
+                  <strong className="font-semibold">{ticketLabel(activeTicket)}</strong>{" "}
+                  at {FLOW_STAGE_LABELS[activeTicket.stage].toLowerCase()} (
+                  {activeTicket.status === "in_progress" ? "being served" : "waiting"}
+                  ). A second ticket cannot be issued.{" "}
+                  <Link to="/queue" className="font-medium underline">
+                    Open the queue
+                  </Link>
+                </span>
+              </div>
+            )}
+
+            {selectedPatient && !alreadyQueued && (
               <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Add to Stage *
-                  </label>
-                  <select
-                    value={stage}
-                    onChange={(e) => setStage(e.target.value as QueueStage)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="registration">Registration</option>
-                    <option value="vitals">Vitals (Recommended)</option>
-                    <option value="consult">Consultation</option>
-                    <option value="pharmacy">Pharmacy</option>
-                  </select>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Select which stage to add the patient to
-                  </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="ticket-stage" className="field-label">
+                      First stop
+                    </label>
+                    <select
+                      id="ticket-stage"
+                      value={stage}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (isFlowStage(v)) setStage(v);
+                      }}
+                      className="input-field"
+                    >
+                      {FLOW_STAGES.map((s) => (
+                        <option key={s} value={s}>
+                          {STAGE_OPTION_LABEL[s]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="ticket-priority" className="field-label">
+                      Priority
+                    </label>
+                    <select
+                      id="ticket-priority"
+                      value={priority}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (isTicketPriority(v)) setPriority(v);
+                      }}
+                      aria-describedby="ticket-priority-hint"
+                      className="input-field"
+                    >
+                      <option value="normal">Normal</option>
+                      <option value="urgent">Urgent</option>
+                      <option value="low">Low priority</option>
+                    </select>
+                    <p id="ticket-priority-hint" className="field-hint">
+                      {PRIORITY_HINT[priority]}
+                    </p>
+                  </div>
                 </div>
 
-                {/* Priority Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Priority Level *
-                  </label>
-                  <select
-                    value={priority}
-                    onChange={(e) =>
-                      setPriority(e.target.value as QueuePriority)
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="normal">Normal</option>
-                    <option value="urgent">Urgent</option>
-                    <option value="low">Low Priority</option>
-                  </select>
-                  <p className="text-sm text-gray-500 mt-1">
-                    {priority === "urgent" &&
-                      "Urgent patients will be moved to the front of the queue"}
-                    {priority === "normal" &&
-                      "Normal priority - patient will be added to the end of the queue"}
-                    {priority === "low" &&
-                      "Low priority - for non-critical cases"}
-                  </p>
+                <div className="banner banner-info">
+                  <InformationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <div>
+                    <p className="font-medium">What happens next</p>
+                    <p>{STAGE_NEXT[stage]}</p>
+                  </div>
                 </div>
 
-                {/* Stage Info */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h4 className="font-medium text-blue-900 mb-2">
-                    What happens next?
-                  </h4>
-                  <p className="text-sm text-blue-800">
-                    {stage === "registration" &&
-                      "Patient will be added to registration queue and wait to be registered."}
-                    {stage === "vitals" &&
-                      "Patient will be added to vitals queue and wait for vital signs to be recorded. After vitals are recorded, they will automatically move to consultation."}
-                    {stage === "consult" &&
-                      "Patient will be added to consultation queue and appear in the Doctor Station immediately."}
-                    {stage === "pharmacy" &&
-                      "Patient will be added to pharmacy queue and wait for medication dispensing."}
-                  </p>
-                </div>
-
-                {/* Submit Button */}
                 <button
-                  onClick={handleAddToQueue}
-                  disabled={loading}
-                  className={`w-full py-3 px-4 rounded-lg font-medium text-white transition-colors ${
-                    loading
-                      ? "bg-gray-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700"
-                  }`}
+                  type="button"
+                  onClick={() => void handleIssue()}
+                  disabled={saving || !canIssue}
+                  className="btn-primary w-full"
                 >
-                  {loading ? (
-                    <span className="flex items-center justify-center">
-                      <svg
-                        className="animate-spin h-5 w-5 mr-2"
-                        viewBox="0 0 24 24"
-                      >
-                        <circle
-                          className="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                          fill="none"
-                        />
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                        />
-                      </svg>
-                      Adding to Queue...
-                    </span>
-                  ) : (
-                    `Add to ${stage.charAt(0).toUpperCase() + stage.slice(1)} Queue`
-                  )}
+                  {saving
+                    ? "Issuing ticket…"
+                    : `Issue ticket for ${FLOW_STAGE_LABELS[stage]}`}
                 </button>
               </>
             )}
           </div>
-        </div>
-      )}
+        </section>
 
-      {/* Quick Stats */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Current Queue Status
-        </h3>
-        <QueueStats />
+        {/* Result + queue status */}
+        <div className="space-y-4">
+          {lastIssued && (
+            <section className="panel" aria-labelledby="ticket-issued-title">
+              <div className="panel-header">
+                <h2
+                  id="ticket-issued-title"
+                  ref={issuedHeadingRef}
+                  tabIndex={-1}
+                  className="panel-title"
+                >
+                  Last ticket issued
+                </h2>
+                <StatusBadge tone="success" icon>
+                  Saved on this device
+                </StatusBadge>
+              </div>
+              <div className="panel-body text-center">
+                <p className="section-label">Ticket number</p>
+                <p className="mt-1 text-6xl font-bold tabular-nums tracking-tight text-ink">
+                  {lastIssued.ticketNumber}
+                </p>
+                <p className="mt-3">
+                  <span
+                    className={`inline-flex items-center gap-2 rounded-md border px-3 py-1 text-label ${STAGE_CHIP_CLASS[lastIssued.stage]}`}
+                  >
+                    <span
+                      className={`h-2 w-2 rounded-full ${STAGE_MARKER_CLASS[lastIssued.stage]}`}
+                      aria-hidden
+                    />
+                    Go to {FLOW_STAGE_LABELS[lastIssued.stage]}
+                  </span>
+                </p>
+                <p className="mt-3 text-body text-ink-secondary">
+                  {lastIssued.patientName} · position {lastIssued.position} when issued
+                </p>
+                {lastIssued.priority === "urgent" && (
+                  <p className="mt-2">
+                    <StatusBadge tone="danger">Marked urgent</StatusBadge>
+                  </p>
+                )}
+                <p className="field-hint">
+                  Issued at{" "}
+                  {lastIssued.issuedAt.toLocaleTimeString("en-NG", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                  .{issuedSyncText}
+                </p>
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  className="btn-secondary mt-4"
+                >
+                  <PrinterIcon className="h-5 w-5" aria-hidden />
+                  Print ticket {lastIssued.ticketNumber}
+                </button>
+                <p className="field-hint">
+                  The printed slip shows the ticket number, destination and
+                  site only.
+                </p>
+                {printError && (
+                  <p className="field-error" role="alert">
+                    {printError}
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+
+          <QueueStats />
+        </div>
       </div>
     </div>
   );
 }
 
 function QueueStats() {
-  const [stats, setStats] = useState<Record<QueueStage, number>>({
-    registration: 0,
-    vitals: 0,
-    consult: 0,
-    pharmacy: 0,
-  });
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadStats();
-    const interval = setInterval(loadStats, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  async function loadStats() {
-    try {
-      const counts: Record<QueueStage, number> = {
-        registration: 0,
-        vitals: 0,
-        consult: 0,
-        pharmacy: 0,
-      };
-
-      for (const stage of stages) {
+  // A failed read shows a message here instead of taking the whole issuing
+  // page down with it.
+  const result: { items: QueueItem[]; failed: boolean } | undefined =
+    useLiveQuery(async () => {
+      try {
         const items = await db.queue
-          .where("stage")
-          .equals(stage)
-          .and((item) => item.status !== "done")
+          .where("status")
+          .anyOf(["waiting", "in_progress"])
           .toArray();
-        counts[stage] = items.length;
+        return { items, failed: false };
+      } catch (err) {
+        console.error(
+          "Queue counts could not be read:",
+          err instanceof Error ? err.name : err,
+        );
+        return { items: [], failed: true };
       }
-
-      setStats(counts);
-    } catch (err) {
-      console.error("Error loading queue stats:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const stageColors: Record<QueueStage, string> = {
-    registration: "bg-blue-100 text-blue-800 border-blue-200",
-    vitals: "bg-green-100 text-green-800 border-green-200",
-    consult: "bg-purple-100 text-purple-800 border-purple-200",
-    pharmacy: "bg-orange-100 text-orange-800 border-orange-200",
-  };
-
-  if (loading) {
-    return (
-      <div className="text-center py-8 text-gray-500">
-        Loading queue statistics...
-      </div>
-    );
-  }
+    }, []);
+  const counts = useMemo(
+    () =>
+      result && !result.failed ? countByStage(result.items, Date.now()) : null,
+    [result],
+  );
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-      {stages.map((stage) => (
-        <div key={stage} className="text-center">
-          <div
-            className={`text-3xl font-bold ${stageColors[stage]} border-2 rounded-lg py-6`}
-          >
-            {stats[stage]}
-          </div>
-          <div className="text-sm text-gray-700 mt-2 font-medium capitalize">
-            {stage}
-          </div>
+    <section className="panel" aria-labelledby="ticket-queue-status-title">
+      <div className="panel-header">
+        <h2 id="ticket-queue-status-title" className="panel-title">
+          Queue now
+        </h2>
+      </div>
+      {result?.failed ? (
+        <p className="panel-body text-body text-ink-muted" role="status">
+          Queue counts could not be read on this device. Reload the page to
+          try again.
+        </p>
+      ) : !counts ? (
+        <div className="grid grid-cols-2 gap-3 p-4" aria-busy="true">
+          <span role="status" className="sr-only">
+            Loading queue counts
+          </span>
+          {FLOW_STAGES.map((s) => (
+            <Skeleton key={s} className="h-16" />
+          ))}
         </div>
-      ))}
-    </div>
+      ) : (
+        <ul className="grid grid-cols-2 gap-px overflow-hidden rounded-b-lg bg-line">
+          {FLOW_STAGES.map((s) => (
+            <li key={s} className="bg-surface px-4 py-3">
+              <span className="flex items-center gap-2 text-label text-ink">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${STAGE_MARKER_CLASS[s]}`}
+                  aria-hidden
+                />
+                {FLOW_STAGE_LABELS[s]}
+              </span>
+              <span className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-stat text-ink">{counts[s].waiting}</span>
+                <span className="text-caption text-ink-muted">waiting</span>
+              </span>
+              <span className="block text-caption text-ink-muted">
+                {counts[s].inService} being served
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

@@ -1,229 +1,269 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  ArrowPathIcon,
   CalendarIcon,
   ChevronRightIcon,
-  FunnelIcon,
 } from "@heroicons/react/24/outline";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { getPatientMedicalHistory } from "@/services/patientPortalData";
 import type { PatientMedicalRecord } from "@/types/patientPortal";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
+import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
+import { appendUnique, formatPortalLongDate } from "./portalStatus";
+import { readPortalUser } from "./portalSession";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+
+const PAGE_SIZE = 10;
+
+const PAGE_TITLE = "Your visits";
+const PAGE_DESCRIPTION =
+  "Visits recorded by the outreach team. A visit shows here once it is finished and uploaded from the clinic's device.";
+
+function VitalsSummary({
+  vitals,
+}: {
+  vitals: NonNullable<PatientMedicalRecord["vitals"]>;
+}) {
+  const items: { label: string; value: string }[] = [];
+  if (vitals.systolic && vitals.diastolic) {
+    items.push({
+      label: "Blood pressure",
+      value: `${vitals.systolic}/${vitals.diastolic} mmHg`,
+    });
+  }
+  if (vitals.pulseBpm) {
+    items.push({ label: "Heart rate", value: `${vitals.pulseBpm} per minute` });
+  }
+  if (vitals.tempC) {
+    items.push({ label: "Temperature", value: `${vitals.tempC}°C` });
+  }
+  if (items.length === 0) return null;
+  return (
+    <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-body">
+      {items.map((item) => (
+        <div key={item.label} className="flex gap-1">
+          <dt className="text-ink-muted">{item.label}:</dt>
+          <dd className="font-medium tabular-nums text-ink">{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 export function MedicalHistory() {
+  const online = useOnlineStatus();
   const [records, setRecords] = useState<PatientMedicalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const pageSize = 10;
+  const [hasMore, setHasMore] = useState(false);
 
-  useEffect(() => {
-    loadRecords();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
-
-  const loadRecords = async () => {
+  const loadRecords = useCallback(async (pageToLoad: number) => {
     setLoading(true);
     setError("");
 
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
-        setError("Session not found. Please log in again.");
-        setLoading(false);
+      const portalUser = readPortalUser();
+      if (!portalUser) {
+        setError("We could not find your sign-in on this phone. Please log in again.");
         return;
       }
-
-      const portalUser = JSON.parse(portalUserStr);
       if (!portalUser.patientId || !portalUser.id) {
-        setError("Session data incomplete. Please log in again.");
-        setLoading(false);
+        setError("Your sign-in details are incomplete. Please log in again.");
         return;
       }
 
       const result = await getPatientMedicalHistory(
         portalUser.id,
         portalUser.patientId,
-        pageSize,
-        (page - 1) * pageSize,
+        PAGE_SIZE,
+        (pageToLoad - 1) * PAGE_SIZE,
       );
       if (result) {
-        setRecords(result.records);
-        setHasMore(result.total > page * pageSize);
+        // "Load more" adds the next page under the visits already shown.
+        setRecords((prev) =>
+          pageToLoad === 1
+            ? result.records
+            : appendUnique(prev, result.records, (r) => r.visitId),
+        );
+        setHasMore(result.total > pageToLoad * PAGE_SIZE);
       } else {
-        setError("Failed to load medical history");
+        setError("We could not load your visits. Please try again.");
       }
     } catch (err) {
-      logger.error("Error loading medical history:", err);
-      setError("An error occurred loading your medical history");
+      logger.error(
+        "Error loading medical history:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      // Offline, the "You are offline" notice already explains it.
+      setError(
+        navigator.onLine ? "We could not load your visits. Please try again." : "",
+      );
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  if (loading && page === 1) {
+  // The visit history lives in the online portal. Try once even when offline:
+  // this phone may have kept a copy from the last time it was online. After
+  // that, reload when the connection comes back.
+  const attempted = useRef(false);
+
+  useEffect(() => {
+    if (!isSupabaseEnabled) {
+      setLoading(false);
+      return;
+    }
+    if (!online && attempted.current) return;
+    attempted.current = true;
+    loadRecords(page);
+  }, [online, page, loadRecords]);
+
+  if (!isSupabaseEnabled) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-      </div>
+      <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
+        <PortalNotice tone="info" title="Visit history is not available here">
+          This portal is not connected to the clinic&apos;s online records, so
+          your full visit history cannot be shown. Your home page shows what
+          is saved on this device.
+        </PortalNotice>
+        <Link to="/patient/dashboard" className="btn-secondary">
+          Go to home
+        </Link>
+      </PortalPage>
     );
   }
 
-  return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              Medical History
-            </h1>
-            <p className="text-gray-600 mt-2">
-              View your past visits and consultations
-            </p>
-          </div>
-          <button className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-            <FunnelIcon className="w-5 h-5 text-gray-600" />
-            <span className="text-sm font-medium text-gray-700">Filter</span>
-          </button>
-        </div>
-      </div>
+  if (loading && records.length === 0) {
+    return <PortalListSkeleton label="Loading your visits" />;
+  }
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
-          <p className="text-red-800">{error}</p>
-        </div>
+  return (
+    <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
+      {!online && (
+        <PortalNotice tone="offline" title="You are offline">
+          {records.length > 0
+            ? "You are seeing the visits loaded when this phone was last online. They may be out of date. Connect to the internet to load more."
+            : "Connect to the internet to see your visits."}
+        </PortalNotice>
       )}
 
-      {records.length === 0 && !loading ? (
-        <div className="bg-white rounded-xl shadow-sm p-12 text-center">
-          <CalendarIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">
-            No Medical Records
-          </h3>
-          <p className="text-gray-600">
-            Your visit history will appear here once you have appointments.
-          </p>
+      {error && (
+        <PortalNotice
+          tone="danger"
+          action={
+            online ? (
+              <button
+                type="button"
+                onClick={() => loadRecords(page)}
+                className="btn-secondary"
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Try again
+              </button>
+            ) : undefined
+          }
+        >
+          {error}
+        </PortalNotice>
+      )}
+
+      {records.length === 0 && !loading && !error && online ? (
+        <div className="panel">
+          <EmptyState
+            icon={CalendarIcon}
+            title="No visits yet"
+            description="After you are seen at an outreach and the visit is finished, it will show here. If you think a visit is missing, ask the outreach team at your next visit."
+          />
         </div>
       ) : (
-        <div className="space-y-4">
-          {records.map((record) => (
-            <Link
-              key={record.visitId}
-              to={`/patient/visit/${record.visitId}`}
-              className="block bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <CalendarIcon className="w-6 h-6 text-blue-600" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-gray-900">
-                        {new Date(record.visitDate).toLocaleDateString(
-                          "en-US",
-                          {
-                            weekday: "long",
-                            year: "numeric",
-                            month: "long",
-                            day: "numeric",
-                          },
-                        )}
+        records.length > 0 && (
+          <ul className="space-y-3" aria-label="Visits, newest first">
+            {records.map((record) => (
+              <li key={record.visitId}>
+                <Link
+                  to={`/patient/visit/${record.visitId}`}
+                  className="flex items-start gap-3 rounded-lg border border-line bg-surface p-4 transition-colors hover:border-line-strong hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <CalendarIcon
+                    className="mt-0.5 h-6 w-6 shrink-0 text-ink-muted"
+                    aria-hidden
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-h3 text-ink">
+                      {formatPortalLongDate(record.visitDate)}
+                    </p>
+                    {record.chiefComplaint && (
+                      <p className="text-body text-ink-secondary">
+                        {record.chiefComplaint}
                       </p>
-                      {record.chiefComplaint && (
-                        <p className="text-sm text-gray-600">
-                          {record.chiefComplaint}
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                    )}
 
-                  {record.vitals && (
-                    <div className="flex flex-wrap gap-4 mb-3 pl-15">
-                      {record.vitals.systolic && record.vitals.diastolic && (
-                        <div className="text-sm">
-                          <span className="text-gray-600">BP:</span>{" "}
-                          <span className="font-medium text-gray-900">
-                            {record.vitals.systolic}/{record.vitals.diastolic}
-                          </span>
-                        </div>
-                      )}
-                      {record.vitals.pulseBpm && (
-                        <div className="text-sm">
-                          <span className="text-gray-600">HR:</span>{" "}
-                          <span className="font-medium text-gray-900">
-                            {record.vitals.pulseBpm} bpm
-                          </span>
-                        </div>
-                      )}
-                      {record.vitals.tempC && (
-                        <div className="text-sm">
-                          <span className="text-gray-600">Temp:</span>{" "}
-                          <span className="font-medium text-gray-900">
-                            {record.vitals.tempC}°C
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    {record.vitals && <VitalsSummary vitals={record.vitals} />}
 
-                  {record.consultation && (
-                    <div className="pl-15">
-                      {record.consultation.diagnoses.length > 0 && (
-                        <div className="mb-2">
-                          <span className="text-sm text-gray-600">
-                            Diagnosis:{" "}
-                          </span>
-                          <span className="text-sm font-medium text-gray-900">
+                    {record.consultation &&
+                      record.consultation.diagnoses?.length > 0 && (
+                        <p className="mt-2 text-body">
+                          <span className="text-ink-muted">Diagnosis: </span>
+                          <span className="font-medium text-ink">
                             {record.consultation.diagnoses.join(", ")}
                           </span>
-                        </div>
+                        </p>
                       )}
-                      {record.consultation.providerName && (
-                        <div className="text-sm text-gray-600">
-                          Provider: {record.consultation.providerName}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {record.prescriptions && record.prescriptions.length > 0 && (
-                    <div className="mt-3 pl-15">
-                      <p className="text-sm text-gray-600 mb-1">
-                        Medications prescribed:
+                    {record.consultation?.providerName && (
+                      <p className="text-body text-ink-muted">
+                        Seen by {record.consultation.providerName}
                       </p>
-                      <div className="flex flex-wrap gap-2">
-                        {record.prescriptions.map((rx, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium"
-                          >
-                            {rx.medicationName}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    )}
 
-                <ChevronRightIcon className="w-5 h-5 text-gray-400 flex-shrink-0 ml-4" />
-              </div>
-            </Link>
-          ))}
-        </div>
+                    {record.prescriptions &&
+                      record.prescriptions.length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-caption text-ink-muted">
+                            Medicines given
+                          </p>
+                          <ul className="mt-1 flex flex-wrap gap-1.5">
+                            {record.prescriptions.map((rx, idx) => (
+                              <li
+                                key={`${rx.medicationName}-${idx}`}
+                                className="badge badge-neutral"
+                              >
+                                {rx.medicationName}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                  </div>
+                  <ChevronRightIcon
+                    className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted"
+                    aria-hidden
+                  />
+                  <span className="sr-only">Open visit details</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )
       )}
 
       {hasMore && records.length > 0 && (
-        <div className="mt-6 text-center">
+        <div className="text-center">
           <button
+            type="button"
             onClick={() => setPage((p) => p + 1)}
-            disabled={loading}
-            className="px-6 py-3 bg-white border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
+            disabled={loading || !online}
+            className="btn-secondary"
           >
-            {loading ? "Loading..." : "Load More"}
+            {loading ? "Loading…" : "Show older visits"}
           </button>
         </div>
       )}
-    </div>
+      <p className="sr-only" aria-live="polite">
+        {loading && records.length > 0 ? "Loading older visits" : ""}
+      </p>
+    </PortalPage>
   );
 }

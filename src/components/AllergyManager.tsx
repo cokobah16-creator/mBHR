@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useId } from "react";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,11 +12,17 @@ import {
   type CreateAllergyInput,
   type UpdateAllergyInput,
 } from "../services/allergies";
-import type { PatientAllergy } from "../db";
+import { generateId, type PatientAllergy } from "../db";
+import { useAuthStore } from "@/stores/auth";
+import { useToast } from "@/stores/toast";
+import { can, type Role } from "@/auth/roles";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
+import { SkeletonText } from "@/components/ui/Skeleton";
 import {
   ExclamationTriangleIcon,
   XMarkIcon,
   PencilIcon,
+  PlusIcon,
 } from "@heroicons/react/24/outline";
 
 const allergySchema = z.object({
@@ -36,15 +42,53 @@ interface AllergyManagerProps {
   showInactive?: boolean;
 }
 
+// Every recorded allergy is a danger-level fact; life-threatening ones are
+// critical. The severity word is always shown next to the colour.
+const SEVERITY_TONE: Record<PatientAllergy["severity"], Tone> = {
+  "life-threatening": "critical",
+  severe: "danger",
+  moderate: "danger",
+  mild: "danger",
+};
+
+const SEVERITY_LABEL: Record<PatientAllergy["severity"], string> = {
+  "life-threatening": "Life-threatening",
+  severe: "Severe",
+  moderate: "Moderate",
+  mild: "Mild",
+};
+
+/** Staff who see patients at a station can record allergies. */
+function canEditAllergies(role: Role | undefined): boolean {
+  return (
+    !!role &&
+    (can(role, "register") ||
+      can(role, "vitals") ||
+      can(role, "consult") ||
+      can(role, "dispense"))
+  );
+}
+
 export function AllergyManager({
   patientId,
   userId,
   showInactive = false,
 }: AllergyManagerProps) {
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const { push: pushToast } = useToast();
+  const idPrefix = useId();
   const [allergies, setAllergies] = useState<PatientAllergy[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmDeactivateId, setConfirmDeactivateId] = useState<
+    string | null
+  >(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const canEdit = canEditAllergies(role);
 
   const {
     register,
@@ -55,61 +99,125 @@ export function AllergyManager({
     resolver: zodResolver(allergySchema),
   });
 
-  useEffect(() => {
-    loadAllergies();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const loadAllergies = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const data = await getPatientAllergies(patientId, !showInactive);
+      setAllergies(data);
+    } catch (error) {
+      console.error(
+        "Error loading allergies:",
+        error instanceof Error ? error.name : error,
+      );
+      setLoadError(
+        "Allergies could not be read from this device. Reload the page before prescribing or dispensing.",
+      );
+    } finally {
+      setLoading(false);
+    }
   }, [patientId, showInactive]);
 
-  const loadAllergies = async () => {
-    setLoading(true);
-    const data = await getPatientAllergies(patientId, !showInactive);
-    setAllergies(data);
-    setLoading(false);
+  useEffect(() => {
+    loadAllergies();
+  }, [loadAllergies]);
+
+  const denyWrite = () => {
+    setActionError("Your role cannot change this patient's allergies.");
   };
 
   const onSubmit = async (data: AllergyFormData) => {
-    if (editingId) {
-      const updates: UpdateAllergyInput = {
-        allergen: data.allergen,
-        allergyType: data.allergyType,
-        reaction: data.reaction,
-        severity: data.severity,
-        onsetDate: data.onsetDate ? new Date(data.onsetDate) : undefined,
-        notes: data.notes,
-      };
-      await updateAllergy(editingId, updates);
-      setEditingId(null);
-    } else {
-      const input: CreateAllergyInput = {
-        patientId,
-        allergen: data.allergen,
-        allergyType: data.allergyType,
-        reaction: data.reaction,
-        severity: data.severity,
-        onsetDate: data.onsetDate ? new Date(data.onsetDate) : undefined,
-        notes: data.notes,
-        createdBy: userId,
-      };
-      await createAllergy(input);
-      setIsAdding(false);
+    setActionError("");
+    if (!canEditAllergies(role)) {
+      denyWrite();
+      return;
     }
-    reset();
-    loadAllergies();
+    setSaving(true);
+    try {
+      if (editingId) {
+        const updates: UpdateAllergyInput = {
+          allergen: data.allergen,
+          allergyType: data.allergyType,
+          reaction: data.reaction,
+          severity: data.severity,
+          onsetDate: data.onsetDate ? new Date(data.onsetDate) : undefined,
+          notes: data.notes,
+        };
+        await updateAllergy(editingId, updates);
+        setEditingId(null);
+      } else {
+        const input: CreateAllergyInput = {
+          patientId,
+          allergen: data.allergen,
+          allergyType: data.allergyType,
+          reaction: data.reaction,
+          severity: data.severity,
+          onsetDate: data.onsetDate ? new Date(data.onsetDate) : undefined,
+          notes: data.notes,
+          createdBy: userId,
+        };
+        await createAllergy(input);
+      }
+      setIsAdding(false);
+      pushToast({
+        id: generateId(),
+        tone: "success",
+        title: editingId ? "Allergy updated" : "Allergy recorded",
+        body: `${data.allergen} saved on this device.`,
+      });
+      reset();
+      loadAllergies();
+    } catch (error) {
+      console.error(
+        "Error saving allergy:",
+        error instanceof Error ? error.name : error,
+      );
+      setActionError("The allergy was not saved. Try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeactivate = async (allergyId: string) => {
-    if (confirm("Deactivate this allergy?")) {
+    setActionError("");
+    if (!canEditAllergies(role)) {
+      denyWrite();
+      setConfirmDeactivateId(null);
+      return;
+    }
+    try {
       await deactivateAllergy(allergyId);
+      setConfirmDeactivateId(null);
       loadAllergies();
+    } catch (error) {
+      console.error(
+        "Error deactivating allergy:",
+        error instanceof Error ? error.name : error,
+      );
+      setActionError("The allergy is still active — the change was not saved. Try again.");
     }
   };
 
   const handleReactivate = async (allergyId: string) => {
-    await reactivateAllergy(allergyId);
-    loadAllergies();
+    setActionError("");
+    if (!canEditAllergies(role)) {
+      denyWrite();
+      return;
+    }
+    try {
+      await reactivateAllergy(allergyId);
+      loadAllergies();
+    } catch (error) {
+      console.error(
+        "Error reactivating allergy:",
+        error instanceof Error ? error.name : error,
+      );
+      setActionError("The allergy was not reactivated. Try again.");
+    }
   };
 
   const handleEdit = (allergy: PatientAllergy) => {
+    setActionError("");
     setEditingId(allergy.id);
     setIsAdding(true);
     reset({
@@ -127,72 +235,101 @@ export function AllergyManager({
   const handleCancel = () => {
     setIsAdding(false);
     setEditingId(null);
+    setActionError("");
     reset();
   };
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case "life-threatening":
-        return "bg-red-100 text-red-800 border-red-300";
-      case "severe":
-        return "bg-orange-100 text-orange-800 border-orange-300";
-      case "moderate":
-        return "bg-yellow-100 text-yellow-800 border-yellow-300";
-      case "mild":
-        return "bg-blue-100 text-blue-800 border-blue-300";
-      default:
-        return "bg-gray-100 text-gray-800 border-gray-300";
-    }
-  };
+  const fieldId = (name: string) => `${idPrefix}-${name}`;
 
   if (loading) {
-    return <div className="text-center py-4">Loading allergies...</div>;
+    return (
+      <div className="space-y-3" aria-busy="true">
+        <span role="status" className="sr-only">
+          Loading allergies
+        </span>
+        <SkeletonText lines={3} />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <ExclamationTriangleIcon className="h-5 w-5 text-red-600" />
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-h3 text-ink">
+          <ExclamationTriangleIcon className="h-5 w-5 text-danger" aria-hidden />
           Allergies
+          {allergies.some((a) => a.isActive) && (
+            <span className="text-caption font-normal text-ink-muted">
+              ({allergies.filter((a) => a.isActive).length} active)
+            </span>
+          )}
         </h3>
-        {!isAdding && (
+        {!isAdding && canEdit && (
           <button
-            onClick={() => setIsAdding(true)}
-            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+            type="button"
+            onClick={() => {
+              setActionError("");
+              setIsAdding(true);
+            }}
+            className="btn-secondary px-3"
           >
-            Add Allergy
+            <PlusIcon className="h-4 w-4" aria-hidden />
+            Add allergy
           </button>
         )}
       </div>
 
+      {loadError && (
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <span>{loadError}</span>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <span>{actionError}</span>
+        </div>
+      )}
+
       {isAdding && (
         <form
           onSubmit={handleSubmit(onSubmit)}
-          className="bg-gray-50 p-4 rounded-lg border space-y-3"
+          className="space-y-3 rounded-md border border-line bg-surface-sunken p-4"
+          noValidate
+          aria-label={editingId ? "Edit allergy" : "Add allergy"}
         >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium mb-1">
+              <label htmlFor={fieldId("allergen")} className="field-label">
                 Allergen *
               </label>
               <input
+                id={fieldId("allergen")}
                 {...register("allergen")}
-                className="w-full px-3 py-2 border rounded"
-                placeholder="e.g., Penicillin"
+                className="input-field"
+                placeholder="e.g. Penicillin"
+                aria-invalid={errors.allergen ? "true" : "false"}
+                aria-describedby={
+                  errors.allergen ? fieldId("allergen-error") : undefined
+                }
               />
               {errors.allergen && (
-                <p className="text-red-600 text-sm mt-1">
+                <p id={fieldId("allergen-error")} className="field-error" role="alert">
                   {errors.allergen.message}
                 </p>
               )}
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Type *</label>
+              <label htmlFor={fieldId("type")} className="field-label">
+                Type *
+              </label>
               <select
+                id={fieldId("type")}
                 {...register("allergyType")}
-                className="w-full px-3 py-2 border rounded"
+                className="input-field"
               >
                 <option value="medication">Medication</option>
                 <option value="food">Food</option>
@@ -202,142 +339,214 @@ export function AllergyManager({
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">
+              <label htmlFor={fieldId("severity")} className="field-label">
                 Severity *
               </label>
               <select
+                id={fieldId("severity")}
                 {...register("severity")}
-                className="w-full px-3 py-2 border rounded"
+                className="input-field"
               >
                 <option value="mild">Mild</option>
                 <option value="moderate">Moderate</option>
                 <option value="severe">Severe</option>
-                <option value="life-threatening">Life-Threatening</option>
+                <option value="life-threatening">Life-threatening</option>
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">
-                Onset Date
+              <label htmlFor={fieldId("onset")} className="field-label">
+                Onset date
               </label>
               <input
+                id={fieldId("onset")}
                 type="date"
                 {...register("onsetDate")}
-                className="w-full px-3 py-2 border rounded"
+                className="input-field"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Reaction</label>
+            <label htmlFor={fieldId("reaction")} className="field-label">
+              Reaction
+            </label>
             <input
+              id={fieldId("reaction")}
               {...register("reaction")}
-              className="w-full px-3 py-2 border rounded"
-              placeholder="Describe the reaction"
+              className="input-field"
+              placeholder="e.g. Rash, swelling, difficulty breathing"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Notes</label>
+            <label htmlFor={fieldId("notes")} className="field-label">
+              Notes
+            </label>
             <textarea
+              id={fieldId("notes")}
               {...register("notes")}
               rows={2}
-              className="w-full px-3 py-2 border rounded"
-              placeholder="Additional information"
+              className="input-field"
             />
           </div>
 
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-            >
-              {editingId ? "Update" : "Add"} Allergy
-            </button>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <button
               type="button"
               onClick={handleCancel}
-              className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+              disabled={saving}
+              className="btn-secondary"
             >
               Cancel
+            </button>
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving ? "Saving…" : editingId ? "Update allergy" : "Add allergy"}
             </button>
           </div>
         </form>
       )}
 
       {allergies.length === 0 ? (
-        <div className="text-center py-8 text-gray-500 border-2 border-dashed rounded-lg">
-          No allergies recorded
-        </div>
+        !loadError && (
+          <div className="rounded-md border border-dashed border-line-strong px-4 py-6 text-center">
+            <p className="text-body font-medium text-ink">
+              No allergies recorded
+            </p>
+            <p className="mt-1 text-caption text-ink-muted">
+              This does not mean the patient has none — ask before prescribing
+              or dispensing.
+            </p>
+          </div>
+        )
       ) : (
-        <div className="space-y-2">
-          {allergies.map((allergy) => (
-            <div
-              key={allergy.id}
-              className={`border-2 rounded-lg p-3 ${allergy.isActive ? getSeverityColor(allergy.severity) : "bg-gray-100 text-gray-500 border-gray-300"}`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="font-semibold text-lg">
-                      {allergy.allergen}
-                    </h4>
-                    <span className="px-2 py-0.5 text-xs rounded bg-white bg-opacity-50">
-                      {allergy.allergyType}
-                    </span>
-                    <span className="px-2 py-0.5 text-xs rounded bg-white bg-opacity-50 font-medium">
-                      {allergy.severity.toUpperCase()}
-                    </span>
-                    {!allergy.isActive && (
-                      <span className="px-2 py-0.5 text-xs rounded bg-gray-400 text-white">
-                        INACTIVE
+        <ul className="space-y-2">
+          {allergies.map((allergy) => {
+            const active = Boolean(allergy.isActive);
+            return (
+              <li
+                key={allergy.id}
+                className={`rounded-md border p-3 ${
+                  active
+                    ? "border-danger-line bg-danger-soft"
+                    : "border-line bg-surface-sunken text-ink-muted"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4
+                        className={`text-h3 ${active ? "text-danger-fg" : "text-ink-muted line-through"}`}
+                      >
+                        {allergy.allergen}
+                      </h4>
+                      {active ? (
+                        <StatusBadge tone={SEVERITY_TONE[allergy.severity]} icon>
+                          {SEVERITY_LABEL[allergy.severity] ?? allergy.severity}
+                        </StatusBadge>
+                      ) : (
+                        <span className="badge badge-neutral">
+                          {SEVERITY_LABEL[allergy.severity] ?? allergy.severity}
+                        </span>
+                      )}
+                      <span className="badge badge-neutral capitalize">
+                        {allergy.allergyType}
                       </span>
+                      {!active && (
+                        <StatusBadge tone="neutral" icon>
+                          Inactive
+                        </StatusBadge>
+                      )}
+                    </div>
+                    {allergy.reaction && (
+                      <p className="mt-1 text-body text-ink-secondary">
+                        Reaction: {allergy.reaction}
+                      </p>
+                    )}
+                    {allergy.onsetDate && (
+                      <p className="mt-1 text-caption text-ink-muted">
+                        Onset: {formatNigerianDate(allergy.onsetDate)}
+                      </p>
+                    )}
+                    {allergy.notes && (
+                      <p className="mt-1 text-body italic text-ink-secondary">
+                        {allergy.notes}
+                      </p>
+                    )}
+
+                    {confirmDeactivateId === allergy.id && (
+                      <div
+                        className="mt-3 rounded-md border border-line bg-surface p-3"
+                        role="alertdialog"
+                        aria-labelledby={fieldId(`deact-${allergy.id}`)}
+                      >
+                        <p
+                          id={fieldId(`deact-${allergy.id}`)}
+                          className="text-body text-ink"
+                        >
+                          Mark the {allergy.allergen} allergy as inactive? It
+                          will no longer be shown in allergy warnings.
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            autoFocus
+                            onClick={() => setConfirmDeactivateId(null)}
+                            className="btn-secondary px-3"
+                          >
+                            Keep active
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeactivate(allergy.id)}
+                            className="btn-danger px-3"
+                          >
+                            Mark inactive
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  {allergy.reaction && (
-                    <p className="text-sm mt-1">Reaction: {allergy.reaction}</p>
-                  )}
-                  {allergy.onsetDate && (
-                    <p className="text-sm mt-1">
-                      Onset: {formatNigerianDate(allergy.onsetDate)}
-                    </p>
-                  )}
-                  {allergy.notes && (
-                    <p className="text-sm mt-1 italic">{allergy.notes}</p>
-                  )}
-                </div>
-                <div className="flex gap-1">
-                  {allergy.isActive && (
-                    <>
-                      <button
-                        onClick={() => handleEdit(allergy)}
-                        className="p-1 hover:bg-white hover:bg-opacity-50 rounded"
-                        title="Edit"
-                      >
-                        <PencilIcon className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeactivate(allergy.id)}
-                        className="p-1 hover:bg-white hover:bg-opacity-50 rounded"
-                        title="Deactivate"
-                      >
-                        <XMarkIcon className="h-4 w-4" />
-                      </button>
-                    </>
-                  )}
-                  {!allergy.isActive && (
-                    <button
-                      onClick={() => handleReactivate(allergy.id)}
-                      className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                    >
-                      Reactivate
-                    </button>
+                  {canEdit && (
+                    <div className="flex shrink-0 gap-1">
+                      {active && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(allergy)}
+                            className="btn-ghost px-2"
+                            aria-label={`Edit ${allergy.allergen} allergy`}
+                            title="Edit"
+                          >
+                            <PencilIcon className="h-5 w-5" aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeactivateId(allergy.id)}
+                            className="btn-ghost px-2"
+                            aria-label={`Mark ${allergy.allergen} allergy inactive`}
+                            title="Mark inactive"
+                          >
+                            <XMarkIcon className="h-5 w-5" aria-hidden />
+                          </button>
+                        </>
+                      )}
+                      {!active && (
+                        <button
+                          type="button"
+                          onClick={() => handleReactivate(allergy.id)}
+                          className="btn-secondary px-3"
+                        >
+                          Reactivate
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

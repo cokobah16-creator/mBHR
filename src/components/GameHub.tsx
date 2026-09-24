@@ -1,252 +1,317 @@
-import React, { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
-import { db } from "@/db";
+import { db, type GamificationWallet } from "@/db";
 import {
-  TrophyIcon,
-  FireIcon,
-  StarIcon,
-  ClockIcon,
-  HeartIcon,
-  CubeIcon,
   AcademicCapIcon,
+  ArrowRightIcon,
+  ClockIcon,
+  CubeIcon,
+  ExclamationCircleIcon,
   ExclamationTriangleIcon,
+  GiftIcon,
+  HeartIcon,
+  LockClosedIcon,
+  MegaphoneIcon,
+  StarIcon,
+  TrophyIcon,
 } from "@heroicons/react/24/outline";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { TrainingModeFrame } from "@/components/training/TrainingModeFrame";
+import { TrainingStat } from "@/components/training/TrainingWidgets";
+import {
+  TOKEN_PAGE_ROLES,
+  TRAINING_ACTIVITIES,
+  activityAccessNote,
+  canOpenActivity,
+  type TrainingActivityId,
+} from "@/components/training/trainingActivities";
+import type { Role } from "@/auth/roles";
+import { badgeLabel } from "@/components/training/trainingRules";
 
 interface GameHubProps {
   className?: string;
 }
 
+const ACTIVITY_ICONS: Record<TrainingActivityId, typeof HeartIcon> = {
+  "knowledge-blitz": AcademicCapIcon,
+  "triage-sprint": ExclamationTriangleIcon,
+  "vitals-precision": HeartIcon,
+  "queue-maestro": MegaphoneIcon,
+  restock: CubeIcon,
+};
+
+// `roles` mirrors each route's guard in App.tsx; undefined = any signed-in role.
+const MORE_LINKS: {
+  href: string;
+  name: string;
+  description: string;
+  icon: typeof StarIcon;
+  roles?: Role[];
+}[] = [
+  {
+    href: "/quests",
+    name: "Quest board",
+    description: "Daily quests, limits and cool-downs.",
+    icon: StarIcon,
+  },
+  {
+    href: "/inv/prizes",
+    name: "Prize shop",
+    description: "Spend Restock game tokens.",
+    icon: GiftIcon,
+    roles: TOKEN_PAGE_ROLES,
+  },
+  {
+    href: "/inv/leaderboard",
+    name: "Restock leaderboard",
+    description: "Prize-shop tokens per staff member.",
+    icon: TrophyIcon,
+    roles: TOKEN_PAGE_ROLES,
+  },
+];
+
+type LoadState = "loading" | "ready" | "failed";
+
+const LIVE_ACTIVITY_NAMES = TRAINING_ACTIVITIES.filter((a) => a.liveData).map(
+  (a) => a.name,
+);
+
 export function GameHub({ className = "" }: GameHubProps) {
-  const { currentUser } = useAuthStore();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [wallet, setWallet] = useState<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [pendingSessions, setPendingSessions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const userId = currentUser?.id;
+  const role = currentUser?.role;
+  const [wallet, setWallet] = useState<GamificationWallet | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [state, setState] = useState<LoadState>("loading");
 
-  useEffect(() => {
-    if (currentUser) {
-      loadGameData();
+  const loadGameData = useCallback(async () => {
+    if (!userId) {
+      setState("ready");
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
-
-  const loadGameData = async () => {
-    if (!currentUser) return;
-
+    setState("loading");
     try {
       const [walletData, sessionsData] = await Promise.all([
-        db.gamificationWallets.get(currentUser.id),
+        db.gamificationWallets.get(userId),
         db.gameSessions
           .where("volunteerId")
-          .equals(currentUser.id)
+          .equals(userId)
           .and((session) => !session.committed && !!session.finishedAt)
           .toArray(),
       ]);
-
-      setWallet(walletData);
-      setPendingSessions(sessionsData);
+      setWallet(walletData ?? null);
+      setPendingCount(sessionsData.length);
+      setState("ready");
     } catch (error) {
-      console.error("Error loading game data:", error);
-    } finally {
-      setLoading(false);
+      console.error(
+        "Error loading game data:",
+        error instanceof Error ? error.name : error,
+      );
+      setState("failed");
     }
-  };
+  }, [userId]);
 
-  const games = [
-    {
-      id: "vitals",
-      name: "Vitals Precision",
-      description: "Validate vital signs with accuracy bonuses",
-      icon: HeartIcon,
-      color: "bg-green-500 hover:bg-green-600",
-      baseTokens: 8,
-      estimatedMinutes: 3,
-      href: "/games/vitals-precision",
-    },
-    {
-      id: "shelf",
-      name: "Shelf Sleuth",
-      description: "Verify inventory counts and find discrepancies",
-      icon: CubeIcon,
-      color: "bg-blue-500 hover:bg-blue-600",
-      baseTokens: 12,
-      estimatedMinutes: 5,
-      href: "/games/shelf-sleuth",
-    },
-    {
-      id: "quiz",
-      name: "Knowledge Blitz",
-      description: "60-second protocol and procedure quizzes",
-      icon: AcademicCapIcon,
-      color: "bg-purple-500 hover:bg-purple-600",
-      baseTokens: 10,
-      estimatedMinutes: 1,
-      href: "/games/knowledge-blitz",
-    },
-    {
-      id: "triage",
-      name: "Triage Sprint",
-      description: "Quick priority assessment challenges",
-      icon: ExclamationTriangleIcon,
-      color: "bg-orange-500 hover:bg-orange-600",
-      baseTokens: 15,
-      estimatedMinutes: 2,
-      href: "/games/triage-sprint",
-    },
-    {
-      id: "vitals-enhanced",
-      name: "Enhanced Vitals",
-      description: "Age/sex-specific vital signs validation",
-      icon: HeartIcon,
-      color: "bg-emerald-500 hover:bg-emerald-600",
-      baseTokens: 12,
-      estimatedMinutes: 4,
-      href: "/games/vitals-precision-enhanced",
-    },
-  ];
+  useEffect(() => {
+    void loadGameData();
+  }, [loadGameData]);
 
-  if (loading) {
-    return (
-      <div className={`space-y-6 ${className}`}>
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-48 mb-4"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-32 bg-gray-200 rounded-lg"></div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const badges = wallet?.badges ?? [];
 
   return (
-    <div className={`space-y-6 ${className}`}>
-      {/* Header with Wallet Info */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <TrophyIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Game Hub</h1>
-            <p className="text-gray-600">
-              Earn tokens and badges through clinic work
-            </p>
-          </div>
-        </div>
+    <div className={className}>
+      <TrainingModeFrame
+        title="Training"
+        description="Practice games and quests. Scores and tokens are kept on this device."
+        breadcrumbs={null}
+        note={`${LIVE_ACTIVITY_NAMES.join(" and ")} use live clinic data and are marked "Live data" below.`}
+      >
+        <div className="space-y-6">
+          <section aria-labelledby="hub-wallet">
+            <h2 id="hub-wallet" className="sr-only">
+              Your game wallet
+            </h2>
+            {state === "loading" && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-hidden>
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="rounded-lg border border-line bg-surface px-4 py-3">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="mt-2 h-7 w-16" />
+                  </div>
+                ))}
+              </div>
+            )}
+            {state === "failed" && (
+              <div className="banner banner-danger" role="alert">
+                <ExclamationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                <div>
+                  <p>Your game wallet could not be read from this device.</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadGameData()}
+                    className="btn-secondary mt-2"
+                  >
+                    Try again
+                  </button>
+                </div>
+              </div>
+            )}
+            {state === "ready" && (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <TrainingStat
+                    label="Game tokens"
+                    value={wallet?.tokens ?? 0}
+                    hint="Approved sessions only"
+                  />
+                  <TrainingStat label="Level" value={wallet?.level ?? 1} />
+                  <TrainingStat
+                    label="Day streak"
+                    value={wallet?.streakDays ?? 0}
+                    hint="Adds up to +50% to game tokens"
+                  />
+                </div>
+                {!wallet && (
+                  <p className="mt-2 text-caption text-ink-muted">
+                    No approved tokens yet. Finish a game; after an admin
+                    approves the session, its tokens appear here.
+                  </p>
+                )}
+              </>
+            )}
+          </section>
 
-        {wallet && (
-          <div className="flex items-center space-x-6">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-primary">
-                {wallet.tokens}
-              </div>
-              <div className="text-sm text-gray-600">Tokens</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-600">
-                Level {wallet.level}
-              </div>
-              <div className="text-sm text-gray-600">Current Level</div>
-            </div>
-            <div className="text-center flex items-center space-x-1">
-              <FireIcon className="h-5 w-5 text-red-500" />
-              <div className="text-xl font-bold text-red-600">
-                {wallet.streakDays}
-              </div>
-              <div className="text-sm text-gray-600">Day Streak</div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Pending Approvals Alert */}
-      {pendingSessions.length > 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <div className="flex items-center space-x-2">
-            <ClockIcon className="h-5 w-5 text-yellow-600" />
-            <div>
-              <h3 className="text-sm font-medium text-yellow-800">
-                Pending Approval ({pendingSessions.length} sessions)
-              </h3>
-              <p className="text-sm text-yellow-700">
-                Your completed game sessions are waiting for supervisor approval
-                to mint tokens.
+          {state === "ready" && pendingCount > 0 && (
+            <div className="banner banner-info" role="status">
+              <ClockIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <p>
+                {pendingCount} finished{" "}
+                {pendingCount === 1 ? "session is" : "sessions are"} waiting
+                for an admin to approve them. Their tokens are added after
+                approval.
               </p>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Game Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {games.map((game) => (
-          <Link
-            key={game.id}
-            to={game.href}
-            className={`${game.color} text-white rounded-lg p-6 transition-all hover:scale-105 transform group`}
-          >
-            <div className="text-center">
-              <game.icon className="h-12 w-12 mx-auto mb-4 group-hover:scale-110 transition-transform" />
-              <h3 className="text-lg font-bold mb-2">{game.name}</h3>
-              <p className="text-sm opacity-90 mb-4">{game.description}</p>
+          <section aria-labelledby="hub-activities">
+            <h2 id="hub-activities" className="mb-3 text-h2 text-ink">
+              Games and quests
+            </h2>
+            <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {TRAINING_ACTIVITIES.map((activity) => {
+                const Icon = ACTIVITY_ICONS[activity.id];
+                const allowed = canOpenActivity(activity, role);
+                const body = (
+                  <>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-accent/25 text-ink">
+                        <Icon className="h-6 w-6" aria-hidden />
+                      </span>
+                      {activity.liveData ? (
+                        <StatusBadge tone="warning">Live data</StatusBadge>
+                      ) : (
+                        <StatusBadge tone="neutral">Practice</StatusBadge>
+                      )}
+                    </div>
+                    <h3 className="mt-3 text-h3 text-ink">{activity.name}</h3>
+                    <p className="text-body text-ink-secondary">
+                      {activity.description}
+                    </p>
+                    {activity.liveData && (
+                      <p className="mt-1 text-body text-warning-fg">
+                        {activity.liveData}
+                      </p>
+                    )}
+                    <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-caption text-ink-muted">
+                      <li className="flex items-center gap-1">
+                        <ClockIcon className="h-4 w-4" aria-hidden />
+                        <span className="sr-only">Time: </span>
+                        {activity.timing}
+                      </li>
+                      <li className="flex items-center gap-1">
+                        <StarIcon className="h-4 w-4" aria-hidden />
+                        <span className="sr-only">Reward: </span>
+                        {activity.reward}
+                      </li>
+                    </ul>
+                    <p className="mt-auto flex items-center gap-1.5 pt-3 text-label">
+                      {allowed ? (
+                        <span className="flex items-center gap-1 text-primary-fg">
+                          Open
+                          <ArrowRightIcon className="h-4 w-4" aria-hidden />
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-ink-muted">
+                          <LockClosedIcon className="h-4 w-4" aria-hidden />
+                          Not available: {activityAccessNote(activity, role)}
+                        </span>
+                      )}
+                    </p>
+                  </>
+                );
+                return (
+                  <li key={activity.id} className="flex">
+                    {allowed ? (
+                      <Link
+                        to={activity.href}
+                        className="flex w-full flex-col rounded-lg border border-line bg-surface p-5 transition-colors hover:border-accent hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        {body}
+                      </Link>
+                    ) : (
+                      <div className="flex w-full flex-col rounded-lg border border-line bg-surface-sunken p-5">
+                        {body}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
 
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center space-x-1">
-                  <ClockIcon className="h-4 w-4" />
-                  <span>{game.estimatedMinutes} min</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <StarIcon className="h-4 w-4" />
-                  <span>{game.baseTokens} tokens</span>
-                </div>
+          <section aria-labelledby="hub-more">
+            <h2 id="hub-more" className="mb-3 text-h2 text-ink">
+              Quests, prizes and rankings
+            </h2>
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {MORE_LINKS.filter((l) => !l.roles || (!!role && l.roles.includes(role))).map((l) => (
+                <li key={l.href}>
+                  <Link
+                    to={l.href}
+                    className="flex min-h-touch-target items-start gap-3 rounded-lg border border-line bg-surface p-4 transition-colors hover:border-accent hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    <l.icon className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
+                    <span>
+                      <span className="block text-label text-ink">{l.name}</span>
+                      <span className="block text-caption text-ink-muted">
+                        {l.description}
+                      </span>
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {badges.length > 0 && (
+            <section className="panel" aria-labelledby="hub-badges">
+              <div className="panel-header">
+                <h2 id="hub-badges" className="panel-title">
+                  Recent badges
+                </h2>
               </div>
-            </div>
-          </Link>
-        ))}
-      </div>
-
-      {/* Recent Badges */}
-      {wallet?.badges.length > 0 && (
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Recent Badges
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {wallet.badges.slice(-6).map((badge: string, index: number) => (
-              <span
-                key={index}
-                className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800"
-              >
-                🏆{" "}
-                {badge
-                  .replace("_", " ")
-                  .replace(/\b\w/g, (l) => l.toUpperCase())}
-              </span>
-            ))}
-          </div>
+              <ul className="panel-body flex flex-wrap gap-2">
+                {badges.slice(-6).map((badge) => (
+                  <li key={badge}>
+                    <StatusBadge tone="info">{badgeLabel(badge)}</StatusBadge>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
-      )}
-
-      {/* Getting Started */}
-      {!wallet && (
-        <div className="card bg-blue-50 border-blue-200">
-          <div className="text-center py-8">
-            <TrophyIcon className="h-12 w-12 mx-auto text-blue-600 mb-4" />
-            <h3 className="text-lg font-medium text-blue-800 mb-2">
-              Welcome to the Game Hub!
-            </h3>
-            <p className="text-blue-700 mb-4">
-              Complete your first game to start earning tokens and badges.
-            </p>
-            <p className="text-sm text-blue-600">
-              All games are based on real clinic work - you're helping patients
-              while having fun!
-            </p>
-          </div>
-        </div>
-      )}
+      </TrainingModeFrame>
     </div>
   );
 }

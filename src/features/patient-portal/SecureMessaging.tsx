@@ -1,15 +1,33 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { isRealtimeAvailable } from "@/lib/realtimeAvailable";
 import * as logger from "@/lib/logger";
-import { formatNigerianDate } from "@/utils/dateFormat";
 import {
-  PaperAirplaneIcon,
+  ArrowLeftIcon,
+  ArrowPathIcon,
+  ChevronRightIcon,
   InboxIcon,
+  PaperAirplaneIcon,
+  PencilSquareIcon,
+  TrashIcon,
   UserCircleIcon,
-  WifiIcon,
 } from "@heroicons/react/24/outline";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
+import { formatPortalDate, formatPortalTime, messageDeliveryInfo } from "./portalStatus";
+import { readPortalUser } from "./portalSession";
+import {
+  queuedForPatient,
+  readMessageQueue,
+  withoutQueued,
+  writeMessageQueue,
+  type QueuedMessage,
+} from "./messageQueue";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface Message {
   id: string;
@@ -30,28 +48,149 @@ const QUICK_MESSAGES = [
   "I have a question",
 ];
 
+type Feedback = { tone: "success" | "warning"; text: string } | null;
+
+function localId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function errorName(err: unknown): string {
+  return err instanceof Error ? err.name : "unknown";
+}
+
+async function insertPatientMessage(
+  client: SupabaseClient,
+  patientId: string,
+  msg: { subject: string; body: string; staffId: string | null },
+): Promise<void> {
+  const { data: patient } = await client
+    .from("patients")
+    .select("given_name, family_name")
+    .eq("id", patientId)
+    .maybeSingle();
+
+  const fromName = patient
+    ? `${patient.given_name} ${patient.family_name}`
+    : "Patient";
+
+  const { error: insertError } = await client
+    .from("patient_secure_messages")
+    .insert({
+      patient_id: patientId,
+      staff_id: msg.staffId,
+      subject: msg.subject,
+      body: msg.body,
+      from_patient: true,
+      from_name: fromName,
+      read: false,
+    });
+
+  if (insertError) throw insertError;
+}
+
+function MessageDate({ value }: { value: string }) {
+  return (
+    <span className="whitespace-nowrap tabular-nums">
+      {formatPortalDate(value)} {formatPortalTime(value)}
+    </span>
+  );
+}
+
 export function SecureMessaging() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const online = useOnlineStatus();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [unsent, setUnsent] = useState<QueuedMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [composeError, setComposeError] = useState("");
+  const [feedback, setFeedback] = useState<Feedback>(null);
   const [showCompose, setShowCompose] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [replyStaffId, setReplyStaffId] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState({ subject: "", body: "" });
-  const isOffline = !supabase;
+  const [sendingQueuedId, setSendingQueuedId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  const lastOpenedId = useRef<string | null>(null);
+
+  const messagingConfigured = !!supabase;
+
+  const loadMessages = useCallback(async () => {
+    setError("");
+    const portalUser = readPortalUser();
+    if (!portalUser) {
+      setError(
+        "We could not find your sign-in on this phone. Please log in again.",
+      );
+      setLoading(false);
+      return;
+    }
+    if (!portalUser.patientId) {
+      setError("Your sign-in details are incomplete. Please log in again.");
+      setLoading(false);
+      return;
+    }
+
+    setUnsent(queuedForPatient(readMessageQueue(), portalUser.patientId));
+
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data, error: messagesError } = await supabase
+        .from("patient_secure_messages")
+        .select("*")
+        .eq("patient_id", portalUser.patientId)
+        .order("created_at", { ascending: false });
+
+      if (messagesError) throw messagesError;
+
+      setMessages(data || []);
+      setLoaded(true);
+    } catch (err) {
+      logger.error("Error loading messages:", errorName(err));
+      // Offline, the "You are offline" notice already explains it.
+      setError(
+        navigator.onLine
+          ? "We could not load your messages. Please try again."
+          : "",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Load now (even offline: this phone may have kept a copy from the last time
+  // it was online), and again whenever the connection comes back.
+  const attempted = useRef(false);
 
   useEffect(() => {
+    if (!online && attempted.current) return;
+    attempted.current = true;
     loadMessages();
+  }, [online, loadMessages]);
 
+  // Live updates when the clinic replies (if realtime is available).
+  useEffect(() => {
     if (!supabase) return;
     if (!isRealtimeAvailable()) return;
+    const client = supabase;
 
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let channel: ReturnType<typeof client.channel> | null = null;
     try {
-      channel = supabase
+      channel = client
         .channel("secure_messages")
         .on(
           "postgres_changes",
@@ -66,134 +205,156 @@ export function SecureMessaging() {
         )
         .subscribe();
     } catch (err) {
-      console.warn(
+      logger.warn(
         "[SecureMessaging] Realtime unavailable; live message updates disabled:",
-        err,
+        errorName(err),
       );
     }
 
     return () => {
-      if (channel) supabase!.removeChannel(channel);
+      if (channel) client.removeChannel(channel);
     };
-  }, []);
+  }, [loadMessages]);
 
-  const loadMessages = async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
-        setError("Session not found. Please log in again.");
-        setLoading(false);
-        return;
-      }
-
-      const portalUser = JSON.parse(portalUserStr);
-      if (!portalUser.patientId) {
-        setError("Session data incomplete. Please log in again.");
-        setLoading(false);
-        return;
-      }
-
-      if (!supabase) {
-        setMessages([]);
-        return;
-      }
-
-      const { data, error: messagesError } = await supabase
-        .from("patient_secure_messages")
-        .select("*")
-        .eq("patient_id", portalUser.patientId)
-        .order("created_at", { ascending: false });
-
-      if (messagesError) throw messagesError;
-
-      setMessages(data || []);
-    } catch (err) {
-      logger.error("Error loading messages:", err);
-      setError("Failed to load messages");
-    } finally {
-      setLoading(false);
+  // Arriving from "Need more of a medicine?" opens a refill message.
+  useEffect(() => {
+    const state = location.state as { compose?: string } | null;
+    if (state?.compose !== "refill") return;
+    if (supabase) {
+      setReplyStaffId(null);
+      setSelectedMessage(null);
+      setNewMessage({ subject: "Medicine refill request", body: "" });
+      setShowCompose(true);
     }
+    // Clear the request so a page refresh does not reopen it.
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (showCompose) subjectRef.current?.focus();
+  }, [showCompose]);
+
+  // Move focus with the view so keyboard and screen-reader users follow it.
+  useEffect(() => {
+    if (selectedMessage) {
+      detailHeadingRef.current?.focus();
+    } else if (lastOpenedId.current) {
+      document.getElementById(`message-${lastOpenedId.current}`)?.focus();
+    }
+  }, [selectedMessage]);
+
+  const resetCompose = () => {
+    setNewMessage({ subject: "", body: "" });
+    setShowCompose(false);
+    setReplyStaffId(null);
+    setComposeError("");
   };
 
-  const sendMessage = async () => {
-    if (!newMessage.subject.trim() || !newMessage.body.trim()) {
-      setError("Subject and message are required");
+  const sendMessage = async (e?: FormEvent<HTMLFormElement>) => {
+    e?.preventDefault();
+    const subject = newMessage.subject.trim();
+    const body = newMessage.body.trim();
+    if (!subject || !body) {
+      setComposeError("Add a subject and a message before sending.");
+      return;
+    }
+    if (!supabase) return;
+
+    const portalUser = readPortalUser();
+    if (!portalUser || !portalUser.patientId) {
+      navigate("/patient/login", { replace: true });
       return;
     }
 
-    if (!supabase) {
-      const offline: Message = {
-        id: crypto.randomUUID(),
-        subject: newMessage.subject,
-        body: newMessage.body,
+    setComposeError("");
+    setFeedback(null);
+
+    if (!navigator.onLine) {
+      // Keep it on this phone, clearly marked as not sent.
+      const queued: QueuedMessage = {
+        id: localId(),
+        subject,
+        body,
         from_patient: true,
         from_name: "You",
         created_at: new Date().toISOString(),
-        read: true,
-        patient_id: "",
+        read: false,
+        patient_id: portalUser.patientId,
+        staff_id: replyStaffId,
       };
-      const queue: Message[] = JSON.parse(
-        localStorage.getItem("patient_message_queue") || "[]",
-      );
-      queue.push(offline);
-      localStorage.setItem("patient_message_queue", JSON.stringify(queue));
-      setSuccess("Message saved. It will be sent when you connect.");
-      setNewMessage({ subject: "", body: "" });
-      setShowCompose(false);
+      const saved = writeMessageQueue([...readMessageQueue(), queued]);
+      if (!saved) {
+        setComposeError(
+          "You are offline and this phone could not save your message. It has not been sent. Please try again when you are online.",
+        );
+        return;
+      }
+      setUnsent(queuedForPatient(readMessageQueue(), portalUser.patientId));
+      setFeedback({
+        tone: "warning",
+        text: "You are offline, so your message has not been sent. It is saved on this phone. Tap “Send now” when you are back online.",
+      });
+      resetCompose();
       return;
     }
 
     setSending(true);
-    setError("");
-    setSuccess("");
-
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
-        navigate("/patient/login", { replace: true });
-        return;
-      }
-
-      const portalUser = JSON.parse(portalUserStr);
-
-      const { data: patient } = await supabase
-        .from("patients")
-        .select("given_name, family_name")
-        .eq("id", portalUser.patientId)
-        .maybeSingle();
-
-      const fromName = patient
-        ? `${patient.given_name} ${patient.family_name}`
-        : "Patient";
-
-      const { error: insertError } = await supabase
-        .from("patient_secure_messages")
-        .insert({
-          patient_id: portalUser.patientId,
-          staff_id: replyStaffId,
-          subject: newMessage.subject,
-          body: newMessage.body,
-          from_patient: true,
-          from_name: fromName,
-          read: false,
-        });
-
-      if (insertError) throw insertError;
-
-      setSuccess("Message sent successfully");
-      setNewMessage({ subject: "", body: "" });
-      setShowCompose(false);
-      setReplyStaffId(null);
+      await insertPatientMessage(supabase, portalUser.patientId, {
+        subject,
+        body,
+        staffId: replyStaffId,
+      });
+      setFeedback({
+        tone: "success",
+        text: "Message sent. The clinic team will see it when they next check messages.",
+      });
+      resetCompose();
       await loadMessages();
     } catch (err) {
-      logger.error("Error sending message:", err);
-      setError("Failed to send message");
+      logger.error("Error sending message:", errorName(err));
+      setComposeError(
+        "Your message was not sent. Check your connection and try again.",
+      );
     } finally {
       setSending(false);
     }
+  };
+
+  const sendQueued = async (item: QueuedMessage) => {
+    if (!supabase || !navigator.onLine) {
+      setError(
+        "You are offline. Connect to the internet to send this message.",
+      );
+      return;
+    }
+    setSendingQueuedId(item.id);
+    setError("");
+    setFeedback(null);
+    try {
+      await insertPatientMessage(supabase, item.patient_id, {
+        subject: item.subject,
+        body: item.body,
+        staffId: item.staff_id ?? null,
+      });
+      writeMessageQueue(withoutQueued(readMessageQueue(), item.id));
+      setUnsent((prev) => prev.filter((m) => m.id !== item.id));
+      setFeedback({ tone: "success", text: `“${item.subject}” was sent.` });
+      await loadMessages();
+    } catch (err) {
+      logger.error("Error sending saved message:", errorName(err));
+      setError(
+        "That message was not sent. It is still saved on this phone. Check your connection and try again.",
+      );
+    } finally {
+      setSendingQueuedId(null);
+    }
+  };
+
+  const discardQueued = (item: QueuedMessage) => {
+    writeMessageQueue(withoutQueued(readMessageQueue(), item.id));
+    setUnsent((prev) => prev.filter((m) => m.id !== item.id));
+    setConfirmDeleteId(null);
   };
 
   const markAsRead = async (messageId: string) => {
@@ -206,11 +367,12 @@ export function SecureMessaging() {
 
       await loadMessages();
     } catch (err) {
-      logger.error("Error marking message as read:", err);
+      logger.error("Error marking message as read:", errorName(err));
     }
   };
 
   const openMessage = (message: Message) => {
+    lastOpenedId.current = message.id;
     setSelectedMessage(message);
     if (!message.read && !message.from_patient) {
       markAsRead(message.id);
@@ -226,237 +388,405 @@ export function SecureMessaging() {
         : `Re: ${selectedMessage.subject}`,
       body: "",
     });
+    setComposeError("");
     setShowCompose(true);
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading messages...</p>
-          </div>
-        </div>
-      </div>
-    );
+  const startNewMessage = () => {
+    setReplyStaffId(null);
+    setNewMessage({ subject: "", body: "" });
+    setComposeError("");
+    setFeedback(null);
+    setShowCompose(true);
+  };
+
+  if (loading && !loaded) {
+    return <PortalListSkeleton label="Loading your messages" />;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 px-4 py-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Secure Messaging
-            </h1>
-            <p className="mt-2 text-gray-600">
-              Communicate securely with your healthcare providers
-            </p>
-          </div>
+    <PortalPage
+      title="Messages"
+      description="Write to the outreach clinic team about your care. Messages are not for emergencies."
+      actions={
+        messagingConfigured &&
+        !showCompose && (
           <button
-            onClick={() => {
-              setReplyStaffId(null);
-              setShowCompose(true);
-            }}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            type="button"
+            onClick={startNewMessage}
+            className="btn-primary"
           >
-            New Message
+            <PencilSquareIcon className="h-5 w-5" aria-hidden />
+            New message
           </button>
-        </div>
+        )
+      }
+    >
+      {!messagingConfigured && (
+        <PortalNotice tone="info" title="Messages are not available here">
+          This portal is not connected to the clinic&apos;s online system, so
+          messages cannot be sent or received here. Speak to the outreach team
+          at your next visit.
+        </PortalNotice>
+      )}
 
-        {isOffline && (
-          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
-            <WifiIcon className="w-5 h-5 text-amber-600 flex-shrink-0" />
-            <p className="text-sm text-amber-800">
-              Offline mode — messages will sync when you connect to the
-              internet.
-            </p>
-          </div>
-        )}
+      {messagingConfigured && !online && (
+        <PortalNotice tone="offline" title="You are offline">
+          {loaded
+            ? "You are seeing the messages loaded when this phone was last online. New replies cannot load right now. "
+            : "Your messages cannot load right now. "}
+          You can still write a message: it will be saved on this phone, not
+          sent, until you tap “Send now” while online.
+        </PortalNotice>
+      )}
 
-        {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-800">{error}</p>
-          </div>
-        )}
-
-        {success && (
-          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <p className="text-sm text-green-800">{success}</p>
-          </div>
-        )}
-
-        {showCompose && (
-          <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold mb-4">Compose New Message</h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Subject
-                </label>
-                <input
-                  type="text"
-                  value={newMessage.subject}
-                  onChange={(e) =>
-                    setNewMessage({ ...newMessage, subject: e.target.value })
-                  }
-                  placeholder="Enter subject"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Quick Messages
-                </label>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {QUICK_MESSAGES.map((msg) => (
-                    <button
-                      key={msg}
-                      type="button"
-                      onClick={() =>
-                        setNewMessage({ ...newMessage, body: msg })
-                      }
-                      className="px-4 py-2 rounded-full text-sm font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors min-h-[44px]"
-                    >
-                      {msg}
-                    </button>
-                  ))}
-                </div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Message
-                </label>
-                <textarea
-                  value={newMessage.body}
-                  onChange={(e) =>
-                    setNewMessage({ ...newMessage, body: e.target.value })
-                  }
-                  placeholder="Type your message here..."
-                  rows={6}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={sendMessage}
-                  disabled={sending}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-                >
-                  <PaperAirplaneIcon className="h-5 w-5" />
-                  {sending ? "Sending..." : "Send Message"}
-                </button>
-                <button
-                  onClick={() => setShowCompose(false)}
-                  disabled={sending}
-                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {selectedMessage ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="mb-4 flex items-center justify-between">
+      {error && (
+        <PortalNotice
+          tone="danger"
+          action={
+            messagingConfigured && online ? (
               <button
-                onClick={() => setSelectedMessage(null)}
-                className="text-blue-600 hover:text-blue-800"
+                type="button"
+                onClick={loadMessages}
+                className="btn-secondary"
               >
-                ← Back to inbox
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Try again
               </button>
-              {!selectedMessage.from_patient && (
-                <button
-                  onClick={handleReply}
-                  className="px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                >
-                  Reply
-                </button>
-              )}
-            </div>
+            ) : undefined
+          }
+        >
+          {error}
+        </PortalNotice>
+      )}
 
-            <div className="border-b border-gray-200 pb-4 mb-4">
-              <h2 className="text-xl font-semibold text-gray-900">
-                {selectedMessage.subject}
-              </h2>
-              <div className="mt-2 flex items-center gap-4 text-sm text-gray-600">
-                <span className="flex items-center gap-1">
-                  <UserCircleIcon className="h-5 w-5" />
-                  {selectedMessage.from_patient
-                    ? "You"
-                    : selectedMessage.from_name}
-                </span>
-                <span>{formatNigerianDate(selectedMessage.created_at)}</span>
-              </div>
-            </div>
+      {feedback && (
+        <PortalNotice tone={feedback.tone}>{feedback.text}</PortalNotice>
+      )}
 
-            <div className="prose max-w-none">
-              <p className="whitespace-pre-wrap text-gray-900">
-                {selectedMessage.body}
-              </p>
-            </div>
+      {showCompose && messagingConfigured && (
+        <form
+          onSubmit={sendMessage}
+          className="panel"
+          aria-labelledby="compose-title"
+          noValidate
+        >
+          <div className="panel-header">
+            <h2 id="compose-title" className="panel-title">
+              {replyStaffId ? "Reply" : "New message"}
+            </h2>
           </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            {messages.length === 0 ? (
-              <div className="p-12 text-center">
-                <InboxIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">
-                  No messages
-                </h3>
-                <p className="text-gray-600">
-                  {isOffline
-                    ? "Messages will appear here when you connect to the internet."
-                    : "Start a conversation with your healthcare provider"}
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {messages.map((message) => (
+          <div className="panel-body space-y-4">
+            <div>
+              <label htmlFor="message-subject" className="field-label">
+                Subject
+              </label>
+              <input
+                ref={subjectRef}
+                id="message-subject"
+                type="text"
+                value={newMessage.subject}
+                onChange={(e) =>
+                  setNewMessage({ ...newMessage, subject: e.target.value })
+                }
+                disabled={sending}
+                className="input-field"
+              />
+            </div>
+
+            <fieldset>
+              <legend className="field-label">Quick messages</legend>
+              <div className="flex flex-wrap gap-2">
+                {QUICK_MESSAGES.map((msg) => (
                   <button
-                    key={message.id}
-                    onClick={() => openMessage(message)}
-                    className="w-full p-4 text-left hover:bg-gray-50 transition-colors"
+                    key={msg}
+                    type="button"
+                    onClick={() => setNewMessage({ ...newMessage, body: msg })}
+                    aria-pressed={newMessage.body === msg}
+                    disabled={sending}
+                    className={`min-h-touch-target rounded-md border px-4 py-2 text-label transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                      newMessage.body === msg
+                        ? "border-primary bg-primary-soft text-primary-fg"
+                        : "border-line-strong bg-surface text-ink hover:bg-surface-hover"
+                    }`}
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h3
-                            className={`font-medium ${
-                              !message.read && !message.from_patient
-                                ? "text-blue-600"
-                                : "text-gray-900"
-                            }`}
-                          >
-                            {message.subject}
-                          </h3>
-                          {!message.read && !message.from_patient && (
-                            <span className="inline-block w-2 h-2 bg-blue-600 rounded-full"></span>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-600 mt-1">
-                          From:{" "}
-                          {message.from_patient ? "You" : message.from_name}
-                        </p>
-                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                          {message.body}
-                        </p>
-                      </div>
-                      <span className="text-xs text-gray-500 ml-4 whitespace-nowrap">
-                        {formatNigerianDate(message.created_at)}
-                      </span>
-                    </div>
+                    {msg}
                   </button>
                 ))}
               </div>
+              <p className="field-hint">Tapping one fills in the message.</p>
+            </fieldset>
+
+            <div>
+              <label htmlFor="message-body" className="field-label">
+                Message
+              </label>
+              <textarea
+                id="message-body"
+                value={newMessage.body}
+                onChange={(e) =>
+                  setNewMessage({ ...newMessage, body: e.target.value })
+                }
+                rows={6}
+                disabled={sending}
+                className="input-field"
+              />
+            </div>
+
+            {composeError && (
+              <PortalNotice tone="danger">{composeError}</PortalNotice>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <button type="submit" disabled={sending} className="btn-primary">
+                <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
+                {sending
+                  ? "Sending…"
+                  : online
+                    ? "Send message"
+                    : "Save on this phone"}
+              </button>
+              <button
+                type="button"
+                onClick={resetCompose}
+                disabled={sending}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      {unsent.length > 0 && (
+        <section className="panel" aria-labelledby="unsent-title">
+          <div className="panel-header">
+            <h2 id="unsent-title" className="panel-title">
+              Not sent yet
+            </h2>
+          </div>
+          <ul className="divide-y divide-line">
+            {unsent.map((item) => {
+              const delivery = messageDeliveryInfo({
+                fromPatient: true,
+                read: false,
+                local: true,
+              });
+              const confirming = confirmDeleteId === item.id;
+              return (
+                <li key={item.id} className="space-y-2 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p className="text-body font-medium text-ink">
+                      {item.subject}
+                    </p>
+                    <StatusBadge tone={delivery.tone}>
+                      {delivery.label} – saved on this phone
+                    </StatusBadge>
+                  </div>
+                  <p className="whitespace-pre-wrap text-body text-ink-secondary line-clamp-3">
+                    {item.body}
+                  </p>
+                  <p className="text-caption text-ink-muted">
+                    Written <MessageDate value={item.created_at} />
+                  </p>
+                  {confirming ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-body text-ink">
+                        Delete this unsent message?
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => discardQueued(item)}
+                        className="btn-danger"
+                      >
+                        Yes, delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="btn-secondary"
+                        // Focus the safe choice so keyboard users are not lost
+                        // when the Delete button is replaced.
+                        autoFocus
+                      >
+                        Keep it
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => sendQueued(item)}
+                        disabled={
+                          !online ||
+                          !messagingConfigured ||
+                          sendingQueuedId !== null
+                        }
+                        className="btn-primary"
+                      >
+                        <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
+                        {sendingQueuedId === item.id ? "Sending…" : "Send now"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(item.id)}
+                        disabled={sendingQueuedId === item.id}
+                        className="btn-secondary"
+                      >
+                        <TrashIcon className="h-5 w-5" aria-hidden />
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
+      {selectedMessage ? (
+        <section className="panel" aria-labelledby="message-detail-title">
+          <div className="panel-header flex-wrap">
+            <button
+              type="button"
+              onClick={() => setSelectedMessage(null)}
+              className="btn-ghost -ml-2"
+            >
+              <ArrowLeftIcon className="h-5 w-5" aria-hidden />
+              Back to messages
+            </button>
+            {!selectedMessage.from_patient && messagingConfigured && (
+              <button
+                type="button"
+                onClick={handleReply}
+                className="btn-primary"
+              >
+                Reply
+              </button>
             )}
           </div>
-        )}
-      </div>
-    </div>
+          <div className="panel-body">
+            <h2
+              id="message-detail-title"
+              ref={detailHeadingRef}
+              tabIndex={-1}
+              className="text-h2 text-ink focus:outline-none"
+            >
+              {selectedMessage.subject}
+            </h2>
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-body text-ink-muted">
+              <span className="flex items-center gap-1">
+                <UserCircleIcon className="h-5 w-5" aria-hidden />
+                {selectedMessage.from_patient
+                  ? "You"
+                  : selectedMessage.from_name}
+              </span>
+              <MessageDate value={selectedMessage.created_at} />
+              {selectedMessage.from_patient && (
+                <StatusBadge
+                  tone={
+                    messageDeliveryInfo({
+                      fromPatient: true,
+                      read: selectedMessage.read,
+                    }).tone
+                  }
+                  icon
+                >
+                  {
+                    messageDeliveryInfo({
+                      fromPatient: true,
+                      read: selectedMessage.read,
+                    }).label
+                  }
+                </StatusBadge>
+              )}
+            </div>
+            <p className="mt-4 whitespace-pre-wrap border-t border-line pt-4 text-body text-ink">
+              {selectedMessage.body}
+            </p>
+          </div>
+        </section>
+      ) : (
+        messagingConfigured &&
+        (loaded || messages.length > 0) && (
+          <section className="panel" aria-labelledby="inbox-title">
+            <div className="panel-header">
+              <h2 id="inbox-title" className="panel-title">
+                Your messages
+              </h2>
+            </div>
+            {messages.length === 0 ? (
+              <EmptyState
+                icon={InboxIcon}
+                title="No messages yet"
+                description="Send a message to the outreach team if you have a question about your care."
+              />
+            ) : (
+              <ul className="divide-y divide-line">
+                {messages.map((message) => {
+                  const delivery = messageDeliveryInfo({
+                    fromPatient: message.from_patient,
+                    read: message.read,
+                  });
+                  const unread = !message.read && !message.from_patient;
+                  return (
+                    <li key={message.id}>
+                      <button
+                        id={`message-${message.id}`}
+                        type="button"
+                        onClick={() => openMessage(message)}
+                        className="flex min-h-touch-target w-full items-start gap-3 p-4 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className={`block text-body ${
+                              unread
+                                ? "font-semibold text-ink"
+                                : "font-medium text-ink"
+                            }`}
+                          >
+                            {message.subject}
+                          </span>
+                          <span className="block text-caption text-ink-muted">
+                            {message.from_patient
+                              ? "From you"
+                              : `From ${message.from_name}`}
+                          </span>
+                          <span className="mt-1 block text-body text-ink-secondary line-clamp-2">
+                            {message.body}
+                          </span>
+                          <span className="mt-2 flex flex-wrap items-center gap-2">
+                            <StatusBadge tone={delivery.tone} icon>
+                              {delivery.label}
+                            </StatusBadge>
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-caption text-ink-muted">
+                          <MessageDate value={message.created_at} />
+                        </span>
+                        <ChevronRightIcon
+                          className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted"
+                          aria-hidden
+                        />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        )
+      )}
+
+      {messagingConfigured && (
+        <p className="text-caption text-ink-muted">
+          The clinic team reads messages when they can, so we cannot promise a
+          reply time. If you need help urgently, use the Emergency button at
+          the top of the page.
+        </p>
+      )}
+    </PortalPage>
   );
 }

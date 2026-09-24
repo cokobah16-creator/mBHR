@@ -106,8 +106,7 @@ mBHR is an offline-first Progressive Web App (PWA) for medical record management
   - KnowledgeBlitz
   - ApprovalInbox
 - **Pharmacy**:
-  - FEFODispenser (First Expiry First Out)
-  - EnhancedPharmacy
+  - Dispense (prescription dispensing with first-expiry-first-out lots, `features/pharmacy/fefo.ts`)
   - PharmacyStock
 - **Triage**:
   - QuickTriage

@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { normalizePhone } from "@/utils/phone";
 import * as logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
+import { safeErrorLabel } from "./logSafe";
 
 const RATE_LIMIT_MS = Number(import.meta.env.VITE_INVITE_RATE_MS || 60000); // Default 60 seconds
 
@@ -86,22 +87,30 @@ export async function enablePortalAccess(
           });
 
         if (createError) {
-          logger.error("Error creating portal user:", createError);
-          // Don't fail the enrollment - we can retry later
-          logger.warn("Portal user creation failed, will retry on sync");
+          // The raw error can echo the email or phone that clashed.
+          logger.error(
+            "Error creating portal user:",
+            safeErrorLabel(createError),
+          );
+          // Don't fail the enrollment: portal access stays enabled on the
+          // patient record. No background job re-creates the server account,
+          // so say so.
+          logger.warn(
+            "Portal user not created on the server; nothing retries this automatically",
+          );
         } else {
-          logger.info("Portal user account created for patient:", patientId);
+          logger.info("Portal user account created on the server");
         }
       }
     } catch (supabaseError) {
       logger.warn(
-        "Failed to create portal user in Supabase (will retry):",
-        supabaseError,
+        "Failed to create portal user in Supabase (nothing retries this automatically):",
+        safeErrorLabel(supabaseError),
       );
-      // Don't fail the operation - the sync will handle it later
+      // Don't fail the operation: the local change stands
     }
 
-    logger.info("Portal access enabled for patient:", patientId);
+    logger.info("Portal access enabled on this device");
 
     // Send invitation if requested
     if (options.sendInviteNow) {
@@ -111,7 +120,7 @@ export async function enablePortalAccess(
     return { success: true };
      
   } catch (error: unknown) {
-    logger.error("Error enabling portal access:", error);
+    logger.error("Error enabling portal access:", safeErrorLabel(error));
     return {
       success: false,
       error: getErrorMessage(error) || "Failed to enable portal access",
@@ -132,11 +141,11 @@ export async function disablePortalAccess(
       _dirty: 1,
     });
 
-    logger.info("Portal access disabled for patient:", patientId);
+    logger.info("Portal access disabled on this device");
     return { success: true };
      
   } catch (error: unknown) {
-    logger.error("Error disabling portal access:", error);
+    logger.error("Error disabling portal access:", safeErrorLabel(error));
     return {
       success: false,
       error: getErrorMessage(error) || "Failed to disable portal access",
@@ -195,9 +204,6 @@ export async function sendPortalInvitation(patientId: string): Promise<{
       _dirty: 1,
     });
 
-    const patientName = `${patient.givenName} ${patient.familyName}`;
-    const contact = patient.email || patient.phone!;
-
     // Build a pre-filled registration URL so patients land with their contact ready
     const registrationUrl = patient.email
       ? `${window.location.origin}/patient/register?email=${encodeURIComponent(patient.email)}`
@@ -233,13 +239,10 @@ export async function sendPortalInvitation(patientId: string): Promise<{
               portalInvitation: { ...invitation, lastStatus: "sent" },
               _dirty: 1,
             });
-            logger.info(
-              "Portal invitation email sent via edge function to:",
-              patient.email,
-            );
+            logger.info("Portal invitation email accepted by the server");
             return { success: true, registrationUrl };
           }
-          logger.warn("Edge function email failed:", fnError);
+          logger.warn("Edge function email failed:", safeErrorLabel(fnError));
         } else if (patient.phone) {
           const { error: fnError } = await supabase.functions.invoke(
             "send-otp-sms",
@@ -258,37 +261,40 @@ export async function sendPortalInvitation(patientId: string): Promise<{
               portalInvitation: { ...invitation, lastStatus: "sent" },
               _dirty: 1,
             });
-            logger.info(
-              "Portal invitation SMS sent via edge function to:",
-              patient.phone,
-            );
+            logger.info("Portal invitation SMS accepted by the server");
             return { success: true, registrationUrl };
           }
-          logger.warn("Edge function SMS failed:", fnError);
+          logger.warn("Edge function SMS failed:", safeErrorLabel(fnError));
         }
       } catch (edgeFnError) {
-        logger.warn("Supabase edge function call failed:", edgeFnError);
+        logger.warn(
+          "Supabase edge function call failed:",
+          safeErrorLabel(edgeFnError),
+        );
       }
     }
 
-    // --- Offline fallback: mark as sent and return a pre-filled registration link ---
+    // --- Offline fallback: no message was sent. Record it as "sent" (the
+    // screen labels this "Sent or link shared") and return the pre-filled
+    // registration link for staff to share with the patient.
     await db.patients.update(patientId, {
       portalInvitation: { ...invitation, lastStatus: "sent" },
       _dirty: 1,
     });
 
+    // No name, contact or link here: the link carries the email or phone.
     logger.info(
-      `[Portal Invitation] ${patientName} (${contact}) → ${registrationUrl}`,
+      `[Portal Invitation] No email/SMS service reached; registration link returned for staff to share (${contactMethod})`,
     );
 
     return {
       success: true,
       registrationUrl,
-      demoOTP: `No email service configured. Share this registration link with the patient: ${registrationUrl}`,
+      demoOTP: `No email or SMS was sent. Share this registration link with the patient: ${registrationUrl}`,
     };
      
   } catch (error: unknown) {
-    logger.error("Error sending portal invitation:", error);
+    logger.error("Error sending portal invitation:", safeErrorLabel(error));
 
     // Update invitation status to failed
     const patient = await db.patients.get(patientId);
@@ -372,7 +378,7 @@ export async function getPortalStatus(
         : undefined,
     };
   } catch (error) {
-    logger.error("Error getting portal status:", error);
+    logger.error("Error getting portal status:", safeErrorLabel(error));
     return null;
   }
 }
@@ -425,16 +431,19 @@ export async function linkAuthUserToPatient(
     } catch (supabaseError) {
       logger.warn(
         "Failed to sync auth link to Supabase (will retry):",
-        supabaseError,
+        safeErrorLabel(supabaseError),
       );
       // Don't fail the operation - the sync will happen later
     }
 
-    logger.info("Auth user linked to patient:", { authUid, patientId });
+    logger.info("Auth user linked to a patient record on this device");
     return { success: true };
      
   } catch (error: unknown) {
-    logger.error("Error linking auth user to patient:", error);
+    logger.error(
+      "Error linking auth user to patient:",
+      safeErrorLabel(error),
+    );
     return {
       success: false,
       error: getErrorMessage(error) || "Failed to link account",
@@ -481,7 +490,7 @@ export async function findEligiblePatients(
       return true;
     });
   } catch (error) {
-    logger.error("Error finding eligible patients:", error);
+    logger.error("Error finding eligible patients:", safeErrorLabel(error));
     return [];
   }
 }

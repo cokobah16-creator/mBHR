@@ -1,79 +1,99 @@
-import React from 'react'
 import { useOperationsQueue } from '@/stores/operationsQueue'
-import { QueueListIcon, CheckCircleIcon, ExclamationCircleIcon, ClockIcon } from '@heroicons/react/24/outline'
+import { isSupabaseEnabled } from '@/lib/supabaseClient'
+import { StatusBadge } from '@/components/ui/StatusBadge'
+import { ArrowPathIcon, QueueListIcon } from '@heroicons/react/24/outline'
 
+/**
+ * Operations saved on this device that are waiting for, or failed, their
+ * background processing. Says plainly that pending work has not been sent.
+ */
 export function QueueStatus() {
   const queueStore = useOperationsQueue()
 
   const pendingCount = queueStore.getPendingCount()
   const failedCount = queueStore.getFailedCount()
   const completedOps = queueStore.operations.filter(op => op.status === 'completed')
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine
 
   if (pendingCount === 0 && failedCount === 0 && completedOps.length === 0) {
     return null
   }
 
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <QueueListIcon className="h-5 w-5 text-blue-600" />
-          <h3 className="font-semibold text-gray-900">Sync Queue</h3>
-        </div>
+  const plural = (n: number) => (n === 1 ? '' : 's')
 
+  return (
+    <section className="panel" aria-labelledby="ops-queue-title">
+      <div className="panel-header">
+        <h3 id="ops-queue-title" className="panel-title flex items-center gap-2">
+          <QueueListIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+          Saved operations on this device
+        </h3>
         {completedOps.length > 0 && (
           <button
+            type="button"
             onClick={() => queueStore.clearCompleted()}
-            className="text-xs text-gray-600 hover:text-gray-900"
+            className="btn-ghost text-label"
           >
-            Clear completed
+            Clear finished
           </button>
         )}
       </div>
 
-      <div className="space-y-2">
-        {pendingCount > 0 && (
-          <div className="flex items-center gap-2 text-sm">
-            <ClockIcon className="h-4 w-4 text-blue-500" />
-            <span className="text-gray-700">{pendingCount} pending operation{pendingCount !== 1 ? 's' : ''}</span>
-          </div>
+      <div className="panel-body space-y-2">
+        <ul className="space-y-2" aria-live="polite">
+          {pendingCount > 0 && (
+            <li className="flex items-center gap-2">
+              <StatusBadge tone="warning">Not sent yet</StatusBadge>
+              <span className="text-body text-ink-secondary">
+                {pendingCount} operation{plural(pendingCount)} saved on this device
+              </span>
+            </li>
+          )}
+
+          {queueStore.totalProcessed > 0 && (
+            <li className="flex items-center gap-2">
+              <StatusBadge tone="success" icon>Processed</StatusBadge>
+              <span className="text-body text-ink-secondary">
+                {queueStore.totalProcessed} operation{plural(queueStore.totalProcessed)}
+              </span>
+            </li>
+          )}
+
+          {failedCount > 0 && (
+            <li className="flex flex-wrap items-center gap-2">
+              <StatusBadge tone="danger">Failed</StatusBadge>
+              <span className="text-body text-ink-secondary">
+                {failedCount} operation{plural(failedCount)} could not be processed
+              </span>
+              <button
+                type="button"
+                onClick={() => queueStore.retryAllFailed()}
+                className="btn-ghost ml-auto text-label"
+              >
+                <ArrowPathIcon className="h-4 w-4" aria-hidden />
+                Retry failed
+              </button>
+            </li>
+          )}
+        </ul>
+
+        {queueStore.isProcessing && (
+          <p role="status" className="flex items-center gap-2 border-t border-line pt-2 text-body text-info-fg">
+            <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden />
+            Processing saved operations…
+          </p>
         )}
 
-        {queueStore.totalProcessed > 0 && (
-          <div className="flex items-center gap-2 text-sm">
-            <CheckCircleIcon className="h-4 w-4 text-green-500" />
-            <span className="text-gray-700">{queueStore.totalProcessed} synced</span>
-          </div>
-        )}
-
-        {failedCount > 0 && (
-          <div className="flex items-center gap-2 text-sm">
-            <ExclamationCircleIcon className="h-4 w-4 text-red-500" />
-            <span className="text-gray-700">{failedCount} failed</span>
-            <button
-              onClick={() => queueStore.retryAllFailed()}
-              className="ml-auto text-xs text-blue-600 hover:text-blue-800 font-medium"
-            >
-              Retry all
-            </button>
-          </div>
+        {(pendingCount > 0 || failedCount > 0) && (
+          <p className="text-caption text-ink-muted">
+            {!isSupabaseEnabled
+              ? 'Sync is not set up on this device, so these stay here until it is.'
+              : !online
+                ? 'This device is offline. These stay saved here and are only sent once it is back online.'
+                : 'These stay saved here until they are processed. Nothing has been sent for them yet.'}
+          </p>
         )}
       </div>
-
-      {queueStore.isProcessing && (
-        <div className="mt-3 pt-3 border-t border-gray-200">
-          <div className="flex items-center gap-2 text-sm text-blue-600">
-            <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent" />
-            <span>Processing queue...</span>
-          </div>
-        </div>
-      )}
-
-      {(pendingCount > 0 || failedCount > 0) && (
-        <div className="mt-3 text-xs text-gray-500">
-          Operations will sync automatically when online
-        </div>
-      )}
-    </div>
+    </section>
   )
 }

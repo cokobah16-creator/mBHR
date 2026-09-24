@@ -1,10 +1,11 @@
-import type { ComponentType, SVGProps } from "react";
+import type { ComponentType, ReactNode, SVGProps } from "react";
 import { Link } from "react-router-dom";
 import {
   CalendarDaysIcon,
   ClipboardDocumentListIcon,
   BeakerIcon,
   HeartIcon,
+  ArchiveBoxIcon,
   ArrowPathIcon,
   VideoCameraIcon,
   ChatBubbleLeftRightIcon,
@@ -12,6 +13,7 @@ import {
   ArrowDownTrayIcon,
   ShieldCheckIcon,
   ChevronRightIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
 import { useT } from "@/hooks/useT";
 
@@ -35,9 +37,9 @@ function Tile({ to, icon: I, label }: { to: string; icon: Icon; label: string })
   return (
     <Link
       to={to}
-      className="flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-lg border border-line bg-surface p-3 text-center text-label text-ink transition-colors hover:border-info-line hover:bg-info-soft"
+      className="flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-lg border border-line bg-surface p-3 text-center text-label text-ink transition-colors hover:border-line-strong hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
-      <I className="h-6 w-6 text-info" aria-hidden />
+      <I className="h-6 w-6 text-primary" aria-hidden />
       {label}
     </Link>
   );
@@ -47,14 +49,14 @@ function Row({ to, icon: I, label, hint, badge }: { to: string; icon: Icon; labe
   return (
     <Link
       to={to}
-      className="flex min-h-[64px] items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-sunken"
+      className="flex min-h-[64px] items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
     >
-      <I className="h-6 w-6 shrink-0 text-info" aria-hidden />
+      <I className="h-6 w-6 shrink-0 text-primary" aria-hidden />
       <span className="min-w-0 flex-1">
         <span className="block text-body font-medium text-ink">{label}</span>
         {hint && <span className="block text-caption text-ink-muted">{hint}</span>}
       </span>
-      {badge && <span className="badge badge-danger">{badge}</span>}
+      {badge && <span className="badge badge-info">{badge}</span>}
       <ChevronRightIcon className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
     </Link>
   );
@@ -62,17 +64,21 @@ function Row({ to, icon: I, label, hint, badge }: { to: string; icon: Icon; labe
 
 /**
  * Patient portal home: calm, large targets, plain language. Shows the next
- * appointment first, then the patient's own records, then requests.
+ * appointment first, then the patient's own records (passed as children),
+ * then shortcuts and requests.
  */
 export function PortalHome({
   name,
   nextAppointment,
   unreadMessages,
+  children,
 }: {
   name: string;
   /** undefined while unknown (e.g. offline); null when there is none. */
   nextAppointment?: NextAppointment | null;
   unreadMessages?: number;
+  /** Record summaries (vitals, medicines, visits) shown under the appointment. */
+  children?: ReactNode;
 }) {
   const { t } = useT();
   return (
@@ -88,13 +94,13 @@ export function PortalHome({
           {nextAppointment ? (
             <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
               <p className="text-h2 text-ink tabular-nums">
-                {nextAppointment.scheduledAt.toLocaleDateString(undefined, {
+                {nextAppointment.scheduledAt.toLocaleDateString("en-NG", {
                   weekday: "short",
                   day: "numeric",
                   month: "long",
                 })}{" "}
                 ·{" "}
-                {nextAppointment.scheduledAt.toLocaleTimeString(undefined, {
+                {nextAppointment.scheduledAt.toLocaleTimeString("en-NG", {
                   hour: "2-digit",
                   minute: "2-digit",
                 })}
@@ -122,6 +128,8 @@ export function PortalHome({
         </section>
       )}
 
+      {children}
+
       <section aria-labelledby="your-health">
         <h2 id="your-health" className="mb-2 text-h3 text-ink">
           {t("portal.home.yourHealth")}
@@ -130,7 +138,7 @@ export function PortalHome({
           <Tile to="/patient/medical-history" icon={ClipboardDocumentListIcon} label={t("portal.home.visits")} />
           <Tile to="/patient/lab-results" icon={BeakerIcon} label={t("portal.nav.labResults")} />
           <Tile to="/patient/conditions" icon={HeartIcon} label={t("portal.home.conditions")} />
-          <Tile to="/patient/prescriptions" icon={ArrowPathIcon} label={t("portal.home.medicines")} />
+          <Tile to="/patient/prescriptions" icon={ArchiveBoxIcon} label={t("portal.home.medicines")} />
         </div>
       </section>
 
@@ -151,7 +159,11 @@ export function PortalHome({
           icon={ChatBubbleLeftRightIcon}
           label={t("portal.nav.messages")}
           hint={t("portal.home.messagesHint")}
-          badge={unreadMessages ? String(unreadMessages) : undefined}
+          badge={
+            unreadMessages
+              ? t("portal.home.unreadCount", { count: unreadMessages })
+              : undefined
+          }
         />
         <Row to="/patient/outreach" icon={MapPinIcon} label={t("portal.action.findOutreach")} hint={t("portal.home.outreachHint")} />
       </section>
@@ -166,7 +178,10 @@ export function PortalHome({
         </div>
       </section>
 
-      <p className="text-caption text-ink-muted">{t("portal.home.notEmergency")}</p>
+      <p className="flex items-start gap-2 text-caption text-ink-muted">
+        <ExclamationTriangleIcon className="h-4 w-4 shrink-0" aria-hidden />
+        {t("portal.home.notEmergency")}
+      </p>
     </div>
   );
 }

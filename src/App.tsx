@@ -108,6 +108,8 @@ const BulkPortalMigration = lazy(() =>
 const EmailDiagnostics = lazy(() => import("@/pages/admin/EmailDiagnostics"));
 const ConflictDashboard = lazy(() => import("@/pages/admin/ConflictDashboard"));
 const AdminSettings = lazy(() => import("@/pages/admin/Settings"));
+const AdminHome = lazy(() => import("@/pages/admin/AdminHome"));
+const FhirExport = lazy(() => import("@/pages/admin/FhirExport"));
 
 // Patient Portal components
 const PatientPortalLanding = lazy(() =>
@@ -511,6 +513,19 @@ function App() {
             }
           />
 
+          {/* Waiting-room display: full screen, outside the staff shell, but
+              still behind staff sign-in. Shows ticket numbers only. */}
+          <Route
+            path="/display"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<ScreenSkeleton label="Loading display" />}>
+                  <PublicDisplay />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+
           {/* Staff Routes - catch-all for authenticated routes */}
           <Route
             path="*"
@@ -540,7 +555,14 @@ function App() {
                           </RequireRoles>
                         }
                       />
-                      <Route path="/register" element={<Register />} />
+                      <Route
+                        path="/register"
+                        element={
+                          <RequirePermission permission="register">
+                            <Register />
+                          </RequirePermission>
+                        }
+                      />
                       <Route path="/patients" element={<Patients />} />
                       <Route path="/patients/:id" element={<PatientDetail />} />
                       <Route path="/queue" element={<Queue />} />
@@ -599,15 +621,15 @@ function App() {
                       <Route
                         path="/inv/game"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                          <RequirePermission permission="inventory">
                             <RestockGame />
-                          </RequireRoles>
+                          </RequirePermission>
                         }
                       />
                       <Route
                         path="/inv/prizes"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                          <RequireRoles roles={["volunteer", "nurse", "pharmacist", "admin"]}>
                             <PrizeShop />
                           </RequireRoles>
                         }
@@ -657,12 +679,11 @@ function App() {
                       <Route
                         path="/inv/leaderboard"
                         element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
+                          <RequireRoles roles={["volunteer", "nurse", "pharmacist", "admin"]}>
                             <Leaderboard />
                           </RequireRoles>
                         }
                       />
-                      <Route path="/display" element={<PublicDisplay />} />
                       <Route path="/quests" element={<QuestBoard />} />
                       <Route
                         path="/games/queue-maestro"
@@ -699,11 +720,7 @@ function App() {
                       />
                       <Route
                         path="/games/vitals-precision-enhanced"
-                        element={
-                          <RequireRoles roles={["volunteer", "nurse", "admin"]}>
-                            <VitalsPrecisionGame />
-                          </RequireRoles>
-                        }
+                        element={<Navigate to="/games/vitals-precision" replace />}
                       />
                       <Route
                         path="/analytics"
@@ -711,6 +728,15 @@ function App() {
                           <RequireRoles roles={["admin"]}>
                             <AnalyticsDashboard />
                           </RequireRoles>
+                        }
+                      />
+                      <Route path="/admin" element={<AdminHome />} />
+                      <Route
+                        path="/admin/fhir-export"
+                        element={
+                          <RequirePermission permission="export">
+                            <FhirExport />
+                          </RequirePermission>
                         }
                       />
                       <Route
@@ -756,7 +782,9 @@ function App() {
                       <Route
                         path="/admin/conflicts"
                         element={
-                          <RequireRoles roles={["admin", "doctor", "nurse"]}>
+                          <RequireRoles
+                            roles={["admin", "doctor", "nurse", "lead_clinician", "auditor"]}
+                          >
                             <ConflictDashboard />
                           </RequireRoles>
                         }
@@ -771,9 +799,15 @@ function App() {
                       />
                       <Route
                         path="/simple/register"
-                        element={<SimpleRegister />}
+                        element={
+                          <RequirePermission permission="register">
+                            <SimpleRegister />
+                          </RequirePermission>
+                        }
                       />
-                      <Route path="/pharmacy" element={<PharmacyMenu />} />
+                      {/* "/pharmacy" is the visit dispensing screen (above); the
+                          task menu has its own path so it is reachable. */}
+                      <Route path="/pharmacy/menu" element={<PharmacyMenu />} />
                       <Route
                         path="/pharmacy/reports"
                         element={
@@ -798,18 +832,13 @@ function App() {
                           </RequireRoles>
                         }
                       />
-                      {/* Temporarily disabled - corrupted file
-                    <Route path="/pharmacy/enhanced/:visitId" element={
-                      <RequireRoles roles={['pharmacist', 'admin']}>
-                        <EnhancedPharmacy patientId="" visitId="" onSuccess={() => {}} />
-                      </RequireRoles>
-                    } />
-                    */}
                       <Route
                         path="/labs"
                         element={
+                          /* Matches the server's lab_orders/lab_results policies
+                             (doctor, nurse, admin); widen both together. */
                           <RequireRoles roles={["doctor", "nurse", "admin"]}>
-                            <LabResultsDashboard userId="" />
+                            <LabResultsDashboard />
                           </RequireRoles>
                         }
                       />
