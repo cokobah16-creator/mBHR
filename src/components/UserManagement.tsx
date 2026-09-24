@@ -252,6 +252,20 @@ export function UserManagement() {
     }
   };
 
+  /** Resolve a review flag by keeping the account deactivated here. */
+  const keepDeactivated = async (user: User) => {
+    if (!canManage) {
+      denied();
+      return;
+    }
+    try {
+      await db.users.update(user.id, { accessConflict: 0 });
+      await loadUsers();
+    } catch (error) {
+      console.error("Error resolving access review:", errorName(error));
+    }
+  };
+
   /** Remove someone's offline access on this device (they enroll again). */
   const resetDevicePin = async (user: User) => {
     if (!canManage) {
@@ -308,8 +322,12 @@ export function UserManagement() {
         refuse(LAST_ADMIN_MESSAGE);
         return;
       }
+      // A deactivation here is remembered so a download never silently
+      // reactivates the person; activating is the authorised resolution.
       await db.users.update(user.id, {
         isActive: active ? 1 : 0,
+        disabledLocallyAt: active ? undefined : new Date(),
+        accessConflict: 0,
         updatedAt: new Date(),
       });
       pushToast({
@@ -512,7 +530,26 @@ export function UserManagement() {
   );
 
   const renderStatus = (u: User) =>
-    u.isActive === 1 ? (
+    u.accessConflict === 1 ? (
+      <span className="flex flex-col items-start gap-1">
+        <StatusBadge tone="warning" icon>
+          Needs review
+        </StatusBadge>
+        <span className="text-caption text-ink-muted">
+          Deactivated on this device, still active online.
+        </span>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => keepDeactivated(u)}
+            className="btn-ghost"
+            aria-label={`Keep ${u.fullName} deactivated`}
+          >
+            Keep deactivated
+          </button>
+        )}
+      </span>
+    ) : u.isActive === 1 ? (
       <StatusBadge tone="success" icon>
         Active
       </StatusBadge>
