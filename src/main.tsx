@@ -25,6 +25,11 @@ import "@/services/portalAccess"; // set_patient_portal_access answers
 import "@/sync/queueSync"; // queue tickets (also needed on a /display-only device)
 import "@/sync/pharmacySync"; // "pharmacy" participant and rx_* commands
 
+// URLs can carry secrets: a query string (a sign-in code) or a fragment
+// (Supabase puts password-recovery access and refresh tokens in the hash).
+// Error reports keep only the path.
+const stripUrlSecrets = (url: string) => url.split(/[?#]/)[0];
+
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
@@ -60,8 +65,12 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       }
       return breadcrumb;
     },
+    beforeSendTransaction(event) {
+      if (event.request?.url) event.request.url = stripUrlSecrets(event.request.url);
+      return event;
+    },
     beforeSend(event, _hint) {
-      if (event.request?.url) event.request.url = event.request.url.split("?")[0];
+      if (event.request?.url) event.request.url = stripUrlSecrets(event.request.url);
       if (event.request) {
         delete event.request.query_string;
         delete event.request.data;

@@ -27,6 +27,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PharmacySkeleton } from "@/components/ui/Skeleton";
 import { DocumentTextIcon } from "@heroicons/react/24/outline";
 import { ExclamationTriangleIcon, InformationCircleIcon } from "@heroicons/react/20/solid";
+import { isAllergyActive } from "@/utils/allergyActive";
 
 type Line = Prescription["lines"][number];
 
@@ -173,7 +174,7 @@ export default function Dispense() {
     db.patientAllergies
       .where("patientId")
       .equals(selectedPatientId)
-      .filter((a) => a.isActive === 1 && a.allergyType === "medication")
+      .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
       .toArray()
       .then((as) => {
         if (stale) return;

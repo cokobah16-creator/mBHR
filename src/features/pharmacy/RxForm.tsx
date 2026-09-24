@@ -17,6 +17,7 @@ import {
 } from "@/services/pharmacyCommands";
 import type { Tone } from "@/components/ui/StatusBadge";
 import { ExclamationTriangleIcon } from "@heroicons/react/20/solid";
+import { isAllergyActive } from "@/utils/allergyActive";
 
 interface RxFormProps {
   /** When given, the prescription is written for this patient and visit. */
@@ -81,7 +82,7 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
               await db.patientAllergies
                 .where("patientId")
                 .equals(effectivePatientId)
-                .filter((a) => a.isActive === 1 && a.allergyType === "medication")
+                .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
                 .toArray()
             ).map((a) => a.allergen)
           : [],

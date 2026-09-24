@@ -12,6 +12,7 @@
 
 import { db, type Patient, type PortalInvitation } from "@/db";
 import { supabase } from "@/lib/supabase";
+import { appLinkOrigin } from "@/config/canonicalOrigin";
 import * as logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
 import { safeErrorLabel } from "./logSafe";
@@ -257,12 +258,13 @@ export async function sendPortalInvitation(patientId: string): Promise<{
     });
 
     // Build a pre-filled registration URL so patients land with their contact ready
+    const origin = appLinkOrigin();
     const registrationUrl = patient.email
-      ? `${window.location.origin}/patient/register?email=${encodeURIComponent(patient.email)}`
+      ? `${origin}/patient/register?email=${encodeURIComponent(patient.email)}`
       : patient.phone
-        ? `${window.location.origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
-        : `${window.location.origin}/patient/register`;
-    const loginUrl = `${window.location.origin}/patient/login`;
+        ? `${origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
+        : `${origin}/patient/register`;
+    const loginUrl = `${origin}/patient/login`;
 
     let notSentReason: string = INVITE_NOT_SENT_REASONS.noServer;
 

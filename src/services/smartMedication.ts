@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import type { Patient } from "@/db";
+import { isAllergyActive } from "@/utils/allergyActive";
 
 export interface MedicationInteraction {
   severity: "critical" | "major" | "moderate" | "minor";
@@ -291,7 +292,7 @@ class SmartMedicationSystem {
     const allergies = await db.patientAllergies
       .where("patientId")
       .equals(patientId)
-      .and((a) => a.isActive === 1)
+      .and((a) => isAllergyActive(a))
       .toArray();
 
     const medData = this.medicationDatabase.get(medication.toLowerCase());

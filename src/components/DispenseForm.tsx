@@ -11,6 +11,7 @@ import { recordStageEvent } from "@/services/stageEvents";
 import { matchMedicationToAllergen } from "@/utils/allergyMatch";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ExclamationTriangleIcon } from "@heroicons/react/20/solid";
+import { isAllergyActive } from "@/utils/allergyActive";
 
 const dispenseSchema = z.object({
   itemName: z.string().min(1, "Choose a medicine from stock"),
@@ -62,7 +63,7 @@ export function DispenseForm({
       db.patientAllergies
         .where("patientId")
         .equals(patientId)
-        .filter((a) => a.isActive === 1 && a.allergyType === "medication")
+        .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
         .toArray(),
     [patientId],
     [],

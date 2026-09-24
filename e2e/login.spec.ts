@@ -1,12 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// The staff login form lives at /login ("/" is the landing page), runs in
-// offline PIN mode by default, and its field is `pattern="\d{6}"`, so only a
-// six-digit PIN ever reaches the submit handler.
+// The staff login form lives at /login ("/" is the landing page). Offline
+// sign-in is name-first: pick the account under "Who's signing in?", then the
+// PIN field (`pattern="\d{6}"`) appears for that person.
 const PIN_FIELD = 'input[aria-label="PIN"]';
 const CONFIRM_PIN_FIELD = 'input[aria-label="Confirm PIN"]';
 const NAME_FIELD = 'input[aria-label="Full name"]';
 const SEEDED_PIN = "482913";
+const SEEDED_NAME = "E2E Smoke Admin";
 // 16 bytes ("mbhr-smoke-test1"), matching SALT_LENGTH in src/utils/pin.ts.
 // Fixed rather than random so the run is deterministic.
 const PIN_SALT = "bWJoci1zbW9rZS10ZXN0MQ==";
@@ -63,7 +64,7 @@ async function bootApp(page: Page, path: string): Promise<void> {
 // renders. bootApp() is the guarantee that the upgrade is finished.
 async function seedStaffUser(page: Page): Promise<void> {
   await page.evaluate(
-    async ({ pin, salt, dbName }) => {
+    async ({ pin, salt, dbName, name }) => {
       const handle = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open(dbName);
         request.onsuccess = () => resolve(request.result);
@@ -100,7 +101,7 @@ async function seedStaffUser(page: Page): Promise<void> {
         // and needsFirstRunSetup() counts only active users.
         tx.objectStore("users").put({
           id: "e2e-smoke-admin",
-          fullName: "E2E Smoke Admin",
+          fullName: name,
           role: "admin",
           email: "e2e-smoke@local",
           pinHash,
@@ -117,27 +118,57 @@ async function seedStaffUser(page: Page): Promise<void> {
       });
       handle.close();
     },
-    { pin: SEEDED_PIN, salt: PIN_SALT, dbName: DB_NAME },
+    { pin: SEEDED_PIN, salt: PIN_SALT, dbName: DB_NAME, name: SEEDED_NAME },
   );
 }
 
-// Boots the app on the public landing page, writes a staff user, then lands on
-// the login form with a PIN that works. Going straight to /login on a device
-// with no staff account would bounce to /setup instead.
+// Boots the app on the public landing page, writes a staff user with a device
+// PIN, then lands on the login page, chooses that account and waits for the
+// PIN field.
 async function openLoginWithSeededUser(page: Page): Promise<void> {
   await bootApp(page, "/");
   await seedStaffUser(page);
   await bootApp(page, "/login");
+  await expect(page.getByText("Who's signing in?")).toBeVisible({
+    timeout: BOOT_TIMEOUT,
+  });
+  await page.getByRole("button", { name: new RegExp(SEEDED_NAME) }).click();
   await expect(page.locator(PIN_FIELD)).toBeVisible({ timeout: BOOT_TIMEOUT });
 }
 
 test.describe("First-run setup", () => {
-  test("sends a device with no staff account to setup", async ({ page }) => {
+  test("offers setup from the login page on a device with no staff account", async ({
+    page,
+  }) => {
     await bootApp(page, "/login");
+
+    // No PIN can work on an empty device, so the page says so. This smoke
+    // build has no online sign-in, so first-run setup is the way in (builds
+    // with online sign-in never offer it).
+    await expect(
+      page.getByText("This device hasn't been set up for mBHR yet."),
+    ).toBeVisible({ timeout: BOOT_TIMEOUT });
+    await expect(page).toHaveURL(/\/login$/);
+
+    await page.getByRole("link", { name: "Set up this device" }).click();
 
     await expect(page).toHaveURL(/\/setup$/, { timeout: BOOT_TIMEOUT });
     await expect(
       page.getByRole("heading", { name: "Set up this device" }),
+    ).toBeVisible();
+  });
+
+  test("links back to sign-in from setup", async ({ page }) => {
+    await bootApp(page, "/setup");
+    await expect(page.locator(NAME_FIELD)).toBeVisible({
+      timeout: BOOT_TIMEOUT,
+    });
+
+    await page.getByRole("link", { name: "Sign in instead" }).click();
+
+    await expect(page).toHaveURL(/\/login$/, { timeout: BOOT_TIMEOUT });
+    await expect(
+      page.getByRole("heading", { name: "Staff Sign In" }),
     ).toBeVisible();
   });
 

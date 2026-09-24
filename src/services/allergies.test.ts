@@ -220,6 +220,19 @@ describe("allergies service", () => {
       expect(result).toEqual(medAllergies);
       expect(chain.filter).toHaveBeenCalled();
     });
+
+    it("keeps allergies synced from the server with isActive true", async () => {
+      const chain = makeChain([]);
+      mockWhere.mockReturnValue({ equals: vi.fn().mockReturnValue(chain) });
+
+      await getMedicationAllergies("p1");
+      const keep = chain.filter.mock.calls[0][0] as (a: unknown) => boolean;
+
+      expect(keep({ allergyType: "medication", isActive: true })).toBe(true);
+      expect(keep({ allergyType: "medication", isActive: 1 })).toBe(true);
+      expect(keep({ allergyType: "medication", isActive: false })).toBe(false);
+      expect(keep({ allergyType: "food", isActive: true })).toBe(false);
+    });
   });
 
   // ── getSevereAllergies ───────────────────────────────────────────────────────

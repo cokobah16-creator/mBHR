@@ -85,6 +85,7 @@ export async function createFirstAdmin(input: FirstAdminInput): Promise<User> {
     role: "admin",
     pinHash,
     pinSalt,
+    pinEnrolledAt: now,
     // Permanent so a later admin cannot delete or demote the account of last
     // resort and lock the device out again.
     adminAccess: true,

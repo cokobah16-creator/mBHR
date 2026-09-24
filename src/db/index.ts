@@ -9,8 +9,11 @@ export interface User {
   role: "admin" | "doctor" | "nurse" | "pharmacist" | "volunteer" | "guest";
   email?: string;
   phone?: string;
+  // Device-local offline credential (src/db/devicePin.ts). Never uploaded
+  // or downloaded by sync; empty when the person has no PIN on this device.
   pinHash: string;
   pinSalt: string;
+  pinEnrolledAt?: Date;
   adminAccess?: boolean;
   adminPermanent?: boolean;
   createdAt: Date;
