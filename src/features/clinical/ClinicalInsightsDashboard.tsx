@@ -1,424 +1,458 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { clinicalDecisionSupport } from "@/services/clinicalDecisionSupport";
 import type {
   ClinicalAlert,
   PatientRiskProfile,
 } from "@/services/clinicalDecisionSupport";
-import { db } from "@/db";
+import { db, createAuditLog, generateId, type Patient } from "@/db";
 import { useAuthStore } from "@/stores/auth";
+import { useToast } from "@/stores/toast";
+import { can } from "@/auth/roles";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonText } from "@/components/ui/Skeleton";
+import { Tabs } from "@/components/ui/Tabs";
+import { tabId, panelId } from "@/components/ui/tabIds";
+import { formatNigerianDateTime } from "@/utils/dateFormat";
+import { latestByIndex } from "@/features/reports/localRecords";
 import {
-  ExclamationTriangleIcon,
   CheckCircleIcon,
-  ChartBarIcon,
   ClockIcon,
-  UserGroupIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
+
+type Severity = ClinicalAlert["severity"];
+type SeverityFilter = "all" | Severity;
+type TabKey = "alerts" | "risk" | "adherence";
+
+const SEVERITY_META: Record<Severity, { label: string; tone: Tone }> = {
+  critical: { label: "Critical", tone: "critical" },
+  high: { label: "High", tone: "danger" },
+  moderate: { label: "Moderate", tone: "warning" },
+  low: { label: "Low", tone: "info" },
+};
+
+const RISK_META: Record<PatientRiskProfile["overallRisk"], { label: string; tone: Tone }> = {
+  critical: { label: "Critical risk", tone: "critical" },
+  high: { label: "High risk", tone: "danger" },
+  moderate: { label: "Moderate risk", tone: "warning" },
+  low: { label: "Low risk", tone: "neutral" },
+};
+
+const FACTOR_TONE: Record<"low" | "moderate" | "high", Tone> = {
+  high: "danger",
+  moderate: "warning",
+  low: "neutral",
+};
+
+const RECENT_PATIENT_LIMIT = 20;
+const ID_PREFIX = "cds";
+
+function isSeverityFilter(value: string): value is SeverityFilter {
+  return (
+    value === "all" ||
+    value === "critical" ||
+    value === "high" ||
+    value === "moderate" ||
+    value === "low"
+  );
+}
+
+function isTabKey(value: string): value is TabKey {
+  return value === "alerts" || value === "risk" || value === "adherence";
+}
+
+interface HighRiskPatient {
+  patientId: string;
+  name: string;
+  profile: PatientRiskProfile;
+}
 
 export function ClinicalInsightsDashboard() {
   const currentUser = useAuthStore((state) => state.currentUser);
+  const push = useToast((s) => s.push);
   const [alerts, setAlerts] = useState<ClinicalAlert[]>([]);
-  const [highRiskPatients, setHighRiskPatients] = useState<
-    Array<{ patientId: string; name: string; profile: PatientRiskProfile }>
-  >([]);
+  const [highRiskPatients, setHighRiskPatients] = useState<HighRiskPatient[]>([]);
+  const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [selectedTab, setSelectedTab] = useState<
-    "alerts" | "risk" | "adherence"
-  >("alerts");
-  const [filterSeverity, setFilterSeverity] = useState<
-    "all" | "critical" | "high" | "moderate" | "low"
-  >("all");
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [selectedTab, setSelectedTab] = useState<TabKey>("alerts");
+  const [filterSeverity, setFilterSeverity] = useState<SeverityFilter>("all");
   const [showAcknowledged, setShowAcknowledged] = useState(false);
+  const [ackBusyId, setAckBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showAcknowledged, filterSeverity]);
+  // Acknowledging an alert is a clinical action (consult permission).
+  const canAcknowledge = !!currentUser && can(currentUser.role, "consult");
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
-      setLoading(true);
+      setLoadFailed(false);
 
-      const allAlerts = await db.clinicalAlerts
-        .orderBy("createdAt")
-        .reverse()
-        .toArray();
+      const [allAlerts, users] = await Promise.all([
+        db.clinicalAlerts.orderBy("createdAt").reverse().toArray(),
+        db.users.toArray(),
+      ]);
 
       let filteredAlerts = showAcknowledged
         ? allAlerts
         : allAlerts.filter((a) => !a.acknowledged);
-
       if (filterSeverity !== "all") {
-        filteredAlerts = filteredAlerts.filter(
-          (a) => a.severity === filterSeverity,
-        );
+        filteredAlerts = filteredAlerts.filter((a) => a.severity === filterSeverity);
       }
-
       setAlerts(filteredAlerts);
+      setUserNames(new Map<string, string>(users.map((u) => [u.id, u.fullName])));
 
-      const recentPatients = await db.patients
-        .orderBy("updatedAt")
-        .reverse()
-        .limit(20)
-        .toArray();
+      const recentPatients = await latestByIndex<Patient>(
+        db.patients,
+        "updatedAt",
+        RECENT_PATIENT_LIMIT,
+        (p) => p.updatedAt,
+      );
 
       const riskProfiles = await Promise.all(
-        recentPatients.map(async (patient) => {
+        recentPatients.map(async (patient): Promise<HighRiskPatient | null> => {
           try {
-            const profile = await clinicalDecisionSupport.assessPatientRisk(
-              patient.id,
-            );
-            if (
-              profile.overallRisk === "high" ||
-              profile.overallRisk === "critical"
-            ) {
+            const profile = await clinicalDecisionSupport.assessPatientRisk(patient.id);
+            if (profile.overallRisk === "high" || profile.overallRisk === "critical") {
               return {
                 patientId: patient.id,
                 name: `${patient.givenName} ${patient.familyName}`,
                 profile,
               };
             }
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          } catch (_error) {
-            return null;
+          } catch (error) {
+            console.error(
+              "Risk assessment failed:",
+              error instanceof Error ? error.name : error,
+            );
           }
           return null;
         }),
       );
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setHighRiskPatients(riskProfiles.filter((p) => p !== null) as any);
+      setHighRiskPatients(
+        riskProfiles.filter((p): p is HighRiskPatient => p !== null),
+      );
     } catch (error) {
-      console.error("Failed to load clinical insights:", error);
+      console.error(
+        "Failed to load clinical insights:",
+        error instanceof Error ? error.name : error,
+      );
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, [showAcknowledged, filterSeverity]);
 
-  const handleAcknowledgeAlert = async (alertId: string) => {
-    if (!currentUser) return;
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
-    await clinicalDecisionSupport.acknowledgeAlert(alertId, currentUser.id);
+  const handleAcknowledgeAlert = async (alert: ClinicalAlert) => {
+    if (!currentUser || !can(currentUser.role, "consult")) {
+      push({
+        id: generateId(),
+        tone: "warning",
+        title: "Only clinicians can acknowledge alerts",
+        body: "Ask a doctor or lead clinician to review this alert.",
+      });
+      return;
+    }
+    setAckBusyId(alert.id);
+    try {
+      await clinicalDecisionSupport.acknowledgeAlert(alert.id, currentUser.id);
+    } catch (error) {
+      console.error(
+        "Acknowledge alert failed:",
+        error instanceof Error ? error.name : error,
+      );
+      push({
+        id: generateId(),
+        tone: "error",
+        title: "Alert not acknowledged",
+        body: "The change was not saved. Try again.",
+      });
+      setAckBusyId(null);
+      return;
+    }
+    // The acknowledgement is saved at this point; a failed audit entry must
+    // not be reported as a failed acknowledgement.
+    let audited = true;
+    try {
+      await createAuditLog(currentUser.role, "acknowledge_clinical_alert", "clinicalAlerts", alert.id);
+    } catch (error) {
+      audited = false;
+      console.error(
+        "Audit log for alert acknowledgement failed:",
+        error instanceof Error ? error.name : error,
+      );
+    }
+    push({
+      id: generateId(),
+      tone: audited ? "success" : "warning",
+      title: "Alert acknowledged",
+      body: audited
+        ? "Saved on this device."
+        : "Saved on this device, but the audit log entry could not be written.",
+    });
+    setAckBusyId(null);
     await loadData();
   };
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case "critical":
-        return "text-red-600 bg-red-50 border-red-200";
-      case "high":
-        return "text-orange-600 bg-orange-50 border-orange-200";
-      case "moderate":
-        return "text-yellow-600 bg-yellow-50 border-yellow-200";
-      case "low":
-        return "text-blue-600 bg-blue-50 border-blue-200";
-      default:
-        return "text-gray-600 bg-gray-50 border-gray-200";
-    }
-  };
-
-  const getRiskColor = (risk: string) => {
-    switch (risk) {
-      case "critical":
-        return "bg-red-500";
-      case "high":
-        return "bg-orange-500";
-      case "moderate":
-        return "bg-yellow-500";
-      case "low":
-        return "bg-green-500";
-      default:
-        return "bg-gray-500";
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-          <ChartBarIcon className="h-7 w-7 text-blue-600" />
-          Clinical Decision Support
+    <section className="space-y-4" aria-labelledby="cds-title">
+      <div>
+        <h2 id="cds-title" className="text-h2 text-ink">
+          Clinical decision support
         </h2>
-        <p className="text-gray-600">
-          Rule-based alerts from recorded vitals and history to help
-          clinicians spot high-risk patients
+        <p className="text-body text-ink-muted">
+          Rule-based alerts from recorded vitals and history, to help
+          clinicians spot patients who need another look.
         </p>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm">
-        <div className="border-b border-gray-200">
-          <nav className="flex -mb-px">
-            <button
-              onClick={() => setSelectedTab("alerts")}
-              className={`px-6 py-3 border-b-2 font-medium text-sm ${
-                selectedTab === "alerts"
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <ExclamationTriangleIcon className="h-5 w-5" />
-                Clinical Alerts ({alerts.length})
-              </div>
-            </button>
-            <button
-              onClick={() => setSelectedTab("risk")}
-              className={`px-6 py-3 border-b-2 font-medium text-sm ${
-                selectedTab === "risk"
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <UserGroupIcon className="h-5 w-5" />
-                High-Risk Patients ({highRiskPatients.length})
-              </div>
-            </button>
-            <button
-              onClick={() => setSelectedTab("adherence")}
-              className={`px-6 py-3 border-b-2 font-medium text-sm ${
-                selectedTab === "adherence"
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <ClockIcon className="h-5 w-5" />
-                Medication Adherence
-              </div>
-            </button>
-          </nav>
-        </div>
+      <div className="panel">
+        <Tabs<TabKey>
+          tabs={[
+            { id: "alerts", label: "Clinical alerts", badge: loading ? undefined : alerts.length },
+            { id: "risk", label: "High-risk patients", badge: loading ? undefined : highRiskPatients.length },
+            { id: "adherence", label: "Medication adherence" },
+          ]}
+          active={selectedTab}
+          onChange={(id) => {
+            if (isTabKey(id)) setSelectedTab(id);
+          }}
+          idPrefix={ID_PREFIX}
+          label="Clinical decision support sections"
+          className="px-2"
+        />
 
-        <div className="p-6">
-          {selectedTab === "alerts" && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={showAcknowledged}
-                      onChange={(e) => setShowAcknowledged(e.target.checked)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-gray-700">
-                      Show acknowledged
-                    </span>
-                  </label>
-
-                  <select
-                    value={filterSeverity}
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    onChange={(e) => setFilterSeverity(e.target.value as any)}
-                    className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                  >
-                    <option value="all">All Severities</option>
-                    <option value="critical">Critical</option>
-                    <option value="high">High</option>
-                    <option value="moderate">Moderate</option>
-                    <option value="low">Low</option>
-                  </select>
-                </div>
-              </div>
-
-              {alerts.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  <CheckCircleIcon className="h-12 w-12 mx-auto mb-3 text-green-500" />
-                  <p>No clinical alerts to display</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {alerts.map((alert) => (
-                    <div
-                      key={alert.id}
-                      className={`border rounded-lg p-4 ${getSeverityColor(alert.severity)}`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span
-                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium uppercase ${getSeverityColor(alert.severity)}`}
-                            >
-                              {alert.severity}
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              {alert.alertType.replace("_", " ")}
-                            </span>
-                          </div>
-                          <h4 className="font-semibold text-gray-900 mb-1">
-                            {alert.message}
-                          </h4>
-                          <p className="text-sm text-gray-700 mb-2">
-                            {alert.details}
-                          </p>
-                          <div className="text-xs text-gray-500">
-                            {new Date(alert.createdAt).toLocaleString()}
-                            {alert.acknowledged && (
-                              <span className="ml-2 text-green-600">
-                                ✓ Acknowledged by {alert.acknowledgedBy}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        {!alert.acknowledged && (
-                          <button
-                            onClick={() => handleAcknowledgeAlert(alert.id)}
-                            className="ml-4 px-3 py-1 text-sm bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                          >
-                            Acknowledge
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+        <div
+          role="tabpanel"
+          id={panelId(ID_PREFIX, selectedTab)}
+          aria-labelledby={tabId(ID_PREFIX, selectedTab)}
+          className="panel-body"
+        >
+          {loadFailed && (
+            <div className="banner banner-danger mb-4" role="alert">
+              <span className="flex-1">Clinical alerts could not be read from this device.</span>
+              <button type="button" onClick={loadData} className="btn-secondary">
+                Try again
+              </button>
             </div>
           )}
 
-          {selectedTab === "risk" && (
-            <div className="space-y-4">
-              {highRiskPatients.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  <CheckCircleIcon className="h-12 w-12 mx-auto mb-3 text-green-500" />
-                  <p>No high-risk patients identified</p>
-                </div>
-              ) : (
+          {loading ? (
+            <div>
+              <span role="status" className="sr-only">
+                Loading clinical alerts
+              </span>
+              <SkeletonText lines={5} />
+            </div>
+          ) : (
+            <>
+              {selectedTab === "alerts" && (
                 <div className="space-y-4">
-                  {highRiskPatients.map(({ patientId, name, profile }) => (
-                    <div
-                      key={patientId}
-                      className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-                    >
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h4 className="font-semibold text-gray-900">
-                            {name}
-                          </h4>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span
-                              className={`h-2 w-2 rounded-full ${getRiskColor(profile.overallRisk)}`}
-                            ></span>
-                            <span className="text-sm text-gray-600 capitalize">
-                              {profile.overallRisk} Risk
-                            </span>
-                          </div>
-                        </div>
-                        <a
-                          href={`/patients/${patientId}`}
-                          className="text-sm text-blue-600 hover:text-blue-800"
-                        >
-                          View Patient →
-                        </a>
-                      </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <label className="flex min-h-touch-target items-center gap-2 text-body text-ink-secondary">
+                      <input
+                        type="checkbox"
+                        checked={showAcknowledged}
+                        onChange={(e) => setShowAcknowledged(e.target.checked)}
+                        className="h-4 w-4 rounded border-line-strong text-primary focus:ring-primary"
+                      />
+                      Show acknowledged alerts
+                    </label>
+                    <div className="sm:w-48">
+                      <label htmlFor="cds-severity" className="field-label">
+                        Severity
+                      </label>
+                      <select
+                        id="cds-severity"
+                        value={filterSeverity}
+                        onChange={(e) => {
+                          if (isSeverityFilter(e.target.value)) setFilterSeverity(e.target.value);
+                        }}
+                        className="input-field"
+                      >
+                        <option value="all">All severities</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="moderate">Moderate</option>
+                        <option value="low">Low</option>
+                      </select>
+                    </div>
+                  </div>
 
-                      <div className="space-y-2">
-                        <div>
-                          <h5 className="text-sm font-medium text-gray-700 mb-1">
-                            Risk Factors:
-                          </h5>
-                          <div className="space-y-1">
-                            {profile.riskFactors.map((rf, idx) => (
-                              <div
-                                key={idx}
-                                className="text-sm text-gray-600 flex items-start gap-2"
-                              >
-                                <span
-                                  className={`mt-1 h-1.5 w-1.5 rounded-full flex-shrink-0 ${
-                                    rf.severity === "high"
-                                      ? "bg-red-500"
-                                      : rf.severity === "moderate"
-                                        ? "bg-yellow-500"
-                                        : "bg-blue-500"
-                                  }`}
-                                ></span>
-                                <span>
-                                  <strong>{rf.factor}:</strong> {rf.description}
+                  {!canAcknowledge && alerts.some((a) => !a.acknowledged) && (
+                    <p className="text-caption text-ink-muted">
+                      Alerts can be acknowledged by doctors, lead clinicians and administrators.
+                    </p>
+                  )}
+
+                  {alerts.length === 0 ? (
+                    <EmptyState
+                      icon={CheckCircleIcon}
+                      title={showAcknowledged ? "No clinical alerts" : "No alerts waiting for review"}
+                      description="Alerts are created when recorded vitals or history match a rule."
+                    />
+                  ) : (
+                    <ul className="divide-y divide-line rounded-md border border-line">
+                      {alerts.map((alert) => {
+                        const meta = SEVERITY_META[alert.severity];
+                        return (
+                          <li key={alert.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start">
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-1 flex flex-wrap items-center gap-2">
+                                <StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>
+                                <span className="text-caption capitalize text-ink-muted">
+                                  {alert.alertType.replace(/_/g, " ")}
                                 </span>
                               </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {profile.predictedComplications.length > 0 && (
-                          <div>
-                            <h5 className="text-sm font-medium text-gray-700 mb-1">
-                              Predicted Complications:
-                            </h5>
-                            <div className="flex flex-wrap gap-2">
-                              {profile.predictedComplications.map(
-                                (comp, idx) => (
-                                  <span
-                                    key={idx}
-                                    className="inline-flex items-center px-2 py-1 rounded-md text-xs bg-red-50 text-red-700 border border-red-200"
-                                  >
-                                    {comp}
-                                  </span>
-                                ),
-                              )}
+                              <p className="font-medium text-ink">{alert.message}</p>
+                              <p className="text-body text-ink-secondary">{alert.details}</p>
+                              <p className="mt-1 text-caption text-ink-muted">
+                                {formatNigerianDateTime(alert.createdAt)}
+                                {alert.acknowledged && (
+                                  <>
+                                    {" · "}
+                                    <span className="inline-flex items-center gap-1 text-success-fg">
+                                      <CheckCircleIcon className="h-3.5 w-3.5" aria-hidden />
+                                      Acknowledged
+                                      {alert.acknowledgedBy
+                                        ? ` by ${userNames.get(alert.acknowledgedBy) ?? "another user"}`
+                                        : ""}
+                                    </span>
+                                  </>
+                                )}
+                              </p>
+                              <Link
+                                to={`/patients/${alert.patientId}`}
+                                className="mt-1 inline-block text-label text-primary-fg hover:underline"
+                              >
+                                Open patient record
+                              </Link>
                             </div>
-                          </div>
-                        )}
-
-                        {profile.recommendedActions.length > 0 && (
-                          <div>
-                            <h5 className="text-sm font-medium text-gray-700 mb-1">
-                              Recommended Actions:
-                            </h5>
-                            <ul className="list-disc list-inside space-y-1">
-                              {profile.recommendedActions.map((action, idx) => (
-                                <li key={idx} className="text-sm text-gray-600">
-                                  {action}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                            {!alert.acknowledged && canAcknowledge && (
+                              <button
+                                type="button"
+                                onClick={() => handleAcknowledgeAlert(alert)}
+                                disabled={ackBusyId === alert.id}
+                                className="btn-secondary shrink-0"
+                              >
+                                {ackBusyId === alert.id ? "Saving…" : "Acknowledge"}
+                              </button>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </div>
               )}
-            </div>
-          )}
 
-          {selectedTab === "adherence" && (
-            <div className="text-center py-12 text-gray-500">
-              <ClockIcon className="h-12 w-12 mx-auto mb-3" />
-              <p className="mb-2">Medication Adherence Predictions</p>
-              <p className="text-sm">
-                This feature analyzes patient factors to predict medication
-                adherence risks.
-              </p>
-              <p className="text-sm text-gray-400 mt-2">
-                Integration with prescription data coming soon
-              </p>
-            </div>
+              {selectedTab === "risk" && (
+                <div className="space-y-3">
+                  <p className="text-caption text-ink-muted">
+                    Checks the {RECENT_PATIENT_LIMIT} most recently updated patient
+                    records on this device with fixed rules.
+                  </p>
+                  {highRiskPatients.length === 0 ? (
+                    <EmptyState
+                      icon={CheckCircleIcon}
+                      title="No high-risk patients found"
+                      description={`None of the ${RECENT_PATIENT_LIMIT} most recently updated patients matched a high-risk rule.`}
+                    />
+                  ) : (
+                    <ul className="space-y-3">
+                      {highRiskPatients.map(({ patientId, name, profile }) => {
+                        const risk = RISK_META[profile.overallRisk];
+                        return (
+                          <li key={patientId} className="rounded-md border border-line p-4">
+                            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <p className="text-h3 text-ink">{name}</p>
+                                <StatusBadge tone={risk.tone} className="mt-1">
+                                  {risk.label}
+                                </StatusBadge>
+                              </div>
+                              <Link to={`/patients/${patientId}`} className="btn-ghost text-label">
+                                View patient
+                              </Link>
+                            </div>
+
+                            <div className="space-y-3">
+                              <div>
+                                <p className="section-label mb-1">Risk factors</p>
+                                <ul className="space-y-1">
+                                  {profile.riskFactors.map((rf, idx) => (
+                                    <li key={idx} className="flex flex-wrap items-start gap-2 text-body text-ink-secondary">
+                                      <StatusBadge tone={FACTOR_TONE[rf.severity]} icon={rf.severity !== "low"}>
+                                        {rf.severity}
+                                      </StatusBadge>
+                                      <span>
+                                        <span className="font-medium text-ink">{rf.factor}:</span> {rf.description}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+
+                              {profile.predictedComplications.length > 0 && (
+                                <div>
+                                  <p className="section-label mb-1">Possible complications (rule-based)</p>
+                                  <ul className="flex flex-wrap gap-2">
+                                    {profile.predictedComplications.map((comp, idx) => (
+                                      <li key={idx}>
+                                        <StatusBadge tone="warning">{comp}</StatusBadge>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+
+                              {profile.recommendedActions.length > 0 && (
+                                <div>
+                                  <p className="section-label mb-1">Suggested actions</p>
+                                  <ul className="list-disc space-y-1 pl-5">
+                                    {profile.recommendedActions.map((action, idx) => (
+                                      <li key={idx} className="text-body text-ink-secondary">
+                                        {action}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {selectedTab === "adherence" && (
+                <EmptyState
+                  icon={ClockIcon}
+                  title="Not available in this version"
+                  description="Medication adherence checks are not built yet, so no adherence figures are shown."
+                />
+              )}
+            </>
           )}
         </div>
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <ExclamationTriangleIcon className="h-5 w-5 text-blue-600 mt-0.5" />
-          <div className="text-sm text-blue-900">
-            <p className="font-medium mb-1">About Clinical Decision Support</p>
-            <p className="text-blue-800">
-              These alerts come from fixed rules applied to recorded vitals,
-              history and risk factors. They are prompts to look again, not
-              diagnoses — the treating clinician decides.
-            </p>
-          </div>
-        </div>
+      <div className="banner banner-info">
+        <InformationCircleIcon className="h-5 w-5 shrink-0" aria-hidden />
+        <p>
+          These alerts come from fixed rules applied to recorded vitals, history
+          and risk factors. They are prompts to look again, not diagnoses; the
+          treating clinician decides.
+        </p>
       </div>
-    </div>
+    </section>
   );
 }

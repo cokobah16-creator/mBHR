@@ -1,310 +1,343 @@
+import type { ComponentType, SVGProps } from "react";
 import { Link } from "react-router-dom";
 import {
-  DevicePhoneMobileIcon,
-  ClipboardDocumentListIcon,
-  CalendarIcon,
-  EnvelopeIcon,
-  ShieldCheckIcon,
-  ClockIcon,
+  ArrowDownTrayIcon,
   ArrowLeftIcon,
+  ArrowRightIcon,
+  CalendarIcon,
+  ChatBubbleLeftRightIcon,
+  ChevronDownIcon,
+  ClipboardDocumentListIcon,
+  DevicePhoneMobileIcon,
+  InformationCircleIcon,
+  LanguageIcon,
+  LockClosedIcon,
 } from "@heroicons/react/24/outline";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
+
+type Icon = ComponentType<SVGProps<SVGSVGElement>>;
+
+const FEATURES: {
+  icon: Icon;
+  title: string;
+  body: string;
+  /** Only works with an online account (Supabase). */
+  needsOnline?: boolean;
+}[] = [
+  {
+    icon: ClipboardDocumentListIcon,
+    title: "Your medical records",
+    body: "See your clinic visits, medicines and test results in one place.",
+  },
+  {
+    icon: CalendarIcon,
+    title: "Appointments",
+    body: "Ask for an appointment on a day that suits you, and see visits you have booked.",
+    needsOnline: true,
+  },
+  {
+    icon: ChatBubbleLeftRightIcon,
+    title: "Messages",
+    body: "Send non-urgent questions to your care team.",
+    needsOnline: true,
+  },
+  {
+    icon: ArrowDownTrayIcon,
+    title: "A copy of your record",
+    body: "Download your health record as a file you can keep or give to another doctor.",
+  },
+  {
+    icon: LockClosedIcon,
+    title: "Private sign-in",
+    body: "Log in with your email and password, or with a 6-digit PIN on a device set up for offline use.",
+  },
+  {
+    icon: DevicePhoneMobileIcon,
+    title: "Works on your phone",
+    body: "Use it on a phone, tablet or computer.",
+  },
+];
+
+const STEPS: { title: string; body: string }[] = [
+  {
+    title: "Create your account",
+    body: "Use the email address the clinic has for you, so your account can be linked to your clinic record.",
+  },
+  {
+    title: "Log in",
+    body: "Log in with your email and password (or your 6-digit PIN on a device set up for offline use).",
+  },
+  {
+    title: "Use your record",
+    body: isSupabaseEnabled
+      ? "See your visits, results and medicines, ask for appointments and message your care team."
+      : "See your visits, results and medicines, and download a copy of your record.",
+  },
+];
+
+const linkClass =
+  "font-medium text-primary-fg underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary";
 
 export function PatientPortalLanding() {
   return (
     <div className="min-h-screen bg-canvas">
-      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-100 sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2.5">
+      <header className="sticky top-0 z-40 border-b border-line bg-surface">
+        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 sm:px-6">
+          <Link
+            to="/"
+            className="flex items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
             <img
               src="/brand/mbhr-mark.svg"
               alt=""
               aria-hidden
-              className="w-9 h-9 rounded-xl"
+              className="h-9 w-9 rounded-lg"
             />
-            <div className="text-left">
-              <div className="text-sm font-bold text-gray-900 leading-tight">
+            <span className="text-left">
+              <span className="block text-label font-semibold text-ink">
                 MedBridge Patient Portal
-              </div>
-              <div className="text-[10px] text-gray-500">
+              </span>
+              <span className="block text-caption text-ink-muted">
                 Bridging Care, Reaching All.
-              </div>
-            </div>
+              </span>
+            </span>
           </Link>
-          <Link
-            to="/"
-            className="inline-flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors font-medium px-3 py-2 rounded-lg hover:bg-gray-100 text-sm"
-          >
-            <ArrowLeftIcon className="w-5 h-5" />
-            <span className="hidden sm:inline">Back to Home</span>
+          <Link to="/" className="btn-ghost">
+            <ArrowLeftIcon className="h-5 w-5" aria-hidden />
+            <span className="sr-only sm:not-sr-only">Back to Home</span>
           </Link>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
-        <div className="text-center max-w-3xl mx-auto mb-12">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-green-100 text-green-800 text-xs font-medium mb-5">
-            <span className="w-2 h-2 rounded-full bg-green-600"></span>
-            Available in English, Hausa, Yoruba, Igbo, Pidgin
-          </div>
-          <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 leading-[1.1] tracking-tight mb-5">
-            Your health,
-            <br />
-            in your hands.
+      <main className="mx-auto max-w-5xl space-y-10 px-4 py-10 sm:px-6 sm:py-14">
+        <section className="mx-auto max-w-2xl text-center" aria-labelledby="portal-hero">
+          <p className="mb-4 inline-flex items-center gap-2 text-label text-ink-secondary">
+            <LanguageIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+            Available in English, Hausa, Yoruba, Igbo and Pidgin
+          </p>
+          <h1 id="portal-hero" className="text-display text-ink">
+            Your health record, in your hands.
           </h1>
-          <p className="text-lg text-gray-600 mb-8 max-w-2xl mx-auto leading-relaxed">
-            Access your medical records, request appointments, and communicate
-            with your care team — anytime, anywhere. Works offline; syncs when
-            you reconnect.
+          <p className="mx-auto mt-4 max-w-xl text-body text-ink-secondary">
+            {isSupabaseEnabled
+              ? "See your records from mBHR outreach clinics, ask for appointments and message your care team."
+              : "See your records from mBHR outreach clinics and download a copy of them."}
           </p>
-          <div className="flex flex-wrap gap-3 justify-center">
-            <Link
-              to="/patient/register"
-              className="inline-flex items-center justify-center gap-2 h-14 px-8 bg-[#0A7A3B] text-white text-lg font-semibold rounded-xl hover:bg-[#0a6e35] transition-colors shadow-lg hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0A7A3B]"
-            >
-              Create Free Account
-              <svg
-                className="w-5 h-5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+          <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+            <Link to="/patient/register" className="btn-primary">
+              Create an account
+              <ArrowRightIcon className="h-5 w-5" aria-hidden />
+            </Link>
+            <Link to="/patient/login" className="btn-secondary">
+              I already have an account
+            </Link>
+          </div>
+          <p className="mx-auto mt-5 flex max-w-xl items-start justify-center gap-2 text-left text-caption text-ink-muted">
+            <InformationCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
+            {isSupabaseEnabled ? (
+              <span>
+                You need an internet connection to log in and see your latest
+                records.
+              </span>
+            ) : (
+              <span>
+                This device is in offline mode. Portal accounts and records are
+                kept on this device only.
+              </span>
+            )}
+          </p>
+        </section>
+
+        <section aria-labelledby="portal-features" className="panel">
+          <div className="panel-header">
+            <h2 id="portal-features" className="panel-title">
+              What you can do
+            </h2>
+          </div>
+          <ul className="grid gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+            {FEATURES.map(({ icon: I, title, body, needsOnline }) => (
+              <li key={title} className="flex items-start gap-3 bg-surface p-4">
+                <I className="mt-0.5 h-6 w-6 shrink-0 text-primary" aria-hidden />
+                <span>
+                  <span className="block text-h3 text-ink">{title}</span>
+                  <span className="mt-0.5 block text-body text-ink-secondary">
+                    {body}
+                  </span>
+                  {needsOnline && !isSupabaseEnabled && (
+                    <span className="mt-1 block text-caption text-ink-muted">
+                      Needs an online account, so it is not available on this
+                      device.
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section aria-labelledby="portal-steps" className="panel">
+          <div className="panel-header">
+            <h2 id="portal-steps" className="panel-title">
+              How it works
+            </h2>
+          </div>
+          <ol className="panel-body grid gap-5 md:grid-cols-3">
+            {STEPS.map((step, i) => (
+              <li key={step.title} className="flex items-start gap-3">
+                <span
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line-strong text-label text-ink"
+                  aria-hidden
+                >
+                  {i + 1}
+                </span>
+                <span>
+                  <span className="block text-h3 text-ink">
+                    <span className="sr-only">Step {i + 1}: </span>
+                    {step.title}
+                  </span>
+                  <span className="mt-0.5 block text-body text-ink-secondary">
+                    {step.body}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section aria-labelledby="portal-faq" className="panel">
+          <div className="panel-header">
+            <h2 id="portal-faq" className="panel-title">
+              Common questions
+            </h2>
+          </div>
+          <div className="divide-y divide-line">
+            <details className="group">
+              <summary className="flex min-h-touch-target cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-body font-medium text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+                <span>Who can register?</span>
+                <ChevronDownIcon
+                  className="h-5 w-5 shrink-0 text-ink-muted group-open:rotate-180"
+                  aria-hidden
                 />
-              </svg>
-            </Link>
-            <Link
-              to="/patient/login"
-              className="inline-flex items-center justify-center gap-2 h-14 px-8 bg-white text-blue-600 text-lg font-semibold rounded-xl hover:bg-blue-50 transition-colors border-2 border-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-600"
-            >
-              <DevicePhoneMobileIcon className="w-6 h-6" />I already have an
-              account
-            </Link>
+              </summary>
+              <p className="px-4 pb-4 text-body text-ink-secondary">
+                Anyone who has been seen at an mBHR outreach clinic. Use the
+                same email address (or phone number) the clinic has for you so
+                your account can be linked to your record. If you cannot see
+                your visits after logging in, ask clinic staff to link your
+                record.
+              </p>
+            </details>
+            <details className="group">
+              <summary className="flex min-h-touch-target cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-body font-medium text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+                <span>Is my health information private?</span>
+                <ChevronDownIcon
+                  className="h-5 w-5 shrink-0 text-ink-muted group-open:rotate-180"
+                  aria-hidden
+                />
+              </summary>
+              <p className="px-4 pb-4 text-body text-ink-secondary">
+                Only people who log in to your account can see your records in
+                the portal. Keep your password or PIN to yourself, and log out
+                when you use a shared phone or computer. Our{" "}
+                <Link to="/privacy" className={linkClass}>
+                  Privacy notice
+                </Link>{" "}
+                explains how your information is used.
+              </p>
+            </details>
+            <details className="group">
+              <summary className="flex min-h-touch-target cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-body font-medium text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+                <span>What if I forget my password or PIN?</span>
+                <ChevronDownIcon
+                  className="h-5 w-5 shrink-0 text-ink-muted group-open:rotate-180"
+                  aria-hidden
+                />
+              </summary>
+              <p className="px-4 pb-4 text-body text-ink-secondary">
+                For an online account, choose “Forgot password?” on the login
+                page and we will email you a reset link. If you log in with a
+                PIN on this device, ask clinic staff to help you reset it.
+              </p>
+            </details>
+            <details className="group">
+              <summary className="flex min-h-touch-target cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-body font-medium text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+                <span>Can I use the portal in an emergency?</span>
+                <ChevronDownIcon
+                  className="h-5 w-5 shrink-0 text-ink-muted group-open:rotate-180"
+                  aria-hidden
+                />
+              </summary>
+              <p className="px-4 pb-4 text-body text-ink-secondary">
+                No. The portal is for non-urgent matters only. In a medical
+                emergency, call emergency services or go to the nearest
+                hospital straight away.
+              </p>
+            </details>
+            <details className="group">
+              <summary className="flex min-h-touch-target cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-body font-medium text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+                <span>Do I need internet access?</span>
+                <ChevronDownIcon
+                  className="h-5 w-5 shrink-0 text-ink-muted group-open:rotate-180"
+                  aria-hidden
+                />
+              </summary>
+              <p className="px-4 pb-4 text-body text-ink-secondary">
+                For an online account, yes: you need an internet connection
+                (Wi-Fi or mobile data) to log in and see your latest records. On
+                a device the clinic has set up for offline use, your account and
+                records are kept on that device only.
+              </p>
+            </details>
           </div>
-        </div>
+        </section>
 
-        {/* Features Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-12">
-          <div className="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-shadow">
-            <div className="w-16 h-16 bg-blue-100 rounded-xl flex items-center justify-center mb-4">
-              <ClipboardDocumentListIcon className="w-8 h-8 text-blue-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              Medical Records
-            </h3>
-            <p className="text-gray-600">
-              View your complete medical history, visit notes, prescriptions,
-              and lab results in one secure place.
-            </p>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-shadow">
-            <div className="w-16 h-16 bg-green-100 rounded-xl flex items-center justify-center mb-4">
-              <CalendarIcon className="w-8 h-8 text-green-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              Appointments
-            </h3>
-            <p className="text-gray-600">
-              Request appointments online with your preferred dates and times.
-              Track upcoming visits easily.
-            </p>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-shadow">
-            <div className="w-16 h-16 bg-purple-100 rounded-xl flex items-center justify-center mb-4">
-              <EnvelopeIcon className="w-8 h-8 text-purple-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              Secure Messaging
-            </h3>
-            <p className="text-gray-600">
-              Communicate directly with your care team for non-urgent questions
-              and follow-ups.
-            </p>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-shadow">
-            <div className="w-16 h-16 bg-yellow-100 rounded-xl flex items-center justify-center mb-4">
-              <ShieldCheckIcon className="w-8 h-8 text-yellow-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              Secure Access
-            </h3>
-            <p className="text-gray-600">
-              Your health information is protected with SMS verification and
-              industry-standard security.
-            </p>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-shadow">
-            <div className="w-16 h-16 bg-red-100 rounded-xl flex items-center justify-center mb-4">
-              <ClockIcon className="w-8 h-8 text-red-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              24/7 Access
-            </h3>
-            <p className="text-gray-600">
-              Access your health information anytime, from any device with an
-              internet connection.
-            </p>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-lg p-8 hover:shadow-xl transition-shadow">
-            <div className="w-16 h-16 bg-indigo-100 rounded-xl flex items-center justify-center mb-4">
-              <DevicePhoneMobileIcon className="w-8 h-8 text-indigo-600" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              Mobile Friendly
-            </h3>
-            <p className="text-gray-600">
-              Optimized for smartphones and tablets. Access your health info on
-              the go.
-            </p>
-          </div>
-        </div>
-
-        {/* How It Works */}
-        <div className="bg-white rounded-2xl shadow-xl p-8 mb-12">
-          <h2 className="text-3xl font-bold text-gray-900 mb-8 text-center">
-            How It Works
+        <section
+          aria-labelledby="portal-start"
+          className="rounded-lg border border-line bg-surface px-6 py-8 text-center"
+        >
+          <h2 id="portal-start" className="text-h2 text-ink">
+            Ready to start?
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="text-center">
-              <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                1
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Register</h3>
-              <p className="text-gray-600">
-                Create your account using your phone number and date of birth.
-                We'll verify your identity.
-              </p>
-            </div>
-
-            <div className="text-center">
-              <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                2
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Verify</h3>
-              <p className="text-gray-600">
-                Receive a 6-digit code via SMS. Enter it to verify your phone
-                number and access your account.
-              </p>
-            </div>
-
-            <div className="text-center">
-              <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                3
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Access</h3>
-              <p className="text-gray-600">
-                View your medical records, request appointments, and message
-                your care team.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* FAQ Section */}
-        <div className="bg-info rounded-lg p-8 mb-12 text-white">
-          <h2 className="text-3xl font-bold mb-6 text-center">
-            Frequently Asked Questions
-          </h2>
-          <div className="space-y-6 max-w-3xl mx-auto">
-            <div>
-              <h3 className="text-xl font-bold mb-2">
-                Who can register for the patient portal?
-              </h3>
-              <p className="text-blue-100">
-                Any patient who has visited our facility and has a phone number
-                on record can register. Your phone number and date of birth must
-                match our records.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-bold mb-2">
-                Is my health information secure?
-              </h3>
-              <p className="text-blue-100">
-                Yes! We use SMS verification for login, encrypt all data, and
-                follow strict security practices to protect your health
-                information.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-bold mb-2">
-                What if I don't receive my verification code?
-              </h3>
-              <p className="text-blue-100">
-                Wait a few minutes as SMS can be delayed. Make sure you entered
-                the correct phone number. You can request a new code after 10
-                minutes. Contact our office if problems persist.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-bold mb-2">
-                Can I use the portal for emergencies?
-              </h3>
-              <p className="text-blue-100">
-                No. The patient portal is for non-urgent matters only. For
-                medical emergencies, call emergency services or visit the
-                nearest hospital immediately.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-bold mb-2">
-                Do I need internet access?
-              </h3>
-              <p className="text-blue-100">
-                Yes, you need an internet connection (WiFi or mobile data) to
-                access the portal. The portal works on smartphones, tablets, and
-                computers.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Call to Action */}
-        <div className="text-center bg-white rounded-2xl shadow-xl p-12">
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">
-            Ready to Get Started?
-          </h2>
-          <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-            Join hundreds of patients who are already using the mBHR Patient
-            Portal to manage their health.
+          <p className="mx-auto mt-2 max-w-xl text-body text-ink-secondary">
+            Creating an account is free.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              to="/patient/register"
-              className="inline-flex items-center justify-center px-8 py-4 bg-green-600 text-white text-lg font-semibold rounded-xl hover:bg-green-700 transition-colors shadow-lg hover:shadow-xl"
-            >
-              Create Free Account
+          <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
+            <Link to="/patient/register" className="btn-primary">
+              Create an account
             </Link>
-            <a
-              href="#contact"
-              className="inline-flex items-center justify-center px-8 py-4 bg-white text-gray-700 text-lg font-semibold rounded-xl hover:bg-gray-50 transition-colors border-2 border-gray-300 shadow-lg hover:shadow-xl"
-            >
-              Contact Support
-            </a>
+            <Link to="/patient/login" className="btn-secondary">
+              Log in
+            </Link>
           </div>
-        </div>
+        </section>
+      </main>
 
-        {/* Footer */}
-        <div className="mt-12 text-center text-gray-600">
-          <p className="mb-2">Med Bridge Health Reach</p>
-          <p className="text-sm">Dr. Isioma Okobah Foundation</p>
-          <p className="text-sm mt-4">
-            For technical support, contact: support@mbhr.health
+      <footer className="border-t border-line bg-surface">
+        <div className="mx-auto max-w-5xl space-y-2 px-4 py-6 text-center text-caption text-ink-muted sm:px-6">
+          <p className="text-label text-ink-secondary">
+            Med Bridge Health Reach · Dr. Isioma Okobah Foundation
+          </p>
+          <nav aria-label="Legal" className="flex flex-wrap items-center justify-center gap-x-2">
+            <Link
+              to="/privacy"
+              className="inline-flex min-h-touch-target items-center px-2 text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              Privacy notice
+            </Link>
+            <span aria-hidden>·</span>
+            <Link
+              to="/terms"
+              className="inline-flex min-h-touch-target items-center px-2 text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              Terms of use
+            </Link>
+          </nav>
+          <p>
+            Need help with the portal? Speak to the outreach team at your next
+            visit, or contact the Dr. Isioma Okobah Foundation.
           </p>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }

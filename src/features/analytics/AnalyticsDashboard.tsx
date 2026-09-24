@@ -1,16 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
-import Dexie, { type IndexableType } from "dexie";
+import { Link } from "react-router-dom";
 import { useAuthStore } from "@/stores/auth";
-import { db } from "@/db";
+import { useToast } from "@/stores/toast";
+import { db, generateId, type Consultation, type Dispense, type Vital } from "@/db";
 import { can } from "@/auth/roles";
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -19,63 +15,55 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import {
-  ChartBarIcon,
   UsersIcon,
+  UserPlusIcon,
   ClockIcon,
   HeartIcon,
-  TrophyIcon,
-  ExclamationTriangleIcon,
-  CalendarIcon,
   ArrowDownTrayIcon,
+  ChartBarIcon,
+  LockClosedIcon,
+  TrophyIcon,
 } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { DashboardSkeleton } from "@/components/ui/Skeleton";
+import { formatNigerianDate, formatTime } from "@/utils/dateFormat";
+import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
+import { StatTile } from "@/features/reports/StatTile";
+import { BarList } from "@/features/reports/BarList";
+import { DataScopeNote } from "@/features/reports/DataScopeNote";
+import { useCsvExport } from "@/features/reports/useCsvExport";
+import { loadInRange } from "@/features/reports/localRecords";
+import {
+  ACTIVITY_SERIES,
+  CHART_AXIS,
+  CHART_GRID,
+} from "@/features/reports/chartTheme";
+import {
+  addLocalDays,
+  averageMinutes,
+  countByLocalDay,
+  isInRange,
+  listLocalDays,
+  localDateKey,
+  localRangeBounds,
+} from "@/features/reports/reportUtils";
 
-// Date range helpers to ensure valid IndexedDB keys
-const toISO = (v?: Date | string | null) => {
-  if (!v) return undefined;
-  const d = v instanceof Date ? v : new Date(v);
-  return Number.isFinite(d.getTime()) ? d.toISOString() : undefined;
-};
-
-const makeBoundsISO = (
-  from?: Date | string | null,
-  to?: Date | string | null,
-): [IndexableType, IndexableType] => {
-  const lo = toISO(from) ?? (Dexie.minKey as IndexableType);
-  const hi = toISO(to) ?? (Dexie.maxKey as IndexableType);
-  return [lo, hi];
-};
-
-const rangeOrAll = <T,>(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  table: Dexie.Table<T, any>,
-  index: string,
-  from?: Date | string | null,
-  to?: Date | string | null,
-) => {
-  if (from || to) {
-    const [lo, hi] = makeBoundsISO(from, to);
-    return table.where(index).between(lo, hi, true, true);
-  }
-  return table.orderBy(index);
-};
-
-const CHART_COLORS = [
-  "#2563eb",
-  "#16a34a",
-  "#9333ea",
-  "#ea580c",
-  "#0891b2",
-  "#e11d48",
-];
+const STAGES = ["registration", "vitals", "consult", "pharmacy"] as const;
 
 interface AnalyticsData {
+  loadedAt: Date;
+  /** The date inputs these figures were built for (yyyy-mm-dd, inclusive). */
+  range: { from: string; to: string; start: Date; end: Date };
   overview: {
     totalPatients: number;
-    todayRegistrations: number;
+    periodRegistrations: number;
     activeVisits: number;
     completedVisits: number;
-    avgWaitTime: number;
-    tokensAwarded: number;
+    /** Joining a stage's queue → finishing it, for stages finished in the period. */
+    avgStage: { minutes: number; count: number } | null;
+    tokensEarned: number;
   };
   throughput: Array<{
     date: string;
@@ -86,9 +74,9 @@ interface AnalyticsData {
     dispenses: number;
   }>;
   queueMetrics: Array<{
-    stage: string;
-    avgWaitMinutes: number;
-    throughput: number;
+    stage: (typeof STAGES)[number];
+    avgStage: { minutes: number; count: number } | null;
+    finished: number;
     currentWaiting: number;
   }>;
   demographics: Array<{
@@ -106,179 +94,99 @@ interface AnalyticsData {
   };
 }
 
-function downloadCSV(filename: string, headers: string[], rows: string[][]) {
-  const csvContent = [
-    headers.join(","),
-    ...rows.map((row) =>
-      row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
-    ),
-  ].join("\n");
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
 export default function AnalyticsDashboard() {
-  const { currentUser } = useAuthStore();
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const push = useToast((s) => s.push);
+  const exportCsv = useCsvExport();
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [dateRange, setDateRange] = useState({
-    from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .split("T")[0],
-    to: new Date().toISOString().split("T")[0],
-  });
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [dateRange, setDateRange] = useState(() => ({
+    from: localDateKey(addLocalDays(new Date(), -7)),
+    to: localDateKey(new Date()),
+  }));
 
   const hasAccess = !!currentUser && can(currentUser.role, "export");
+  const bounds = localRangeBounds(dateRange.from, dateRange.to);
 
   const loadAnalyticsData = useCallback(async () => {
+    const range = localRangeBounds(dateRange.from, dateRange.to);
+    if (!range) {
+      setLoading(false);
+      return;
+    }
+    const { start, end } = range;
     setLoading(true);
+    setLoadFailed(false);
     try {
-      const fromDate = dateRange.from
-        ? new Date(dateRange.from + "T00:00:00.000Z")
-        : null;
-      const toDate = dateRange.to
-        ? new Date(dateRange.to + "T23:59:59.999Z")
-        : null;
-
-      // Calculate days in range
-      const startMs = fromDate?.getTime() ?? Date.now() - 7 * 86400000;
-      const endMs = toDate?.getTime() ?? Date.now();
-      const dayCount = Math.max(1, Math.ceil((endMs - startMs) / 86400000));
-
-      // Overview metrics
+      // Records made on this device store Date objects and synced ones store
+      // ISO text; loadInRange and the day counts below handle both.
       const [
-        totalPatients,
-        todayCount,
+        allPatients,
+        vitals,
+        consultations,
+        dispenses,
         activeVisits,
         completedVisits,
         pendingCount,
         wallets,
         totalSessions,
+        queueItems,
+        users,
       ] = await Promise.all([
-        db.patients.count(),
-        rangeOrAll(db.patients, "createdAt", fromDate, toDate).count(),
+        db.patients.toArray(),
+        loadInRange<Vital>(db.vitals, "takenAt", start, end),
+        loadInRange<Consultation>(db.consultations, "createdAt", start, end),
+        loadInRange<Dispense>(db.dispenses, "dispensedAt", start, end),
         db.visits.where("status").equals("open").count(),
         db.visits.where("status").equals("closed").count(),
         db.gameSessions.filter((s) => !s.committed && !!s.finishedAt).count(),
-        db.gamificationWallets.orderBy("tokens").reverse().limit(5).toArray(),
+        db.gamificationWallets.toArray(),
         db.gameSessions.count(),
+        db.queue.toArray(),
+        db.users.toArray(),
       ]);
 
-      // Calculate real average wait time from queue
-      const queueItems = await db.queue
-        .where("status")
-        .equals("done")
-        .toArray();
-      let avgWaitTime = 0;
-      if (queueItems.length > 0) {
-        const totalWait = queueItems.reduce((sum, item) => {
-          if (
-            (item as unknown as Record<string, unknown>).queuedAt &&
-            item.updatedAt
-          ) {
-            return (
-              sum +
-              (new Date(item.updatedAt).getTime() -
-                new Date(
-                  (item as unknown as Record<string, unknown>)
-                    .queuedAt as string,
-                ).getTime())
-            );
-          }
-          return sum;
-        }, 0);
-        avgWaitTime = Math.round(totalWait / queueItems.length / 60000); // minutes
-      }
-
-      // Throughput data for each day in range
-      const throughputData: AnalyticsData["throughput"] = [];
-      for (let i = dayCount - 1; i >= 0; i--) {
-        const date = new Date(endMs - i * 86400000);
-        const dayStart = new Date(
-          date.getFullYear(),
-          date.getMonth(),
-          date.getDate(),
-        );
-        const dayEnd = new Date(
-          date.getFullYear(),
-          date.getMonth(),
-          date.getDate() + 1,
-        );
-
-        const [registrations, vitalsCount, consultations, dispenses] =
-          await Promise.all([
-            rangeOrAll(db.patients, "createdAt", dayStart, dayEnd).count(),
-            rangeOrAll(db.vitals, "takenAt", dayStart, dayEnd).count(),
-            rangeOrAll(db.consultations, "createdAt", dayStart, dayEnd).count(),
-            rangeOrAll(db.dispenses, "dispensedAt", dayStart, dayEnd).count(),
-          ]);
-
-        throughputData.push({
-          date: dayStart.toISOString().split("T")[0],
-          label: dayStart.toLocaleDateString("en-US", {
+      const counts = {
+        registrations: countByLocalDay(allPatients.map((p) => p.createdAt), start, end),
+        vitals: countByLocalDay(vitals.map((v) => v.takenAt), start, end),
+        consultations: countByLocalDay(consultations.map((c) => c.createdAt), start, end),
+        dispenses: countByLocalDay(dispenses.map((d) => d.dispensedAt), start, end),
+      };
+      const throughput: AnalyticsData["throughput"] = listLocalDays(start, end).map((day) => {
+        const key = localDateKey(day);
+        return {
+          date: key,
+          label: day.toLocaleDateString("en-NG", {
             weekday: "short",
-            month: "short",
             day: "numeric",
+            month: "short",
           }),
-          registrations,
-          vitals: vitalsCount,
-          consultations,
-          dispenses,
-        });
-      }
+          registrations: counts.registrations.get(key) ?? 0,
+          vitals: counts.vitals.get(key) ?? 0,
+          consultations: counts.consultations.get(key) ?? 0,
+          dispenses: counts.dispenses.get(key) ?? 0,
+        };
+      });
 
-      // Queue metrics with real wait time calculation
-      const queueMetrics = await Promise.all(
-        ["registration", "vitals", "consult", "pharmacy"].map(async (stage) => {
-          const waiting = await db.queue
-            .where("stage")
-            .equals(stage)
-            .and((q) => q.status === "waiting")
-            .count();
-          const doneInStage = await db.queue
-            .where("stage")
-            .equals(stage)
-            .and((q) => q.status === "done")
-            .toArray();
-          let stageAvgWait = 0;
-          if (doneInStage.length > 0) {
-            const totalWait = doneInStage.reduce((sum, item) => {
-              if (
-                (item as unknown as Record<string, unknown>).queuedAt &&
-                item.updatedAt
-              ) {
-                return (
-                  sum +
-                  (new Date(item.updatedAt).getTime() -
-                    new Date(
-                      (item as unknown as Record<string, unknown>)
-                        .queuedAt as string,
-                    ).getTime())
-                );
-              }
-              return sum;
-            }, 0);
-            stageAvgWait = Math.round(totalWait / doneInStage.length / 60000);
-          }
-          return {
-            stage,
-            avgWaitMinutes: stageAvgWait,
-            throughput: doneInStage.length,
-            currentWaiting: waiting,
-          };
-        }),
+      // Queue: stages finished within the period, and who is waiting now.
+      const finishedInPeriod = queueItems.filter(
+        (q) => q.status === "done" && isInRange(q.updatedAt, start, end),
       );
+      const queueMetrics = STAGES.map((stage) => {
+        const finished = finishedInPeriod.filter((q) => q.stage === stage);
+        return {
+          stage,
+          avgStage: averageMinutes(finished.map((q) => ({ start: q.queuedAt, end: q.updatedAt }))),
+          finished: finished.length,
+          currentWaiting: queueItems.filter((q) => q.stage === stage && q.status === "waiting").length,
+        };
+      });
 
-      // Patient demographics by state
-      const allPatients = await db.patients.toArray();
+      // Patients by state (all patient records on this device).
       const stateCounts = new Map<string, number>();
       allPatients.forEach((p) => {
-        const state = p.state || "Unknown";
+        const state = p.state || "Not recorded";
         stateCounts.set(state, (stateCounts.get(state) || 0) + 1);
       });
       const demographics = Array.from(stateCounts.entries())
@@ -286,25 +194,31 @@ export default function AnalyticsDashboard() {
         .sort((a, b) => b.value - a.value)
         .slice(0, 6);
 
-      // Top performers
-      const users = await db.users.toArray();
-      const userMap = new Map(users.map((u) => [u.id, u.fullName]));
-      const topPerformers = wallets.map((wallet) => ({
-        name: userMap.get(wallet.volunteerId) || "Unknown",
-        tokens: wallet.tokens,
-        badges: wallet.badges.length,
-      }));
+      const userMap = new Map<string, string>(users.map((u) => [u.id, u.fullName]));
+      const topPerformers = [...wallets]
+        .sort((a, b) => b.tokens - a.tokens)
+        .slice(0, 5)
+        .map((wallet) => ({
+          name: userMap.get(wallet.volunteerId) || "Unknown volunteer",
+          tokens: wallet.tokens,
+          badges: wallet.badges?.length ?? 0,
+        }));
 
       setData({
+        loadedAt: new Date(),
+        range: { from: dateRange.from, to: dateRange.to, start, end },
         overview: {
-          totalPatients,
-          todayRegistrations: todayCount,
+          totalPatients: allPatients.length,
+          periodRegistrations: allPatients.filter((p) => isInRange(p.createdAt, start, end)).length,
           activeVisits,
           completedVisits,
-          avgWaitTime,
-          tokensAwarded: wallets.reduce((sum, w) => sum + w.tokens, 0),
+          avgStage: averageMinutes(
+            finishedInPeriod.map((q) => ({ start: q.queuedAt, end: q.updatedAt })),
+          ),
+          // Every wallet, not just the top five; lifetime so spent tokens still count.
+          tokensEarned: wallets.reduce((sum, w) => sum + (w.lifetimeTokens ?? w.tokens ?? 0), 0),
         },
-        throughput: throughputData,
+        throughput,
         queueMetrics,
         demographics,
         gamification: {
@@ -314,53 +228,15 @@ export default function AnalyticsDashboard() {
         },
       });
     } catch (error) {
-      console.error("Error loading analytics data:", error);
+      console.error(
+        "Error loading analytics data:",
+        error instanceof Error ? error.name : error,
+      );
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
-  }, [dateRange]);
-
-  const exportAnalyticsCSV = useCallback(() => {
-    if (!data) return;
-    downloadCSV(
-      `analytics-${dateRange.from}-to-${dateRange.to}.csv`,
-      ["Date", "Registrations", "Vitals", "Consultations", "Dispenses"],
-      data.throughput.map((d) => [
-        d.date,
-        String(d.registrations),
-        String(d.vitals),
-        String(d.consultations),
-        String(d.dispenses),
-      ]),
-    );
-  }, [data, dateRange]);
-
-  const exportQueueCSV = useCallback(() => {
-    if (!data) return;
-    downloadCSV(
-      `queue-metrics-${dateRange.from}-to-${dateRange.to}.csv`,
-      ["Stage", "Currently Waiting", "Avg Wait (min)", "Total Processed"],
-      data.queueMetrics.map((q) => [
-        q.stage,
-        String(q.currentWaiting),
-        String(q.avgWaitMinutes),
-        String(q.throughput),
-      ]),
-    );
-  }, [data, dateRange]);
-
-  const exportGamificationCSV = useCallback(() => {
-    if (!data) return;
-    downloadCSV(
-      `gamification-${dateRange.from}-to-${dateRange.to}.csv`,
-      ["Name", "Tokens", "Badges"],
-      data.gamification.topPerformers.map((p) => [
-        p.name,
-        String(p.tokens),
-        String(p.badges),
-      ]),
-    );
-  }, [data, dateRange]);
+  }, [dateRange.from, dateRange.to]);
 
   useEffect(() => {
     if (hasAccess) {
@@ -368,402 +244,472 @@ export default function AnalyticsDashboard() {
     }
   }, [hasAccess, loadAnalyticsData]);
 
+  // Exports are an "export" permission action; check it here as well as by
+  // only rendering the page for roles that have it.
+  const exportAllowed = useCallback((): boolean => {
+    if (currentUser && can(currentUser.role, "export")) return true;
+    push({
+      id: generateId(),
+      tone: "warning",
+      title: "Export not allowed for your role",
+      body: "No file was created. Ask an administrator to export this report.",
+    });
+    return false;
+  }, [currentUser, push]);
+
+  // File names use the period the figures were built for, not the inputs.
+  const fileRange = data ? `${data.range.from}-to-${data.range.to}` : "";
+
+  const exportAnalyticsCSV = useCallback(() => {
+    if (!data || !exportAllowed()) return;
+    exportCsv(
+      "daily activity",
+      `analytics-${fileRange}.csv`,
+      ["Date", "Registrations", "Vitals", "Consultations", "Dispenses"],
+      data.throughput.map((d) => [d.date, d.registrations, d.vitals, d.consultations, d.dispenses]),
+    );
+  }, [data, exportAllowed, exportCsv, fileRange]);
+
+  const exportQueueCSV = useCallback(() => {
+    if (!data || !exportAllowed()) return;
+    exportCsv(
+      "queue figures",
+      `queue-metrics-${fileRange}.csv`,
+      ["Stage", "Waiting now", "Finished in period", "Average time in stage (min)"],
+      data.queueMetrics.map((q) => [
+        FLOW_STAGE_LABELS[q.stage],
+        q.currentWaiting,
+        q.finished,
+        q.avgStage ? q.avgStage.minutes : "",
+      ]),
+    );
+  }, [data, exportAllowed, exportCsv, fileRange]);
+
+  const exportGamificationCSV = useCallback(() => {
+    if (!data || !exportAllowed()) return;
+    exportCsv(
+      "volunteer token balances",
+      `gamification-${fileRange}.csv`,
+      ["Name", "Tokens", "Badges"],
+      data.gamification.topPerformers.map((p) => [p.name, p.tokens, p.badges]),
+    );
+  }, [data, exportAllowed, exportCsv, fileRange]);
+
   if (!hasAccess) {
     return (
-      <div className="text-center py-12">
-        <ChartBarIcon className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">
-          Access Restricted
-        </h3>
-        <p className="text-gray-600">
-          Only administrators can access the analytics dashboard.
-        </p>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center space-x-3">
-          <ChartBarIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Analytics Dashboard
-            </h1>
-            <p className="text-gray-600">Loading clinic performance data...</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {[...Array(8)].map((_, i) => (
-            <div key={i} className="card animate-pulse">
-              <div className="h-20 bg-gray-200 rounded"></div>
-            </div>
-          ))}
+      <div className="mx-auto max-w-7xl">
+        <PageHeader title="Analytics" />
+        <div className="panel">
+          <EmptyState
+            icon={LockClosedIcon}
+            title="Access restricted"
+            description="Analytics is available to administrators, auditors and lead clinicians."
+          />
         </div>
       </div>
     );
   }
 
-  if (!data) return null;
+  if (loading && !data) {
+    return <DashboardSkeleton />;
+  }
+
+  // Label figures with the period they were read for; while a new range
+  // loads (or if it fails) the figures on screen are still the previous ones.
+  const shownRange = data?.range ?? bounds;
+  const periodLabel = shownRange
+    ? `${formatNigerianDate(shownRange.start)} – ${formatNigerianDate(addLocalDays(shownRange.end, -1))}`
+    : "";
+  const totals = data
+    ? data.throughput.reduce(
+        (t, d) => ({
+          registrations: t.registrations + d.registrations,
+          vitals: t.vitals + d.vitals,
+          consultations: t.consultations + d.consultations,
+          dispenses: t.dispenses + d.dispenses,
+        }),
+        { registrations: 0, vitals: 0, consultations: 0, dispenses: 0 },
+      )
+    : null;
+  const anyActivity =
+    !!totals &&
+    totals.registrations + totals.vitals + totals.consultations + totals.dispenses > 0;
+  const stateTotal = data?.overview.totalPatients ?? 0;
 
   return (
-    <div className="space-y-6">
-      {/* Header with Date Filter */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center space-x-3">
-          <ChartBarIcon className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Analytics Dashboard
-            </h1>
-            <p className="text-gray-600">Clinic performance and insights</p>
-          </div>
-        </div>
+    <div className="mx-auto max-w-7xl space-y-4">
+      <PageHeader
+        title="Analytics"
+        description="Clinic activity, queue and volunteer figures for a date range."
+      />
 
-        <div className="flex items-center space-x-2">
-          <CalendarIcon className="h-5 w-5 text-gray-400" />
-          <input
-            type="date"
-            value={dateRange.from}
-            onChange={(e) =>
-              setDateRange({ ...dateRange, from: e.target.value })
-            }
-            className="input-field text-sm py-2"
-          />
-          <span className="text-gray-500">to</span>
-          <input
-            type="date"
-            value={dateRange.to}
-            onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
-            className="input-field text-sm py-2"
-          />
-        </div>
-      </div>
-
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="card bg-blue-50 border-blue-200">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 p-2 rounded-lg bg-blue-100">
-              <UsersIcon className="h-6 w-6 text-blue-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-blue-600">
-                Total Patients
-              </p>
-              <p className="text-2xl font-bold text-blue-800">
-                {data.overview.totalPatients}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card bg-green-50 border-green-200">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 p-2 rounded-lg bg-green-100">
-              <HeartIcon className="h-6 w-6 text-green-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-green-600">
-                Active / Completed Visits
-              </p>
-              <p className="text-2xl font-bold text-green-800">
-                {data.overview.activeVisits} / {data.overview.completedVisits}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card bg-orange-50 border-orange-200">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 p-2 rounded-lg bg-orange-100">
-              <ClockIcon className="h-6 w-6 text-orange-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-orange-600">
-                Avg Wait Time
-              </p>
-              <p className="text-2xl font-bold text-orange-800">
-                {data.overview.avgWaitTime > 0
-                  ? `${data.overview.avgWaitTime}m`
-                  : "N/A"}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card bg-purple-50 border-purple-200">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 p-2 rounded-lg bg-purple-100">
-              <TrophyIcon className="h-6 w-6 text-purple-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-purple-600">
-                Tokens Awarded
-              </p>
-              <p className="text-2xl font-bold text-purple-800">
-                {data.overview.tokensAwarded}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Throughput Line Chart */}
-      <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Daily Throughput
-        </h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={data.throughput}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
-            <Legend />
-            <Line
-              type="monotone"
-              dataKey="registrations"
-              stroke="#2563eb"
-              strokeWidth={2}
-              dot={{ r: 4 }}
-              name="Registrations"
+      <section className="panel" aria-label="Date range">
+        <div className="panel-body flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="sm:w-48">
+            <label htmlFor="analytics-from" className="field-label">
+              From
+            </label>
+            <input
+              id="analytics-from"
+              type="date"
+              value={dateRange.from}
+              max={dateRange.to}
+              onChange={(e) => setDateRange((r) => ({ ...r, from: e.target.value }))}
+              className="input-field"
+              aria-invalid={!bounds}
+              aria-describedby={!bounds ? "analytics-range-error" : undefined}
             />
-            <Line
-              type="monotone"
-              dataKey="vitals"
-              stroke="#16a34a"
-              strokeWidth={2}
-              dot={{ r: 4 }}
-              name="Vitals"
+          </div>
+          <div className="sm:w-48">
+            <label htmlFor="analytics-to" className="field-label">
+              To (inclusive)
+            </label>
+            <input
+              id="analytics-to"
+              type="date"
+              value={dateRange.to}
+              min={dateRange.from}
+              onChange={(e) => setDateRange((r) => ({ ...r, to: e.target.value }))}
+              className="input-field"
+              aria-invalid={!bounds}
+              aria-describedby={!bounds ? "analytics-range-error" : undefined}
             />
-            <Line
-              type="monotone"
-              dataKey="consultations"
-              stroke="#9333ea"
-              strokeWidth={2}
-              dot={{ r: 4 }}
-              name="Consultations"
-            />
-            <Line
-              type="monotone"
-              dataKey="dispenses"
-              stroke="#ea580c"
-              strokeWidth={2}
-              dot={{ r: 4 }}
-              name="Dispenses"
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+          </div>
+          <p className="text-caption text-ink-muted sm:pb-3" aria-live="polite">
+            {loading
+              ? "Updating…"
+              : data
+                ? `Read at ${formatTime(data.loadedAt)}`
+                : ""}
+          </p>
+        </div>
+        {!bounds && (
+          <p id="analytics-range-error" className="field-error px-4 pb-4" role="alert">
+            Choose a start date on or before the end date.
+          </p>
+        )}
+      </section>
 
-      {/* Charts Row: Queue Bar Chart + Demographics Pie */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Queue Status Bar Chart */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Queue Status
-          </h3>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={data.queueMetrics}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="stage" tick={{ fontSize: 12 }} />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Legend />
-              <Bar
-                dataKey="currentWaiting"
-                fill="#2563eb"
-                name="Waiting"
-                radius={[4, 4, 0, 0]}
+      {loadFailed && (
+        <div className="banner banner-danger" role="alert">
+          <span className="flex-1">
+            The figures could not be read from this device.
+            {data ? " The figures below are from the last successful read." : ""}
+          </span>
+          <button type="button" onClick={loadAnalyticsData} className="btn-secondary">
+            Try again
+          </button>
+        </div>
+      )}
+
+      {bounds && shownRange && <DataScopeNote period={periodLabel} />}
+
+      {data && bounds && (
+        <>
+          {/* Overview */}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile
+              label="Patient records"
+              value={data.overview.totalPatients.toLocaleString("en-NG")}
+              hint="All time"
+              icon={UsersIcon}
+            />
+            <StatTile
+              label="New patients"
+              value={data.overview.periodRegistrations.toLocaleString("en-NG")}
+              hint="Registered in this period"
+              icon={UserPlusIcon}
+            />
+            <StatTile
+              label="Open / closed visits"
+              value={`${data.overview.activeVisits.toLocaleString("en-NG")} / ${data.overview.completedVisits.toLocaleString("en-NG")}`}
+              hint="All time, as of now"
+              icon={HeartIcon}
+            />
+            <StatTile
+              label="Average time in a stage"
+              value={data.overview.avgStage ? `${data.overview.avgStage.minutes} min` : "No data"}
+              hint={
+                data.overview.avgStage
+                  ? `Queue to finish, ${data.overview.avgStage.count} stages finished in this period`
+                  : "No stages with a queue time finished in this period"
+              }
+              icon={ClockIcon}
+            />
+          </div>
+
+          {/* Daily activity */}
+          <section className="panel" aria-labelledby="daily-activity-title">
+            <div className="panel-header flex-wrap">
+              <h2 id="daily-activity-title" className="panel-title">
+                Daily activity
+              </h2>
+              <span className="text-caption text-ink-muted">Records saved per day</span>
+            </div>
+            {!anyActivity ? (
+              <EmptyState
+                icon={ChartBarIcon}
+                title="No activity recorded in this period"
+                description="Registrations, vitals, consultations and dispensing saved on this device will show here."
               />
-              <Bar
-                dataKey="throughput"
-                fill="#16a34a"
-                name="Processed"
-                radius={[4, 4, 0, 0]}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            {data.queueMetrics.map((q) => (
-              <div
-                key={q.stage}
-                className="flex justify-between px-2 py-1 bg-gray-50 rounded"
-              >
-                <span className="capitalize text-gray-700">{q.stage}</span>
-                <span className="text-gray-500">
-                  {q.avgWaitMinutes > 0
-                    ? `~${q.avgWaitMinutes}m wait`
-                    : "No data"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Demographics Pie Chart */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Patients by State
-          </h3>
-          {data.demographics.length > 0 ? (
-            <>
-              <ResponsiveContainer width="100%" height={250}>
-                <PieChart>
-                  <Pie
-                    data={data.demographics}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={90}
-                    dataKey="value"
-                    label={({ name, percent }) =>
-                      `${name} (${(percent * 100).toFixed(0)}%)`
-                    }
-                  >
-                    {data.demographics.map((_, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={CHART_COLORS[index % CHART_COLORS.length]}
+            ) : (
+              <div className="panel-body space-y-3">
+                <div className="h-72" aria-hidden>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={data.throughput} margin={{ top: 8, right: 16, bottom: 0, left: -16 }}>
+                      <CartesianGrid stroke={CHART_GRID} vertical={false} />
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fontSize: 12, fill: CHART_AXIS }}
+                        stroke={CHART_GRID}
+                        minTickGap={16}
                       />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="mt-2 flex flex-wrap gap-2 justify-center">
-                {data.demographics.map((d, i) => (
-                  <span
-                    key={d.name}
-                    className="text-xs flex items-center gap-1"
-                  >
-                    <span
-                      className="inline-block w-3 h-3 rounded-full"
-                      style={{
-                        backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
-                      }}
-                    />
-                    {d.name}: {d.value}
-                  </span>
-                ))}
-              </div>
-            </>
-          ) : (
-            <p className="text-gray-500 text-center py-12">
-              No patient data yet
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Gamification Insights */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top Performers */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Top Performers
-          </h3>
-          {data.gamification.topPerformers.length > 0 ? (
-            <div className="space-y-3">
-              {data.gamification.topPerformers.map((performer, index) => (
-                <div key={index} className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-white font-bold text-sm">
-                      {index + 1}
-                    </div>
-                    <div>
-                      <span className="font-medium text-gray-900">
-                        {performer.name}
-                      </span>
-                      <span className="text-sm text-gray-600 ml-2">
-                        {performer.badges} badges
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-lg font-bold text-primary">
-                    {performer.tokens}
-                  </span>
+                      <YAxis
+                        allowDecimals={false}
+                        tick={{ fontSize: 12, fill: CHART_AXIS }}
+                        stroke={CHART_GRID}
+                      />
+                      <Tooltip />
+                      <Legend wrapperStyle={{ fontSize: 13 }} />
+                      {ACTIVITY_SERIES.map((s) => (
+                        <Line
+                          key={s.key}
+                          type="monotone"
+                          dataKey={s.key}
+                          stroke={s.color}
+                          strokeWidth={2}
+                          strokeDasharray={s.dash}
+                          dot={{ r: 4 }}
+                          name={s.label}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-gray-500 text-center py-8">
-              No gamification data yet
-            </p>
-          )}
-        </div>
-
-        {/* Gamification Overview */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Gamification Overview
-          </h3>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-gray-700">Total Game Sessions</span>
-              <span className="text-lg font-bold text-gray-900">
-                {data.gamification.totalSessions}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-gray-700">Pending Approvals</span>
-              <div className="flex items-center space-x-2">
-                {data.gamification.pendingApprovals > 0 && (
-                  <ExclamationTriangleIcon className="h-4 w-4 text-yellow-600" />
-                )}
-                <span className="text-lg font-bold text-gray-900">
-                  {data.gamification.pendingApprovals}
-                </span>
+                <details className="rounded-md border border-line">
+                  <summary className="flex min-h-touch-target cursor-pointer items-center px-3 text-label text-ink-secondary hover:bg-surface-hover">
+                    Show the daily figures as a table
+                  </summary>
+                  <div className="max-h-96 overflow-auto border-t border-line">
+                    <table className="data-table">
+                      <caption className="sr-only">Records saved per day, {periodLabel}</caption>
+                      <thead>
+                        <tr>
+                          <th scope="col">Date</th>
+                          {ACTIVITY_SERIES.map((s) => (
+                            <th key={s.key} scope="col" className="text-right">
+                              {s.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.throughput.map((d) => (
+                          <tr key={d.date}>
+                            <td className="whitespace-nowrap">{d.label}</td>
+                            {ACTIVITY_SERIES.map((s) => (
+                              <td key={s.key} className="text-right tabular-nums">
+                                {d[s.key]}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                        {totals && (
+                          <tr>
+                            <td className="font-semibold">Total</td>
+                            {ACTIVITY_SERIES.map((s) => (
+                              <td key={s.key} className="text-right font-semibold tabular-nums">
+                                {totals[s.key]}
+                              </td>
+                            ))}
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
               </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-gray-700">Total Tokens Awarded</span>
-              <span className="text-lg font-bold text-primary">
-                {data.overview.tokensAwarded}
-              </span>
-            </div>
+            )}
+          </section>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {/* Queue */}
+            <section className="panel" aria-labelledby="queue-figures-title">
+              <div className="panel-header">
+                <h2 id="queue-figures-title" className="panel-title">
+                  Queue
+                </h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Stage</th>
+                      <th scope="col" className="text-right">Waiting now</th>
+                      <th scope="col" className="text-right">Finished</th>
+                      <th scope="col" className="text-right">Avg time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.queueMetrics.map((q) => (
+                      <tr key={q.stage}>
+                        <td className="font-medium">{FLOW_STAGE_LABELS[q.stage]}</td>
+                        <td className="text-right tabular-nums">{q.currentWaiting}</td>
+                        <td className="text-right tabular-nums">{q.finished}</td>
+                        <td className="text-right tabular-nums text-ink-secondary">
+                          {q.avgStage ? `${q.avgStage.minutes} min` : "No data"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="border-t border-line px-4 py-3 text-caption text-ink-muted">
+                Finished and average time cover this period; average time runs
+                from joining the stage's queue to finishing it. Waiting is right
+                now.
+              </p>
+            </section>
+
+            {/* States */}
+            <section className="panel" aria-labelledby="states-title">
+              <div className="panel-header">
+                <h2 id="states-title" className="panel-title">
+                  Patients by state
+                </h2>
+                <span className="text-caption text-ink-muted">All patient records · top 6</span>
+              </div>
+              <div className="panel-body">
+                {data.demographics.length > 0 ? (
+                  <BarList
+                    label="Patient records by state"
+                    scale="share"
+                    total={stateTotal}
+                    items={data.demographics.map((d) => ({
+                      key: d.name,
+                      label: d.name,
+                      value: d.value,
+                    }))}
+                  />
+                ) : (
+                  <p className="text-body text-ink-muted">No patient records on this device yet.</p>
+                )}
+              </div>
+            </section>
           </div>
 
-          {data.gamification.pendingApprovals > 0 && (
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <button className="btn-primary w-full text-sm">
-                Review Pending Approvals
-              </button>
+          {/* Volunteer training (gamification) */}
+          <section className="panel" aria-labelledby="volunteer-games-title">
+            <div className="panel-header flex-wrap">
+              <h2 id="volunteer-games-title" className="panel-title flex items-center gap-2">
+                <TrophyIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+                Volunteer training games
+              </h2>
+              <span className="text-caption text-ink-muted">All time</span>
             </div>
-          )}
-        </div>
-      </div>
+            <div className="grid grid-cols-1 gap-0 lg:grid-cols-2">
+              <div className="border-b border-line p-4 lg:border-b-0 lg:border-r">
+                <p className="section-label mb-2">Highest token balances</p>
+                {data.gamification.topPerformers.length > 0 ? (
+                  <ol className="divide-y divide-line">
+                    {data.gamification.topPerformers.map((performer, index) => (
+                      <li key={`${performer.name}-${index}`} className="flex items-center gap-3 py-2">
+                        <span className="w-6 text-right tabular-nums text-ink-muted">{index + 1}.</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium text-ink">{performer.name}</span>
+                          <span className="text-caption text-ink-muted">
+                            {performer.badges} {performer.badges === 1 ? "badge" : "badges"}
+                          </span>
+                        </span>
+                        <span className="tabular-nums text-ink">
+                          {performer.tokens.toLocaleString("en-NG")} tokens
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="text-body text-ink-muted">No volunteer has earned tokens on this device yet.</p>
+                )}
+              </div>
+              <dl className="space-y-3 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-body text-ink-secondary">Game sessions played</dt>
+                  <dd className="tabular-nums text-ink">{data.gamification.totalSessions.toLocaleString("en-NG")}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-body text-ink-secondary">Sessions waiting for approval</dt>
+                  <dd className="flex items-center gap-2 tabular-nums text-ink">
+                    {data.gamification.pendingApprovals > 0 ? (
+                      <StatusBadge tone="warning">{data.gamification.pendingApprovals} to review</StatusBadge>
+                    ) : (
+                      "None"
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-body text-ink-secondary">Tokens earned by all volunteers</dt>
+                  <dd className="tabular-nums text-ink">{data.overview.tokensEarned.toLocaleString("en-NG")}</dd>
+                </div>
+                {data.gamification.pendingApprovals > 0 && currentUser?.role === "admin" && (
+                  <div className="pt-1">
+                    <Link to="/admin/approvals" className="btn-primary w-full">
+                      Review pending approvals
+                    </Link>
+                  </div>
+                )}
+              </dl>
+            </div>
+          </section>
 
-      {/* Export Section */}
-      <div className="card">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Data Export
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <button
-            onClick={exportAnalyticsCSV}
-            className="btn-secondary text-sm flex items-center justify-center gap-2"
-          >
-            <ArrowDownTrayIcon className="h-4 w-4" />
-            Throughput (CSV)
-          </button>
-          <button
-            onClick={exportQueueCSV}
-            className="btn-secondary text-sm flex items-center justify-center gap-2"
-          >
-            <ArrowDownTrayIcon className="h-4 w-4" />
-            Queue Metrics (CSV)
-          </button>
-          <button
-            onClick={exportGamificationCSV}
-            className="btn-secondary text-sm flex items-center justify-center gap-2"
-          >
-            <ArrowDownTrayIcon className="h-4 w-4" />
-            Gamification (CSV)
-          </button>
-        </div>
-      </div>
+          {/* Export */}
+          <section className="panel" aria-labelledby="analytics-export-title">
+            <div className="panel-header">
+              <h2 id="analytics-export-title" className="panel-title">
+                Export
+              </h2>
+              <span className="text-caption text-ink-muted">CSV files, saved to this device</span>
+            </div>
+            <ul className="divide-y divide-line">
+              <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  <span className="block font-medium text-ink">Daily activity</span>
+                  <span className="text-caption text-ink-muted">
+                    One row per day in the period: new patients, vitals, consultations and dispensing records.
+                  </span>
+                </span>
+                <button type="button" onClick={exportAnalyticsCSV} className="btn-secondary">
+                  <ArrowDownTrayIcon className="h-4 w-4" aria-hidden />
+                  Daily activity (CSV)
+                </button>
+              </li>
+              <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  <span className="block font-medium text-ink">Queue figures</span>
+                  <span className="text-caption text-ink-muted">
+                    One row per stage: waiting now, finished and average time in the period.
+                  </span>
+                </span>
+                <button type="button" onClick={exportQueueCSV} className="btn-secondary">
+                  <ArrowDownTrayIcon className="h-4 w-4" aria-hidden />
+                  Queue figures (CSV)
+                </button>
+              </li>
+              <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  <span className="block font-medium text-ink">Volunteer token balances</span>
+                  <span className="text-caption text-ink-muted">
+                    The five highest current balances with badge counts. Not limited to the period.
+                  </span>
+                </span>
+                <button type="button" onClick={exportGamificationCSV} className="btn-secondary">
+                  <ArrowDownTrayIcon className="h-4 w-4" aria-hidden />
+                  Token balances (CSV)
+                </button>
+              </li>
+            </ul>
+          </section>
+        </>
+      )}
     </div>
   );
 }

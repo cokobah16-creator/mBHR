@@ -1,9 +1,19 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
-import { formatNigerianDate } from "@/utils/dateFormat";
-import { PlusIcon, HeartIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowPathIcon,
+  HeartIcon,
+  PlusIcon,
+} from "@heroicons/react/24/outline";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
+import { conditionStatusInfo, formatPortalDate } from "./portalStatus";
+import { readPortalUser } from "./portalSession";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface MedicalCondition {
   id: string;
@@ -14,38 +24,59 @@ interface MedicalCondition {
   created_at: string;
 }
 
+type ConditionStatus = MedicalCondition["status"];
+
+const STATUS_OPTIONS: { value: ConditionStatus; label: string }[] = [
+  { value: "active", label: "Current – I have it now" },
+  { value: "managed", label: "Being managed – under treatment or control" },
+  { value: "resolved", label: "Resolved – I no longer have it" },
+];
+
+function isConditionStatus(value: string): value is ConditionStatus {
+  return value === "active" || value === "managed" || value === "resolved";
+}
+
+const EMPTY_FORM = {
+  condition_name: "",
+  diagnosed_date: "",
+  status: "active" as ConditionStatus,
+  notes: "",
+};
+
+const PAGE_TITLE = "Your conditions";
+const PAGE_DESCRIPTION =
+  "Long-term health conditions added to your portal record, newest first. They are separate from the notes the clinic keeps from your visits.";
+
 export function MedicalConditions() {
   const navigate = useNavigate();
+  const online = useOnlineStatus();
   const [conditions, setConditions] = useState<MedicalCondition[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [nameError, setNameError] = useState("");
   const [success, setSuccess] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  const [newCondition, setNewCondition] = useState({
-    condition_name: "",
-    diagnosed_date: "",
-    status: "active" as "active" | "resolved" | "managed",
-    notes: "",
-  });
+  const [newCondition, setNewCondition] = useState(EMPTY_FORM);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    loadConditions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadConditions = async () => {
+  const loadConditions = useCallback(async () => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
 
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
+      const portalUser = readPortalUser();
+      if (!portalUser) {
         navigate("/patient/login", { replace: true });
         return;
       }
-
-      const portalUser = JSON.parse(portalUserStr);
 
       const { data, error: conditionsError } = await supabase
         .from("patient_medical_conditions")
@@ -56,32 +87,83 @@ export function MedicalConditions() {
       if (conditionsError) throw conditionsError;
 
       setConditions(data || []);
+      setLoaded(true);
     } catch (err) {
-      logger.error("Error loading conditions:", err);
-      setError("Failed to load medical conditions");
+      logger.error(
+        "Error loading conditions:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      // Offline, the "You are offline" notice already explains it.
+      setError(
+        navigator.onLine
+          ? "We could not load your conditions. Please try again."
+          : "",
+      );
     } finally {
       setLoading(false);
     }
+  }, [navigate]);
+
+  // Try once even when offline (this phone may have kept a copy from the last
+  // time it was online), then reload when the connection comes back.
+  const attempted = useRef(false);
+
+  useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+    if (!online && attempted.current) return;
+    attempted.current = true;
+    loadConditions();
+  }, [online, loadConditions]);
+
+  useEffect(() => {
+    if (showAdd) nameInputRef.current?.focus();
+  }, [showAdd]);
+
+  const openForm = () => {
+    setSuccess("");
+    setFormError("");
+    setNameError("");
+    setShowAdd(true);
   };
 
-  const addCondition = async () => {
+  const closeForm = () => {
+    setShowAdd(false);
+    setFormError("");
+    setNameError("");
+    setNewCondition(EMPTY_FORM);
+    // Wait for the button to be enabled again before focusing it.
+    setTimeout(() => addButtonRef.current?.focus(), 0);
+  };
+
+  const addCondition = async (e?: FormEvent<HTMLFormElement>) => {
+    e?.preventDefault();
     if (!newCondition.condition_name.trim()) {
-      setError("Condition name is required");
+      setNameError("Enter the name of the condition.");
+      nameInputRef.current?.focus();
+      return;
+    }
+    if (!supabase) return;
+    if (!navigator.onLine) {
+      setFormError(
+        "You are offline, so this condition was not saved. Connect to the internet and try again.",
+      );
       return;
     }
 
     setSaving(true);
-    setError("");
+    setFormError("");
+    setNameError("");
     setSuccess("");
 
     try {
-      const portalUserStr = localStorage.getItem("patient_portal_user");
-      if (!portalUserStr) {
+      const portalUser = readPortalUser();
+      if (!portalUser) {
         navigate("/patient/login", { replace: true });
         return;
       }
-
-      const portalUser = JSON.parse(portalUserStr);
 
       const { error: insertError } = await supabase
         .from("patient_medical_conditions")
@@ -95,225 +177,276 @@ export function MedicalConditions() {
 
       if (insertError) throw insertError;
 
-      setSuccess("Medical condition added successfully");
-      setNewCondition({
-        condition_name: "",
-        diagnosed_date: "",
-        status: "active",
-        notes: "",
-      });
+      setSuccess(
+        `${newCondition.condition_name.trim()} was saved to your portal record.`,
+      );
+      setNewCondition(EMPTY_FORM);
       setShowAdd(false);
       await loadConditions();
     } catch (err) {
-      logger.error("Error adding condition:", err);
-      setError("Failed to add medical condition");
+      logger.error(
+        "Error adding condition:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      setFormError(
+        "This condition was not saved. Check your connection and try again.",
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
+  const nameDescribedBy = `condition-name-${nameError ? "error" : "hint"}`;
+
+  if (!supabase) {
     return (
-      <div className="min-h-screen bg-gray-50 px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading medical conditions...</p>
-          </div>
-        </div>
-      </div>
+      <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
+        <PortalNotice tone="info" title="Conditions are not available here">
+          This portal is not connected to the clinic&apos;s online records, so
+          conditions cannot be shown or added. Tell the outreach team about
+          any health conditions at your next visit.
+        </PortalNotice>
+      </PortalPage>
     );
   }
 
+  if (loading && !loaded) {
+    return <PortalListSkeleton label="Loading your conditions" />;
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50 px-4 py-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Medical Conditions
-            </h1>
-            <p className="mt-2 text-gray-600">
-              Manage your health conditions and history
-            </p>
-          </div>
+    <PortalPage
+      title={PAGE_TITLE}
+      description={PAGE_DESCRIPTION}
+      actions={
+        !showAdd && (
           <button
-            onClick={() => setShowAdd(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            ref={addButtonRef}
+            type="button"
+            onClick={openForm}
+            disabled={!online}
+            className="btn-primary"
           >
-            <PlusIcon className="h-5 w-5" />
-            Add Condition
+            <PlusIcon className="h-5 w-5" aria-hidden />
+            Add a condition
           </button>
-        </div>
+        )
+      }
+    >
+      {!online && (
+        <PortalNotice tone="offline" title="You are offline">
+          {loaded
+            ? "You are seeing the conditions loaded when this phone was last online. They may be out of date. Connect to the internet to add a condition."
+            : "Connect to the internet to see or add your conditions."}
+        </PortalNotice>
+      )}
 
-        {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-800">{error}</p>
+      {error && (
+        <PortalNotice
+          tone="danger"
+          action={
+            online ? (
+              <button
+                type="button"
+                onClick={loadConditions}
+                className="btn-secondary"
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Try again
+              </button>
+            ) : undefined
+          }
+        >
+          {error}
+        </PortalNotice>
+      )}
+
+      {success && <PortalNotice tone="success">{success}</PortalNotice>}
+
+      {showAdd && (
+        <form
+          onSubmit={addCondition}
+          className="panel"
+          aria-labelledby="add-condition-title"
+          noValidate
+        >
+          <div className="panel-header">
+            <h2 id="add-condition-title" className="panel-title">
+              Add a condition
+            </h2>
           </div>
-        )}
-
-        {success && (
-          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <p className="text-sm text-green-800">{success}</p>
-          </div>
-        )}
-
-        {showAdd && (
-          <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold mb-4">Add New Condition</h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Condition Name *
-                </label>
-                <input
-                  type="text"
-                  value={newCondition.condition_name}
-                  onChange={(e) =>
-                    setNewCondition({
-                      ...newCondition,
-                      condition_name: e.target.value,
-                    })
-                  }
-                  placeholder="e.g., Hypertension, Diabetes"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Diagnosed Date
-                </label>
-                <input
-                  type="date"
-                  value={newCondition.diagnosed_date}
-                  onChange={(e) =>
-                    setNewCondition({
-                      ...newCondition,
-                      diagnosed_date: e.target.value,
-                    })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Status
-                </label>
-                <select
-                  value={newCondition.status}
-                  onChange={(e) =>
-                    setNewCondition({
-                      ...newCondition,
-                      status: e.target.value as
-                        | "active"
-                        | "resolved"
-                        | "managed",
-                    })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="active">Active</option>
-                  <option value="managed">Managed</option>
-                  <option value="resolved">Resolved</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Notes
-                </label>
-                <textarea
-                  value={newCondition.notes}
-                  onChange={(e) =>
-                    setNewCondition({ ...newCondition, notes: e.target.value })
-                  }
-                  placeholder="Additional information about this condition"
-                  rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={addCondition}
-                  disabled={saving}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {saving ? "Adding..." : "Add Condition"}
-                </button>
-                <button
-                  onClick={() => setShowAdd(false)}
-                  disabled={saving}
-                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-              </div>
+          <div className="panel-body space-y-4">
+            <div>
+              <label htmlFor="condition-name" className="field-label">
+                Condition name (required)
+              </label>
+              <input
+                ref={nameInputRef}
+                id="condition-name"
+                type="text"
+                value={newCondition.condition_name}
+                onChange={(e) => {
+                  setNameError("");
+                  setNewCondition({
+                    ...newCondition,
+                    condition_name: e.target.value,
+                  });
+                }}
+                aria-invalid={nameError ? true : undefined}
+                aria-describedby={nameDescribedBy}
+                disabled={saving}
+                className="input-field"
+              />
+              {nameError ? (
+                <p id="condition-name-error" className="field-error">
+                  {nameError}
+                </p>
+              ) : (
+                <p id="condition-name-hint" className="field-hint">
+                  For example: high blood pressure, diabetes, asthma.
+                </p>
+              )}
             </div>
-          </div>
-        )}
 
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          {conditions.length === 0 ? (
-            <div className="p-12 text-center">
-              <HeartIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                No conditions recorded
-              </h3>
-              <p className="text-gray-600">
-                Add your medical conditions to keep your record updated
+            <div>
+              <label htmlFor="condition-date" className="field-label">
+                Date a health worker told you (optional)
+              </label>
+              <input
+                id="condition-date"
+                type="date"
+                value={newCondition.diagnosed_date}
+                onChange={(e) =>
+                  setNewCondition({
+                    ...newCondition,
+                    diagnosed_date: e.target.value,
+                  })
+                }
+                disabled={saving}
+                className="input-field"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="condition-status" className="field-label">
+                How is it now?
+              </label>
+              <select
+                id="condition-status"
+                value={newCondition.status}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (isConditionStatus(value)) {
+                    setNewCondition({ ...newCondition, status: value });
+                  }
+                }}
+                disabled={saving}
+                className="input-field"
+              >
+                {STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="condition-notes" className="field-label">
+                Notes (optional)
+              </label>
+              <textarea
+                id="condition-notes"
+                value={newCondition.notes}
+                onChange={(e) =>
+                  setNewCondition({ ...newCondition, notes: e.target.value })
+                }
+                rows={3}
+                disabled={saving}
+                aria-describedby="condition-notes-hint"
+                className="input-field"
+              />
+              <p id="condition-notes-hint" className="field-hint">
+                For example, medicines you take for it.
               </p>
             </div>
-          ) : (
-            <div className="divide-y divide-gray-200">
-              {conditions.map((condition) => (
-                <div key={condition.id} className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <h3 className="font-medium text-gray-900">
-                        {condition.condition_name}
-                      </h3>
-                      {condition.diagnosed_date && (
-                        <p className="text-sm text-gray-600 mt-1">
-                          Diagnosed:{" "}
-                          {formatNigerianDate(condition.diagnosed_date)}
-                        </p>
-                      )}
-                      {condition.notes && (
-                        <p className="text-sm text-gray-600 mt-1">
-                          {condition.notes}
-                        </p>
-                      )}
-                    </div>
-                    <span
-                      className={`px-2 py-1 text-xs font-medium rounded ${
-                        condition.status === "active"
-                          ? "bg-red-100 text-red-800"
-                          : condition.status === "managed"
-                            ? "bg-yellow-100 text-yellow-800"
-                            : "bg-green-100 text-green-800"
-                      }`}
-                    >
-                      {condition.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
-        <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-          <p className="text-sm text-blue-800">
-            <strong>Note:</strong> This information will be reviewed by your
-            healthcare provider and may be used to update your official medical
-            record.
-          </p>
+            {formError && (
+              <PortalNotice tone="danger">{formError}</PortalNotice>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                disabled={saving || !online}
+                className="btn-primary"
+              >
+                {saving ? "Saving…" : "Save condition"}
+              </button>
+              <button
+                type="button"
+                onClick={closeForm}
+                disabled={saving}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      {loaded && conditions.length === 0 && !showAdd && (
+        <div className="panel">
+          <EmptyState
+            icon={HeartIcon}
+            title="No conditions saved yet"
+            description="If a health worker has told you that you have a long-term condition, you can add it here so it is part of your portal record."
+          />
         </div>
-      </div>
-    </div>
+      )}
+
+      {conditions.length > 0 && (
+        <ul className="panel divide-y divide-line" aria-label="Your conditions">
+          {conditions.map((condition) => {
+            const status = conditionStatusInfo(condition.status);
+            return (
+              <li key={condition.id} className="p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <h3 className="text-body font-medium text-ink">
+                    {condition.condition_name}
+                  </h3>
+                  <StatusBadge tone={status.tone} icon>
+                    {status.label}
+                  </StatusBadge>
+                </div>
+                {condition.diagnosed_date && (
+                  <p className="mt-1 text-body text-ink-secondary">
+                    Diagnosed {formatPortalDate(condition.diagnosed_date)}
+                  </p>
+                )}
+                {condition.notes && (
+                  <p className="mt-1 whitespace-pre-wrap text-body text-ink-secondary">
+                    {condition.notes}
+                  </p>
+                )}
+                {condition.created_at && (
+                  <p className="mt-1 text-caption text-ink-muted">
+                    Added to your portal on{" "}
+                    {formatPortalDate(condition.created_at)}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <PortalNotice tone="info">
+        Adding a condition here does not change the record the clinic keeps
+        from your visits, and it is not a diagnosis. Tell your clinician about
+        it at your next visit.
+      </PortalNotice>
+    </PortalPage>
   );
 }

@@ -1,5 +1,10 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
-import { captureError } from "@/lib/logger";
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon } from "@heroicons/react/20/solid";
+import * as Sentry from "@sentry/react";
+import { can } from "@/auth/roles";
+import { useAuthStore } from "@/stores/auth";
+import { DeviceResetPanel } from "@/components/DeviceResetPanel";
 
 interface Props {
   children: ReactNode;
@@ -9,66 +14,44 @@ interface State {
   hasError: boolean;
   error?: Error;
   isClearing: boolean;
+  showErase: boolean;
 }
 
-async function clearAllClientState(): Promise<void> {
-  try {
-    localStorage.clear();
-  } catch (e) {
-    console.error("localStorage.clear failed:", e);
-  }
+function errorName(e: unknown): unknown {
+  return e instanceof Error ? e.name : e;
+}
+
+/**
+ * Removes what a stale deployment leaves behind: service workers that keep
+ * serving an old bundle, the Cache Storage they fill, and per-tab session
+ * state. Patient records (IndexedDB), the staff sign-in and the queue of
+ * changes waiting to sync (localStorage) are left alone: this used to delete
+ * them too, which let anyone who hit an error erase unsynced records. Erasing
+ * them now needs an administrator PIN, through DeviceResetPanel.
+ */
+async function clearAppCache(): Promise<void> {
   try {
     sessionStorage.clear();
   } catch (e) {
-    console.error("sessionStorage.clear failed:", e);
+    console.error("sessionStorage.clear failed:", errorName(e));
   }
 
-  // Unregister service workers so a stale SW can't keep serving an old bundle.
   try {
     if ("serviceWorker" in navigator) {
       const regs = await navigator.serviceWorker.getRegistrations();
       await Promise.all(regs.map((r) => r.unregister()));
     }
   } catch (e) {
-    console.error("serviceWorker unregister failed:", e);
+    console.error("serviceWorker unregister failed:", errorName(e));
   }
 
-  // Clear Cache Storage (workbox precache, etc.)
   try {
     if ("caches" in window) {
       const keys = await caches.keys();
       await Promise.all(keys.map((k) => caches.delete(k)));
     }
   } catch (e) {
-    console.error("caches.delete failed:", e);
-  }
-
-  // Drop all IndexedDB databases (Dexie + others). databases() is unsupported
-  // on Safari < 17, so fall back to a known list.
-  try {
-    const idb = window.indexedDB;
-    if (idb) {
-      const dbNames: string[] = [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const idbAny = idb as any;
-      if (typeof idbAny.databases === "function") {
-        const list = await idbAny.databases();
-        for (const d of list) if (d?.name) dbNames.push(d.name);
-      } else {
-        dbNames.push("mbhr_v5", "keyval-store");
-      }
-      await Promise.all(
-        dbNames.map(
-          (name) =>
-            new Promise<void>((resolve) => {
-              const req = idb.deleteDatabase(name);
-              req.onsuccess = req.onerror = req.onblocked = () => resolve();
-            }),
-        ),
-      );
-    }
-  } catch (e) {
-    console.error("indexedDB delete failed:", e);
+    console.error("caches.delete failed:", errorName(e));
   }
 }
 
@@ -76,6 +59,7 @@ export class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
     isClearing: false,
+    showErase: false,
   };
 
   public static getDerivedStateFromError(error: Error): Partial<State> {
@@ -83,89 +67,134 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    captureError(error, {
-      tag: "ErrorBoundary",
-      extra: { componentStack: errorInfo.componentStack },
-    });
+    // logger.captureError would print the whole error to the console, and
+    // error messages can embed record data, so log the name only. Sentry
+    // reporting is unchanged (see beforeSend in main.tsx).
+    console.error("[ErrorBoundary] caught error:", errorName(error));
+    try {
+      Sentry.captureException(error, {
+        tags: { source: "ErrorBoundary" },
+        extra: { componentStack: errorInfo.componentStack },
+      });
+    } catch {
+      // Sentry not initialised or its transport failed.
+    }
   }
 
   private handleClearAndReload = async () => {
     this.setState({ isClearing: true });
-    await clearAllClientState();
+    await clearAppCache();
     window.location.replace("/");
   };
 
   public render() {
     if (this.state.hasError) {
       const err = this.state.error;
-      const errorText = err
-        ? `${err.name || "Error"}: ${err.message || "Unknown error"}`
-        : "Unknown error";
+      const { isClearing, showErase } = this.state;
+      // Device reset stays reachable only by a signed-in administrator (as on
+      // admin Settings), and DeviceResetPanel asks for their PIN again.
+      const user = useAuthStore.getState().currentUser;
+      const canResetDevice = !!user && can(user.role, "users");
 
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50">
-          <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-6">
-            <div className="text-center">
-              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
-                <svg
-                  className="h-6 w-6 text-red-600"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"
-                  />
-                </svg>
+        <main className="min-h-screen flex items-center justify-center bg-canvas px-4 py-8">
+          <div
+            className="panel w-full max-w-lg p-6"
+            role="alert"
+            aria-labelledby="error-boundary-title"
+          >
+            <div className="flex items-start gap-3">
+              <ExclamationTriangleIcon
+                className="h-6 w-6 shrink-0 text-danger mt-1"
+                aria-hidden
+              />
+              <div className="min-w-0">
+                <h1 id="error-boundary-title" className="text-h1 text-ink">
+                  Something went wrong
+                </h1>
+                <p className="mt-2 text-body text-ink-secondary">
+                  This screen stopped because of an error in the app. Records
+                  that were already saved are still stored on this device.
+                  Anything you were typing on this screen may not have been
+                  saved.
+                </p>
               </div>
-              <h3 className="mt-4 text-lg font-medium text-gray-900">
-                Something went wrong
-              </h3>
-              <p className="mt-2 text-sm text-gray-500">
-                An unexpected error occurred. Try refreshing the page. If the
-                problem persists, clear cached data to recover from a stale
-                deployment.
-              </p>
+            </div>
 
-              <p className="mt-3 text-xs text-gray-700 bg-gray-100 border border-gray-200 rounded px-3 py-2 break-words">
-                {errorText}
-              </p>
+            <div className="mt-5 rounded-md border border-line bg-surface-sunken p-4">
+              <p className="section-label mb-2">What to do next</p>
+              <ol className="list-decimal space-y-1 pl-5 text-body text-ink-secondary">
+                <li>Reload the page. This fixes most problems.</li>
+                <li>
+                  If the error comes back, clear the app cache. This removes
+                  old app files left over from an update. Patient records and
+                  changes waiting to sync stay on this device.
+                </li>
+                <li>
+                  If it still happens, tell your site administrator what you
+                  were doing when it appeared.
+                </li>
+              </ol>
+            </div>
 
-              <div className="mt-6 flex flex-col gap-2">
-                <button
-                  onClick={() => window.location.reload()}
-                  className="btn-primary"
-                  disabled={this.state.isClearing}
-                >
-                  Refresh Page
-                </button>
-                <button
-                  onClick={this.handleClearAndReload}
-                  className="text-sm text-gray-600 hover:text-gray-900 underline"
-                  disabled={this.state.isClearing}
-                >
-                  {this.state.isClearing
-                    ? "Clearing…"
-                    : "Clear cached data & reload"}
-                </button>
-              </div>
-
-              {import.meta.env.DEV && err?.stack && (
-                <details className="mt-4 text-left">
-                  <summary className="text-sm text-gray-600 cursor-pointer">
-                    Stack trace
-                  </summary>
-                  <pre className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded overflow-auto">
+            {import.meta.env.DEV && err && (
+              <details className="mt-4 rounded-md border border-danger-line bg-danger-soft p-3">
+                <summary className="cursor-pointer text-label text-danger-fg">
+                  Technical details (development build only)
+                </summary>
+                <p className="mt-2 font-mono text-caption text-danger-fg break-words">
+                  {`${err.name || "Error"}: ${err.message || "Unknown error"}`}
+                </p>
+                {err.stack && (
+                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-caption text-danger-fg">
                     {err.stack}
                   </pre>
-                </details>
-              )}
+                )}
+              </details>
+            )}
+
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={this.handleClearAndReload}
+                className="btn-secondary"
+                disabled={isClearing}
+              >
+                {isClearing ? "Clearing app cache…" : "Clear app cache and reload"}
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="btn-primary"
+                disabled={isClearing}
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Reload page
+              </button>
             </div>
+
+            {canResetDevice && (
+              <div className="mt-6 border-t border-line pt-4">
+                <button
+                  type="button"
+                  className="btn-ghost -ml-3 text-label"
+                  aria-expanded={showErase}
+                  aria-controls="error-boundary-erase"
+                  onClick={() => this.setState({ showErase: !showErase })}
+                >
+                  {showErase
+                    ? "Hide device reset"
+                    : "Still broken? Reset this device"}
+                </button>
+                {showErase && (
+                  <div id="error-boundary-erase" className="mt-3">
+                    <DeviceResetPanel />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
+        </main>
       );
     }
 

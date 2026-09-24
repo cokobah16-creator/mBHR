@@ -1,15 +1,20 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
-  DocumentCheckIcon,
-  CheckCircleIcon,
-  ClockIcon,
   ChevronRightIcon,
+  DocumentCheckIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
 import * as logger from "@/lib/logger";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonText } from "@/components/ui/Skeleton";
+import { errorName, readPortalUser } from "./account/portalSession";
 
 const preVisitFormSchema = z.object({
   chiefComplaint: z.string().min(5, "Please describe your symptoms"),
@@ -35,12 +40,25 @@ interface PreVisitForm {
   data?: PreVisitFormData;
 }
 
+const EMPTY_FORM: PreVisitFormData = {
+  chiefComplaint: "",
+  symptomDuration: "",
+  currentMedications: "",
+  allergies: "",
+  recentHospitalVisits: "",
+  smokingStatus: "never",
+  alcoholUse: "never",
+  exerciseFrequency: "",
+  additionalNotes: "",
+};
+
 export function PreVisitForms() {
   const [forms, setForms] = useState<PreVisitForm[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedForm, setSelectedForm] = useState<PreVisitForm | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitNotice, setSubmitNotice] = useState<string | null>(null);
+  const firstFieldRef = useRef<HTMLTextAreaElement | null>(null);
 
   const {
     register,
@@ -51,392 +69,378 @@ export function PreVisitForms() {
     resolver: zodResolver(preVisitFormSchema),
   });
 
-  useEffect(() => {
-    loadForms();
-  }, []);
-
-  const loadForms = async () => {
+  const loadForms = useCallback(async () => {
     setLoading(true);
     try {
-      const portalUser = JSON.parse(
-        localStorage.getItem("patient_portal_user") || "{}",
-      );
-      if (!portalUser.patientId) {
+      const portalUser = readPortalUser();
+      if (!portalUser?.patientId) {
         logger.error("No patient ID found");
         return;
       }
 
+      // No source for pre-visit forms is connected to the portal yet.
       setForms([]);
     } catch (err) {
-      logger.error("Error loading forms:", err);
+      logger.error("[PreVisitForms] load failed:", errorName(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadForms();
+  }, [loadForms]);
+
+  useEffect(() => {
+    if (!showFormModal) return;
+    const previous =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    firstFieldRef.current?.focus();
+    return () => previous?.focus();
+  }, [showFormModal]);
 
   const handleFillForm = (form: PreVisitForm) => {
     setSelectedForm(form);
-    if (form.data) {
-      reset(form.data);
-    } else {
-      reset({
-        chiefComplaint: "",
-        symptomDuration: "",
-        currentMedications: "",
-        allergies: "",
-        recentHospitalVisits: "",
-        smokingStatus: "never",
-        alcoholUse: "never",
-        exerciseFrequency: "",
-        additionalNotes: "",
-      });
-    }
+    setSubmitNotice(null);
+    reset(form.data ?? EMPTY_FORM);
     setShowFormModal(true);
   };
 
-  const onSubmit = async (data: PreVisitFormData) => {
+  const closeForm = () => {
+    setShowFormModal(false);
+    setSelectedForm(null);
+    setSubmitNotice(null);
+    reset();
+  };
+
+  const onSubmit = (_data: PreVisitFormData) => {
     if (!selectedForm) return;
+    // There is no service to send pre-visit forms to yet. Say so plainly
+    // rather than pretending the form was submitted.
+    setSubmitNotice(
+      "Forms cannot be sent from the portal yet, so nothing was sent. Please bring these answers to your visit.",
+    );
+  };
 
-    setSubmitting(true);
-    try {
-      // Mock submission - replace with actual API call
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      const updatedForms = forms.map((form) => {
-        if (form.id === selectedForm.id) {
-          return {
-            ...form,
-            status: "completed" as const,
-            submittedAt: new Date(),
-            data,
-          };
-        }
-        return form;
-      });
-
-      setForms(updatedForms);
-      setShowFormModal(false);
-      setSelectedForm(null);
-      reset();
-
-      alert("Form submitted successfully!");
-    } catch (err) {
-      logger.error("Form submission error:", err);
-      alert("Failed to submit form. Please try again.");
-    } finally {
-      setSubmitting(false);
+  const onDialogKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      closeForm();
     }
   };
 
   const pendingForms = forms.filter((f) => f.status === "pending");
   const completedForms = forms.filter((f) => f.status === "completed");
 
+  const { ref: chiefComplaintRef, ...chiefComplaintField } =
+    register("chiefComplaint");
+
+  const header = (
+    <PageHeader
+      title="Forms before your visit"
+      description="Answer questions about your health before an appointment."
+    />
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+        {header}
+        <span role="status" className="sr-only">
+          Loading your forms
+        </span>
+        <div className="panel p-5" aria-hidden>
+          <Skeleton className="mb-4 h-5 w-40" />
+          <SkeletonText lines={3} />
+        </div>
       </div>
     );
   }
 
+  const fieldError = (id: string, message?: string) =>
+    message ? (
+      <p id={id} className="field-error" role="alert">
+        {message}
+      </p>
+    ) : null;
+
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <h1 className="text-3xl font-bold text-gray-900">Pre-Visit Forms</h1>
-        <p className="text-gray-600 mt-2">
-          Complete forms before your appointment to save time
-        </p>
-      </div>
+    <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+      {header}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-              <ClockIcon className="w-6 h-6 text-yellow-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Pending Forms</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {pendingForms.length}
-              </p>
-            </div>
-          </div>
+      {forms.length === 0 ? (
+        <div className="panel">
+          <EmptyState
+            icon={DocumentCheckIcon}
+            title="No forms to fill in"
+            description="You have no forms to complete before a visit. Clinic staff will ask you any questions they need at your visit."
+          />
         </div>
-
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <CheckCircleIcon className="w-6 h-6 text-green-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Completed Forms</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {completedForms.length}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {pendingForms.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200 bg-yellow-50">
-            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <ClockIcon className="w-6 h-6 text-yellow-600" />
-              Pending Forms
-            </h2>
-          </div>
-
-          <div className="divide-y divide-gray-200">
-            {pendingForms.map((form) => (
-              <div
-                key={form.id}
-                className="p-6 hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-gray-900 text-lg">
-                      {form.appointmentType}
-                    </h3>
-                    <p className="text-gray-600 mt-1">
-                      Appointment: {formatNigerianDate(form.appointmentDate)}
-                    </p>
-                    <p className="text-sm text-yellow-600 mt-2">
-                      Please complete before your visit
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleFillForm(form)}
-                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2"
-                  >
-                    <DocumentCheckIcon className="w-5 h-5" />
-                    Fill Form
-                    <ChevronRightIcon className="w-4 h-4" />
-                  </button>
-                </div>
+      ) : (
+        <>
+          {pendingForms.length > 0 && (
+            <section className="panel" aria-labelledby="forms-pending-title">
+              <div className="panel-header">
+                <h2 id="forms-pending-title" className="panel-title">
+                  To fill in
+                </h2>
+                <span className="text-caption text-ink-muted tabular-nums">
+                  {pendingForms.length}
+                </span>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {completedForms.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <CheckCircleIcon className="w-6 h-6 text-green-600" />
-              Completed Forms
-            </h2>
-          </div>
-
-          <div className="divide-y divide-gray-200">
-            {completedForms.map((form) => (
-              <div
-                key={form.id}
-                className="p-6 hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-semibold text-gray-900 text-lg">
+              <ul className="divide-y divide-line">
+                {pendingForms.map((form) => (
+                  <li
+                    key={form.id}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-body font-medium text-ink">
                         {form.appointmentType}
-                      </h3>
-                      <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
-                        Completed
-                      </span>
-                    </div>
-                    <p className="text-gray-600 mt-1">
-                      Appointment: {formatNigerianDate(form.appointmentDate)}
-                    </p>
-                    {form.submittedAt && (
-                      <p className="text-sm text-gray-500 mt-1">
-                        Submitted: {formatNigerianDate(form.submittedAt)}
                       </p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => handleFillForm(form)}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
-                  >
-                    View Form
-                  </button>
-                </div>
+                      <p className="text-caption text-ink-muted">
+                        Appointment: {formatNigerianDate(form.appointmentDate)}
+                      </p>
+                      <StatusBadge tone="warning" className="mt-1">
+                        Please fill in before your visit
+                      </StatusBadge>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleFillForm(form)}
+                      className="btn-primary"
+                    >
+                      Fill in form
+                      <ChevronRightIcon className="h-4 w-4" aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {completedForms.length > 0 && (
+            <section className="panel" aria-labelledby="forms-done-title">
+              <div className="panel-header">
+                <h2 id="forms-done-title" className="panel-title">
+                  Completed
+                </h2>
+                <span className="text-caption text-ink-muted tabular-nums">
+                  {completedForms.length}
+                </span>
               </div>
-            ))}
-          </div>
-        </div>
+              <ul className="divide-y divide-line">
+                {completedForms.map((form) => (
+                  <li
+                    key={form.id}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="flex flex-wrap items-center gap-2 text-body font-medium text-ink">
+                        {form.appointmentType}
+                        <StatusBadge tone="success" icon>
+                          Completed
+                        </StatusBadge>
+                      </p>
+                      <p className="text-caption text-ink-muted">
+                        Appointment: {formatNigerianDate(form.appointmentDate)}
+                        {form.submittedAt
+                          ? ` · Sent ${formatNigerianDate(form.submittedAt)}`
+                          : ""}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleFillForm(form)}
+                      className="btn-secondary"
+                    >
+                      View form
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
       )}
 
       {showFormModal && selectedForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl max-w-3xl w-full p-6 my-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              Pre-Visit Medical Form
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="previsit-title"
+            onKeyDown={onDialogKeyDown}
+            className="my-8 w-full max-w-2xl rounded-lg border border-line bg-surface p-6 shadow-2xl"
+          >
+            <h2 id="previsit-title" className="text-h2 text-ink">
+              Before your visit
             </h2>
-            <p className="text-gray-600 mb-6">
-              {selectedForm.appointmentType} -{" "}
+            <p className="mt-1 text-body text-ink-muted">
+              {selectedForm.appointmentType} ·{" "}
               {formatNigerianDate(selectedForm.appointmentDate)}
             </p>
 
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+            <form
+              onSubmit={handleSubmit(onSubmit)}
+              className="mt-5 space-y-5"
+              noValidate
+            >
+              <p className="text-caption text-ink-muted">
+                Questions marked * need an answer.
+              </p>
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  What brings you in today? (Chief Complaint) *
+                <label htmlFor="pv-complaint" className="field-label">
+                  What brings you in? *
                 </label>
                 <textarea
-                  {...register("chiefComplaint")}
+                  {...chiefComplaintField}
+                  ref={(el) => {
+                    chiefComplaintRef(el);
+                    firstFieldRef.current = el;
+                  }}
+                  id="pv-complaint"
                   rows={3}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="input-field"
                   placeholder="Describe your symptoms or reason for visit"
+                  aria-invalid={errors.chiefComplaint ? true : undefined}
+                  aria-describedby={errors.chiefComplaint ? "pv-complaint-error" : undefined}
                 />
-                {errors.chiefComplaint && (
-                  <p className="text-red-600 text-sm mt-1">
-                    {errors.chiefComplaint.message}
-                  </p>
-                )}
+                {fieldError("pv-complaint-error", errors.chiefComplaint?.message)}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="pv-duration" className="field-label">
                   How long have you had these symptoms? *
                 </label>
                 <input
                   {...register("symptomDuration")}
+                  id="pv-duration"
                   type="text"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="e.g., 3 days, 2 weeks"
+                  className="input-field"
+                  placeholder="For example: 3 days, 2 weeks"
+                  aria-invalid={errors.symptomDuration ? true : undefined}
+                  aria-describedby={errors.symptomDuration ? "pv-duration-error" : undefined}
                 />
-                {errors.symptomDuration && (
-                  <p className="text-red-600 text-sm mt-1">
-                    {errors.symptomDuration.message}
-                  </p>
-                )}
+                {fieldError("pv-duration-error", errors.symptomDuration?.message)}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Current Medications
+                <label htmlFor="pv-meds" className="field-label">
+                  Medicines you take now
                 </label>
                 <textarea
                   {...register("currentMedications")}
+                  id="pv-meds"
                   rows={2}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="List all medications you're currently taking"
+                  className="input-field"
+                  placeholder="List all medicines you are taking"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Known Allergies
+                <label htmlFor="pv-allergies" className="field-label">
+                  Known allergies
                 </label>
                 <textarea
                   {...register("allergies")}
+                  id="pv-allergies"
                   rows={2}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="List any drug or food allergies"
+                  className="input-field"
+                  placeholder="Any medicine or food allergies"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Recent Hospital Visits
+                <label htmlFor="pv-hospital" className="field-label">
+                  Recent hospital visits
                 </label>
                 <textarea
                   {...register("recentHospitalVisits")}
+                  id="pv-hospital"
                   rows={2}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Any recent hospitalizations or ER visits"
+                  className="input-field"
+                  placeholder="Any recent hospital stays or emergency visits"
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid gap-5 sm:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Smoking Status
+                  <label htmlFor="pv-smoking" className="field-label">
+                    Smoking
                   </label>
-                  <select
-                    {...register("smokingStatus")}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
+                  <select {...register("smokingStatus")} id="pv-smoking" className="input-field">
                     <option value="never">Never smoked</option>
-                    <option value="former">Former smoker</option>
-                    <option value="current">Current smoker</option>
+                    <option value="former">Used to smoke</option>
+                    <option value="current">Smoke now</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Alcohol Use
+                  <label htmlFor="pv-alcohol" className="field-label">
+                    Alcohol
                   </label>
-                  <select
-                    {...register("alcoholUse")}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
+                  <select {...register("alcoholUse")} id="pv-alcohol" className="input-field">
                     <option value="never">Never</option>
-                    <option value="occasional">Occasionally</option>
+                    <option value="occasional">Sometimes</option>
                     <option value="regular">Regularly</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Exercise Frequency
+                <label htmlFor="pv-exercise" className="field-label">
+                  How often you exercise
                 </label>
                 <input
                   {...register("exerciseFrequency")}
+                  id="pv-exercise"
                   type="text"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="e.g., 3 times per week"
+                  className="input-field"
+                  placeholder="For example: 3 times a week"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Additional Notes
+                <label htmlFor="pv-notes" className="field-label">
+                  Anything else
                 </label>
                 <textarea
                   {...register("additionalNotes")}
+                  id="pv-notes"
                   rows={3}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Any other information you'd like to share"
+                  className="input-field"
+                  placeholder="Anything else you would like the clinic to know"
                 />
               </div>
 
-              <div className="flex gap-3 pt-4 border-t border-gray-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowFormModal(false);
-                    setSelectedForm(null);
-                    reset();
-                  }}
-                  disabled={submitting}
-                  className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  Cancel
+              <div aria-live="polite">
+                {submitNotice && (
+                  <div className="banner banner-warning">
+                    <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+                    <p>{submitNotice}</p>
+                  </div>
+                )}
+                {selectedForm.status === "completed" && (
+                  <div className="banner banner-info">
+                    <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+                    <p>This form has already been sent.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:justify-end">
+                <button type="button" onClick={closeForm} className="btn-secondary">
+                  Close
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || selectedForm.status === "completed"}
-                  className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  disabled={selectedForm.status === "completed"}
+                  className="btn-primary"
                 >
-                  {submitting ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Submitting...
-                    </>
-                  ) : selectedForm.status === "completed" ? (
-                    <>
-                      <CheckCircleIcon className="w-5 h-5" />
-                      Submitted
-                    </>
-                  ) : (
-                    <>
-                      <DocumentCheckIcon className="w-5 h-5" />
-                      Submit Form
-                    </>
-                  )}
+                  <DocumentCheckIcon className="h-5 w-5" aria-hidden />
+                  Send form
                 </button>
               </div>
             </form>

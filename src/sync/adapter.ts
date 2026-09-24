@@ -3,11 +3,15 @@ import { createClient } from "@supabase/supabase-js";
 import { db } from "../db";
 import { PendingOperation, processQueue } from "../stores/operationsQueue";
 import { useSyncStore } from "../stores/syncStore";
-import { toAllergyActiveFlag } from "../utils/allergyActive";
-import {
+import type {
   ConflictData,
   ConflictField,
 } from "../components/ConflictResolutionModal";
+import { findFieldConflicts } from "./fieldCompare";
+import { mergePulledRow } from "./pullMerge";
+import { markersAfterUpload } from "./uploadMarkers";
+import { namedSyncError, syncErrorCode } from "./errorCode";
+import { queueSyncConflicts } from "./queueConflicts";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
@@ -291,35 +295,14 @@ async function detectConflict(
       if (remoteUpdated <= syncedAt) return { hasConflict: false };
     }
 
-    // Detect field-level conflicts
-    const conflicts: ConflictField[] = [];
-    const dbMap = mapToDB[table];
-
-    for (const [appKey, dbKey] of Object.entries(dbMap)) {
-      const localVal = localData[appKey];
-      const remoteVal = remoteData[dbKey];
-
-      if (
-        localVal !== remoteVal &&
-        appKey !== "updatedAt" &&
-        appKey !== "createdAt"
-      ) {
-        conflicts.push({
-          field: appKey,
-          label: appKey.replace(/([A-Z])/g, " $1").trim(),
-          localValue: localVal,
-          remoteValue: remoteVal,
-          type:
-            typeof localVal === "number"
-              ? "number"
-              : localVal instanceof Date
-                ? "date"
-                : typeof localVal === "object"
-                  ? "object"
-                  : "string",
-        });
-      }
-    }
+    // Detect field-level conflicts. Values are normalised first (Date vs
+    // ISO string, null vs missing, JSON key order) so a different shape of
+    // the same value is not reported as a conflict.
+    const conflicts: ConflictField[] = findFieldConflicts(
+      localData,
+      remoteData,
+      mapToDB[table],
+    );
 
     if (conflicts.length === 0) return { hasConflict: false };
 
@@ -347,7 +330,10 @@ export async function pushChanges() {
       .equals(1)
       .toArray()
       .catch((e: unknown) => {
-        console.error(`[sync] failed to read dirty records for ${t}:`, e);
+        console.error(
+          `[sync] failed to read dirty records for ${t}:`,
+          syncErrorCode(e),
+        );
         return [];
       });
     if (!dirty?.length) continue;
@@ -372,11 +358,21 @@ export async function pushChanges() {
       const { error } = await sb.from(t).upsert(payload, { onConflict: "id" });
 
       if (!error) {
+        // Mark it clean only if it was not edited during the upload; a
+        // newer edit stays marked unsent (and safe from the download).
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (db as any)[localTable].update(record.id, {
-          _dirty: 0,
-          _syncedAt: new Date().toISOString(),
+        const table = (db as any)[localTable];
+        const syncedAt = new Date().toISOString();
+        await db.transaction("rw", table, async () => {
+          const current = await table.get(record.id);
+          await table.update(
+            record.id,
+            markersAfterUpload(record, current, syncedAt),
+          );
         });
+      } else {
+        // The row stays marked unsent and is retried on the next sync.
+        console.warn(`[sync] upload refused for ${t}`, syncErrorCode(error));
       }
     }
   }
@@ -384,43 +380,79 @@ export async function pushChanges() {
   return { conflicts: detectedConflicts };
 }
 
-export async function pullChanges() {
-  if (!sb) return;
+export interface PullSummary {
+  /** Downloaded rows written on this device. */
+  applied: number;
+  /**
+   * Downloaded rows not written because this device has changes to them
+   * that are not uploaded yet. The upload step compares those rows with the
+   * server copy and raises a conflict when both sides changed.
+   */
+  keptLocalEdits: number;
+  /** Server tables whose download failed in this run. */
+  failedTables: string[];
+}
+
+export async function pullChanges(): Promise<PullSummary> {
+  const summary: PullSummary = {
+    applied: 0,
+    keptLocalEdits: 0,
+    failedTables: [],
+  };
+  if (!sb) return summary;
   for (const t of tables) {
     const localTable = localTableMap[t];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const table = (db as any)[localTable];
     const since = await getCursor(t); // ALWAYS a valid ISO string
     // If it's the default, don't send a gt filter to avoid corner cases
-    let q = sb.from(t).select("*").limit(1000);
+    let q = sb.from(t).select("*");
     if (since !== DEFAULT_TS) q = q.gt("updated_at", since);
 
-    const { data, error } = await q;
+    // Oldest changes first: the cursor moves to the newest row of this page,
+    // so a page cut off by the limit continues on the next sync instead of
+    // skipping the rows it did not return.
+    const { data, error } = await q
+      .order("updated_at", { ascending: true })
+      .limit(1000);
     if (error) {
-      console.warn("pull error", t, error);
+      console.warn(`[sync] download failed for ${t}`, syncErrorCode(error));
+      summary.failedTables.push(t);
       continue;
     }
 
+    const rows = data ?? [];
     let maxTs = since;
-    for (const row of data ?? []) {
-      const mapped = fromDB(row, mapFromDB[t]);
-      // The server column is boolean; the app expects the 0/1 flag.
-      if (t === "patient_allergies") {
-        mapped.isActive = toAllergyActiveFlag(mapped.isActive);
-      }
-      // Queue rows carry device-local fields the column map does not sync
-      // (assignee, ticket number, priority); lay the remote row over the
-      // local one instead of replacing it, so those survive a pull.
-      const localRow = t === "queue" ? await db.queue.get(mapped.id) : undefined;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (db as any)[localTable].put({
-        ...localRow,
-        ...mapped,
-        _dirty: 0,
-        _syncedAt: new Date().toISOString(),
+    const syncedAt = new Date().toISOString();
+    // Read and write each row in one transaction so an edit saved on this
+    // device between the read and the write cannot be overwritten.
+    if (rows.length > 0) {
+      await db.transaction("rw", table, async () => {
+        for (const row of rows) {
+          // The cursor advances past every row, applied or kept local.
+          if (row.updated_at && row.updated_at > maxTs) maxTs = row.updated_at;
+          const mapped = fromDB(row, mapFromDB[t]);
+          const localRow = await table.get(mapped.id);
+          // Rows with unsent changes are kept; others get the server row
+          // laid over the local one, so device-only fields survive (queue
+          // assignee and ticket number, patient search keys and merge
+          // links, staff PIN hashes).
+          const decision = mergePulledRow(localRow, mapped, {
+            _dirty: 0,
+            _syncedAt: syncedAt,
+          });
+          if (decision.kind === "kept-local") {
+            summary.keptLocalEdits += 1;
+            continue;
+          }
+          await table.put(decision.row);
+          summary.applied += 1;
+        }
       });
-      if (row.updated_at && row.updated_at > maxTs) maxTs = row.updated_at;
     }
     await setCursor(t, maxTs);
   }
+  return summary;
 }
 
 // Process operations queue and sync with conflict detection
@@ -497,10 +529,25 @@ export async function processOperationsQueue(): Promise<ConflictData[]> {
 
 let syncInProgress = false;
 
-export async function syncNow() {
+const SYNC_IN_PROGRESS = "Sync already in progress";
+
+export interface SyncNowResult {
+  success: boolean;
+  conflicts: ConflictData[];
+  error?: string;
+  /** Server tables whose download failed in this run. */
+  downloadFailedTables?: string[];
+  /**
+   * Downloaded rows not applied because this device has unsent changes to
+   * them (kept until they upload or their conflict is resolved).
+   */
+  keptLocalEdits?: number;
+}
+
+export async function syncNow(): Promise<SyncNowResult> {
   if (!isOnlineSyncEnabled()) return { success: false, conflicts: [] };
   if (syncInProgress) {
-    return { success: false, conflicts: [], error: "Sync already in progress" };
+    return { success: false, conflicts: [], error: SYNC_IN_PROGRESS };
   }
 
   syncInProgress = true;
@@ -515,14 +562,19 @@ export async function syncNow() {
     const { conflicts: pushConflicts } = await pushChanges();
 
     // Pull remote changes
-    await pullChanges();
+    const pulled = await pullChanges();
 
     const allConflicts = [...queueConflicts, ...pushConflicts];
 
     syncStore.setLastSuccessAt(Date.now());
     syncStore.setStatus("ok");
 
-    return { success: true, conflicts: allConflicts };
+    return {
+      success: true,
+      conflicts: allConflicts,
+      downloadFailedTables: pulled.failedTables,
+      keptLocalEdits: pulled.keptLocalEdits,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Sync failed";
     syncStore.setLastErrorAt(Date.now(), message);
@@ -537,15 +589,54 @@ export function isConfigured() {
   return !!sb;
 }
 
+/**
+ * The server's current copy of one record (server column names), used to
+ * resolve a sync conflict. Resolves to null when the server has no such
+ * record. Throws an error that carries only a name when the copy cannot be
+ * read: cloud sync not set up, unknown record type, offline, or the
+ * request failed.
+ */
+export async function fetchRemoteRecord(
+  entityType: string,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  if (!sb) throw namedSyncError("SyncNotConfigured");
+  if (!(tables as string[]).includes(entityType)) {
+    throw namedSyncError("UnknownRecordType");
+  }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    throw namedSyncError("Offline");
+  }
+  const { data, error } = await sb
+    .from(entityType)
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    console.warn(
+      `[sync] could not read the server copy from ${entityType}`,
+      syncErrorCode(error),
+    );
+    throw namedSyncError("RemoteReadFailed");
+  }
+  return (data as Record<string, unknown> | null) ?? null;
+}
+
 // Auto-sync on network reconnection
 if (typeof window !== "undefined") {
   window.addEventListener("online", async () => {
     const syncStore = useSyncStore.getState();
     if (syncStore.isOnline && isOnlineSyncEnabled()) {
       setTimeout(() => {
-        syncNow().catch((err) => {
-          console.error("Auto-sync on reconnection failed:", err);
-        });
+        syncNow()
+          // No dialog on automatic runs: queue conflicts for review.
+          .then((result) => queueSyncConflicts(result.conflicts))
+          .catch((err) => {
+            console.error(
+              "Auto-sync on reconnection failed:",
+              syncErrorCode(err),
+            );
+          });
       }, 2000); // Wait 2s for stable connection
     }
   });
@@ -567,9 +658,11 @@ const BACKGROUND_SYNC_MAX_BACKOFF_MS = 5 * 60_000;
 
 let backgroundSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let backgroundSyncFailures = 0;
+let backgroundSyncActive = false;
 
 function scheduleNextBackgroundSync(delayMs: number): void {
   if (typeof window === "undefined") return;
+  if (!backgroundSyncActive) return; // stopped while a run was in flight
   if (backgroundSyncTimer) clearTimeout(backgroundSyncTimer);
   backgroundSyncTimer = setTimeout(runBackgroundSync, delayMs);
 }
@@ -592,7 +685,17 @@ async function runBackgroundSync(): Promise<void> {
       scheduleNextBackgroundSync(BACKGROUND_SYNC_INTERVAL_MS);
       return;
     }
-    await syncNow();
+    const result = await syncNow();
+    // No dialog on background runs: queue conflicts for review so they are
+    // not dropped. Records already queued are skipped.
+    if (result.conflicts.length > 0) {
+      await queueSyncConflicts(result.conflicts);
+    }
+    // syncNow reports failure in its result rather than throwing; count it
+    // so repeated failures back off.
+    if (!result.success && result.error !== SYNC_IN_PROGRESS) {
+      throw namedSyncError("BackgroundSyncFailed");
+    }
     backgroundSyncFailures = 0;
     scheduleNextBackgroundSync(BACKGROUND_SYNC_INTERVAL_MS);
   } catch (err) {
@@ -603,7 +706,7 @@ async function runBackgroundSync(): Promise<void> {
     );
     console.warn(
       `[sync] background push failed (attempt ${backgroundSyncFailures}); retry in ${backoff}ms`,
-      err,
+      syncErrorCode(err),
     );
     scheduleNextBackgroundSync(backoff);
   }
@@ -613,6 +716,16 @@ async function runBackgroundSync(): Promise<void> {
 // mounting before we start hitting the network.
 export function startBackgroundSync(): void {
   if (typeof window === "undefined") return;
-  if (backgroundSyncTimer) return; // already running
+  if (backgroundSyncActive) return; // already running
+  backgroundSyncActive = true;
+  backgroundSyncFailures = 0;
   scheduleNextBackgroundSync(5_000);
+}
+
+/** Stop background sync (for example on sign-out). Safe to call twice. */
+export function stopBackgroundSync(): void {
+  backgroundSyncActive = false;
+  backgroundSyncFailures = 0;
+  if (backgroundSyncTimer) clearTimeout(backgroundSyncTimer);
+  backgroundSyncTimer = null;
 }

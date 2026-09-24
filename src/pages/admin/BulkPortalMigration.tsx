@@ -1,33 +1,81 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { UserPlusIcon, CloudIcon } from "@heroicons/react/24/outline";
 import { supabase } from "@/lib/supabase";
 import { bulkEnrollPatients } from "@/services/unifiedPortalEnrollment";
+import { useAuthStore } from "@/stores/auth";
+import { formatNigerianDate } from "@/utils/dateFormat";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
+import { canManagePortalEnrollment } from "@/features/admin/adminSections";
+import { useServerStatus } from "@/features/admin/useServerStatus";
+import type { ServerState } from "@/features/admin/serverStatus";
 import {
-  UserPlusIcon,
-  CheckCircleIcon,
-  XCircleIcon,
-} from "@heroicons/react/24/outline";
+  groupFailureReasons,
+  type BulkRunError,
+} from "@/features/admin/portalStats";
+
+/** A row of the server's `patients` table, as selected below. */
+interface ServerPatientRow {
+  id: string;
+  given_name: string;
+  family_name: string;
+  dob: string;
+  email: string | null;
+  phone: string | null;
+  portal_enabled: boolean | null;
+}
+
+interface EnrollmentResult {
+  total: number;
+  success: number;
+  failed: number;
+  errors: BulkRunError[];
+  names: Map<string, string>;
+}
+
+const SERVER_LIMIT = 100;
+
+const SERVER_TONE: Record<ServerState, Tone> = {
+  available: "success",
+  offline: "warning",
+  "not-configured": "neutral",
+};
+
+const BREADCRUMBS = [
+  { label: "Administration", to: "/admin" },
+  { label: "Patient portal", to: "/admin/portal-dashboard" },
+  { label: "Create server accounts" },
+];
+
+function rowName(p: ServerPatientRow) {
+  return `${p.given_name} ${p.family_name}`;
+}
 
 export function BulkPortalMigration() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [patients, setPatients] = useState<any[]>([]);
+  const role = useAuthStore((s) => s.currentUser?.role);
+  const canRun = canManagePortalEnrollment(role);
+  const server = useServerStatus();
+
+  const [patients, setPatients] = useState<ServerPatientRow[]>([]);
   const [selectedPatients, setSelectedPatients] = useState<Set<string>>(
     new Set(),
   );
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [results, setResults] = useState<{
-    success: number;
-    failed: number;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    errors: any[];
-  } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [runError, setRunError] = useState(false);
+  const [results, setResults] = useState<EnrollmentResult | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadEligiblePatients();
-  }, []);
-
-  const loadEligiblePatients = async () => {
+  const loadEligiblePatients = useCallback(async () => {
+    if (!supabase) return;
     setLoading(true);
+    setLoadError(false);
     try {
       const { data, error } = await supabase
         .from("patients")
@@ -37,17 +85,27 @@ export function BulkPortalMigration() {
         .or("email.not.is.null,phone.not.is.null")
         .eq("portal_enabled", false)
         .order("created_at", { ascending: false })
-        .limit(100);
+        .limit(SERVER_LIMIT);
 
       if (error) throw error;
-      setPatients(data || []);
+      setPatients((data as ServerPatientRow[] | null) || []);
+      setLoaded(true);
     } catch (error) {
-      console.error("Error loading patients:", error);
-      alert("Failed to load patients");
+      console.error(
+        "Error loading patients:",
+        error instanceof Error ? error.name : "request failed",
+      );
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Load once the server can be reached (and again if it comes back after
+  // being offline and nothing has loaded yet).
+  useEffect(() => {
+    if (server.available && !loaded) loadEligiblePatients();
+  }, [server.available, loaded, loadEligiblePatients]);
 
   const togglePatient = (patientId: string) => {
     const newSelected = new Set(selectedPatients);
@@ -68,176 +126,303 @@ export function BulkPortalMigration() {
   };
 
   const handleBulkEnroll = async () => {
-    if (selectedPatients.size === 0) {
-      alert("Please select at least one patient");
-      return;
-    }
+    setConfirming(false);
+    if (!canRun || selectedPatients.size === 0 || !server.available) return;
 
-    if (!confirm(`Enroll ${selectedPatients.size} patients in the portal?`)) {
-      return;
-    }
-
+    const ids = Array.from(selectedPatients);
+    const names = new Map(
+      patients.filter((p) => selectedPatients.has(p.id)).map((p) => [p.id, rowName(p)]),
+    );
     setProcessing(true);
+    setRunError(false);
+    setResults(null);
     try {
-      const result = await bulkEnrollPatients(Array.from(selectedPatients));
-      setResults(result);
-
-      if (result.success > 0) {
-        alert(`Successfully enrolled ${result.success} patients!`);
-        loadEligiblePatients();
-        setSelectedPatients(new Set());
-      }
-
-      if (result.failed > 0) {
-        console.error("Enrollment errors:", result.errors);
-      }
+      const result = await bulkEnrollPatients(ids);
+      setResults({ total: ids.length, ...result, names });
+      setSelectedPatients(new Set());
+      if (result.success > 0) await loadEligiblePatients();
     } catch (error) {
-      console.error("Bulk enrollment error:", error);
-      alert("Bulk enrollment failed");
+      console.error(
+        "Bulk enrollment error:",
+        error instanceof Error ? error.name : error,
+      );
+      setRunError(true);
     } finally {
       setProcessing(false);
+      resultRef.current?.focus();
     }
   };
 
+  const count = selectedPatients.size;
+  const plural = (n: number) => `${n} patient${n === 1 ? "" : "s"}`;
+
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Bulk Portal Migration
-        </h1>
-        <p className="text-gray-600">
-          Enroll existing patients in the patient portal. Patients must have
-          email or phone number.
-        </p>
+    <div className="space-y-4">
+      <PageHeader
+        breadcrumbs={BREADCRUMBS}
+        title="Create portal accounts on the server"
+        description="Create patient portal sign-in accounts for patients in the server database who have an email or phone number."
+      />
+
+      <div className="card flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:gap-3" aria-live="polite">
+        <span className="section-label">Server connection</span>
+        <StatusBadge tone={SERVER_TONE[server.state]} icon>
+          {server.label}
+        </StatusBadge>
+        <span className="text-caption text-ink-muted">
+          {server.available
+            ? "This page works on the server's patient records, not the records stored on this device."
+            : server.state === "offline"
+              ? "Connect to the internet to load patients from the server. Nothing on this page works offline."
+              : "This device is not connected to a server, so portal accounts cannot be created here."}
+        </span>
       </div>
 
-      {results && (
-        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="font-semibold text-blue-900 mb-2">
-            Enrollment Results
-          </h3>
-          <div className="space-y-1 text-sm">
-            <div className="flex items-center gap-2 text-green-700">
-              <CheckCircleIcon className="w-5 h-5" />
-              <span>{results.success} patients successfully enrolled</span>
-            </div>
-            {results.failed > 0 && (
-              <div className="flex items-center gap-2 text-red-700">
-                <XCircleIcon className="w-5 h-5" />
-                <span>{results.failed} patients failed</span>
-              </div>
-            )}
-          </div>
-          {results.errors.length > 0 && (
-            <details className="mt-3">
-              <summary className="cursor-pointer text-sm font-medium text-blue-900">
-                View errors
-              </summary>
-              <ul className="mt-2 space-y-1 text-xs">
-                {results.errors.map((err, idx) => (
-                  <li key={idx} className="text-red-700">
-                    {err.patientId}: {err.error}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
+      {!canRun && (
+        <div className="banner banner-warning" role="status">
+          Only an administrator can create portal accounts.
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow">
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+      <div ref={resultRef} tabIndex={-1} aria-live="polite" className="focus:outline-none">
+        {runError && (
+          <div className="banner banner-danger" role="alert">
+            <span className="flex-1">
+              The server did not finish creating accounts. Some may have been
+              created; reload the list and try the remaining patients again.
+            </span>
+            <button
+              type="button"
+              onClick={loadEligiblePatients}
+              disabled={loading || !server.available}
+              className="btn-secondary"
+            >
+              Reload list
+            </button>
+          </div>
+        )}
+        {results && (
+          <section className="panel" aria-labelledby="enroll-result-title">
+            <div className="panel-header">
+              <h2 id="enroll-result-title" className="panel-title">
+                Result
+              </h2>
+            </div>
+            <div className="panel-body space-y-3">
+              <div
+                className={`banner ${results.failed === 0 ? "banner-success" : "banner-warning"}`}
+              >
+                <p>
+                  {/* The service also counts a patient who already had a
+                      portal account as a success, so do not say "created". */}
+                  Portal account ready on the server for {results.success} of{" "}
+                  {plural(results.total)}.
+                  {results.failed > 0 && ` ${results.failed} failed.`} No
+                  invitation was sent: tell patients to register or sign in at
+                  the patient portal with their email or phone number.
+                </p>
+              </div>
+              {results.errors.length > 0 && (
+                <div>
+                  <h3 className="text-label text-ink">Why patients failed</h3>
+                  <ul className="mt-1 space-y-1 text-body text-ink-secondary">
+                    {groupFailureReasons(results.errors).map((g) => (
+                      <li key={g.reason}>
+                        {g.count} × {g.reason}
+                      </li>
+                    ))}
+                  </ul>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-label text-primary">
+                      Show each failed patient
+                    </summary>
+                    <ul className="mt-2 max-h-64 divide-y divide-line overflow-y-auto rounded-md border border-line">
+                      {results.errors.map((err) => (
+                        <li key={err.patientId} className="px-3 py-2 text-caption">
+                          <span className="font-medium text-ink">
+                            {results.names.get(err.patientId) ?? err.patientId}
+                          </span>
+                          <span className="text-ink-muted"> · {err.error}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+      </div>
+
+      <section className="panel" aria-labelledby="enroll-list-title">
+        <div className="panel-header flex-col items-stretch gap-3 sm:flex-row sm:items-center">
           <div>
-            <p className="text-sm text-gray-600">
-              {selectedPatients.size} of {patients.length} patients selected
+            <h2 id="enroll-list-title" className="panel-title">
+              Patients without portal accounts
+            </h2>
+            <p className="text-caption text-ink-muted">
+              {count} of {plural(patients.length)} selected. Shows up to{" "}
+              {SERVER_LIMIT}, newest first.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
+              type="button"
               onClick={selectAll}
-              className="px-3 py-1 text-sm text-blue-600 hover:text-blue-700 font-medium"
-              disabled={loading || processing}
+              className="btn-secondary"
+              disabled={loading || processing || patients.length === 0}
             >
-              Select All
+              Select all
             </button>
             <button
+              type="button"
               onClick={deselectAll}
-              className="px-3 py-1 text-sm text-gray-600 hover:text-gray-700 font-medium"
-              disabled={loading || processing}
+              className="btn-secondary"
+              disabled={loading || processing || count === 0}
             >
-              Deselect All
+              Clear selection
             </button>
             <button
-              onClick={handleBulkEnroll}
-              disabled={selectedPatients.size === 0 || processing}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              type="button"
+              onClick={() => setConfirming(true)}
+              disabled={!canRun || count === 0 || processing || !server.available}
+              className="btn-primary"
             >
-              <UserPlusIcon className="w-5 h-5" />
-              {processing
-                ? "Enrolling..."
-                : `Enroll ${selectedPatients.size} Patients`}
+              <UserPlusIcon className="h-5 w-5" aria-hidden />
+              {processing ? "Creating accounts…" : `Create ${count} account${count === 1 ? "" : "s"}`}
             </button>
           </div>
         </div>
 
-        {loading ? (
-          <div className="p-8 text-center">
-            <div className="inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            <p className="mt-4 text-gray-600">Loading eligible patients...</p>
+        {!server.available ? (
+          <EmptyState
+            icon={CloudIcon}
+            title={
+              server.state === "offline"
+                ? "Not available offline"
+                : "No server connected"
+            }
+            description={server.detail}
+          />
+        ) : loading ? (
+          <div>
+            <span role="status" className="sr-only">
+              Loading patients from the server
+            </span>
+            <div className="divide-y divide-line" aria-hidden>
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-4 px-4 py-3">
+                  <Skeleton className="h-5 w-5" />
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="ml-auto h-4 w-24" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : loadError ? (
+          <div className="panel-body">
+            <div className="banner banner-danger" role="alert">
+              <span className="flex-1">
+                Patients could not be loaded from the server.
+              </span>
+              <button
+                type="button"
+                onClick={loadEligiblePatients}
+                className="btn-secondary"
+              >
+                Try again
+              </button>
+            </div>
           </div>
         ) : patients.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            No eligible patients found. All patients with contact information
-            are already enrolled.
-          </div>
+          <EmptyState
+            icon={UserPlusIcon}
+            title="No patients waiting for a portal account"
+            description="Every patient on the server with an email or phone number already has portal access."
+          />
         ) : (
-          <div className="divide-y divide-gray-200">
-            {patients.map((patient) => (
-              <div
-                key={patient.id}
-                className="p-4 hover:bg-gray-50 cursor-pointer"
-                onClick={() => togglePatient(patient.id)}
-              >
-                <div className="flex items-center gap-4">
-                  <input
-                    type="checkbox"
-                    checked={selectedPatients.has(patient.id)}
-                    onChange={() => togglePatient(patient.id)}
-                    className="w-5 h-5 text-green-600 rounded focus:ring-green-500"
-                  />
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900">
-                      {patient.given_name} {patient.family_name}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      DOB: {patient.dob}
-                    </div>
-                    <div className="text-sm text-gray-500 mt-1">
-                      {patient.email && (
-                        <span className="mr-4">Email: {patient.email}</span>
-                      )}
-                      {patient.phone && <span>Phone: {patient.phone}</span>}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <ul className="divide-y divide-line">
+            {patients.map((patient) => {
+              const inputId = `enroll-${patient.id}`;
+              return (
+                <li key={patient.id}>
+                  <label
+                    htmlFor={inputId}
+                    className="flex min-h-touch-target cursor-pointer items-start gap-3 px-4 py-3 hover:bg-surface-hover"
+                  >
+                    <input
+                      id={inputId}
+                      type="checkbox"
+                      checked={selectedPatients.has(patient.id)}
+                      onChange={() => togglePatient(patient.id)}
+                      disabled={processing}
+                      className="mt-0.5 h-5 w-5 rounded border-line-strong text-primary focus:ring-primary"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium text-ink">
+                        {rowName(patient)}
+                      </span>
+                      <span className="block text-caption text-ink-muted">
+                        Date of birth{" "}
+                        {formatNigerianDate(patient.dob) || patient.dob}
+                      </span>
+                      <span className="block text-caption text-ink-secondary">
+                        {[
+                          patient.email && `Email: ${patient.email}`,
+                          patient.phone && `Phone: ${patient.phone}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
         )}
-      </div>
+      </section>
 
-      <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-        <h3 className="font-semibold text-yellow-900 mb-2">How it works</h3>
-        <ul className="text-sm text-yellow-800 space-y-1 list-disc list-inside">
-          <li>Select patients who should have portal access</li>
-          <li>Portal accounts will be created automatically</li>
+      <section className="panel" aria-labelledby="enroll-how-title">
+        <div className="panel-header">
+          <h2 id="enroll-how-title" className="panel-title">
+            How it works
+          </h2>
+        </div>
+        <ul className="panel-body list-disc space-y-1 pl-9 text-body text-ink-secondary">
+          <li>Select patients who should have portal access.</li>
+          <li>A portal account is created on the server for each one.</li>
           <li>
-            Patients can login using their email/phone and OTP verification
+            Patients sign in with their email or phone number and a one-time
+            code.
           </li>
-          <li>Only patients with email or phone number can be enrolled</li>
-          <li>Duplicate email/phone numbers will be skipped</li>
+          <li>Only patients with an email or phone number can be enrolled.</li>
+          <li>
+            Patients whose email or phone number is already registered in the
+            portal are skipped and listed as failed.
+          </li>
         </ul>
-      </div>
+      </section>
+
+      <ConfirmDialog
+        open={confirming}
+        title={`Create portal accounts for ${plural(count)}?`}
+        confirmLabel={`Create ${count} account${count === 1 ? "" : "s"}`}
+        onConfirm={handleBulkEnroll}
+        onCancel={() => setConfirming(false)}
+      >
+        <p>
+          A portal account is created on the server for each selected patient,
+          and their server record is marked as portal-enabled.
+        </p>
+        <p>
+          No invitation is sent. Patients whose email or phone number is already
+          registered are skipped.
+        </p>
+        <p className="font-medium text-ink">
+          Only continue if these patients agreed to use the portal.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

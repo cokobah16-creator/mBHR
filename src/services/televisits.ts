@@ -92,8 +92,18 @@ interface TelevisitRequestRow {
   created_at: string;
 }
 
+// Database and SMS errors can quote patient data (names, phone numbers), so
+// only the error's name or code is logged, never its message or details.
+function errorTag(error: unknown): string {
+  if (error instanceof Error) return error.name;
+  if (error && typeof error === "object" && "code" in error) {
+    return `code ${String((error as { code: unknown }).code)}`;
+  }
+  return typeof error;
+}
+
 function logError(error: unknown, context: string): void {
-  logger.error(`[televisits] ${context}:`, error);
+  logger.error(`[televisits] ${context} failed:`, errorTag(error));
   if (import.meta.env.VITE_SENTRY_DSN && error instanceof Error) {
     Sentry.captureException(error, {
       tags: { service: "televisits", context },
@@ -192,6 +202,12 @@ export function canJoinTelevisit(
   return t >= opensAt && t <= closesAt;
 }
 
+/** True when this build has the online service televisits need. */
+export function isTelevisitServiceConfigured(): boolean {
+  return supabase !== null;
+}
+
+/** Configured and the device reports a network connection. */
 export function isTelevisitServiceAvailable(): boolean {
   return (
     supabase !== null && (typeof navigator === "undefined" || navigator.onLine)
@@ -321,6 +337,31 @@ export async function getUpcomingTelevisits(
   return ((data ?? []) as TelevisitRow[]).map(mapTelevisitRow);
 }
 
+/**
+ * Every televisit scheduled in [from, to), any status, latest first. Used
+ * for the recent-visits list (ended, no-show, cancelled).
+ */
+export async function getTelevisitsBetween(
+  from: Date,
+  to: Date,
+  providerId?: string,
+): Promise<Televisit[]> {
+  if (!supabase) return [];
+  let query = supabase
+    .from("appointments")
+    .select("*")
+    .eq("visit_mode", "televisit")
+    .gte("scheduled_at", from.toISOString())
+    .lt("scheduled_at", to.toISOString())
+    .order("scheduled_at", { ascending: false });
+
+  if (providerId) query = query.eq("provider_id", providerId);
+
+  const { data, error } = await query;
+  if (error) logAndThrow(error, "getTelevisitsBetween");
+  return ((data ?? []) as TelevisitRow[]).map(mapTelevisitRow);
+}
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -353,7 +394,10 @@ export async function resolveStaffAppUserId(
     const sessionUserId = data.session?.user?.id;
     if (sessionUserId) candidates.push(sessionUserId);
   } catch (err) {
-    logger.warn("[televisits] Could not read the Supabase session:", err);
+    logger.warn(
+      "[televisits] Could not read the Supabase session:",
+      errorTag(err),
+    );
   }
   if (localUserId && !candidates.includes(localUserId)) {
     candidates.push(localUserId);
@@ -655,6 +699,33 @@ export async function loadPatientNames(
   return map;
 }
 
+// Reads the edge function's error without echoing the phone number into
+// logs; the caller turns it into plain language for staff.
+async function readSmsError(response: Response): Promise<string> {
+  if (response.status === 429) return "Rate limited (HTTP 429)";
+  let text = "";
+  try {
+    text = await response.text();
+  } catch {
+    // Body unreadable; fall back to the status code.
+  }
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown };
+    if (typeof parsed.error === "string" && parsed.error.trim()) {
+      return parsed.error.trim();
+    }
+  } catch {
+    // Not JSON; use the raw text below.
+  }
+  return text.trim() || `HTTP ${response.status}`;
+}
+
+/**
+ * Sends the meeting link by SMS. `sent` is true only when the SMS service
+ * accepted the message for delivery; demo mode (logged, not sent), missing
+ * configuration, an offline device and provider errors all return
+ * `sent: false` with an `error` describing why.
+ */
 export async function notifyPatientTelevisitScheduled(
   visit: Televisit,
   patient: PatientContact,
@@ -665,6 +736,9 @@ export async function notifyPatientTelevisitScheduled(
   }
   if (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_ANON_KEY) {
     return { sent: false, error: "SMS service not configured" };
+  }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return { sent: false, error: "Device is offline" };
   }
 
   try {
@@ -693,23 +767,31 @@ export async function notifyPatientTelevisitScheduled(
     );
 
     if (!response.ok) {
-      const errorText = await response.text();
-      logger.warn("[televisits] SMS send failed:", errorText);
-      return { sent: false, error: errorText || `HTTP ${response.status}` };
+      const error = await readSmsError(response);
+      logger.warn("[televisits] SMS send failed: HTTP", response.status);
+      return { sent: false, error };
     }
 
     const result = (await response.json()) as {
       success?: boolean;
+      demo?: boolean;
       error?: string;
     };
     if (!result.success) {
-      logger.warn("[televisits] SMS send rejected:", result.error);
+      logger.warn("[televisits] SMS send rejected by the SMS service");
       return { sent: false, error: result.error ?? "SMS send failed" };
+    }
+    if (result.demo) {
+      // SMS_DEMO_MODE logs the message on the server instead of sending it.
+      return {
+        sent: false,
+        error: "SMS demo mode is on: the message was logged, not sent",
+      };
     }
     return { sent: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Network error";
-    logger.warn("[televisits] SMS send error:", err);
+    logger.warn("[televisits] SMS send error:", errorTag(err));
     return { sent: false, error: message };
   }
 }

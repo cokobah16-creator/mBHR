@@ -1,85 +1,100 @@
-import { useCallback, useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
-  VideoCameraIcon,
+  ArrowPathIcon,
   CalendarIcon,
-  ClockIcon,
-  UserIcon,
-  XMarkIcon,
   ClipboardDocumentIcon,
-  PhoneIcon,
-  CheckCircleIcon,
+  ClockIcon,
   ExclamationTriangleIcon,
+  InboxIcon,
+  InformationCircleIcon,
+  PhoneIcon,
+  VideoCameraIcon,
+  WifiIcon,
 } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { Tabs, type TabItem } from "@/components/ui/Tabs";
+import { panelId, tabId } from "@/components/ui/tabIds";
 import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
-import { PatientSearch } from "@/components/PatientSearch";
-import type { Patient } from "@/db";
+import { createAuditLog, generateId } from "@/db";
 import * as logger from "@/lib/logger";
-import { formatNigerianDate, formatNigerianDateTime } from "@/utils/dateFormat";
+import {
+  formatNigerianDate,
+  formatNigerianDateTime,
+  formatTime,
+} from "@/utils/dateFormat";
+import { updateAppointmentDetails } from "@/services/appointments";
 import {
   STAFF_NOT_REGISTERED_MESSAGE,
-  TELEVISIT_DEFAULT_DURATION_MIN,
+  TELEVISIT_JOIN_WINDOW_BEFORE_MIN,
   canJoinTelevisit,
-  cancelTelevisit,
   declineTelevisitRequest,
   getPatientContact,
   getPendingTelevisitRequests,
+  getTelevisitsBetween,
   getUpcomingTelevisits,
-  isTelevisitServiceAvailable,
-  loadPatientNames,
+  isTelevisitServiceConfigured,
   notifyPatientTelevisitScheduled,
   preferredSlotToTime,
   resolveStaffAppUserId,
   scheduleTelevisit,
-  updateTelevisitStatus,
+  televisitJoinOpensAt,
   type Televisit,
   type TelevisitRequest,
   type TelevisitStatus,
 } from "@/services/televisits";
+import { CancelAppointmentDialog } from "@/features/appointments/CancelAppointmentDialog";
+import {
+  StaffFacingError,
+  addDays,
+  canManageAppointments,
+  describeActionError,
+  notesWithCancellation,
+  startOfDay,
+  toDateInputValue,
+} from "@/features/appointments/appointmentModel";
+import {
+  loadPatientLabels,
+  patientPlaceholder,
+  type PatientLabel,
+} from "@/features/appointments/patientLabels";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { copyText } from "./clipboard";
+import {
+  ScheduleTelevisitDialog,
+  type ScheduleFormValues,
+  type ScheduleTarget,
+} from "./ScheduleTelevisitDialog";
+import { LinkDeliveryStatus, TelevisitLinkNotice } from "./TelevisitLinkNotice";
+import {
+  joinWindowLabel,
+  joinWindowOf,
+  linkDeliveryFrom,
+  sendLinkLabel,
+  televisitStatusMeta,
+  type LinkDelivery,
+} from "./televisitModel";
 
-const DURATION_OPTIONS = [15, 20, 30, 45, 60];
+type TabKey = "requests" | "upcoming" | "recent";
 
-const STATUS_STYLES: Record<TelevisitStatus, string> = {
-  scheduled: "bg-blue-100 text-blue-800",
-  confirmed: "bg-indigo-100 text-indigo-800",
-  arrived: "bg-teal-100 text-teal-800",
-  "in-progress": "bg-yellow-100 text-yellow-800",
-  completed: "bg-green-100 text-green-800",
-  "no-show": "bg-orange-100 text-orange-800",
-  cancelled: "bg-gray-100 text-gray-700",
-};
+const TABS_PREFIX = "televisits";
+const RECENT_DAYS = 7;
+const REFRESH_MS = 30000;
 
-interface ScheduleTarget {
-  requestId?: string;
-  patientId?: string;
-  patientName?: string;
-  date: string;
-  time: string;
-  reason: string;
-}
+const isTabKey = (value: string): value is TabKey =>
+  value === "requests" || value === "upcoming" || value === "recent";
 
-interface ScheduleFormValues {
-  requestId?: string;
-  patientId: string;
-  scheduledAt: Date;
-  durationMinutes: number;
-  reason: string;
-  notes: string;
-}
+type LoadState =
+  | { status: "loading" }
+  | { status: "idle" }
+  | { status: "error"; message: string };
 
-interface ScheduledResult {
-  visit: Televisit;
-  patientName: string;
-  smsMessage: string;
-}
-
-function toDateInputValue(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+const errorName = (err: unknown) =>
+  err instanceof Error ? err.name : typeof err;
 
 function formatPreferredDate(value: string): string {
   return formatNigerianDate(
@@ -108,346 +123,140 @@ function isSameLocalDay(a: Date, b: Date): boolean {
   );
 }
 
-function errorMessage(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
-
-function StatusPill({ status }: { status: TelevisitStatus }) {
+function ListSkeleton({ label }: { label: string }) {
   return (
-    <span
-      className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium capitalize ${
-        STATUS_STYLES[status] ?? "bg-gray-100 text-gray-700"
-      }`}
-    >
-      {status.replace("-", " ")}
-    </span>
-  );
-}
-
-interface ScheduleTelevisitModalProps {
-  initial: ScheduleTarget;
-  disabled: boolean;
-  onClose: () => void;
-  onSubmit: (values: ScheduleFormValues) => Promise<void>;
-}
-
-function ScheduleTelevisitModal({
-  initial,
-  disabled,
-  onClose,
-  onSubmit,
-}: ScheduleTelevisitModalProps) {
-  const fixedPatient = Boolean(initial.requestId && initial.patientId);
-  const [patient, setPatient] = useState<{ id: string; name: string } | null>(
-    initial.patientId
-      ? {
-          id: initial.patientId,
-          name: initial.patientName ?? initial.patientId,
-        }
-      : null,
-  );
-  const [date, setDate] = useState(initial.date);
-  const [time, setTime] = useState(initial.time);
-  const [duration, setDuration] = useState(TELEVISIT_DEFAULT_DURATION_MIN);
-  const [reason, setReason] = useState(initial.reason);
-  const [notes, setNotes] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const today = toDateInputValue(new Date());
-
-  const handlePatientSelect = (selected: Patient) => {
-    setPatient({
-      id: selected.id,
-      name: `${selected.givenName} ${selected.familyName}`.trim(),
-    });
-  };
-
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (disabled) return;
-    if (!patient) {
-      setError("Select a patient.");
-      return;
-    }
-    if (!date || !time) {
-      setError("Choose a date and a time.");
-      return;
-    }
-    const scheduledAt = new Date(`${date}T${time}`);
-    if (isNaN(scheduledAt.getTime())) {
-      setError("The date or time is invalid.");
-      return;
-    }
-    if (scheduledAt.getTime() <= Date.now()) {
-      setError("Choose a time in the future.");
-      return;
-    }
-    if (!reason.trim()) {
-      setError("Enter a reason for the visit.");
-      return;
-    }
-
-    setError(null);
-    setSubmitting(true);
-    try {
-      await onSubmit({
-        requestId: initial.requestId,
-        patientId: patient.id,
-        scheduledAt,
-        durationMinutes: duration,
-        reason: reason.trim(),
-        notes: notes.trim(),
-      });
-    } catch (err) {
-      setError(errorMessage(err, "Could not schedule the televisit."));
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <>
-      <div
-        className="fixed inset-0 bg-black bg-opacity-50 z-40"
-        onClick={onClose}
-      />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="schedule-televisit-title"
-          className="pointer-events-auto w-full max-w-lg bg-white rounded-lg shadow-xl max-h-full overflow-y-auto"
-        >
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-            <h2
-              id="schedule-televisit-title"
-              className="text-lg font-semibold text-gray-900"
-            >
-              Schedule televisit
-            </h2>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100"
-            >
-              <XMarkIcon className="h-5 w-5" />
-            </button>
+    <div>
+      <span role="status" className="sr-only">
+        {label}
+      </span>
+      <div className="divide-y divide-line" aria-hidden>
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="space-y-2 px-4 py-4">
+            <Skeleton className="h-4 w-48 max-w-full" />
+            <Skeleton className="h-3 w-72 max-w-full" />
+            <Skeleton className="h-3 w-40" />
           </div>
-
-          <form onSubmit={handleSubmit} className="px-6 py-4 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Patient
-              </label>
-              {fixedPatient && patient ? (
-                <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-900">
-                  <UserIcon className="h-4 w-4 text-gray-500" />
-                  <span>{patient.name}</span>
-                </div>
-              ) : (
-                <>
-                  <PatientSearch
-                    onPatientSelect={handlePatientSelect}
-                    placeholder="Search by name or phone..."
-                  />
-                  {patient && (
-                    <p className="mt-1 text-xs text-gray-600">
-                      Selected: {patient.name}
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label
-                  htmlFor="televisit-date"
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  Date
-                </label>
-                <input
-                  id="televisit-date"
-                  type="date"
-                  min={today}
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="televisit-time"
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  Time
-                </label>
-                <input
-                  id="televisit-time"
-                  type="time"
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label
-                htmlFor="televisit-duration"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Duration
-              </label>
-              <select
-                id="televisit-duration"
-                value={duration}
-                onChange={(e) => setDuration(Number(e.target.value))}
-                className="input-field"
-              >
-                {DURATION_OPTIONS.map((minutes) => (
-                  <option key={minutes} value={minutes}>
-                    {minutes} minutes
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label
-                htmlFor="televisit-reason"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Reason
-              </label>
-              <input
-                id="televisit-reason"
-                type="text"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                className="input-field"
-                placeholder="e.g. Follow-up on blood pressure"
-                required
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="televisit-notes"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Notes (optional)
-              </label>
-              <textarea
-                id="televisit-notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="input-field"
-                rows={3}
-              />
-            </div>
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
-                {error}
-              </div>
-            )}
-
-            <div className="flex flex-wrap justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="btn-secondary text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={disabled || submitting}
-                className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {submitting ? "Scheduling..." : "Schedule & send link"}
-              </button>
-            </div>
-          </form>
-        </div>
+        ))}
       </div>
-    </>
+    </div>
   );
 }
 
 export function TelevisitManager() {
-  const { currentUser } = useAuthStore();
-  const toast = useToast();
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const { push } = useToast();
+  const online = useOnlineStatus();
+  const configured = isTelevisitServiceConfigured();
+
+  const [tab, setTab] = useState<TabKey>("requests");
   const [requests, setRequests] = useState<TelevisitRequest[]>([]);
   const [visits, setVisits] = useState<Televisit[]>([]);
-  const [patientNames, setPatientNames] = useState<Map<string, string>>(
-    new Map(),
+  const [recent, setRecent] = useState<Televisit[] | null>([]);
+  const [labels, setLabels] = useState<Map<string, PatientLabel>>(
+    () => new Map(),
   );
-  const [loading, setLoading] = useState(true);
+  const [loadState, setLoadState] = useState<LoadState>({
+    status: "loading",
+  });
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [scheduleTarget, setScheduleTarget] = useState<ScheduleTarget | null>(
     null,
   );
   const [decliningId, setDecliningId] = useState<string | null>(null);
   const [declineNote, setDeclineNote] = useState("");
+  const [declineError, setDeclineError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [lastScheduled, setLastScheduled] = useState<ScheduledResult | null>(
-    null,
+  const [deliveries, setDeliveries] = useState<Record<string, LinkDelivery>>(
+    {},
   );
+  const [lastBooked, setLastBooked] = useState<{
+    visit: Televisit;
+    patientName: string;
+  } | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<Televisit | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const [staffAppUserId, setStaffAppUserId] = useState<
     string | null | undefined
   >(undefined);
+  const requestRef = useRef(0);
+  const wasOnline = useRef(online);
 
   const userId = currentUser?.id;
-  const providerName = currentUser?.fullName;
-  const actionsDisabled = !userId;
-  const available = isTelevisitServiceAvailable();
+  const role = currentUser?.role;
+  const myName = currentUser?.fullName;
+  const canManage = canManageAppointments(role);
 
-  const notify = (title: string, body?: string) => {
-    toast.push({ id: Date.now().toString(), title, body });
-  };
-
-  const load = useCallback(async (isInitial = false) => {
-    if (!isTelevisitServiceAvailable()) {
-      if (isInitial) setLoading(false);
-      return;
-    }
-    try {
-      if (isInitial) setLoading(true);
-      const [pending, upcoming] = await Promise.all([
-        getPendingTelevisitRequests(),
-        getUpcomingTelevisits(),
-      ]);
-      const patientIds = [
-        ...pending.map((r) => r.patientId),
-        ...upcoming.map((v) => v.patientId),
-      ];
-      const names =
-        patientIds.length > 0
-          ? await loadPatientNames(patientIds)
-          : new Map<string, string>();
-      setRequests(pending);
-      setVisits(upcoming);
-      setPatientNames(names);
-    } catch (err) {
-      logger.error("[TelevisitManager] Failed to load televisits:", err);
-    } finally {
-      if (isInitial) setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (initial: boolean) => {
+      if (!configured) return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        // Keep whatever was loaded; the offline banner explains.
+        setLoadState({ status: "idle" });
+        return;
+      }
+      const request = ++requestRef.current;
+      if (initial) setLoadState({ status: "loading" });
+      try {
+        const today = startOfDay(new Date());
+        const [pending, upcoming, past] = await Promise.all([
+          getPendingTelevisitRequests(),
+          getUpcomingTelevisits(),
+          // Recent visits are secondary: a failure here leaves the rest usable.
+          getTelevisitsBetween(
+            addDays(today, -RECENT_DAYS),
+            addDays(today, 1),
+          ).catch((err) => {
+            logger.warn(
+              "[TelevisitManager] Recent televisits failed to load:",
+              errorName(err),
+            );
+            return null;
+          }),
+        ]);
+        const names = await loadPatientLabels([
+          ...pending.map((r) => r.patientId),
+          ...upcoming.map((v) => v.patientId),
+          ...(past ?? []).map((v) => v.patientId),
+        ]);
+        if (request !== requestRef.current) return;
+        const upcomingIds = new Set(upcoming.map((v) => v.id));
+        setRequests(pending);
+        setVisits(upcoming);
+        setRecent(past ? past.filter((v) => !upcomingIds.has(v.id)) : null);
+        setLabels(names);
+        setLoadedAt(new Date());
+        setLoadState({ status: "idle" });
+      } catch (err) {
+        if (request !== requestRef.current) return;
+        logger.error(
+          "[TelevisitManager] Failed to load televisits:",
+          errorName(err),
+        );
+        setLoadState({
+          status: "error",
+          message:
+            "The televisit lists could not be loaded from the online service. Check the connection, then try again.",
+        });
+      }
+    },
+    [configured],
+  );
 
   useEffect(() => {
-    load(true);
-    const interval = setInterval(() => load(false), 30000);
+    void load(true);
+    const interval = setInterval(() => void load(false), REFRESH_MS);
     return () => clearInterval(interval);
   }, [load]);
 
+  // Reload as soon as the connection comes back.
   useEffect(() => {
-    if (!userId || !isTelevisitServiceAvailable()) return;
+    if (online && !wasOnline.current) void load(false);
+    wasOnline.current = online;
+  }, [online, load]);
+
+  useEffect(() => {
+    if (!userId || !configured || !online) return;
     let active = true;
     resolveStaffAppUserId(userId)
       .then((resolved) => {
@@ -456,21 +265,141 @@ export function TelevisitManager() {
       .catch((err) => {
         logger.error(
           "[TelevisitManager] Staff registration check failed:",
-          err,
+          errorName(err),
         );
       });
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [userId, configured, online]);
 
   useEffect(() => {
-    const tick = setInterval(() => setNow(new Date()), 30000);
+    const tick = setInterval(() => setNow(new Date()), REFRESH_MS);
     return () => clearInterval(tick);
   }, []);
 
   const nameOf = (patientId: string) =>
-    patientNames.get(patientId) || patientId;
+    labels.get(patientId)?.name || patientPlaceholder(patientId);
+
+  const patientName = (patientId: string) => {
+    const label = labels.get(patientId);
+    const name = label?.name || patientPlaceholder(patientId);
+    return label?.onDevice ? (
+      <Link
+        to={`/patients/${patientId}`}
+        className="text-primary-fg underline decoration-primary-line underline-offset-2 hover:decoration-primary-fg"
+      >
+        {name}
+      </Link>
+    ) : (
+      name
+    );
+  };
+
+  const notify = (
+    tone: "success" | "info" | "warning" | "error",
+    title: string,
+    body?: string,
+  ) => push({ id: generateId(), tone, title, body });
+
+  const audit = (action: string, entityId: string) => {
+    if (!role) return;
+    void createAuditLog(role, action, "televisit", entityId).catch(
+      () => undefined,
+    );
+  };
+
+  // Checked before every write, not only by hiding buttons.
+  const writeBlockReason = (): string | null => {
+    const user = useAuthStore.getState().currentUser;
+    if (!user) return "Sign in to manage televisits.";
+    if (!canManageAppointments(user.role)) {
+      return "Your role can view televisits but not change them.";
+    }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return "This device is offline. Televisits are managed online; connect to the internet, then try again.";
+    }
+    return null;
+  };
+
+  const assertCanWrite = (): boolean => {
+    const reason = writeBlockReason();
+    if (reason) notify("warning", "Nothing was changed", reason);
+    return reason === null;
+  };
+
+  const providerNameFor = (visit: Televisit) =>
+    visit.providerId && visit.providerId === staffAppUserId
+      ? myName
+      : undefined;
+
+  /**
+   * Sends the meeting link by SMS and records exactly what happened.
+   * `announce` adds a toast (off when the booking notice shows the result);
+   * `providerName` names the clinician in the SMS when already known.
+   */
+  const sendLink = async (
+    visit: Televisit,
+    options: { announce?: boolean; providerName?: string } = {},
+  ) => {
+    const { announce = true } = options;
+    if (!assertCanWrite()) return;
+    setDeliveries((d) => ({ ...d, [visit.id]: { state: "sending" } }));
+    let delivery: LinkDelivery;
+    try {
+      const contact = await getPatientContact(visit.patientId);
+      if (!contact) {
+        delivery = linkDeliveryFrom({ kind: "no-contact" }, new Date());
+      } else {
+        const result = await notifyPatientTelevisitScheduled(
+          visit,
+          contact,
+          options.providerName ?? providerNameFor(visit),
+        );
+        delivery = linkDeliveryFrom(
+          {
+            kind: "result",
+            sent: result.sent,
+            error: result.error,
+            to: contact.fullName || nameOf(visit.patientId),
+          },
+          new Date(),
+        );
+      }
+    } catch (err) {
+      delivery = linkDeliveryFrom(
+        {
+          kind: "result",
+          sent: false,
+          error: err instanceof Error ? err.message : undefined,
+          to: "",
+        },
+        new Date(),
+      );
+    }
+    setDeliveries((d) => ({ ...d, [visit.id]: delivery }));
+    if (!announce) return;
+    if (delivery.state === "sent") {
+      notify("success", "Link sent by SMS", `To ${delivery.to}.`);
+    } else if (delivery.state === "failed") {
+      notify("warning", "Link not sent by SMS", delivery.reason);
+    }
+  };
+
+  const copyLink = async (link?: string) => {
+    if (!link) {
+      notify(
+        "warning",
+        "No meeting link",
+        "This televisit has no meeting link.",
+      );
+      return;
+    }
+    const ok = await copyText(link);
+    if (ok) notify("success", "Link copied");
+    else
+      notify("warning", "Could not copy the link", `Copy it by hand: ${link}`);
+  };
 
   const openScheduleFromHeader = () => {
     setScheduleTarget({
@@ -492,13 +421,12 @@ export function TelevisitManager() {
   };
 
   const handleSchedule = async (values: ScheduleFormValues) => {
-    if (!userId) {
-      throw new Error("You must be signed in to schedule a televisit.");
-    }
-    const staffId = staffAppUserId ?? (await resolveStaffAppUserId(userId));
-    if (!staffId) {
-      throw new Error(STAFF_NOT_REGISTERED_MESSAGE);
-    }
+    const blocked = writeBlockReason();
+    if (blocked) throw new StaffFacingError(blocked);
+    const staffId =
+      staffAppUserId ?? (userId ? await resolveStaffAppUserId(userId) : null);
+    if (!staffId) throw new StaffFacingError(STAFF_NOT_REGISTERED_MESSAGE);
+
     const visit = await scheduleTelevisit({
       patientId: values.patientId,
       providerId: staffId,
@@ -509,508 +437,769 @@ export function TelevisitManager() {
       createdBy: staffId,
       requestId: values.requestId,
     });
+    audit("televisit_scheduled", visit.id);
 
-    let smsSent = false;
-    let smsMessage: string;
-    let patientName = nameOf(values.patientId);
-    const contact = await getPatientContact(values.patientId);
-    if (contact) {
-      if (contact.fullName) patientName = contact.fullName;
-      const result = await notifyPatientTelevisitScheduled(
-        visit,
-        contact,
-        providerName,
-      );
-      smsSent = result.sent;
-      smsMessage = result.sent
-        ? "SMS sent to the patient."
-        : `SMS not sent: ${result.error ?? "unknown error"}. Share the link manually.`;
-    } else {
-      smsMessage = "Patient contact not found. Share the link manually.";
-    }
-
+    const name = values.patientName || nameOf(values.patientId);
     notify(
-      smsSent
-        ? "Televisit scheduled — SMS sent"
-        : "Televisit scheduled — SMS not sent",
-      `${smsMessage}${visit.meetingLink ? ` Link: ${visit.meetingLink}` : ""}`,
+      "success",
+      "Televisit booked",
+      `${name} · ${formatNigerianDateTime(visit.scheduledAt)}`,
     );
-    setLastScheduled({ visit, patientName, smsMessage });
+    setLastBooked({ visit, patientName: name });
     setScheduleTarget(null);
-    await load();
+    if (staffId !== staffAppUserId) setStaffAppUserId(staffId);
+    void load(false);
+    // The signed-in clinician is the provider of a televisit booked here.
+    void sendLink(visit, { announce: false, providerName: myName });
   };
 
   const confirmDecline = async (request: TelevisitRequest) => {
-    if (!userId) return;
+    // Shown next to the decline button, where the person is looking.
+    const blocked = writeBlockReason();
+    if (blocked || !userId) {
+      setDeclineError(blocked ?? "Sign in to manage televisits.");
+      return;
+    }
     setBusyId(request.id);
+    setDeclineError(null);
     try {
+      // reviewed_by references the online staff directory, so resolve the
+      // directory id first; the local id is the fallback it always used.
+      const reviewer =
+        staffAppUserId ??
+        (await resolveStaffAppUserId(userId).catch(() => null)) ??
+        userId;
       await declineTelevisitRequest(
         request.id,
-        userId,
+        reviewer,
         declineNote.trim() || undefined,
       );
-      notify("Request declined", `${nameOf(request.patientId)} was declined.`);
-      setDecliningId(null);
-      setDeclineNote("");
-      await load();
-    } catch (err) {
-      notify(
-        "Could not decline request",
-        errorMessage(err, "Please try again."),
-      );
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const joinCall = (visit: Televisit) => {
-    if (!visit.meetingLink) {
-      notify("No meeting link", "This televisit has no meeting link.");
-      return;
-    }
-    window.open(visit.meetingLink, "_blank", "noopener,noreferrer");
-  };
-
-  const copyLink = async (link?: string) => {
-    if (!link) {
-      notify("No meeting link", "This televisit has no meeting link.");
-      return;
-    }
-    if (!navigator.clipboard) {
-      notify("Could not copy link", link);
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(link);
-      notify("Link copied", link);
-    } catch {
-      notify("Could not copy link", link);
-    }
-  };
-
-  const resendSms = async (visit: Televisit) => {
-    setBusyId(visit.id);
-    try {
-      const contact = await getPatientContact(visit.patientId);
-      if (!contact) {
-        notify("SMS not sent", "Patient contact not found.");
-        return;
-      }
-      const result = await notifyPatientTelevisitScheduled(
-        visit,
-        contact,
-        providerName,
-      );
-      if (result.sent) {
-        notify("SMS sent", `Meeting link sent to ${contact.fullName}.`);
-      } else {
-        notify(
-          "SMS not sent",
-          `${result.error ?? "Unknown error"}. Share the link manually.`,
+      // The service reports success even when row-level security changed
+      // nothing, so check the request really left the pending list.
+      const stillPending = await getPendingTelevisitRequests()
+        .then((list) => list.some((r) => r.id === request.id))
+        .catch(() => false);
+      if (stillPending) {
+        throw new StaffFacingError(
+          "The request was not declined: the online service did not accept the change. It is still pending. Ask an admin to check that your account can review requests.",
         );
       }
+      audit("televisit_request_declined", request.id);
+      notify(
+        "success",
+        "Request declined",
+        `${nameOf(request.patientId)}'s request was declined. The patient sees this when they next open the portal; no SMS is sent.`,
+      );
+      setDecliningId(null);
+      setDeclineNote("");
+      await load(false);
+    } catch (err) {
+      setDeclineError(
+        describeActionError(
+          err,
+          "The request was not declined. Check the connection, then try again.",
+        ),
+      );
     } finally {
       setBusyId(null);
     }
   };
 
   const changeStatus = async (visit: Televisit, status: TelevisitStatus) => {
+    if (!assertCanWrite()) return;
     setBusyId(visit.id);
     try {
-      if (status === "cancelled") {
-        await cancelTelevisit(visit.id);
-      } else {
-        await updateTelevisitStatus(visit.id, status);
-      }
+      await updateAppointmentDetails(visit.id, { status });
+      audit(`televisit_${status}`, visit.id);
       notify(
+        "success",
         "Televisit updated",
-        `${nameOf(visit.patientId)} marked ${status.replace("-", " ")}.`,
+        `${nameOf(visit.patientId)}: ${televisitStatusMeta(status).label}.`,
       );
-      await load();
+      await load(false);
     } catch (err) {
       notify(
-        "Could not update televisit",
-        errorMessage(err, "Please try again."),
+        "error",
+        "Televisit not updated",
+        describeActionError(
+          err,
+          "The change was not saved. Check the connection, then try again.",
+        ),
       );
     } finally {
       setBusyId(null);
     }
   };
 
-  if (!available) {
+  const confirmCancel = async (reason: string) => {
+    const visit = cancelTarget;
+    if (!visit) return;
+    // Shown inside the dialog: a toast would sit behind the modal.
+    const blocked = writeBlockReason();
+    if (blocked) {
+      setCancelError(blocked);
+      return;
+    }
+    setBusyId(visit.id);
+    setCancelError(null);
+    try {
+      const notes = notesWithCancellation(visit.notes, reason);
+      await updateAppointmentDetails(
+        visit.id,
+        notes ? { status: "cancelled", notes } : { status: "cancelled" },
+      );
+      audit("televisit_cancelled", visit.id);
+      setCancelTarget(null);
+      if (lastBooked?.visit.id === visit.id) setLastBooked(null);
+      notify(
+        "success",
+        "Televisit cancelled",
+        `${nameOf(visit.patientId)} · ${formatNigerianDateTime(visit.scheduledAt)}. The patient has not been told; let them know.`,
+      );
+      await load(false);
+    } catch (err) {
+      setCancelError(
+        describeActionError(
+          err,
+          "The televisit was not cancelled. Check the connection, then try again.",
+        ),
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // ---------------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------------
+
+  if (!configured) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Televisits</h1>
-          <p className="text-gray-600">
-            Video visit requests and upcoming calls
-          </p>
-        </div>
-        <div className="w-full bg-yellow-50 border border-yellow-200 rounded-lg p-6 flex items-start gap-3">
-          <ExclamationTriangleIcon className="h-6 w-6 text-yellow-600 flex-shrink-0" />
-          <div>
-            <h2 className="font-semibold text-yellow-800">
-              Televisits are unavailable
-            </h2>
-            <p className="text-sm text-yellow-700 mt-1">
-              Televisits need the online portal (Supabase) and an internet
-              connection.
-            </p>
-          </div>
-        </div>
+      <div className="space-y-4">
+        <PageHeader
+          title="Televisits"
+          description="Video visit requests from the patient portal and upcoming calls."
+        />
+        <section className="panel">
+          <EmptyState
+            icon={VideoCameraIcon}
+            title="Televisits are not set up on this device"
+            description="Televisits need the online patient portal service and an internet connection. Registration, vitals, consultation and pharmacy keep working offline."
+          />
+        </section>
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading televisits...</p>
-        </div>
-      </div>
-    );
-  }
-
+  const writeBlocked = !canManage || !online;
   const upcomingToday = visits.filter((v) =>
     isSameLocalDay(v.scheduledAt, now),
   ).length;
+  const neverLoaded = loadedAt === null;
+  const initialLoading = loadState.status === "loading" && neverLoaded;
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Televisits</h1>
-          <p className="text-gray-600">
-            Review patient video visit requests and manage upcoming calls
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
+  const tabs: TabItem<TabKey>[] = [
+    {
+      id: "requests",
+      label: "Requests",
+      badge: neverLoaded ? undefined : requests.length,
+    },
+    {
+      id: "upcoming",
+      label: "Upcoming",
+      badge: neverLoaded ? undefined : visits.length,
+    },
+    { id: "recent", label: `Past ${RECENT_DAYS} days` },
+  ];
+
+  const notLoadedState = () => {
+    if (initialLoading) {
+      return <ListSkeleton label="Loading televisits" />;
+    }
+    if (!online) {
+      return (
+        <EmptyState
+          icon={WifiIcon}
+          title="Not loaded: this device is offline"
+          description="Televisit requests and calls are kept online. They will load when the connection returns."
+        />
+      );
+    }
+    return (
+      <EmptyState
+        icon={ExclamationTriangleIcon}
+        title="Televisits not loaded"
+        description={
+          loadState.status === "error"
+            ? loadState.message
+            : "The lists have not loaded yet."
+        }
+        action={
           <button
             type="button"
-            onClick={openScheduleFromHeader}
-            disabled={actionsDisabled}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-secondary"
+            onClick={() => void load(true)}
           >
-            <VideoCameraIcon className="h-5 w-5" />
-            <span className="font-medium">Schedule televisit</span>
+            <ArrowPathIcon className="h-4 w-4" aria-hidden />
+            Try again
           </button>
-          <div className="flex items-center space-x-4 bg-white rounded-lg shadow-sm p-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-600">
-                {requests.length}
-              </div>
-              <div className="text-xs text-gray-600">Pending requests</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">
-                {upcomingToday}
-              </div>
-              <div className="text-xs text-gray-600">Today</div>
-            </div>
-          </div>
-        </div>
-      </div>
+        }
+      />
+    );
+  };
 
-      {staffAppUserId === null && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
-          {STAFF_NOT_REGISTERED_MESSAGE}
-        </div>
-      )}
-
-      {lastScheduled && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3 min-w-0">
-            <CheckCircleIcon className="h-6 w-6 text-green-600 flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="font-semibold text-green-800">
-                Televisit scheduled for {lastScheduled.patientName} on{" "}
-                {formatNigerianDateTime(lastScheduled.visit.scheduledAt)}
-              </p>
-              <p className="text-sm text-green-700 mt-1">
-                {lastScheduled.smsMessage}
-              </p>
-              {lastScheduled.visit.meetingLink && (
-                <p className="text-sm text-green-900 mt-1 break-all">
-                  {lastScheduled.visit.meetingLink}
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => copyLink(lastScheduled.visit.meetingLink)}
-              className="btn-secondary text-sm flex items-center gap-1"
-            >
-              <ClipboardDocumentIcon className="h-4 w-4" />
-              Copy link
-            </button>
-            <button
-              type="button"
-              onClick={() => setLastScheduled(null)}
-              aria-label="Dismiss"
-              className="p-2 rounded-lg text-green-700 hover:bg-green-100"
-            >
-              <XMarkIcon className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Pending requests ({requests.length})
-        </h2>
-
-        {requests.length === 0 ? (
-          <div className="text-center py-10">
-            <CheckCircleIcon className="h-12 w-12 text-green-500 mx-auto mb-3" />
-            <p className="text-gray-600">No pending televisit requests.</p>
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {requests.map((request) => {
-              const isDeclining = decliningId === request.id;
-              const isBusy = busyId === request.id;
-              return (
-                <div
-                  key={request.id}
-                  className="border-2 border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-all"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <UserIcon className="h-5 w-5 text-gray-500 flex-shrink-0" />
-                        <h3 className="text-lg font-semibold text-gray-900 truncate">
-                          {nameOf(request.patientId)}
-                        </h3>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
-                        <span className="flex items-center gap-1">
-                          <CalendarIcon className="h-4 w-4" />
-                          {formatPreferredDate(request.preferredDate)}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <ClockIcon className="h-4 w-4" />
-                          {slotLabel(request.preferredTime)}
-                        </span>
-                      </div>
-                      {request.reason && (
-                        <p className="mt-2 text-sm text-gray-900">
-                          <span className="text-gray-600">Reason:</span>{" "}
-                          {request.reason}
-                        </p>
-                      )}
-                      {request.notes && (
-                        <p className="mt-1 text-sm text-gray-900">
-                          <span className="text-gray-600">Notes:</span>{" "}
-                          {request.notes}
-                        </p>
-                      )}
-                      <p className="mt-2 text-xs text-gray-500">
-                        Requested {formatNigerianDateTime(request.createdAt)}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap sm:flex-col gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openScheduleFromRequest(request)}
-                        disabled={actionsDisabled || isBusy}
-                        className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Schedule
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDecliningId(isDeclining ? null : request.id);
-                          setDeclineNote("");
-                        }}
-                        disabled={actionsDisabled || isBusy}
-                        className="btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isDeclining ? "Keep request" : "Decline"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {isDeclining && (
-                    <div className="mt-4 border-t border-gray-200 pt-4">
-                      <label
-                        htmlFor={`decline-note-${request.id}`}
-                        className="block text-sm font-medium text-gray-700 mb-1"
-                      >
-                        Note to patient (optional)
-                      </label>
-                      <textarea
-                        id={`decline-note-${request.id}`}
-                        value={declineNote}
-                        onChange={(e) => setDeclineNote(e.target.value)}
-                        className="input-field"
-                        rows={2}
-                        placeholder="e.g. Please book an in-person visit for this concern."
-                      />
-                      <div className="mt-2 flex flex-wrap justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => confirmDecline(request)}
-                          disabled={actionsDisabled || isBusy}
-                          className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {isBusy ? "Declining..." : "Confirm decline"}
-                        </button>
-                      </div>
-                    </div>
+  const renderRequests = () => {
+    if (neverLoaded) return notLoadedState();
+    if (requests.length === 0) {
+      return (
+        <EmptyState
+          icon={InboxIcon}
+          title="No pending requests"
+          description="Video visit requests that patients send from the portal appear here."
+        />
+      );
+    }
+    return (
+      <ul className="divide-y divide-line">
+        {requests.map((request) => {
+          const isDeclining = decliningId === request.id;
+          const isBusy = busyId === request.id;
+          const name = nameOf(request.patientId);
+          return (
+            <li key={request.id} className="px-4 py-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <h2 className="text-h3 text-ink">
+                    {patientName(request.patientId)}
+                  </h2>
+                  <p className="flex flex-wrap gap-x-4 gap-y-1 text-body text-ink-secondary">
+                    <span className="inline-flex items-center gap-1">
+                      <CalendarIcon className="h-4 w-4" aria-hidden />
+                      <span className="sr-only">Preferred date:</span>
+                      {formatPreferredDate(request.preferredDate)}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <ClockIcon className="h-4 w-4" aria-hidden />
+                      <span className="sr-only">Preferred time:</span>
+                      {slotLabel(request.preferredTime)}
+                    </span>
+                  </p>
+                  {request.reason && (
+                    <p className="text-body text-ink">
+                      <span className="text-ink-muted">Reason:</span>{" "}
+                      {request.reason}
+                    </p>
                   )}
+                  {request.notes && (
+                    <p className="text-body text-ink">
+                      <span className="text-ink-muted">Notes:</span>{" "}
+                      {request.notes}
+                    </p>
+                  )}
+                  <p className="text-caption text-ink-muted">
+                    Requested {formatNigerianDateTime(request.createdAt)}
+                  </p>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Upcoming video visits ({visits.length})
-        </h2>
-
-        {visits.length === 0 ? (
-          <div className="text-center py-10">
-            <VideoCameraIcon className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-600">No upcoming video visits.</p>
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {visits.map((visit) => {
-              const joinable = canJoinTelevisit(visit, now);
-              const isBusy = busyId === visit.id;
-              const inProgress = visit.status === "in-progress";
-              return (
-                <div
-                  key={visit.id}
-                  className={`border-2 rounded-lg p-4 transition-all ${
-                    joinable
-                      ? "border-green-300 bg-green-50"
-                      : "border-gray-200 bg-white hover:border-gray-300"
-                  }`}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold text-gray-900 truncate">
-                          {nameOf(visit.patientId)}
-                        </h3>
-                        <StatusPill status={visit.status} />
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
-                        <span className="flex items-center gap-1">
-                          <CalendarIcon className="h-4 w-4" />
-                          {formatNigerianDateTime(visit.scheduledAt)}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <ClockIcon className="h-4 w-4" />
-                          {visit.durationMinutes} min
-                        </span>
-                      </div>
-                      {visit.reason && (
-                        <p className="mt-2 text-sm text-gray-900">
-                          <span className="text-gray-600">Reason:</span>{" "}
-                          {visit.reason}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => joinCall(visit)}
-                        disabled={!joinable || !visit.meetingLink}
-                        title={
-                          joinable
-                            ? "Open the video call"
-                            : "Join opens 10 minutes before the visit"
-                        }
-                        className="flex items-center gap-1 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <VideoCameraIcon className="h-4 w-4" />
-                        Join call
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => copyLink(visit.meetingLink)}
-                        className="btn-secondary text-sm flex items-center gap-1"
-                      >
-                        <ClipboardDocumentIcon className="h-4 w-4" />
-                        Copy link
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => resendSms(visit)}
-                        disabled={actionsDisabled || isBusy}
-                        className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <PhoneIcon className="h-4 w-4" />
-                        Resend SMS
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-2 border-t border-gray-200 pt-3">
-                    {!inProgress && (
-                      <button
-                        type="button"
-                        onClick={() => changeStatus(visit, "in-progress")}
-                        disabled={actionsDisabled || isBusy}
-                        className="px-3 py-1.5 rounded-lg text-sm bg-yellow-100 text-yellow-800 hover:bg-yellow-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Start
-                      </button>
-                    )}
-                    {inProgress && (
-                      <button
-                        type="button"
-                        onClick={() => changeStatus(visit, "completed")}
-                        disabled={actionsDisabled || isBusy}
-                        className="px-3 py-1.5 rounded-lg text-sm bg-green-100 text-green-800 hover:bg-green-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Complete
-                      </button>
-                    )}
-                    {!inProgress && (
-                      <button
-                        type="button"
-                        onClick={() => changeStatus(visit, "no-show")}
-                        disabled={actionsDisabled || isBusy}
-                        className="px-3 py-1.5 rounded-lg text-sm bg-orange-100 text-orange-800 hover:bg-orange-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        No-show
-                      </button>
-                    )}
+                {canManage && (
+                  <div className="flex flex-wrap gap-2 md:justify-end">
                     <button
                       type="button"
-                      onClick={() => changeStatus(visit, "cancelled")}
-                      disabled={actionsDisabled || isBusy}
-                      className="px-3 py-1.5 rounded-lg text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={() => openScheduleFromRequest(request)}
+                      disabled={writeBlocked || isBusy}
+                      className="btn-primary px-4"
+                      aria-label={`Book a televisit for ${name}`}
                     >
-                      Cancel
+                      Book
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDecliningId(isDeclining ? null : request.id);
+                        setDeclineNote("");
+                        setDeclineError(null);
+                      }}
+                      disabled={writeBlocked || isBusy}
+                      className="btn-secondary px-4"
+                      aria-expanded={isDeclining}
+                      aria-controls={
+                        isDeclining ? `decline-${request.id}` : undefined
+                      }
+                    >
+                      {isDeclining ? "Keep request" : "Decline"}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {isDeclining && (
+                <div
+                  id={`decline-${request.id}`}
+                  className="mt-4 space-y-2 rounded-md border border-line bg-surface-sunken p-3"
+                >
+                  <label
+                    htmlFor={`decline-note-${request.id}`}
+                    className="field-label"
+                  >
+                    Note to the patient (optional)
+                  </label>
+                  <textarea
+                    id={`decline-note-${request.id}`}
+                    value={declineNote}
+                    onChange={(e) => setDeclineNote(e.target.value)}
+                    className="input-field"
+                    rows={2}
+                    placeholder="e.g. Please book an in-person visit for this concern."
+                  />
+                  <p className="field-hint">
+                    The patient sees the request as declined in the portal. No
+                    SMS is sent.
+                  </p>
+                  {declineError && (
+                    <div className="banner banner-danger" role="alert">
+                      <ExclamationTriangleIcon
+                        className="h-5 w-5 shrink-0"
+                        aria-hidden
+                      />
+                      <span>{declineError}</span>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void confirmDecline(request)}
+                      disabled={writeBlocked || isBusy}
+                      className="btn-danger"
+                    >
+                      {isBusy ? "Declining…" : `Decline ${name}'s request`}
                     </button>
                   </div>
                 </div>
-              );
-            })}
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
+
+  const joinControl = (visit: Televisit, joinable: boolean) => {
+    if (joinable && online && visit.meetingLink) {
+      return (
+        <a
+          href={visit.meetingLink}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-primary px-4"
+        >
+          <VideoCameraIcon className="h-4 w-4" aria-hidden />
+          Join call
+          <span className="sr-only">
+            {" "}
+            with {nameOf(visit.patientId)} (opens in a new tab)
+          </span>
+        </a>
+      );
+    }
+    return (
+      <button type="button" disabled className="btn-secondary px-4">
+        <VideoCameraIcon className="h-4 w-4" aria-hidden />
+        Join call
+      </button>
+    );
+  };
+
+  const joinHint = (visit: Televisit, joinable: boolean, opensAt: Date) => {
+    if (!visit.meetingLink) return "This televisit has no meeting link.";
+    if (!online) return "Joining needs the internet. This device is offline.";
+    if (joinable) {
+      return "The call opens in a new tab. mBHR cannot see whether it connects: if it does not, copy the link into the browser or phone the patient.";
+    }
+    if (now.getTime() < opensAt.getTime()) {
+      return `You can join from ${formatTime(opensAt)}, ${TELEVISIT_JOIN_WINDOW_BEFORE_MIN} minutes before the start.`;
+    }
+    if (visit.status === "in-progress") {
+      return "The join window has closed. Mark the visit complete once it is over.";
+    }
+    return "The join window has closed. If the call did not take place, mark it a no-show.";
+  };
+
+  const renderVisit = (visit: Televisit, past: boolean) => {
+    const meta = televisitStatusMeta(visit.status);
+    const joinable = canJoinTelevisit(visit, now);
+    const opensAt = televisitJoinOpensAt(visit);
+    const windowState = joinWindowOf(visit.status, joinable, opensAt, now);
+    const windowBadge = joinWindowLabel(windowState, opensAt);
+    const isBusy = busyId === visit.id;
+    const delivery = deliveries[visit.id];
+    const inProgress = visit.status === "in-progress";
+    // "arrived" (checked in from the appointment calendar) only appears in
+    // the past list; it stays open so someone can close it.
+    const open =
+      visit.status === "scheduled" ||
+      visit.status === "confirmed" ||
+      visit.status === "arrived" ||
+      visit.status === "in-progress";
+    const name = nameOf(visit.patientId);
+    const disabled = writeBlocked || isBusy;
+
+    return (
+      <li key={visit.id} className="space-y-3 px-4 py-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-h3 text-ink">
+                {patientName(visit.patientId)}
+              </h2>
+              <StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>
+              {open && windowBadge && (
+                <StatusBadge tone={windowBadge.tone}>
+                  {windowBadge.label}
+                </StatusBadge>
+              )}
+            </div>
+            <p className="flex flex-wrap gap-x-4 gap-y-1 text-body text-ink-secondary">
+              <span className="inline-flex items-center gap-1">
+                <CalendarIcon className="h-4 w-4" aria-hidden />
+                {formatNigerianDateTime(visit.scheduledAt)}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <ClockIcon className="h-4 w-4" aria-hidden />
+                {visit.durationMinutes} min
+              </span>
+            </p>
+            {visit.reason && (
+              <p className="text-body text-ink">
+                <span className="text-ink-muted">Reason:</span> {visit.reason}
+              </p>
+            )}
+            <LinkDeliveryStatus delivery={delivery} />
+          </div>
+
+          {!past && (
+            <div className="flex flex-wrap gap-2 md:justify-end">
+              {joinControl(visit, joinable)}
+              <button
+                type="button"
+                onClick={() => void copyLink(visit.meetingLink)}
+                disabled={!visit.meetingLink}
+                className="btn-secondary px-3"
+                aria-label={`Copy link: meeting link for ${name}`}
+              >
+                <ClipboardDocumentIcon className="h-4 w-4" aria-hidden />
+                Copy link
+              </button>
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={() => void sendLink(visit)}
+                  disabled={
+                    disabled ||
+                    !visit.meetingLink ||
+                    delivery?.state === "sending"
+                  }
+                  className="btn-secondary px-3"
+                  aria-label={`${sendLinkLabel(delivery)}: ${name}`}
+                >
+                  <PhoneIcon className="h-4 w-4" aria-hidden />
+                  {sendLinkLabel(delivery)}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {!past && (
+          <p className="text-caption text-ink-muted">
+            {joinHint(visit, joinable, opensAt)}
+          </p>
+        )}
+
+        {canManage && open && (
+          <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+            {!past && !inProgress && (
+              <button
+                type="button"
+                onClick={() => void changeStatus(visit, "in-progress")}
+                disabled={disabled}
+                className="btn-secondary px-3"
+              >
+                Start
+              </button>
+            )}
+            {(inProgress || past) && (
+              <button
+                type="button"
+                onClick={() => void changeStatus(visit, "completed")}
+                disabled={disabled}
+                className="btn-secondary px-3"
+              >
+                {past ? "Mark ended" : "Complete"}
+              </button>
+            )}
+            {!inProgress && (
+              <button
+                type="button"
+                onClick={() => void changeStatus(visit, "no-show")}
+                disabled={disabled}
+                className="btn-ghost disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Mark no-show
+              </button>
+            )}
+            {!past && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCancelError(null);
+                  setCancelTarget(visit);
+                }}
+                disabled={disabled}
+                className="btn-ghost text-danger-fg hover:text-danger-fg disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            )}
+            {isBusy && (
+              <span className="self-center text-caption text-ink-muted">
+                Saving…
+              </span>
+            )}
           </div>
         )}
-      </div>
+      </li>
+    );
+  };
+
+  const renderUpcoming = () => {
+    if (neverLoaded) return notLoadedState();
+    if (visits.length === 0) {
+      return (
+        <EmptyState
+          icon={VideoCameraIcon}
+          title="No upcoming video visits"
+          description={
+            canManage
+              ? "Book one from a patient's request, or with “Book televisit”."
+              : "Televisits booked by clinicians appear here."
+          }
+        />
+      );
+    }
+    return (
+      <ul className="divide-y divide-line">
+        {visits.map((visit) => renderVisit(visit, false))}
+      </ul>
+    );
+  };
+
+  const renderRecent = () => {
+    if (neverLoaded) return notLoadedState();
+    if (recent === null) {
+      return (
+        <EmptyState
+          icon={ExclamationTriangleIcon}
+          title="Past televisits not loaded"
+          description="The list of recent televisits could not be loaded. The other tabs are up to date."
+          action={
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => void load(false)}
+            >
+              <ArrowPathIcon className="h-4 w-4" aria-hidden />
+              Try again
+            </button>
+          }
+        />
+      );
+    }
+    if (recent.length === 0) {
+      return (
+        <EmptyState
+          icon={VideoCameraIcon}
+          title={`No televisits in the past ${RECENT_DAYS} days`}
+          description="Ended, missed and cancelled video visits appear here."
+        />
+      );
+    }
+    return (
+      <ul className="divide-y divide-line">
+        {recent.map((visit) => renderVisit(visit, true))}
+      </ul>
+    );
+  };
+
+  const blockedReasonForDialog = !canManage
+    ? "Your role can view televisits but not book them."
+    : !online
+      ? "This device is offline. Televisits are booked online, so connect to the internet first."
+      : staffAppUserId === null
+        ? STAFF_NOT_REGISTERED_MESSAGE
+        : null;
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Televisits"
+        description="Review video visit requests from the patient portal and run upcoming calls."
+        actions={
+          canManage ? (
+            <button
+              type="button"
+              onClick={openScheduleFromHeader}
+              disabled={writeBlocked || staffAppUserId === null}
+              className="btn-primary"
+            >
+              <VideoCameraIcon className="h-5 w-5" aria-hidden />
+              Book televisit
+            </button>
+          ) : null
+        }
+      />
+
+      {!online && (
+        <div className="banner banner-warning" role="status">
+          <WifiIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          <span>
+            {loadedAt
+              ? `This device is offline. The lists below were loaded at ${formatTime(loadedAt)} and may be out of date. Booking, joining calls and sending links need the internet.`
+              : "This device is offline. Televisits need the internet: requests and calls will load when the connection returns."}
+          </span>
+        </div>
+      )}
+
+      {staffAppUserId === null && canManage && (
+        <div className="banner banner-warning" role="status">
+          <ExclamationTriangleIcon
+            className="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden
+          />
+          <span>{STAFF_NOT_REGISTERED_MESSAGE}</span>
+        </div>
+      )}
+
+      {!canManage && (
+        <div className="banner banner-info" role="note">
+          <InformationCircleIcon
+            className="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden
+          />
+          <span>
+            You can view televisits. Booking and updating them needs a nurse,
+            doctor or admin account.
+          </span>
+        </div>
+      )}
+
+      {loadState.status === "error" && !neverLoaded && (
+        <div className="banner banner-warning" role="alert">
+          <ExclamationTriangleIcon
+            className="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden
+          />
+          <p className="min-w-0 flex-1">
+            {loadState.message}{" "}
+            {loadedAt
+              ? `Showing the lists loaded at ${formatTime(loadedAt)}.`
+              : ""}
+          </p>
+          <button
+            type="button"
+            className="btn-secondary px-3"
+            onClick={() => void load(false)}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      {lastBooked && (
+        <TelevisitLinkNotice
+          headline={`Televisit booked for ${lastBooked.patientName} on ${formatNigerianDateTime(lastBooked.visit.scheduledAt)}.`}
+          link={lastBooked.visit.meetingLink}
+          delivery={deliveries[lastBooked.visit.id]}
+          canSend={canManage && online}
+          sendBlockedReason={
+            !online ? "Sending needs the internet." : undefined
+          }
+          onSend={() =>
+            void sendLink(lastBooked.visit, {
+              announce: false,
+              providerName: myName,
+            })
+          }
+          onCopy={() => void copyLink(lastBooked.visit.meetingLink)}
+          onDismiss={() => setLastBooked(null)}
+        />
+      )}
+
+      {!neverLoaded && (
+        <dl className="grid max-w-md grid-cols-2 gap-3">
+          <div className="panel p-3">
+            <dt className="section-label">Pending requests</dt>
+            <dd className="text-stat tabular-nums text-ink">
+              {requests.length}
+            </dd>
+          </div>
+          <div className="panel p-3">
+            <dt className="section-label">Open televisits today</dt>
+            <dd className="text-stat tabular-nums text-ink">{upcomingToday}</dd>
+          </div>
+        </dl>
+      )}
+
+      <section className="panel overflow-hidden" aria-label="Televisits">
+        <Tabs
+          tabs={tabs}
+          active={tab}
+          onChange={(id) => {
+            if (isTabKey(id)) setTab(id);
+          }}
+          idPrefix={TABS_PREFIX}
+          label="Televisit lists"
+          className="px-2"
+        />
+        <div
+          role="tabpanel"
+          id={panelId(TABS_PREFIX, tab)}
+          aria-labelledby={tabId(TABS_PREFIX, tab)}
+        >
+          {tab === "requests" && renderRequests()}
+          {tab === "upcoming" && renderUpcoming()}
+          {tab === "recent" && renderRecent()}
+        </div>
+      </section>
 
       {scheduleTarget && (
-        <ScheduleTelevisitModal
+        <ScheduleTelevisitDialog
           initial={scheduleTarget}
-          disabled={actionsDisabled}
+          blockedReason={blockedReasonForDialog}
           onClose={() => setScheduleTarget(null)}
           onSubmit={handleSchedule}
+        />
+      )}
+
+      {cancelTarget && (
+        <CancelAppointmentDialog
+          title={`Cancel the televisit with ${nameOf(cancelTarget.patientId)}?`}
+          summary={
+            <p>
+              Video visit on {formatNigerianDateTime(cancelTarget.scheduledAt)}{" "}
+              ({cancelTarget.durationMinutes} min).
+            </p>
+          }
+          consequences={[
+            "It is marked Cancelled and leaves the upcoming list for all staff.",
+            "The patient is not sent a message. Let them know another way.",
+            "The video link is no longer shown in mBHR, but the patient may still have it by SMS.",
+          ]}
+          confirmLabel="Cancel televisit"
+          keepLabel="Keep televisit"
+          busy={busyId === cancelTarget.id}
+          error={cancelError}
+          onConfirm={(reason) => void confirmCancel(reason)}
+          onClose={() => setCancelTarget(null)}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useId, useState } from 'react'
 import { MinusIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 interface VisualNumberInputProps {
@@ -13,6 +13,13 @@ interface VisualNumberInputProps {
   className?: string
 }
 
+/** Decimal places in the step, so 36.5 + 0.1 gives 36.6, not 36.600000000000001. */
+function decimalsOf(step: number): number {
+  const text = String(step)
+  const dot = text.indexOf('.')
+  return dot === -1 ? 0 : text.length - dot - 1
+}
+
 export function VisualNumberInput({
   value,
   onChange,
@@ -25,15 +32,24 @@ export function VisualNumberInput({
   className = ''
 }: VisualNumberInputProps) {
   const [inputValue, setInputValue] = useState(value.toString())
+  const inputId = useId()
+  const unitId = `${inputId}-unit`
+  const decimals = decimalsOf(step)
+  const round = (n: number) => Number(n.toFixed(decimals))
+
+  // Follow changes made by the parent without overwriting what is being typed.
+  useEffect(() => {
+    setInputValue((prev) => (parseFloat(prev) === value ? prev : value.toString()))
+  }, [value])
 
   const handleIncrement = () => {
-    const newValue = Math.min(max, value + step)
+    const newValue = round(Math.min(max, value + step))
     onChange(newValue)
     setInputValue(newValue.toString())
   }
 
   const handleDecrement = () => {
-    const newValue = Math.max(min, value - step)
+    const newValue = round(Math.max(min, value - step))
     onChange(newValue)
     setInputValue(newValue.toString())
   }
@@ -41,7 +57,7 @@ export function VisualNumberInput({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputVal = e.target.value
     setInputValue(inputVal)
-    
+
     const numVal = parseFloat(inputVal)
     if (!isNaN(numVal) && numVal >= min && numVal <= max) {
       onChange(numVal)
@@ -50,9 +66,9 @@ export function VisualNumberInput({
 
   const renderDots = () => {
     if (!showDots || value > 20) return null
-    
+
     return (
-      <div className="flex flex-wrap gap-1 justify-center mt-3">
+      <div className="flex flex-wrap gap-1 justify-center mt-3" aria-hidden>
         {Array.from({ length: Math.floor(value) }, (_, i) => (
           <div
             key={i}
@@ -65,45 +81,50 @@ export function VisualNumberInput({
 
   return (
     <div className={`space-y-4 ${className}`}>
-      <label className="block text-lg font-medium text-gray-700 text-center">
+      <label htmlFor={inputId} className="block text-h3 text-ink-secondary text-center">
         {label}
       </label>
-      
-      <div className="flex items-center justify-center space-x-4">
+
+      <div className="flex items-center justify-center gap-4">
         <button
           type="button"
           onClick={handleDecrement}
           disabled={value <= min}
-          className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed touch-target-large"
+          className="btn-secondary h-12 w-12 px-0"
+          aria-label={`Decrease ${label}`}
         >
-          <MinusIcon className="h-6 w-6" />
+          <MinusIcon className="h-6 w-6" aria-hidden />
         </button>
-        
+
         <div className="text-center">
           <input
+            id={inputId}
             type="number"
+            inputMode="decimal"
             value={inputValue}
             onChange={handleInputChange}
             min={min}
             max={max}
             step={step}
-            className="w-24 text-3xl font-bold text-center border-2 border-gray-300 rounded-lg py-2 focus:border-primary focus:ring-2 focus:ring-primary/20"
+            aria-describedby={unit ? unitId : undefined}
+            className="input-field w-28 text-center text-h1 tabular-nums"
           />
           {unit && (
-            <div className="text-sm text-gray-600 mt-1">{unit}</div>
+            <div id={unitId} className="text-body text-ink-muted mt-1">{unit}</div>
           )}
         </div>
-        
+
         <button
           type="button"
           onClick={handleIncrement}
           disabled={value >= max}
-          className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed touch-target-large"
+          className="btn-secondary h-12 w-12 px-0"
+          aria-label={`Increase ${label}`}
         >
-          <PlusIcon className="h-6 w-6" />
+          <PlusIcon className="h-6 w-6" aria-hidden />
         </button>
       </div>
-      
+
       {renderDots()}
     </div>
   )

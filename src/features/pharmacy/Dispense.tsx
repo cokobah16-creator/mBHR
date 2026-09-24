@@ -256,7 +256,7 @@ export default function Dispense() {
   return (
     <div>
       <PageHeader
-        breadcrumbs={[{ label: "Pharmacy", to: "/pharmacy" }, { label: "Dispense" }]}
+        breadcrumbs={[{ label: "Pharmacy", to: "/pharmacy/menu" }, { label: "Dispense" }]}
         title="Dispense prescriptions"
         description="Stock is taken from the lot that expires first. Expired lots are never used."
       />

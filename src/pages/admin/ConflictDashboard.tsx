@@ -1,1042 +1,717 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ExclamationTriangleIcon,
-  ShieldExclamationIcon,
-  CheckCircleIcon,
-  ClockIcon,
-  FunnelIcon,
   ArrowPathIcon,
-  MagnifyingGlassIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  DocumentDuplicateIcon,
-  ArrowsRightLeftIcon,
-  SparklesIcon,
-  UserGroupIcon,
-  ClipboardDocumentListIcon,
-  UserCircleIcon,
+  CloudIcon,
+  ExclamationTriangleIcon,
+  MagnifyingGlassIcon,
+  SignalSlashIcon,
 } from "@heroicons/react/24/outline";
 import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
+import { useToast } from "@/stores/toast";
+import { generateId } from "@/db";
+import logger from "@/lib/logger";
 import {
   conflictQueueService,
+  ConflictQueueError,
+  CONFLICT_QUEUE_NOT_CONFIGURED,
   type ConflictResolution,
-  type ConflictType,
-  type ConflictPriority,
-  type FieldChangeDelta,
+  type ConflictStatsSummary,
+  type ConflictView,
 } from "@/services/conflictQueue";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonText } from "@/components/ui/Skeleton";
+import { Tabs, type TabItem } from "@/components/ui/Tabs";
+import { panelId, tabId } from "@/components/ui/tabIds";
+import { ConflictDetailDialog } from "@/features/conflicts/ConflictDetailDialog";
+import { ConflictListTable } from "@/features/conflicts/ConflictListTable";
+import { ResolvedConflictTable } from "@/features/conflicts/ResolvedConflictTable";
+import { BulkResolveDialog } from "@/features/conflicts/BulkResolveDialog";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { ConflictFiltersBar } from "@/features/conflicts/ConflictFiltersBar";
+import { ConflictCounts } from "@/features/conflicts/ConflictCounts";
+import { ConflictEmptyState } from "@/features/conflicts/ConflictEmptyState";
 import {
-  ConflictComparisonCard,
-  ConflictResolutionActions,
-} from "@/components/ConflictComparisonCard";
-import { db } from "@/db";
-import { getRoleDisplayName, type Role } from "@/auth/roles";
-import { useToast } from "@/stores/toast";
+  EMPTY_FILTERS,
+  hasActiveFilters,
+  pageOf,
+  pageRange,
+  sortOpenConflicts,
+  toServiceFilters,
+  type ConflictFilterState,
+} from "@/features/conflicts/conflictFilters";
+import { formatTimestamp } from "@/features/conflicts/conflictLabels";
+import {
+  canResolveConflict,
+  decisionNeedsApproval,
+} from "@/features/conflicts/conflictPermissions";
+import { planDeviceWrite, type DeviceSnapshot } from "@/features/conflicts/devicePlan";
+import {
+  bulkResultText,
+  summariseBulk,
+  type BulkItem,
+  type BulkStrategy,
+} from "@/features/conflicts/resolutionSummary";
+import { resolveMany, type ConflictActor } from "@/features/conflicts/conflictActions";
+import {
+  loadLocalContexts,
+  loadStaffNames,
+  type LocalConflictContext,
+} from "@/features/conflicts/localContext";
 
-type TabType = "pending" | "needs_approval" | "resolved";
+const PAGE_SIZE = 20;
+/** Open conflicts are fetched together so they can be ordered by urgency. */
+const OPEN_CAP = 300;
+const SCAN_LIMIT = 50;
+const EMPTY_SNAPSHOT: DeviceSnapshot = { table: null, record: null, partner: null };
 
-const CONFLICT_TYPE_LABELS: Record<
-  ConflictType,
-  { label: string; icon: typeof DocumentDuplicateIcon }
-> = {
-  duplicate: { label: "Duplicate Record", icon: DocumentDuplicateIcon },
-  sync_conflict: { label: "Sync Conflict", icon: ArrowsRightLeftIcon },
-  data_quality: { label: "Data Quality", icon: ExclamationTriangleIcon },
-};
+type LoadState = "idle" | "loading" | "loaded" | "error";
 
-const ENTITY_TYPE_LABELS: Record<string, string> = {
-  patients: "Patient",
-  vitals: "Vitals",
-  consultations: "Consultation",
-  dispenses: "Dispense",
-  visits: "Visit",
-};
+const TAB_PREFIX = "conflicts";
 
-interface ConflictStats {
-  pending: number;
-  needsApproval: number;
-  resolvedToday: number;
-  autoResolvedToday: number;
-  byPriority: Record<ConflictPriority, number>;
-  byType: Record<ConflictType, number>;
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-type DetailTab = "comparison" | "audit_history";
-
-const REQUIRED_ROLE_LABELS: Record<string, { label: string; color: string }> = {
-  lead_clinician: {
-    label: "Lead Clinician",
-    color: "bg-teal-100 text-teal-800",
-  },
-  auditor: { label: "Auditor", color: "bg-amber-100 text-amber-800" },
-  admin: { label: "Admin", color: "bg-slate-100 text-slate-800" },
-};
-
 export default function ConflictDashboard() {
-  const { currentUser } = useAuthStore();
-  const { push: pushToast } = useToast();
-  const [activeTab, setActiveTab] = useState<TabType>("pending");
-  const [conflicts, setConflicts] = useState<ConflictResolution[]>([]);
-  const [stats, setStats] = useState<ConflictStats | null>(null);
-  const [selectedConflict, setSelectedConflict] =
-    useState<ConflictResolution | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [isLoading, setIsLoading] = useState(true);
-  const [isResolving, setIsResolving] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const { push } = useToast();
+  const online = useOnlineStatus();
+  const available = conflictQueueService.isAvailable();
 
-  const [filters, setFilters] = useState({
-    entityType: "",
-    conflictType: "" as ConflictType | "",
-    priority: "" as ConflictPriority | "",
-  });
+  const actor = useMemo<ConflictActor | null>(
+    () => (currentUser ? { id: currentUser.id, role: currentUser.role } : null),
+    [currentUser],
+  );
+  const role = actor?.role ?? null;
+  const canDecideAny = !!role && can(role, "resolve_conflicts");
+
+  const [view, setView] = useState<ConflictView>("open");
+  const [filters, setFilters] = useState<ConflictFilterState>(EMPTY_FILTERS);
   const [page, setPage] = useState(0);
+  const [rows, setRows] = useState<ConflictResolution[]>([]);
   const [total, setTotal] = useState(0);
-  const pageSize = 20;
-
-  const [selectedResolutions, setSelectedResolutions] = useState<
-    Record<string, "local" | "remote">
-  >({});
-  const [justification, setJustification] = useState("");
-  const [detailTab, setDetailTab] = useState<DetailTab>("comparison");
-  const [auditHistory, setAuditHistory] = useState<
-    Array<{
-      id: string;
-      action: string;
-      actorId?: string;
-      actorRole?: string;
-      fieldChanges: Record<string, unknown>;
-      justification?: string;
-      createdAt: string;
-    }>
-  >([]);
-  const [fieldDeltas, setFieldDeltas] = useState<FieldChangeDelta[]>([]);
-  const [approvalEligibility, setApprovalEligibility] = useState<{
-    canApprove: boolean;
-    requiredRole: string | null;
-    needsSecondApproval: boolean;
-    hasFirstApproval: boolean;
-    reason?: string;
+  const [loadState, setLoadState] = useState<LoadState>("idle");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
+  const [stats, setStats] = useState<ConflictStatsSummary | null>(null);
+  const [statsError, setStatsError] = useState(false);
+  const [contexts, setContexts] = useState<Record<string, LocalConflictContext>>({});
+  const [contextsLoading, setContextsLoading] = useState(false);
+  const [staffNames, setStaffNames] = useState<Record<string, string>>({});
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [openConflict, setOpenConflict] = useState<ConflictResolution | null>(null);
+  const [bulk, setBulk] = useState<{
+    strategy: BulkStrategy;
+    reason: string;
+    error: string | null;
   } | null>(null);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  const [now, setNow] = useState(() => new Date());
+  /** null until checked; false means the server will hide conflict rows. */
+  const [cloudSession, setCloudSession] = useState<boolean | null>(null);
+  const requestRef = useRef(0);
 
-  const loadConflicts = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const result = await conflictQueueService.getPendingConflicts({
-        entityType: filters.entityType || undefined,
-        conflictType: filters.conflictType || undefined,
-        priority: filters.priority || undefined,
-        limit: pageSize,
-        offset: page * pageSize,
-      });
-      setConflicts(result.conflicts);
-      setTotal(result.total);
-    } catch (error) {
-      console.error("Failed to load conflicts:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [filters, page]);
+  const serverPage = view === "resolved" ? page : 0;
 
-  const loadStats = useCallback(async () => {
-    try {
-      const s = await conflictQueueService.getConflictStats();
-      setStats(s);
-    } catch (error) {
-      console.error("Failed to load stats:", error);
-    }
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
   }, []);
 
   useEffect(() => {
-    loadConflicts();
-    loadStats();
-  }, [loadConflicts, loadStats]);
+    if (!available) return;
+    let cancelled = false;
+    conflictQueueService.hasCloudSession().then((has) => {
+      if (!cancelled) setCloudSession(has);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [available, currentUser]);
 
-  const handleScanForDuplicates = async () => {
-    setIsScanning(true);
+  const loadList = useCallback(async () => {
+    if (!available || !online) return;
+    const token = ++requestRef.current;
+    setLoadState("loading");
     try {
-      const result = await conflictQueueService.scanForDuplicates(50);
-      if (result.found > 0) {
-        await loadConflicts();
-        await loadStats();
-      }
-      const skippedMessage =
-        result.skipped > 0
-          ? ` Skipped ${result.skipped} record${result.skipped !== 1 ? "s" : ""} with invalid data.`
-          : "";
-      pushToast({
-        id: `duplicate-scan-${Date.now()}`,
-        title: "Duplicate scan complete",
-        body: `Found ${result.found} new potential duplicate${result.found !== 1 ? "s" : ""}.${skippedMessage}`,
-      });
-    } catch (error) {
-      console.error("Scan failed:", error);
-      pushToast({
-        id: `duplicate-scan-error-${Date.now()}`,
-        title: "Duplicate scan failed",
-        body: "Please try again.",
-      });
-    } finally {
-      setIsScanning(false);
-    }
-  };
-
-  const handleSelectConflict = async (conflict: ConflictResolution) => {
-    setSelectedConflict(conflict);
-    setSelectedResolutions({});
-    setJustification("");
-    setDetailTab("comparison");
-    setApprovalError(null);
-
-    const [history, deltas] = await Promise.all([
-      conflictQueueService.getAuditHistory(conflict.id),
-      conflictQueueService.getFieldDeltas(conflict.id),
-    ]);
-    setAuditHistory(history);
-    setFieldDeltas(deltas);
-
-    if (currentUser && conflict.status === "needs_approval") {
-      const eligibility = await conflictQueueService.checkApprovalEligibility(
-        conflict.id,
-        currentUser.role as Role,
+      const f = toServiceFilters(filters);
+      const res =
+        view === "resolved"
+          ? await conflictQueueService.listConflicts({
+              view,
+              ...f,
+              limit: PAGE_SIZE,
+              offset: serverPage * PAGE_SIZE,
+            })
+          : await conflictQueueService.listConflicts({ view, ...f, limit: OPEN_CAP, offset: 0 });
+      if (token !== requestRef.current) return;
+      setRows(view === "resolved" ? res.conflicts : sortOpenConflicts(res.conflicts));
+      setTotal(res.total);
+      setLoadError(null);
+      setLoadedAt(new Date());
+      setNow(new Date());
+      setLoadState("loaded");
+    } catch (e) {
+      if (token !== requestRef.current) return;
+      logger.error("Conflict list failed to load", e instanceof Error ? e.name : "unknown");
+      setLoadError(
+        e instanceof ConflictQueueError
+          ? e.message
+          : "Something went wrong while loading. Try again.",
       );
-      setApprovalEligibility(eligibility);
-    } else {
-      setApprovalEligibility(null);
+      setLoadState("error");
     }
-  };
+  }, [available, online, filters, view, serverPage]);
 
-  const handleFieldSelect = (field: string, choice: "local" | "remote") => {
-    setSelectedResolutions((prev) => ({ ...prev, [field]: choice }));
-  };
-
-  const handleResolve = async (
-    strategy: "keep_local" | "keep_remote" | "manual" | "ignore",
-  ) => {
-    if (!selectedConflict || !currentUser) return;
-
-    setIsResolving(true);
-    setApprovalError(null);
+  const loadStats = useCallback(async () => {
+    if (!available || !online) return;
     try {
-      const resolutionDetails: Record<string, unknown> =
-        strategy === "manual" ? { fieldResolutions: selectedResolutions } : {};
-
-      const success = await conflictQueueService.resolveConflict({
-        conflictId: selectedConflict.id,
-        strategy,
-        resolutionDetails,
-        resolvedBy: currentUser.id,
-        resolverRole: currentUser.role as Role,
-        justification: justification || undefined,
-      });
-
-      if (success) {
-        if (
-          selectedConflict.conflictType === "duplicate" &&
-          strategy !== "ignore"
-        ) {
-          const winnerId =
-            strategy === "keep_local"
-              ? selectedConflict.entityId
-              : selectedConflict.candidateIds[0];
-          const loserId =
-            strategy === "keep_local"
-              ? selectedConflict.candidateIds[0]
-              : selectedConflict.entityId;
-
-          if (winnerId && loserId) {
-            try {
-              const winner = await db.patients.get(winnerId);
-              const loser = await db.patients.get(loserId);
-
-              if (winner && loser) {
-                await db.patients.update(loserId, {
-                  mergeInto: winnerId,
-                  updatedAt: new Date(),
-                  _dirty: 1,
-                });
-              }
-            } catch {
-              console.warn("Could not merge local patient records");
-            }
-          }
-        }
-
-        setSelectedConflict(null);
-        await loadConflicts();
-        await loadStats();
-      }
-    } catch (error) {
-      console.error("Resolution failed:", error);
-    } finally {
-      setIsResolving(false);
+      setStats(await conflictQueueService.getConflictStats());
+      setStatsError(false);
+    } catch {
+      setStatsError(true);
     }
+  }, [available, online]);
+
+  useEffect(() => {
+    loadList();
+  }, [loadList]);
+
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
+
+  const visible = useMemo(
+    () => (view === "resolved" ? rows : pageOf(rows, page, PAGE_SIZE)),
+    [rows, view, page],
+  );
+  const listTotal = view === "resolved" ? total : rows.length;
+  const truncated = view !== "resolved" && total > rows.length;
+
+  // Name the patient and plan device writes from this device's own copies.
+  useEffect(() => {
+    let cancelled = false;
+    if (visible.length === 0) {
+      setContexts({});
+      setContextsLoading(false);
+      return;
+    }
+    setContextsLoading(true);
+    loadLocalContexts(visible)
+      .then((c) => {
+        if (!cancelled) setContexts(c);
+      })
+      .catch(() => {
+        if (!cancelled) setContexts({});
+      })
+      .finally(() => {
+        if (!cancelled) setContextsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadStaffNames(visible.flatMap((c) => [c.resolvedBy, c.approvedBy, c.secondApproverId])).then(
+      (names) => {
+        if (!cancelled) setStaffNames(names);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [visible]);
+
+  const refresh = () => {
+    loadList();
+    loadStats();
   };
 
-  const handleBulkResolve = async (
-    strategy: "keep_local" | "keep_remote" | "ignore",
-  ) => {
-    if (selectedIds.size === 0 || !currentUser) return;
-
-    setIsResolving(true);
-    try {
-      const result = await conflictQueueService.bulkResolve({
-        conflictIds: Array.from(selectedIds),
-        strategy,
-        resolvedBy: currentUser.id,
-        justification: "Bulk resolution",
-      });
-
-      alert(`Resolved ${result.success} conflicts. ${result.failed} failed.`);
-      setSelectedIds(new Set());
-      await loadConflicts();
-      await loadStats();
-    } catch (error) {
-      console.error("Bulk resolution failed:", error);
-    } finally {
-      setIsResolving(false);
-    }
+  // A different list is about to load: never show the old one under the
+  // new tab or filters, and never call an unloaded list "empty".
+  const resetList = () => {
+    requestRef.current++;
+    setRows([]);
+    setTotal(0);
+    setLoadError(null);
+    setLoadedAt(null);
+    setLoadState("idle");
   };
 
-  const handleApprove = async (
-    conflictId: string,
-    isSecondApproval = false,
-  ) => {
-    if (!currentUser) return;
-
-    setIsResolving(true);
-    setApprovalError(null);
-    try {
-      const result = await conflictQueueService.approveResolution({
-        conflictId,
-        approvedBy: currentUser.id,
-        approverRole: currentUser.role as Role,
-        justification,
-        isSecondApproval,
-      });
-
-      if (!result.success) {
-        setApprovalError(result.error || "Approval failed");
-        return;
-      }
-
-      if (result.needsSecondApproval) {
-        setApprovalError(null);
-        alert(
-          "First approval recorded. A second approver is required to complete this resolution.",
-        );
-        setSelectedConflict(null);
-      } else {
-        setSelectedConflict(null);
-      }
-
-      await loadConflicts();
-      await loadStats();
-    } catch (error) {
-      console.error("Approval failed:", error);
-      setApprovalError("An unexpected error occurred");
-    } finally {
-      setIsResolving(false);
-    }
+  const changeView = (next: ConflictView) => {
+    if (next === view) return;
+    resetList();
+    setView(next);
+    setPage(0);
+    setSelectedIds(new Set());
   };
 
-  const handleReject = async (conflictId: string, reason: string) => {
-    if (!currentUser) return;
+  const changeFilters = (patch: Partial<ConflictFilterState>) => {
+    resetList();
+    setFilters((prev) => ({ ...prev, ...patch }));
+    setPage(0);
+    setSelectedIds(new Set());
+  };
 
-    setIsResolving(true);
-    try {
-      await conflictQueueService.rejectResolution({
-        conflictId,
-        rejectedBy: currentUser.id,
-        reason,
-      });
-      await loadConflicts();
-      await loadStats();
-    } catch (error) {
-      console.error("Rejection failed:", error);
-    } finally {
-      setIsResolving(false);
-    }
+  const changePage = (next: number) => {
+    if (view === "resolved") resetList();
+    setPage(Math.max(0, next));
+    setSelectedIds(new Set());
+  };
+
+  const onChanged = (message: string) => {
+    setAnnouncement(message);
+    setSelectedIds(new Set());
+    refresh();
   };
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === conflicts.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(conflicts.map((c) => c.id)));
+    setSelectedIds((prev) =>
+      visible.length > 0 && visible.every((c) => prev.has(c.id))
+        ? new Set()
+        : new Set(visible.map((c) => c.id)),
+    );
+  };
+
+  const handleScan = async () => {
+    if (!actor || !canDecideAny) return;
+    setScanning(true);
+    try {
+      const r = await conflictQueueService.scanForDuplicates(SCAN_LIMIT, actor);
+      const parts = [
+        `Checked up to ${SCAN_LIMIT} patients on this device and queued ${plural(r.found, "possible duplicate")} for review.`,
+      ];
+      if (r.skipped > 0) {
+        parts.push(
+          `Skipped ${plural(r.skipped, "record")} that could not be checked (missing name or date of birth).`,
+        );
+      }
+      if (r.failed > 0) {
+        parts.push(`${plural(r.failed, "possible duplicate")} could not be saved to the server.`);
+      }
+      const body = parts.join(" ");
+      push({
+        id: generateId(),
+        tone: r.failed > 0 ? "warning" : "success",
+        title: "Duplicate scan finished",
+        body,
+      });
+      setAnnouncement(`Duplicate scan finished. ${body}`);
+      if (r.found > 0) refresh();
+    } catch (e) {
+      logger.error("Duplicate scan failed", e instanceof Error ? e.name : "unknown");
+      push({
+        id: generateId(),
+        tone: "error",
+        title: "Duplicate scan did not finish",
+        body:
+          e instanceof ConflictQueueError
+            ? e.message
+            : "Nothing more was queued. Try again when the connection is steady.",
+      });
+    } finally {
+      setScanning(false);
     }
   };
 
+  // Bulk decisions: the same per-conflict path as a single decision.
+  const selectedConflicts = visible.filter((c) => selectedIds.has(c.id));
+  const bulkEntries = bulk
+    ? selectedConflicts.map((c) => {
+        const needsApproval = decisionNeedsApproval(c, bulk.strategy);
+        const item: BulkItem = {
+          conflict: c,
+          allowed: canResolveConflict(role, c),
+          needsApproval,
+          plan: planDeviceWrite({
+            conflict: c,
+            strategy: bulk.strategy,
+            selections: {},
+            awaitingApproval: needsApproval,
+            snapshot: contexts[c.id] ?? EMPTY_SNAPSHOT,
+          }),
+        };
+        return { conflict: c, item };
+      })
+    : [];
+  const bulkSummary = bulk ? summariseBulk(bulkEntries.map((e) => e.item), bulk.strategy) : null;
+
+  const runBulk = async () => {
+    // Plans are built from this device's copies; without them every record
+    // would be treated as "not on this device" and left unchanged here.
+    if (!bulk || !bulkSummary || !actor || contextsLoading) return;
+    const reason = bulk.reason.trim();
+    if (!reason) {
+      setBulk({ ...bulk, error: "Add a reason. It is saved with each decision." });
+      return;
+    }
+    setBulkBusy(true);
+    const tally = await resolveMany({
+      entries: bulkEntries
+        .filter(({ conflict }) => bulkSummary.eligibleIds.includes(conflict.id))
+        .map(({ conflict, item }) => ({ conflict, plan: item.plan })),
+      strategy: bulk.strategy,
+      justification: reason,
+      actor,
+    });
+    setBulkBusy(false);
+    setBulk(null);
+    const body = bulkResultText(tally, bulk.strategy);
+    push({
+      id: generateId(),
+      tone: tally.notSaved > 0 || tally.deviceFailed > 0 ? "warning" : "success",
+      title: "Bulk decision finished",
+      body,
+    });
+    onChanged(`Bulk decision finished. ${body}`);
+  };
+
+  // Without an online sign-in the server returns zero rows, so its counts
+  // would read as "none" when they are really unknown.
+  const shownStats = cloudSession === false ? null : stats;
+
+  const tabs: TabItem<ConflictView>[] = [
+    { id: "open", label: "Open", badge: shownStats ? shownStats.pending : undefined },
+    {
+      id: "needs_approval",
+      label: "Needs approval",
+      badge: shownStats ? shownStats.needsApproval : undefined,
+    },
+    { id: "resolved", label: "Resolved" },
+  ];
+
+  const selectable = view === "open" && canDecideAny && online;
+  const range = pageRange(page, PAGE_SIZE, listTotal);
+  const filtersActive = hasActiveFilters(filters);
+  const refreshing = loadState === "loading";
+
+  const statsUnavailableText = statsError
+    ? "not available"
+    : cloudSession === false
+      ? "not visible without an online sign-in"
+      : !online
+        ? "not available offline"
+        : "loading";
+
+  let listContent: ReactNode = null;
+  if (loadState === "error" && rows.length === 0) {
+    listContent = null;
+  } else if (!online && loadState !== "loaded") {
+    listContent = (
+      <EmptyState
+        icon={SignalSlashIcon}
+        title="Conflicts can't be loaded offline"
+        description="The conflict list is kept on the server. Reconnect to see it."
+      />
+    );
+  } else if (loadState === "idle" || (refreshing && rows.length === 0 && !loadedAt)) {
+    listContent = (
+      <div className="px-4 py-4" aria-busy="true">
+        <span role="status" className="sr-only">
+          Loading conflicts
+        </span>
+        <SkeletonText lines={5} />
+      </div>
+    );
+  } else if (visible.length === 0) {
+    listContent = (
+      <ConflictEmptyState
+        view={view}
+        filtersActive={filtersActive}
+        onClearFilters={() => changeFilters(EMPTY_FILTERS)}
+        cloudSession={cloudSession}
+        loadedAt={loadedAt}
+      />
+    );
+  } else if (view === "resolved") {
+    listContent = (
+      <ResolvedConflictTable
+        conflicts={visible}
+        contexts={contexts}
+        contextsLoading={contextsLoading}
+        staffNames={staffNames}
+        currentUserId={actor?.id}
+        onOpen={setOpenConflict}
+      />
+    );
+  } else {
+    listContent = (
+      <ConflictListTable
+        conflicts={visible}
+        contexts={contexts}
+        contextsLoading={contextsLoading}
+        now={now}
+        selectable={selectable}
+        selectedIds={selectedIds}
+        onToggle={toggleSelect}
+        onToggleAll={toggleSelectAll}
+        onOpen={setOpenConflict}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-6">
+    <div className="space-y-4">
+      <PageHeader
+        title="Sync conflicts"
+        description="Records that were changed in two places, and possible duplicate patients. Compare both versions, choose what to keep, and see who decided what."
+        actions={
+          available ? (
+            <>
+              {canDecideAny && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleScan}
+                  disabled={scanning || !online}
+                >
+                  <MagnifyingGlassIcon className="h-5 w-5" aria-hidden />
+                  {scanning ? "Scanning…" : "Scan for duplicates"}
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={refresh}
+                disabled={!online || refreshing}
+              >
+                <ArrowPathIcon
+                  className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`}
+                  aria-hidden
+                />
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </button>
+            </>
+          ) : undefined
+        }
+      />
+
+      <p role="status" aria-live="polite" className="sr-only">
+        {announcement}
+      </p>
+
+      {!available ? (
+        <div className="banner banner-info">
+          <CloudIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Conflict Resolution Center
-            </h1>
-            <p className="text-gray-600">
-              Manage duplicate records and sync conflicts with PHI-aware
-              resolution
+            <p className="font-medium">Conflict review needs cloud sync</p>
+            <p>
+              {CONFLICT_QUEUE_NOT_CONFIGURED} Records are saved on this device
+              only and are not compared with any other copy.
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleScanForDuplicates}
-              disabled={isScanning}
-              className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
-            >
-              <MagnifyingGlassIcon
-                className={`h-5 w-5 ${isScanning ? "animate-pulse" : ""}`}
-              />
-              {isScanning ? "Scanning..." : "Scan for Duplicates"}
-            </button>
-            <button
-              onClick={() => {
-                loadConflicts();
-                loadStats();
-              }}
-              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <ArrowPathIcon className="h-5 w-5" />
-            </button>
-          </div>
         </div>
-
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white rounded-lg border p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-100 rounded-lg">
-                  <ClockIcon className="h-6 w-6 text-amber-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {stats.pending}
-                  </p>
-                  <p className="text-sm text-gray-600">Pending</p>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white rounded-lg border p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-red-100 rounded-lg">
-                  <ShieldExclamationIcon className="h-6 w-6 text-red-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {stats.needsApproval}
-                  </p>
-                  <p className="text-sm text-gray-600">Needs Approval</p>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white rounded-lg border p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-green-100 rounded-lg">
-                  <CheckCircleIcon className="h-6 w-6 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {stats.resolvedToday}
-                  </p>
-                  <p className="text-sm text-gray-600">Resolved Today</p>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white rounded-lg border p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <SparklesIcon className="h-6 w-6 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {stats.autoResolvedToday}
-                  </p>
-                  <p className="text-sm text-gray-600">Auto-Resolved</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-white rounded-lg border shadow-sm">
-          <div className="border-b">
-            <div className="flex items-center justify-between px-4">
-              <div className="flex">
-                <button
-                  onClick={() => setActiveTab("pending")}
-                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === "pending"
-                      ? "border-blue-600 text-blue-600"
-                      : "border-transparent text-gray-600 hover:text-gray-900"
-                  }`}
-                >
-                  Pending ({stats?.pending || 0})
-                </button>
-                <button
-                  onClick={() => setActiveTab("needs_approval")}
-                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === "needs_approval"
-                      ? "border-blue-600 text-blue-600"
-                      : "border-transparent text-gray-600 hover:text-gray-900"
-                  }`}
-                >
-                  Needs Approval ({stats?.needsApproval || 0})
-                </button>
-                <button
-                  onClick={() => setActiveTab("resolved")}
-                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === "resolved"
-                      ? "border-blue-600 text-blue-600"
-                      : "border-transparent text-gray-600 hover:text-gray-900"
-                  }`}
-                >
-                  Resolved Today ({stats?.resolvedToday || 0})
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 py-2">
-                <FunnelIcon className="h-4 w-4 text-gray-400" />
-                <select
-                  value={filters.entityType}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      entityType: e.target.value,
-                    }))
-                  }
-                  className="text-sm border-gray-300 rounded-md"
-                >
-                  <option value="">All Types</option>
-                  <option value="patients">Patients</option>
-                  <option value="vitals">Vitals</option>
-                  <option value="consultations">Consultations</option>
-                </select>
-                <select
-                  value={filters.conflictType}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      conflictType: e.target.value as ConflictType | "",
-                    }))
-                  }
-                  className="text-sm border-gray-300 rounded-md"
-                >
-                  <option value="">All Conflicts</option>
-                  <option value="duplicate">Duplicates</option>
-                  <option value="sync_conflict">Sync Conflicts</option>
-                  <option value="data_quality">Data Quality</option>
-                </select>
-                <select
-                  value={filters.priority}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      priority: e.target.value as ConflictPriority | "",
-                    }))
-                  }
-                  className="text-sm border-gray-300 rounded-md"
-                >
-                  <option value="">All Priorities</option>
-                  <option value="critical">Critical</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {selectedIds.size > 0 && (
-            <div className="px-4 py-3 bg-blue-50 border-b flex items-center justify-between">
-              <span className="text-sm text-blue-800">
-                {selectedIds.size} conflict{selectedIds.size !== 1 ? "s" : ""}{" "}
-                selected
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleBulkResolve("keep_local")}
-                  disabled={isResolving}
-                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-                >
-                  Keep Local
-                </button>
-                <button
-                  onClick={() => handleBulkResolve("keep_remote")}
-                  disabled={isResolving}
-                  className="px-3 py-1.5 text-sm bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-50"
-                >
-                  Keep Remote
-                </button>
-                <button
-                  onClick={() => handleBulkResolve("ignore")}
-                  disabled={isResolving}
-                  className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Ignore All
-                </button>
+      ) : (
+        <>
+          {cloudSession === false && (
+            <div className="banner banner-warning">
+              <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <div>
+                <p className="font-medium">Not signed in online</p>
+                <p>
+                  The server only shows and accepts conflict decisions from staff
+                  signed in with their online account (email and password). With a
+                  PIN sign-in, lists and counts here can be empty even when
+                  conflicts exist, and decisions will not be saved.
+                </p>
               </div>
             </div>
           )}
 
-          {isLoading ? (
-            <div className="p-8 text-center">
-              <ArrowPathIcon className="h-8 w-8 animate-spin text-gray-400 mx-auto mb-2" />
-              <p className="text-gray-600">Loading conflicts...</p>
-            </div>
-          ) : conflicts.length === 0 ? (
-            <div className="p-8 text-center">
-              <CheckCircleIcon className="h-12 w-12 text-green-400 mx-auto mb-3" />
-              <h3 className="text-lg font-medium text-gray-900 mb-1">
-                No Conflicts Found
-              </h3>
-              <p className="text-gray-600">
-                All records are synchronized and no duplicates detected.
+          {!online && (
+            <div className="banner banner-warning">
+              <SignalSlashIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <p>
+                You are offline. The conflict list is kept on the server, so it
+                can't be refreshed or decided until the connection returns.
+                {loadedAt ? ` What you see was loaded ${formatTimestamp(loadedAt)}.` : ""}
               </p>
             </div>
-          ) : (
-            <>
-              <div className="divide-y">
-                <div className="px-4 py-2 bg-gray-50 flex items-center text-xs font-medium text-gray-500 uppercase tracking-wide">
-                  <div className="w-8">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.size === conflicts.length}
-                      onChange={toggleSelectAll}
-                      className="rounded border-gray-300"
-                    />
-                  </div>
-                  <div className="flex-1">Conflict</div>
-                  <div className="w-32">Priority</div>
-                  <div className="w-32">PHI Level</div>
-                  <div className="w-40">Created</div>
-                </div>
-
-                {conflicts.map((conflict) => {
-                  const typeConfig =
-                    CONFLICT_TYPE_LABELS[conflict.conflictType];
-                  const TypeIcon = typeConfig.icon;
-
-                  return (
-                    <div
-                      key={conflict.id}
-                      className={`px-4 py-3 hover:bg-gray-50 cursor-pointer flex items-center ${
-                        selectedConflict?.id === conflict.id ? "bg-blue-50" : ""
-                      }`}
-                      onClick={() => handleSelectConflict(conflict)}
-                    >
-                      <div
-                        className="w-8"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelect(conflict.id);
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(conflict.id)}
-                          onChange={() => {}}
-                          className="rounded border-gray-300"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <TypeIcon className="h-5 w-5 text-gray-400" />
-                          <span className="font-medium text-gray-900">
-                            {ENTITY_TYPE_LABELS[conflict.entityType] ||
-                              conflict.entityType}
-                          </span>
-                          <span className="text-gray-500">-</span>
-                          <span className="text-sm text-gray-600">
-                            {typeConfig.label}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-500 truncate mt-0.5">
-                          ID: {conflict.entityId.slice(0, 8)}...
-                          {conflict.candidateIds.length > 0 && (
-                            <span className="ml-2">
-                              <UserGroupIcon className="h-3 w-3 inline" />{" "}
-                              {conflict.candidateIds.length} candidate
-                              {conflict.candidateIds.length !== 1 ? "s" : ""}
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <div className="w-32">
-                        <span
-                          className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                            conflict.priority === "critical"
-                              ? "bg-red-100 text-red-800"
-                              : conflict.priority === "high"
-                                ? "bg-orange-100 text-orange-800"
-                                : conflict.priority === "medium"
-                                  ? "bg-yellow-100 text-yellow-800"
-                                  : "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {conflict.priority}
-                        </span>
-                      </div>
-                      <div className="w-32">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                            conflict.phiSensitivity === "high"
-                              ? "bg-red-100 text-red-800"
-                              : conflict.phiSensitivity === "medium"
-                                ? "bg-amber-100 text-amber-800"
-                                : conflict.phiSensitivity === "low"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {conflict.phiSensitivity === "high" && (
-                            <ShieldExclamationIcon className="h-3 w-3" />
-                          )}
-                          {conflict.phiSensitivity}
-                        </span>
-                      </div>
-                      <div className="w-40 text-sm text-gray-500">
-                        {new Date(conflict.createdAt).toLocaleDateString()}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="px-4 py-3 border-t flex items-center justify-between">
-                <p className="text-sm text-gray-600">
-                  Showing {page * pageSize + 1}-
-                  {Math.min((page + 1) * pageSize, total)} of {total}
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPage((p) => Math.max(0, p - 1))}
-                    disabled={page === 0}
-                    className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-50"
-                  >
-                    <ChevronLeftIcon className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => setPage((p) => p + 1)}
-                    disabled={(page + 1) * pageSize >= total}
-                    className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-50"
-                  >
-                    <ChevronRightIcon className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-            </>
           )}
-        </div>
 
-        {selectedConflict && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-lg font-bold text-gray-900">
-                      Resolve{" "}
-                      {
-                        CONFLICT_TYPE_LABELS[selectedConflict.conflictType]
-                          .label
-                      }
-                    </h2>
-                    {selectedConflict.requiredApproverRole && (
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${REQUIRED_ROLE_LABELS[selectedConflict.requiredApproverRole]?.color || "bg-gray-100 text-gray-700"}`}
-                      >
-                        <UserCircleIcon className="h-3.5 w-3.5" />
-                        Requires{" "}
-                        {REQUIRED_ROLE_LABELS[
-                          selectedConflict.requiredApproverRole
-                        ]?.label || selectedConflict.requiredApproverRole}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm text-gray-600">
-                    {ENTITY_TYPE_LABELS[selectedConflict.entityType]} - ID:{" "}
-                    {selectedConflict.entityId.slice(0, 12)}...
-                  </p>
-                  {selectedConflict.escalationReason && (
-                    <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
-                      <ExclamationTriangleIcon className="h-3.5 w-3.5" />
-                      {selectedConflict.escalationReason}
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={() => setSelectedConflict(null)}
-                  className="p-2 hover:bg-gray-100 rounded-lg"
-                >
-                  <ChevronLeftIcon className="h-5 w-5" />
-                </button>
-              </div>
+          <ConflictCounts
+            stats={shownStats}
+            unknownText={statsUnavailableText}
+            failed={statsError}
+          />
 
-              <div className="border-b px-6">
-                <div className="flex gap-4">
-                  <button
-                    onClick={() => setDetailTab("comparison")}
-                    className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                      detailTab === "comparison"
-                        ? "border-blue-600 text-blue-600"
-                        : "border-transparent text-gray-600 hover:text-gray-900"
-                    }`}
-                  >
-                    Field Comparison
-                  </button>
-                  <button
-                    onClick={() => setDetailTab("audit_history")}
-                    className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
-                      detailTab === "audit_history"
-                        ? "border-blue-600 text-blue-600"
-                        : "border-transparent text-gray-600 hover:text-gray-900"
-                    }`}
-                  >
-                    <ClipboardDocumentListIcon className="h-4 w-4" />
-                    Audit History ({auditHistory.length})
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-6 space-y-6">
-                {detailTab === "comparison" ? (
-                  <>
-                    <ConflictComparisonCard
-                      fields={selectedConflict.conflictDetails.fields}
-                      localTimestamp={
-                        selectedConflict.conflictDetails.localTimestamp
-                      }
-                      remoteTimestamp={
-                        selectedConflict.conflictDetails.remoteTimestamp
-                      }
-                      matchScore={selectedConflict.conflictDetails.matchScore}
-                      matchReasons={
-                        selectedConflict.conflictDetails.matchReasons
-                      }
-                      priority={selectedConflict.priority}
-                      phiSensitivity={selectedConflict.phiSensitivity}
-                      selectedResolutions={selectedResolutions}
-                      onFieldSelect={handleFieldSelect}
-                    />
-
-                    {fieldDeltas.length > 0 && (
-                      <div className="border rounded-lg p-4">
-                        <h4 className="text-sm font-medium text-gray-900 mb-3">
-                          Previous Field Changes
-                        </h4>
-                        <div className="space-y-2">
-                          {fieldDeltas.map((delta) => (
-                            <div
-                              key={delta.id}
-                              className="flex items-start gap-3 text-sm"
-                            >
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                                  delta.changeType === "merge"
-                                    ? "bg-blue-100 text-blue-700"
-                                    : delta.changeType === "override"
-                                      ? "bg-amber-100 text-amber-700"
-                                      : delta.changeType === "correction"
-                                        ? "bg-green-100 text-green-700"
-                                        : "bg-gray-100 text-gray-700"
-                                }`}
-                              >
-                                {delta.changeType}
-                              </span>
-                              <div className="flex-1">
-                                <span className="font-medium">
-                                  {delta.fieldName}
-                                </span>
-                                {delta.phiField && (
-                                  <ShieldExclamationIcon className="h-3.5 w-3.5 inline ml-1 text-red-500" />
-                                )}
-                                <span className="text-gray-500 mx-1">:</span>
-                                <span className="text-gray-600">
-                                  {String(delta.oldValue || "-")} →{" "}
-                                  {String(delta.newValue || "-")}
-                                </span>
-                              </div>
-                              <span className="text-xs text-gray-400">
-                                {new Date(delta.createdAt).toLocaleString()}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="space-y-4">
-                    {auditHistory.length === 0 ? (
-                      <p className="text-center text-gray-500 py-8">
-                        No audit history available
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {auditHistory.map((entry) => (
-                          <div key={entry.id} className="border rounded-lg p-4">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <span
-                                  className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                                    entry.action === "created"
-                                      ? "bg-blue-100 text-blue-800"
-                                      : entry.action === "resolved"
-                                        ? "bg-green-100 text-green-800"
-                                        : entry.action === "approved"
-                                          ? "bg-teal-100 text-teal-800"
-                                          : entry.action === "rejected"
-                                            ? "bg-red-100 text-red-800"
-                                            : entry.action === "auto_resolved"
-                                              ? "bg-amber-100 text-amber-800"
-                                              : "bg-gray-100 text-gray-700"
-                                  }`}
-                                >
-                                  {entry.action.replace("_", " ")}
-                                </span>
-                                {entry.actorRole && (
-                                  <span className="ml-2 text-sm text-gray-600">
-                                    by{" "}
-                                    {getRoleDisplayName(
-                                      entry.actorRole as Role,
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-xs text-gray-500">
-                                {new Date(entry.createdAt).toLocaleString()}
-                              </span>
-                            </div>
-                            {entry.justification && (
-                              <p className="mt-2 text-sm text-gray-700 italic">
-                                "{entry.justification}"
-                              </p>
-                            )}
-                            {Object.keys(entry.fieldChanges).length > 0 &&
-                              entry.action !== "viewed" && (
-                                <div className="mt-2 text-xs text-gray-500">
-                                  Details:{" "}
-                                  {JSON.stringify(entry.fieldChanges).slice(
-                                    0,
-                                    100,
-                                  )}
-                                  ...
-                                </div>
-                              )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {selectedConflict.phiSensitivity === "high" && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Justification (required for high PHI)
-                    </label>
-                    <textarea
-                      value={justification}
-                      onChange={(e) => setJustification(e.target.value)}
-                      rows={2}
-                      className="w-full px-3 py-2 border rounded-lg text-sm"
-                      placeholder="Explain why this resolution is appropriate..."
-                    />
-                  </div>
-                )}
-
-                {approvalError && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                    {approvalError}
-                  </div>
-                )}
-
-                {selectedConflict.status === "needs_approval" ? (
-                  <div className="space-y-3">
-                    {approvalEligibility && !approvalEligibility.canApprove && (
-                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
-                        <strong>Cannot Approve:</strong>{" "}
-                        {approvalEligibility.reason}
-                      </div>
-                    )}
-
-                    {approvalEligibility?.needsSecondApproval &&
-                      approvalEligibility.hasFirstApproval && (
-                        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-                          <strong>Dual Approval Required:</strong> First
-                          approval has been recorded. You are providing the
-                          second approval.
-                        </div>
-                      )}
-
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() =>
-                          handleApprove(
-                            selectedConflict.id,
-                            approvalEligibility?.hasFirstApproval,
-                          )
-                        }
-                        disabled={
-                          isResolving ||
-                          (approvalEligibility &&
-                            !approvalEligibility.canApprove)
-                        }
-                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
-                      >
-                        {approvalEligibility?.hasFirstApproval
-                          ? "Provide Second Approval"
-                          : "Approve Resolution"}
-                      </button>
-                      <button
-                        onClick={() =>
-                          handleReject(
-                            selectedConflict.id,
-                            justification || "No reason provided",
-                          )
-                        }
-                        disabled={isResolving}
-                        className="flex-1 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50 font-medium"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <ConflictResolutionActions
-                    onKeepLocal={() => handleResolve("keep_local")}
-                    onKeepRemote={() => handleResolve("keep_remote")}
-                    onManualResolve={() => handleResolve("manual")}
-                    onIgnore={() => handleResolve("ignore")}
-                    isResolving={isResolving}
-                    hasManualSelections={
-                      Object.keys(selectedResolutions).length > 0
-                    }
-                    requiresApproval={
-                      selectedConflict.requiredApproverRole !== null &&
-                      selectedConflict.requiredApproverRole !== undefined
-                    }
-                  />
-                )}
-              </div>
+          <section className="panel" aria-label="Conflicts">
+            <div className="px-3 pt-1">
+              <Tabs
+                tabs={tabs}
+                active={view}
+                onChange={changeView}
+                idPrefix={TAB_PREFIX}
+                label="Conflict lists"
+              />
             </div>
-          </div>
-        )}
-      </div>
+            <div
+              role="tabpanel"
+              id={panelId(TAB_PREFIX, view)}
+              aria-labelledby={tabId(TAB_PREFIX, view)}
+            >
+              <ConflictFiltersBar filters={filters} onChange={changeFilters} />
+
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-caption text-ink-muted">
+                <span>
+                  {view === "resolved"
+                    ? "Newest decisions first."
+                    : "Most urgent first, then the ones waiting longest."}
+                </span>
+                <span aria-live="polite">
+                  {refreshing
+                    ? "Refreshing…"
+                    : loadedAt
+                      ? `Updated ${formatTimestamp(loadedAt)}`
+                      : ""}
+                </span>
+              </div>
+
+              {truncated && (
+                <div className="mx-3 mb-3 banner banner-info">
+                  <p>
+                    Showing the {rows.length} oldest of {total} open conflicts.
+                    Use the filters to narrow the list.
+                  </p>
+                </div>
+              )}
+
+              {loadState === "error" && (
+                <div className="mx-3 mb-3 banner banner-danger" role="alert">
+                  <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+                  <div className="space-y-2">
+                    <p className="font-medium">The conflict list could not be loaded.</p>
+                    <p>{loadError}</p>
+                    {rows.length > 0 && (
+                      <p>The list below is from {loadedAt ? formatTimestamp(loadedAt) : "earlier"} and may be out of date.</p>
+                    )}
+                    <button type="button" className="btn-secondary" onClick={refresh} disabled={!online}>
+                      Try again
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {selectable && selectedIds.size > 0 && (
+                <div
+                  role="region"
+                  aria-label="Bulk actions"
+                  className="flex flex-col gap-2 border-y border-line bg-surface-sunken px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <span className="text-label text-ink">
+                    {selectedIds.size} selected
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setBulk({ strategy: "keep_local", reason: "", error: null })}
+                    >
+                      Keep device copy
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setBulk({ strategy: "keep_remote", reason: "", error: null })}
+                    >
+                      Keep server copy
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setBulk({ strategy: "ignore", reason: "", error: null })}
+                    >
+                      Dismiss
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => setSelectedIds(new Set())}
+                    >
+                      Clear selection
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {listContent}
+
+              {visible.length > 0 && listTotal > PAGE_SIZE && (
+                <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+                  <p className="text-caption text-ink-muted">
+                    Showing {range.from}–{range.to} of {listTotal}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary px-3"
+                      onClick={() => changePage(page - 1)}
+                      disabled={page === 0 || refreshing}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeftIcon className="h-5 w-5" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary px-3"
+                      onClick={() => changePage(page + 1)}
+                      disabled={(page + 1) * PAGE_SIZE >= listTotal || refreshing}
+                      aria-label="Next page"
+                    >
+                      <ChevronRightIcon className="h-5 w-5" aria-hidden />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        </>
+      )}
+
+      {openConflict && (
+        <ConflictDetailDialog
+          key={openConflict.id}
+          conflict={openConflict}
+          actor={actor}
+          online={online}
+          staffNames={staffNames}
+          onClose={() => setOpenConflict(null)}
+          onChanged={onChanged}
+        />
+      )}
+
+      {bulk && bulkSummary && (
+        <BulkResolveDialog
+          strategy={bulk.strategy}
+          summary={bulkSummary}
+          selectedCount={selectedConflicts.length}
+          reason={bulk.reason}
+          onReasonChange={(value) => setBulk({ ...bulk, reason: value, error: null })}
+          reasonError={bulk.error}
+          busy={bulkBusy}
+          checking={contextsLoading}
+          online={online}
+          onConfirm={runBulk}
+          onCancel={() => setBulk(null)}
+        />
+      )}
     </div>
   );
 }

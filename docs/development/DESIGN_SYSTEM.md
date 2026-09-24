@@ -17,6 +17,10 @@ Source of truth: `tailwind.config.js` (tokens) and `src/index.css`
 
 The patient portal uses the clinical system with more space and plainer language.
 
+**Training mode** pages render inside `components/training/TrainingModeFrame`: a gold rule and a ribbon that say what the page does to real data, and a link back to the clinic. The ribbon must be true for that page. Pass `liveChanges` when the page writes real records (Queue Maestro acts on the live queue; the restock game adds to real stock) and the ribbon becomes a live-data warning instead of "practice only". Admin work that happens to be about games (approving game sessions) stays in clinical mode.
+
+**Full-screen displays** (`/display`, the waiting-room TV) sit outside the staff shell but behind staff sign-in. They show ticket numbers and destinations only (never names), a last-updated time, and a visible stale/offline warning.
+
 ## Tokens
 
 **Surfaces**: `bg-canvas` (page) → `bg-surface` (panels) → `bg-surface-sunken` (wells, table headers). Overlays add `shadow-xl`; content panels use `border-line`, not shadows.
@@ -60,6 +64,9 @@ The patient portal uses the clinical system with more space and plainer language
 | Containers | `.panel` with `.panel-header` / `.panel-title` / `.panel-body`; `.card` is a bordered surface |
 | Tables | `.data-table`; below `md` render a list instead of a wide table |
 | Messages | `.banner-info / -success / -warning / -danger`; toasts (`useToast`) for completed actions |
+| Confirm a destructive or bulk action | `features/admin/ConfirmDialog` — states consequences; focus trap, Escape, focus return |
+| Sync conflicts | `features/conflicts/*` — side-by-side values, resolution summary, permission checks |
+| Delivery state of a message | `features/notifications/smsOutbox` (SMS), `features/doctor/messagingModel` (staff/patient messages) — only claim "sent" when a provider or server confirmed it |
 
 ## Writing
 
@@ -67,6 +74,8 @@ The patient portal uses the clinical system with more space and plainer language
 - Buttons name the action: "Dispense 15 × Amoxicillin", "Send to Consultation", "Keep record".
 - Destructive confirmations name the record and list consequences.
 - Never claim success before the data is saved; never label rule-based logic as "AI".
+- Say where data lives when it matters: "Saved on this device. It uploads at the next sync." is different from "Saved". If a server is not configured or the device is offline, say what cannot happen and what will happen later.
+- A write that the server may have stored even though the reply was lost is "not confirmed", not "failed"; tell staff how to check before retrying.
 
 ## Clinical helpers
 

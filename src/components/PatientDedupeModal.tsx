@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { mergePatients } from "@/db";
 import { useAuthStore } from "@/stores/auth";
+import { can } from "@/auth/roles";
 import type { Patient } from "@/db";
+import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import {
   ExclamationTriangleIcon,
   UserIcon,
@@ -10,6 +12,7 @@ import {
   CalendarIcon,
   MapPinIcon,
   XMarkIcon,
+  CheckIcon,
 } from "@heroicons/react/24/outline";
 
 interface PatientDedupeModalProps {
@@ -17,6 +20,16 @@ interface PatientDedupeModalProps {
   candidates: Patient[];
   onResolve: (action: "merge" | "create_new", winnerId?: string) => void;
   onCancel: () => void;
+}
+
+function MatchMark({ matches }: { matches: boolean }) {
+  if (!matches) return null;
+  return (
+    <>
+      <CheckIcon className="h-4 w-4 shrink-0 text-success" aria-hidden />
+      <span className="sr-only">(matches)</span>
+    </>
+  );
 }
 
 export function PatientDedupeModal({
@@ -28,17 +41,35 @@ export function PatientDedupeModal({
   const { currentUser } = useAuthStore();
   const [selectedWinner, setSelectedWinner] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Move focus into the dialog so screen readers announce it and Escape works.
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
 
   const handleMerge = async () => {
     if (!selectedWinner || !currentUser) return;
+    setError("");
+
+    if (!can(currentUser.role, "register")) {
+      setError("Your role cannot link registrations to existing patients.");
+      return;
+    }
 
     setLoading(true);
     try {
       await mergePatients(selectedWinner, newPatient.id!, currentUser.id);
       onResolve("merge", selectedWinner);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    } catch (_error) {
-      alert("Failed to merge patients");
+    } catch (err) {
+      console.error(
+        "Merge patients failed:",
+        err instanceof Error ? err.name : err,
+      );
+      setError(
+        "The records were not linked. Nothing was changed — try again, or register as a new patient.",
+      );
     } finally {
       setLoading(false);
     }
@@ -79,15 +110,10 @@ export function PatientDedupeModal({
     return score;
   };
 
-  const getMatchLabel = (score: number) => {
-    if (score >= 70)
-      return { label: "High Match", color: "bg-red-100 text-red-800" };
-    if (score >= 40)
-      return {
-        label: "Possible Match",
-        color: "bg-yellow-100 text-yellow-800",
-      };
-    return { label: "Low Match", color: "bg-gray-100 text-gray-800" };
+  const getMatchLabel = (score: number): { label: string; tone: Tone } => {
+    if (score >= 70) return { label: "Likely the same person", tone: "warning" };
+    if (score >= 40) return { label: "Possible match", tone: "info" };
+    return { label: "Weak match", tone: "neutral" };
   };
 
   const formatField = (value: unknown): string => {
@@ -97,178 +123,209 @@ export function PatientDedupeModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dedupe-title"
+        aria-describedby="dedupe-desc"
+        className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-lg border border-line bg-surface shadow-xl focus:outline-none"
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && !loading) onCancel();
+        }}
+      >
         <div className="p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center space-x-3">
-              <ExclamationTriangleIcon className="h-8 w-8 text-yellow-600" />
+          <div className="mb-6 flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <ExclamationTriangleIcon
+                className="mt-0.5 h-6 w-6 shrink-0 text-warning"
+                aria-hidden
+              />
               <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  Potential Duplicate Patient
+                <h2 id="dedupe-title" className="text-h2 text-ink">
+                  This patient may already be registered
                 </h2>
-                <p className="text-gray-600">
-                  We found similar patients. Please review and choose an action.
+                <p id="dedupe-desc" className="text-body text-ink-muted">
+                  Compare the details below. Choose the existing record if it is
+                  the same person, or register a new patient if not.
                 </p>
               </div>
             </div>
             <button
+              type="button"
               onClick={onCancel}
-              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              disabled={loading}
+              className="btn-ghost px-2"
+              aria-label="Close and go back to the form"
             >
-              <XMarkIcon className="h-6 w-6 text-gray-600" />
+              <XMarkIcon className="h-6 w-6" aria-hidden />
             </button>
           </div>
 
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">
-              New Patient Being Registered
+          <section className="mb-6" aria-labelledby="dedupe-new-title">
+            <h3 id="dedupe-new-title" className="section-label mb-2">
+              Being registered now
             </h3>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <span className="font-medium text-blue-800">Name:</span>
-                  <div className="text-blue-700">
-                    {newPatient.givenName} {newPatient.familyName}
-                  </div>
-                </div>
-                <div>
-                  <span className="font-medium text-blue-800">Phone:</span>
-                  <div className="text-blue-700">
-                    {formatField(newPatient.phone)}
-                  </div>
-                </div>
-                <div>
-                  <span className="font-medium text-blue-800">DOB:</span>
-                  <div className="text-blue-700">
-                    {formatField(newPatient.dob)}
-                  </div>
-                </div>
-                <div>
-                  <span className="font-medium text-blue-800">Sex:</span>
-                  <div className="text-blue-700">
-                    {formatField(newPatient.sex)}
-                  </div>
-                </div>
+            <dl className="grid grid-cols-2 gap-4 rounded-md border border-line bg-surface-sunken p-4 text-body md:grid-cols-4">
+              <div>
+                <dt className="text-caption text-ink-muted">Name</dt>
+                <dd className="text-ink">
+                  {newPatient.givenName} {newPatient.familyName}
+                </dd>
               </div>
-            </div>
-          </div>
+              <div>
+                <dt className="text-caption text-ink-muted">Phone</dt>
+                <dd className="text-ink">{formatField(newPatient.phone)}</dd>
+              </div>
+              <div>
+                <dt className="text-caption text-ink-muted">Date of birth</dt>
+                <dd className="text-ink">
+                  {newPatient.dob
+                    ? formatNigerianDate(newPatient.dob)
+                    : formatField(newPatient.dob)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-caption text-ink-muted">Sex</dt>
+                <dd className="capitalize text-ink">
+                  {formatField(newPatient.sex)}
+                </dd>
+              </div>
+            </dl>
+          </section>
 
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">
-              Existing Patients ({candidates.length} found)
-            </h3>
+          <fieldset className="mb-6">
+            <legend className="section-label mb-2">
+              Existing patients ({candidates.length} found)
+            </legend>
             <div className="space-y-3">
               {candidates.map((candidate) => {
                 const matchScore = getMatchScore(candidate);
                 const matchInfo = getMatchLabel(matchScore);
                 const isSelected = selectedWinner === candidate.id;
+                const phoneMatches = candidate.phone === newPatient.phone;
+                const dobMatches = candidate.dob === newPatient.dob;
+                const sexMatches = candidate.sex === newPatient.sex;
 
                 return (
-                  <div
+                  <label
                     key={candidate.id}
-                    className={`border rounded-lg p-4 cursor-pointer transition-all ${
+                    className={`block cursor-pointer rounded-lg border p-4 transition-colors focus-within:ring-2 focus-within:ring-primary ${
                       isSelected
-                        ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                        : "border-gray-200 hover:border-gray-300"
+                        ? "border-primary bg-primary-soft"
+                        : "border-line hover:bg-surface-hover"
                     }`}
-                    onClick={() => setSelectedWinner(candidate.id)}
                   >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                          <UserIcon className="h-5 w-5 text-gray-500" />
+                    <input
+                      type="radio"
+                      name="dedupe-candidate"
+                      value={candidate.id}
+                      checked={isSelected}
+                      onChange={() => setSelectedWinner(candidate.id)}
+                      className="sr-only"
+                    />
+                    <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface-sunken"
+                          aria-hidden
+                        >
+                          {isSelected ? (
+                            <CheckIcon className="h-5 w-5 text-primary" />
+                          ) : (
+                            <UserIcon className="h-5 w-5 text-ink-muted" />
+                          )}
                         </div>
                         <div>
-                          <h4 className="font-medium text-gray-900">
+                          <p className="font-medium text-ink">
                             {candidate.givenName} {candidate.familyName}
-                          </h4>
-                          <p className="text-sm text-gray-600">
-                            ID: {candidate.id.slice(-8).toUpperCase()}
+                            {isSelected && (
+                              <span className="sr-only"> (selected)</span>
+                            )}
+                          </p>
+                          <p className="font-mono text-caption text-ink-muted">
+                            ID {candidate.id.slice(-8).toUpperCase()}
                           </p>
                         </div>
                       </div>
-                      <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${matchInfo.color}`}
-                      >
-                        {matchInfo.label} ({matchScore}%)
-                      </span>
+                      <StatusBadge tone={matchInfo.tone}>
+                        {matchInfo.label}
+                      </StatusBadge>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                      <div className="flex items-center space-x-2">
-                        <PhoneIcon className="h-4 w-4 text-gray-400" />
-                        <span
-                          className={
-                            candidate.phone === newPatient.phone
-                              ? "font-medium text-green-700"
-                              : "text-gray-600"
-                          }
-                        >
+                    <div className="grid grid-cols-2 gap-4 text-body md:grid-cols-4">
+                      <div className="flex items-center gap-2">
+                        <PhoneIcon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden />
+                        <span className={phoneMatches ? "font-medium text-ink" : "text-ink-secondary"}>
                           {formatField(candidate.phone)}
                         </span>
+                        <MatchMark matches={phoneMatches} />
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <CalendarIcon className="h-4 w-4 text-gray-400" />
-                        <span
-                          className={
-                            candidate.dob === newPatient.dob
-                              ? "font-medium text-green-700"
-                              : "text-gray-600"
-                          }
-                        >
-                          {formatField(candidate.dob)}
+                      <div className="flex items-center gap-2">
+                        <CalendarIcon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden />
+                        <span className={dobMatches ? "font-medium text-ink" : "text-ink-secondary"}>
+                          {candidate.dob
+                            ? formatNigerianDate(candidate.dob)
+                            : formatField(candidate.dob)}
                         </span>
+                        <MatchMark matches={dobMatches} />
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-gray-400">Sex:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-ink-muted">Sex:</span>
                         <span
-                          className={
-                            candidate.sex === newPatient.sex
-                              ? "font-medium text-green-700"
-                              : "text-gray-600"
-                          }
+                          className={`capitalize ${sexMatches ? "font-medium text-ink" : "text-ink-secondary"}`}
                         >
                           {formatField(candidate.sex)}
                         </span>
+                        <MatchMark matches={sexMatches} />
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <MapPinIcon className="h-4 w-4 text-gray-400" />
-                        <span className="text-gray-600">{candidate.state}</span>
+                      <div className="flex items-center gap-2">
+                        <MapPinIcon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden />
+                        <span className="text-ink-secondary">{candidate.state}</span>
                       </div>
                     </div>
 
-                    <div className="mt-2 text-xs text-gray-500">
-                      Registered: {formatNigerianDate(candidate.createdAt)}
+                    <div className="mt-2 text-caption text-ink-muted">
+                      Registered {formatNigerianDate(candidate.createdAt)}
                     </div>
-                  </div>
+                  </label>
                 );
               })}
             </div>
-          </div>
+          </fieldset>
 
-          <div className="flex space-x-4">
+          {error && (
+            <div className="banner banner-danger mb-4" role="alert">
+              <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <button
+              type="button"
               onClick={() => onResolve("create_new")}
+              disabled={loading}
               className="btn-secondary flex-1"
             >
-              Create New Patient
+              Not the same person — register new
             </button>
             <button
+              type="button"
               onClick={handleMerge}
               disabled={!selectedWinner || loading}
-              className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary flex-1"
             >
-              {loading ? "Merging..." : "Use Selected Patient"}
+              {loading ? "Linking…" : "Use selected patient"}
             </button>
           </div>
 
-          <div className="mt-4 text-center">
-            <p className="text-xs text-gray-500">
-              Selecting an existing patient will link this registration to their
-              record.
-            </p>
-          </div>
+          <p className="mt-4 text-center text-caption text-ink-muted">
+            Choosing an existing patient links this registration to their
+            record.
+          </p>
         </div>
       </div>
     </div>

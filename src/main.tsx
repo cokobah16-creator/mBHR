@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 import * as Sentry from "@sentry/react";
 import App from "./App";
 import { GlobalErrorBoundary } from "./components/GlobalErrorBoundary";
+import { ScreenSkeleton } from "./components/ui/Skeleton";
 import i18n from "./i18n";
 import "./index.css";
 
@@ -15,6 +16,11 @@ import { db } from "./db/index";
 import { safeOpenDb } from "./db/safeOpen";
 import { log, error } from "@/lib/logger";
 import { runMigrations } from "@/db/migrations/migration-runner";
+
+// URLs can carry secrets: a query string (a sign-in code) or a fragment
+// (Supabase puts password-recovery access and refresh tokens in the hash).
+// Error reports keep only the path.
+const stripUrlSecrets = (url: string) => url.split(/[?#]/)[0];
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
@@ -37,24 +43,40 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     sendDefaultPii: false,
     beforeBreadcrumb(breadcrumb) {
       if (breadcrumb.category === "console") return null;
+      // Click/input breadcrumbs describe the element with its aria-label or
+      // title, which can name a patient or a medicine ("Update Amoxicillin",
+      // "Change patient (currently …)"). Keep only the element type.
+      if (breadcrumb.category === "ui.click" || breadcrumb.category === "ui.input") {
+        if (breadcrumb.message) {
+          breadcrumb.message = breadcrumb.message.replace(/\[[^\]]*\]/g, "");
+        }
+        if (breadcrumb.data) delete breadcrumb.data["ui.component_name"];
+      }
       if (breadcrumb.data && typeof breadcrumb.data.url === "string") {
         breadcrumb.data.url = breadcrumb.data.url.split("?")[0];
       }
       return breadcrumb;
     },
+    beforeSendTransaction(event) {
+      if (event.request?.url) event.request.url = stripUrlSecrets(event.request.url);
+      return event;
+    },
     beforeSend(event, _hint) {
-      if (event.request?.url) event.request.url = event.request.url.split("?")[0];
+      if (event.request?.url) event.request.url = stripUrlSecrets(event.request.url);
       if (event.request) {
         delete event.request.query_string;
         delete event.request.data;
         delete event.request.cookies;
       }
       if (event.user) event.user = event.user.id ? { id: event.user.id } : undefined;
-      // Exception messages can embed record data; keep type and stack only
-      // for our own DUPLICATES_FOUND signal.
+      // Exception messages and extra context can embed record data (names,
+      // phone numbers, notes, raw Supabase errors). Send only the error type
+      // and stack; our own DUPLICATES_FOUND signal keeps its code.
       event.exception?.values?.forEach((v) => {
-        if (v.value?.startsWith("DUPLICATES_FOUND:")) v.value = "DUPLICATES_FOUND";
+        v.value = v.value?.startsWith("DUPLICATES_FOUND") ? "DUPLICATES_FOUND" : v.type ?? "Error";
       });
+      delete event.extra;
+      if (event.message) event.message = "Message withheld (may contain patient data)";
       if (import.meta.env.MODE !== "production") {
         console.log("Sentry event:", event);
       }
@@ -65,13 +87,16 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 
 // Global error visibility + Sentry capture
 window.addEventListener("error", (ev) => {
-  console.error("[global error]", ev.message, ev.error);
+  // Full detail only in development: messages can carry patient data.
+  if (import.meta.env.DEV) console.error("[global error]", ev.message, ev.error);
+  else console.error("[global error]", ev.error instanceof Error ? ev.error.name : "Error");
   if (import.meta.env.VITE_SENTRY_DSN && ev.error instanceof Error) {
     Sentry.captureException(ev.error, { tags: { source: "window.error" } });
   }
 });
 window.addEventListener("unhandledrejection", (ev) => {
-  console.error("[unhandledrejection]", ev.reason);
+  if (import.meta.env.DEV) console.error("[unhandledrejection]", ev.reason);
+  else console.error("[unhandledrejection]", ev.reason instanceof Error ? ev.reason.name : typeof ev.reason);
   if (import.meta.env.VITE_SENTRY_DSN) {
     const err =
       ev.reason instanceof Error ? ev.reason : new Error(String(ev.reason));
@@ -147,14 +172,7 @@ function renderFatal(msg: string) {
       <I18nextProvider i18n={i18n}>
         <GlobalErrorBoundary>
           <Suspense
-            fallback={
-              <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-green-600 mx-auto"></div>
-                  <p className="mt-4 text-gray-600 text-lg">Loading mBHR...</p>
-                </div>
-              </div>
-            }
+            fallback={<ScreenSkeleton label="Loading mBHR" />}
           >
             <BrowserRouter>
               <App />

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, memo } from 'react'
+import React, { useEffect, useId, useState, useRef, memo } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { useScrollLock, useSwipe, useHaptic } from '@/hooks/useMobile'
 
@@ -21,6 +21,8 @@ export const BottomSheet = memo(({
 }: BottomSheetProps) => {
   const [snapIndex, setSnapIndex] = useState(initialSnap)
   const sheetRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
   const haptic = useHaptic()
 
   useScrollLock()
@@ -61,6 +63,25 @@ export const BottomSheet = memo(({
     }
   }, [isOpen])
 
+  // Move focus into the sheet on open and hand it back on close.
+  useEffect(() => {
+    if (!isOpen) return
+    const previous =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    closeRef.current?.focus()
+    return () => previous?.focus()
+  }, [isOpen])
+
+  // Escape closes, like the close button.
+  useEffect(() => {
+    if (!isOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [isOpen, onClose])
+
   if (!isOpen) return null
 
   const height = `${snapPoints[snapIndex] * 100}%`
@@ -68,36 +89,45 @@ export const BottomSheet = memo(({
   return (
     <>
       <div
-        className="fixed inset-0 bg-black bg-opacity-50 z-40 animate-fade-in"
+        className="fixed inset-0 z-40 bg-ink/50 animate-fade-in"
         onClick={handleClose}
+        aria-hidden
       />
       <div
         ref={sheetRef}
-        className="fixed bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl z-50 animate-slide-up"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : 'Sheet'}
+        className="fixed bottom-0 left-0 right-0 z-50 rounded-t-2xl border-t border-line bg-surface shadow-xl animate-slide-up"
         style={{ height, maxHeight: '95vh' }}
         {...swipeHandlers}
       >
         {/* Drag Handle */}
-        <div className="flex justify-center pt-3 pb-2">
-          <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
+        <div className="flex justify-center pt-3 pb-2" aria-hidden>
+          <div className="h-1.5 w-12 rounded-full bg-line-strong" />
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200">
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2 sm:px-6">
           {title && (
-            <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+            <h2 id={titleId} className="text-h2 text-ink">
+              {title}
+            </h2>
           )}
           <button
+            ref={closeRef}
+            type="button"
             onClick={handleClose}
-            className="p-2 -mr-2 rounded-full hover:bg-gray-100 active:bg-gray-200 transition-colors min-h-touch-target min-w-touch-target"
+            className="btn-ghost -mr-2 ml-auto min-w-touch-target px-2"
             aria-label="Close"
           >
-            <XMarkIcon className="h-6 w-6 text-gray-600" />
+            <XMarkIcon className="h-6 w-6" aria-hidden />
           </button>
         </div>
 
         {/* Content */}
-        <div className="overflow-y-auto px-6 py-4" style={{ maxHeight: 'calc(95vh - 100px)' }}>
+        <div className="overflow-y-auto px-4 py-4 sm:px-6" style={{ maxHeight: 'calc(95vh - 100px)' }}>
           {children}
         </div>
       </div>

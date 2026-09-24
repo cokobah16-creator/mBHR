@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import { clinicalDecisionSupport } from "@/services/clinicalDecisionSupport";
 import type { SOAPSuggestion } from "@/services/clinicalDecisionSupport";
-import { LightBulbIcon, SparklesIcon } from "@heroicons/react/24/outline";
+import { LightBulbIcon, PlusIcon } from "@heroicons/react/24/outline";
 
 interface SmartSOAPInputProps {
   section: "subjective" | "objective" | "assessment" | "plan";
@@ -28,15 +28,11 @@ export function SmartSOAPInput({
   const [suggestions, setSuggestions] = useState<SOAPSuggestion | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const inputId = useId();
+  const panelId = `${inputId}-suggestions`;
 
   useEffect(() => {
-    if (value.length > 10) {
-      generateSuggestions();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-
-  const generateSuggestions = async () => {
+    if (value.length <= 10) return;
     try {
       setIsGenerating(true);
       const result = clinicalDecisionSupport.generateSOAPSuggestions({
@@ -48,11 +44,14 @@ export function SmartSOAPInput({
       });
       setSuggestions(result);
     } catch (error) {
-      console.error("Failed to generate suggestions:", error);
+      console.error(
+        "Failed to generate suggestions:",
+        error instanceof Error ? error.name : error,
+      );
     } finally {
       setIsGenerating(false);
     }
-  };
+  }, [value, section, patientAge, patientSex, vitalSigns]);
 
   const applySuggestion = (suggestion: string) => {
     const currentValue = value.trim();
@@ -68,71 +67,81 @@ export function SmartSOAPInput({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <label className="block text-sm font-medium text-gray-700">
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor={inputId} className="field-label mb-0">
           {label}
         </label>
         {hasRelevantSuggestions && (
           <button
             type="button"
             onClick={() => setShowSuggestions(!showSuggestions)}
-            className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
+            aria-expanded={showSuggestions}
+            aria-controls={panelId}
+            className="btn-ghost text-label"
           >
-            <SparklesIcon className="h-4 w-4" />
-            {showSuggestions ? "Hide" : "Show"} suggestions
+            <LightBulbIcon className="h-4 w-4" aria-hidden />
+            {showSuggestions ? "Hide" : "Show"} suggestions (
+            {suggestions.suggestions.length})
           </button>
         )}
       </div>
 
       <textarea
+        id={inputId}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         rows={6}
-        className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        className="input-field"
       />
 
       {showSuggestions && hasRelevantSuggestions && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-blue-900">
-            <LightBulbIcon className="h-5 w-5" />
-            Suggestions from recorded vitals
-            {suggestions.confidence && (
-              <span className="text-xs text-blue-600">
-                ({Math.round(suggestions.confidence * 100)}% confidence)
-              </span>
-            )}
+        <div
+          id={panelId}
+          className="space-y-3 rounded-md border border-line bg-surface-sunken p-4"
+        >
+          <div className="flex items-center gap-2 text-label text-ink">
+            <LightBulbIcon className="h-5 w-5 text-ink-muted" aria-hidden />
+            Rule-based suggestions from your note and recorded vitals
           </div>
+          <p className="text-caption text-ink-muted">
+            Matched on keywords only. Check each one before adding it to the
+            record.
+          </p>
 
-          <div className="space-y-2">
+          <ul className="space-y-2">
             {suggestions.suggestions.map((suggestion, idx) => (
-              <div
-                key={idx}
-                className="bg-white rounded-md p-3 border border-blue-200 hover:border-blue-400 transition-colors cursor-pointer"
-                onClick={() => applySuggestion(suggestion)}
-              >
-                <p className="text-sm text-gray-700">{suggestion}</p>
-              </div>
+              <li key={idx}>
+                <button
+                  type="button"
+                  onClick={() => applySuggestion(suggestion)}
+                  className="flex min-h-touch-target w-full items-start gap-2 rounded-md border border-line bg-surface p-3 text-left text-body text-ink transition-colors hover:border-line-strong hover:bg-surface-hover"
+                >
+                  <PlusIcon
+                    className="mt-0.5 h-4 w-4 shrink-0 text-ink-muted"
+                    aria-hidden
+                  />
+                  <span>
+                    <span className="sr-only">Add to note: </span>
+                    {suggestion}
+                  </span>
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
 
           {suggestions.keywords.length > 0 && (
-            <div className="text-xs text-blue-700">
+            <p className="text-caption text-ink-muted">
               Based on: {suggestions.keywords.join(", ")}
-            </div>
+            </p>
           )}
-
-          <p className="text-xs text-blue-600">
-            Click any suggestion to add it to your note
-          </p>
         </div>
       )}
 
       {isGenerating && (
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-          Analyzing and generating suggestions...
-        </div>
+        <p className="text-caption text-ink-muted" role="status">
+          Checking for suggestions…
+        </p>
       )}
     </div>
   );

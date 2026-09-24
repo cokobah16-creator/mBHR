@@ -1,13 +1,10 @@
 // src/features/gamification/VitalsPrecisionGame.tsx
-import React from "react";
+//
+// This used to be an unfinished placeholder page. The maintained Vitals
+// Precision game lives in features/vitals (routed at /games/vitals-precision);
+// render that so any link to this module gets the real, framed game.
+import MaintainedVitalsPrecisionGame from "@/features/vitals/VitalsPrecisionGame";
 
 export default function VitalsPrecisionGame() {
-  return (
-    <main className="p-4">
-      <h1 className="text-2xl font-semibold">Vitals Precision</h1>
-      <p className="text-sm text-gray-600">
-        Validate vitals vs. age/sex ranges and earn accuracy bonuses. (stub)
-      </p>
-    </main>
-  );
+  return <MaintainedVitalsPrecisionGame />;
 }

@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { useT } from "@/hooks/useT";
 import { db } from "@/db";
-import { getFlagColor, getFlagLabel } from "@/utils/vitals";
+import { getFlagTone, getFlagLabel } from "@/utils/vitals";
+import { formatNigerianDate, formatTime } from "@/utils/dateFormat";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton } from "@/components/ui/Skeleton";
 import {
   ClockIcon,
   HeartIcon,
@@ -9,6 +13,7 @@ import {
   BeakerIcon,
   UserIcon,
   CalendarIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/react/24/outline";
 import { resolveBmi } from "@/utils/vitals";
 
@@ -24,6 +29,8 @@ interface TimelineEvent {
   color: string;
 }
 
+type TimelineFilter = "all" | "vitals" | "consultations" | "medications";
+
 interface MedicalTimelineProps {
   patientId: string;
   className?: string;
@@ -36,9 +43,8 @@ export function MedicalTimeline({
   const { t } = useT();
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<
-    "all" | "vitals" | "consultations" | "medications"
-  >("all");
+  const [loadError, setLoadError] = useState(false);
+  const [filter, setFilter] = useState<TimelineFilter>("all");
 
   useEffect(() => {
     loadTimelineEvents();
@@ -65,7 +71,7 @@ export function MedicalTimeline({
           title: t("timeline.visitStarted"),
           details: `${visit.siteName} • ${t(`queue.status.${visit.status}`)}`,
           icon: UserIcon,
-          color: "bg-blue-100 text-blue-800",
+          color: "bg-surface-sunken text-ink-secondary ring-line",
         });
       });
 
@@ -96,7 +102,7 @@ export function MedicalTimeline({
           details: vitalDetails.join(" • "),
           metadata: { flags: vital.flags },
           icon: HeartIcon,
-          color: "bg-green-100 text-green-800",
+          color: "bg-stage-vitals-soft text-stage-vitals ring-stage-vitals-line",
         });
       });
 
@@ -113,7 +119,7 @@ export function MedicalTimeline({
             plan: consultation.soapPlan,
           },
           icon: DocumentTextIcon,
-          color: "bg-purple-100 text-purple-800",
+          color: "bg-stage-consult-soft text-stage-consult ring-stage-consult-line",
         });
       });
 
@@ -130,7 +136,7 @@ export function MedicalTimeline({
             dispensedBy: dispense.dispensedBy,
           },
           icon: BeakerIcon,
-          color: "bg-orange-100 text-orange-800",
+          color: "bg-stage-pharmacy-soft text-stage-pharmacy ring-stage-pharmacy-line",
         });
       });
 
@@ -140,7 +146,11 @@ export function MedicalTimeline({
       );
       setEvents(timelineEvents);
     } catch (error) {
-      console.error("Error loading timeline events:", error);
+      console.error(
+        "Error loading timeline events:",
+        error instanceof Error ? error.name : error,
+      );
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -156,18 +166,19 @@ export function MedicalTimeline({
 
   if (loading) {
     return (
-      <div className={`space-y-4 ${className}`}>
-        <div className="animate-pulse">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="flex space-x-4 p-4">
-              <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
-              <div className="flex-1 space-y-2">
-                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                <div className="h-3 bg-gray-200 rounded w-1/2"></div>
-              </div>
+      <div className={`space-y-4 ${className}`} aria-busy="true">
+        <span role="status" className="sr-only">
+          Loading medical history
+        </span>
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="flex space-x-4 p-4" aria-hidden>
+            <Skeleton className="h-10 w-10 rounded-full" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-3 w-1/2" />
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -175,26 +186,33 @@ export function MedicalTimeline({
   return (
     <div className={`space-y-6 ${className}`}>
       {/* Header with Filters */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-h3 text-ink">
           {t("timeline.medicalHistory")}
         </h3>
 
-        <div className="flex space-x-2">
-          {[
-            { key: "all", label: t("common.all") },
-            { key: "vitals", label: t("nav.vitals") },
-            { key: "consultations", label: t("timeline.consultations") },
-            { key: "medications", label: t("timeline.medications") },
-          ].map((filterOption) => (
+        <div
+          className="flex flex-wrap gap-2"
+          role="group"
+          aria-label="Filter medical history"
+        >
+          {(
+            [
+              { key: "all", label: t("common.all") },
+              { key: "vitals", label: t("nav.vitals") },
+              { key: "consultations", label: t("timeline.consultations") },
+              { key: "medications", label: t("timeline.medications") },
+            ] as Array<{ key: TimelineFilter; label: string }>
+          ).map((filterOption) => (
             <button
               key={filterOption.key}
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              onClick={() => setFilter(filterOption.key as any)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              type="button"
+              onClick={() => setFilter(filterOption.key)}
+              aria-pressed={filter === filterOption.key}
+              className={`min-h-touch-target rounded-md border px-3 py-1.5 text-label transition-colors ${
                 filter === filterOption.key
-                  ? "bg-primary text-white"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  ? "border-primary bg-primary-soft text-primary-fg"
+                  : "border-line bg-surface text-ink-secondary hover:bg-surface-hover"
               }`}
             >
               {filterOption.label}
@@ -203,17 +221,26 @@ export function MedicalTimeline({
         </div>
       </div>
 
+      {loadError && (
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <span>
+            The medical history could not be read from this device. Reload the
+            page to try again.
+          </span>
+        </div>
+      )}
+
       {/* Timeline */}
       <div className="relative">
         {filteredEvents.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <ClockIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>{t("timeline.noEvents")}</p>
-          </div>
+          loadError ? null : (
+            <EmptyState icon={ClockIcon} title={t("timeline.noEvents")} />
+          )
         ) : (
           <div className="space-y-6">
             {/* Timeline line */}
-            <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-gray-200"></div>
+            <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-line" aria-hidden></div>
 
             {filteredEvents.map((event, _index) => (
               <div
@@ -222,47 +249,44 @@ export function MedicalTimeline({
               >
                 {/* Timeline dot */}
                 <div
-                  className={`relative z-10 flex items-center justify-center w-12 h-12 rounded-full border-4 border-white ${event.color}`}
+                  className={`relative z-10 flex items-center justify-center w-12 h-12 rounded-full ring-2 ${event.color}`}
                 >
-                  <event.icon className="h-5 w-5" />
+                  <event.icon className="h-5 w-5" aria-hidden />
                 </div>
 
                 {/* Event content */}
                 <div className="flex-1 min-w-0 pb-6">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-lg font-medium text-gray-900">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <h4 className="text-h3 text-ink">
                       {event.title}
                     </h4>
-                    <div className="flex items-center space-x-2 text-sm text-gray-500">
-                      <CalendarIcon className="h-4 w-4" />
-                      <span>{event.timestamp.toLocaleDateString()}</span>
-                      <ClockIcon className="h-4 w-4" />
-                      <span>{event.timestamp.toLocaleTimeString()}</span>
+                    <div className="flex items-center space-x-2 text-caption tabular-nums text-ink-muted">
+                      <CalendarIcon className="h-4 w-4" aria-hidden />
+                      <span>{formatNigerianDate(event.timestamp)}</span>
+                      <ClockIcon className="h-4 w-4" aria-hidden />
+                      <span>{formatTime(event.timestamp)}</span>
                     </div>
                   </div>
 
-                  <p className="text-gray-700 mb-3">{event.details}</p>
+                  <p className="text-body text-ink-secondary mb-3">{event.details}</p>
 
                   {/* Event-specific metadata */}
                   {event.metadata?.flags && event.metadata.flags.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
                       {event.metadata.flags.map((flag: string) => (
-                        <span
-                          key={flag}
-                          className={`px-2 py-1 rounded-full text-xs font-medium ${getFlagColor(flag)}`}
-                        >
+                        <StatusBadge key={flag} tone={getFlagTone(flag)}>
                           {getFlagLabel(flag)}
-                        </span>
+                        </StatusBadge>
                       ))}
                     </div>
                   )}
 
                   {event.metadata?.assessment && (
                     <details className="mt-2">
-                      <summary className="text-sm text-gray-600 cursor-pointer hover:text-gray-800">
+                      <summary className="flex min-h-touch-target cursor-pointer items-center text-label text-ink-secondary hover:text-ink">
                         {t("timeline.viewDetails")}
                       </summary>
-                      <div className="mt-2 p-3 bg-gray-50 rounded-lg text-sm">
+                      <div className="mt-2 rounded-md border border-line bg-surface-sunken p-3 text-body text-ink">
                         <p>
                           <strong>{t("consultation.assessment")}:</strong>{" "}
                           {event.metadata.assessment}
@@ -278,7 +302,7 @@ export function MedicalTimeline({
                   )}
 
                   {event.metadata?.directions && (
-                    <div className="mt-2 p-3 bg-blue-50 rounded-lg text-sm">
+                    <div className="mt-2 rounded-md border border-line bg-surface-sunken p-3 text-body text-ink">
                       <p>
                         <strong>{t("pharmacy.directions")}:</strong>{" "}
                         {event.metadata.directions}

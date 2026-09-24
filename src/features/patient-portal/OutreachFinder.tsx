@@ -1,11 +1,25 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
+import { useCallback, useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import {
   MapPinIcon,
   CalendarIcon,
   ArrowPathIcon,
-  WifiIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton } from "@/components/ui/Skeleton";
+import * as logger from "@/lib/logger";
+import { formatNigerianDate, formatNigerianDateTime } from "@/utils/dateFormat";
+import {
+  readOutreachCache,
+  shortTime,
+  upcomingOnly,
+  writeOutreachCache,
+} from "./account/outreachCache";
+import { errorName } from "./account/portalSession";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface OutreachEvent {
   id: string;
@@ -23,21 +37,33 @@ interface OutreachEvent {
   } | null;
 }
 
+/** Where the list on screen came from. */
+type ListSource = "live" | "saved" | "none";
+
 export function OutreachFinder() {
+  const isOnline = useOnlineStatus();
   const [events, setEvents] = useState<OutreachEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [source, setSource] = useState<ListSource>("none");
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [fetchFailed, setFetchFailed] = useState(false);
   const isOffline = !supabase;
 
-  useEffect(() => {
-    loadEvents();
-  }, []);
+  const loadEvents = useCallback(async () => {
+    const showSaved = () => {
+      const cached = readOutreachCache<OutreachEvent>();
+      // A saved list can be old: never show outreaches that have passed.
+      const upcoming = upcomingOnly(cached.events);
+      setEvents(upcoming);
+      setSavedAt(cached.savedAt);
+      setSource(upcoming.length > 0 ? "saved" : "none");
+    };
 
-  const loadEvents = async () => {
     setLoading(true);
+    setFetchFailed(false);
     try {
       if (!supabase) {
-        const cached = localStorage.getItem("patient_cached_outreach");
-        setEvents(cached ? JSON.parse(cached) : []);
+        showSaved();
         return;
       }
 
@@ -53,98 +79,141 @@ export function OutreachFinder() {
       if (error) throw error;
 
       const result = (data || []) as unknown as OutreachEvent[];
+      const now = new Date();
       setEvents(result);
-      localStorage.setItem("patient_cached_outreach", JSON.stringify(result));
-    } catch {
-      const cached = localStorage.getItem("patient_cached_outreach");
-      setEvents(cached ? JSON.parse(cached) : []);
+      setSource("live");
+      setSavedAt(now);
+      writeOutreachCache(result, now);
+    } catch (err) {
+      logger.warn("[OutreachFinder] load failed:", errorName(err));
+      setFetchFailed(true);
+      showSaved();
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadEvents();
+  }, [loadEvents]);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <MapPinIcon className="w-7 h-7 text-blue-600" />
-            Find Outreach Near Me
-          </h1>
-          <p className="mt-2 text-gray-600">
-            Upcoming community health events and outreach programmes
+    <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
+      <PageHeader
+        title="Find an outreach near you"
+        description="Upcoming community health outreaches and where they will be held."
+        actions={
+          <button
+            type="button"
+            onClick={() => void loadEvents()}
+            disabled={loading}
+            className="btn-secondary"
+          >
+            <ArrowPathIcon
+              className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
+              aria-hidden
+            />
+            {loading ? "Checking…" : "Check for updates"}
+          </button>
+        }
+      />
+
+      <div aria-live="polite" className="space-y-3">
+        {isOffline && !loading && (
+          <div className="banner banner-info">
+            <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>
+              This device is not connected to the online outreach calendar.
+              {source === "saved"
+                ? ` Showing a list saved on this device${savedAt ? ` on ${formatNigerianDateTime(savedAt)}` : " earlier"}. Dates may have changed.`
+                : " Ask clinic staff about upcoming outreaches."}
+            </p>
+          </div>
+        )}
+
+        {!isOffline && fetchFailed && !loading && (
+          <div className="banner banner-warning" role="status">
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <p>
+              {isOnline
+                ? "We could not reach the outreach calendar."
+                : "You are offline."}
+              {source === "saved"
+                ? ` Showing a list saved on this device${savedAt ? ` on ${formatNigerianDateTime(savedAt)}` : " earlier"}. Dates may have changed.`
+                : " Try again when you have a connection."}
+            </p>
+          </div>
+        )}
+
+        {!isOffline && source === "live" && savedAt && !loading && (
+          <p className="text-caption text-ink-muted">
+            Up to date as of {formatNigerianDateTime(savedAt)}.
           </p>
-        </div>
-        <button
-          onClick={loadEvents}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-        >
-          <ArrowPathIcon className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        )}
       </div>
 
-      {isOffline && (
-        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
-          <WifiIcon className="w-5 h-5 text-amber-600 flex-shrink-0" />
-          <p className="text-sm text-amber-800">
-            Offline mode — showing cached events. Connect to the internet to see the latest outreach events near you.
-          </p>
-        </div>
-      )}
-
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-        </div>
-      ) : events.length === 0 ? (
-        <div className="text-center py-20 bg-white rounded-xl shadow-sm">
-          <MapPinIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-700 mb-2">
-            No upcoming events found
-          </h3>
-          <p className="text-gray-500 max-w-sm mx-auto">
-            {isOffline
-              ? "Outreach events near you will appear here once you connect and refresh."
-              : "There are no outreach events scheduled in your area right now. Check back soon."}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {events.map((event) => (
-            <div
-              key={event.id}
-              className="bg-white rounded-xl shadow-sm p-6 border border-gray-100"
-            >
-              <div className="flex items-start justify-between flex-wrap gap-3">
-                <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    {event.event_name}
-                  </h3>
-                  <div className="mt-2 flex flex-wrap gap-4 text-sm text-gray-600">
-                    <span className="flex items-center gap-1">
-                      <MapPinIcon className="w-4 h-4 text-red-500" />
-                      {event.sites
-                        ? `${event.sites.name}, ${event.sites.lga}, ${event.sites.state}`
-                        : "Location to be announced"}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <CalendarIcon className="w-4 h-4 text-blue-500" />
-                      {event.event_date}
-                      {event.start_time
-                        ? ` · ${event.start_time.slice(0, 5)}${event.end_time ? `–${event.end_time.slice(0, 5)}` : ""}`
-                        : ""}
-                    </span>
-                  </div>
-                  {event.notes && (
-                    <p className="mt-3 text-sm text-gray-600">{event.notes}</p>
-                  )}
-                </div>
-              </div>
+        <div className="space-y-3">
+          <span role="status" className="sr-only">
+            Loading outreach events
+          </span>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="panel space-y-2 p-4" aria-hidden>
+              <Skeleton className="h-5 w-56" />
+              <Skeleton className="h-4 w-72 max-w-full" />
             </div>
           ))}
         </div>
+      ) : events.length === 0 ? (
+        <div className="panel">
+          <EmptyState
+            icon={MapPinIcon}
+            title="No upcoming outreaches listed"
+            description={
+              isOffline || fetchFailed
+                ? "Upcoming outreaches will appear here once this device can reach the outreach calendar."
+                : "No outreaches are planned at the moment. Check again later."
+            }
+          />
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {events.map((event) => {
+            const start = shortTime(event.start_time);
+            const end = shortTime(event.end_time);
+            return (
+              <li key={event.id} className="panel p-4">
+                <h2 className="text-h3 text-ink">{event.event_name}</h2>
+                <dl className="mt-2 space-y-1 text-body text-ink-secondary">
+                  <div>
+                    <dt className="sr-only">Place</dt>
+                    <dd className="flex items-start gap-2">
+                      <MapPinIcon className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
+                      <span>
+                        {event.sites
+                          ? `${event.sites.name}, ${event.sites.lga}, ${event.sites.state}`
+                          : "Place to be announced"}
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="sr-only">Date and time</dt>
+                    <dd className="flex items-start gap-2 tabular-nums">
+                      <CalendarIcon className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
+                      <span>
+                        {formatNigerianDate(event.event_date) || event.event_date}
+                        {start ? ` · ${start}${end ? `–${end}` : ""}` : ""}
+                      </span>
+                    </dd>
+                  </div>
+                </dl>
+                {event.notes && (
+                  <p className="mt-3 text-body text-ink-secondary">{event.notes}</p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );
