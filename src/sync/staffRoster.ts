@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 import { db, type User } from "@/db";
 import { accessFromAppUser, endSessionIfRevoked, isDeactivatedAppUser } from "@/stores/auth";
 import { mergePulledRow } from "./pullMerge";
+import { serverStampMarker } from "./serverStamp";
 
 type Row = Record<string, unknown>;
 
@@ -127,6 +128,8 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
         const decision = mergePulledRow(local, { ...remote }, {
           _dirty: 0,
           _syncedAt: syncedAt,
+          // The server's own updated_at, for the next upload's conflict check.
+          ...serverStampMarker(raw),
         });
         if (decision.kind === "kept-local") continue;
         const row = keepLocalRevocation(local, decision.row) as unknown as User;

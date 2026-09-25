@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { ConflictData } from "@/components/ConflictResolutionModal";
 import { namedSyncError } from "./errorCode";
+import { serverStampOf } from "./serverStamp";
 
 export type ResolutionStrategy = "keep-local" | "keep-remote" | "manual";
 
@@ -46,6 +47,21 @@ function versionMarker(
   return version === undefined ? {} : { _serverVersion: version };
 }
 
+/**
+ * The same for the server's updated_at (every record type): the server copy
+ * the decision was made against, else the one the conflict was raised on.
+ * Without it, keeping this device's copy would raise the same conflict at
+ * every sync.
+ */
+function stampMarker(
+  conflict: ConflictData,
+  remoteData: Record<string, unknown> | undefined,
+): { _serverUpdatedAt?: string } {
+  const stamp =
+    serverStampOf(remoteData?.updated_at) ?? serverStampOf(conflict.remoteTimestamp);
+  return stamp === undefined ? {} : { _serverUpdatedAt: stamp };
+}
+
 export async function resolveConflict(
   conflict: ConflictData,
   strategy: ResolutionStrategy,
@@ -67,6 +83,7 @@ export async function resolveConflict(
       updatedAt: new Date(),
       _syncedAt: null,
       ...versionMarker(conflict.entityType, remoteData),
+      ...stampMarker(conflict, remoteData),
     });
   } else if (strategy === "keep-remote") {
     if (!remoteData) {
@@ -88,6 +105,7 @@ export async function resolveConflict(
       // The copy just read from the server may be newer than the one the
       // conflict was raised on; keep its own timestamp when it has one.
       updatedAt: mappedData.updatedAt ?? new Date(conflict.remoteTimestamp),
+      ...stampMarker(conflict, remoteData),
     });
   } else if (strategy === "manual" && manualResolution) {
     if (!localData || !remoteData) {
@@ -116,6 +134,7 @@ export async function resolveConflict(
       updatedAt: new Date(),
       _syncedAt: null,
       ...versionMarker(conflict.entityType, remoteData),
+      ...stampMarker(conflict, remoteData),
     });
     // update() writes nothing when the record is not on this device; say so
     // instead of reporting the choice as applied.

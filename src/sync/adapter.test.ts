@@ -445,9 +445,16 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       upsertError?: { code: string } | null;
       status?: number;
       version?: number;
+      /** Rows the read after an upload returns (select().in()). */
+      readBack?: Row[];
+      readBackError?: { code: string };
     }) {
       const maybeSingle = vi.fn().mockResolvedValue({ data: opts.remote ?? null, error: null });
       const eq = vi.fn().mockReturnValue({ maybeSingle });
+      const inFilter = vi.fn().mockResolvedValue({
+        data: opts.readBackError ? null : (opts.readBack ?? []),
+        error: opts.readBackError ?? null,
+      });
       const result = {
         data: opts.version !== undefined ? [{ id: "x", row_version: opts.version }] : null,
         error: opts.upsertError ?? null,
@@ -457,7 +464,12 @@ describe("Sync Adapter - Operations Queue Integration", () => {
         select: vi.fn().mockResolvedValue(result),
       });
       const upsert = vi.fn().mockReturnValue(upsertQuery);
-      return { select: vi.fn().mockReturnValue({ eq }), upsert, upsertQuery };
+      return {
+        select: vi.fn().mockReturnValue({ eq, in: inFilter }),
+        upsert,
+        upsertQuery,
+        inFilter,
+      };
     }
 
     it("keeps a row refused for permission, waiting for an authorised person, without retrying it under the same sign-in", async () => {
@@ -590,6 +602,147 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       expect(patients.store.get("p1")).toMatchObject({ _dirty: 1 });
     });
 
+    describe("records without row versions: the server's updated_at as last seen", () => {
+      const seen = "2026-09-20T10:00:00.123456+00:00";
+
+      async function setUp(local: Row[], opts: Parameters<typeof remoteTable>[0]) {
+        const { db } = await import("@/db");
+        const visits = fakeTable(local);
+        Object.assign(db, { visits });
+        const remote = remoteTable(opts);
+        mockFrom.mockImplementation((t: string) => (t === "visits" ? remote : remoteTable({})));
+        const { pushChanges } = await import("./adapter");
+        return { visits, remote, pushChanges };
+      }
+
+      it("uploads a re-edit of this device's own upload although this device's clock runs behind", async () => {
+        const { visits, remote, pushChanges } = await setUp(
+          [
+            {
+              id: "v1",
+              patientId: "p1",
+              status: "closed",
+              // This device's clock, minutes behind the server's.
+              updatedAt: "2026-09-20T09:50:00.000Z",
+              _serverUpdatedAt: seen,
+              _dirty: 1,
+            },
+          ],
+          // The server still holds the earlier upload (same instant, other format).
+          { remote: { id: "v1", patient_id: "p1", status: "open", updated_at: "2026-09-20T10:00:00.123456Z" } },
+        );
+
+        const result = await pushChanges();
+
+        expect(result.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+        expect(visits.store.get("v1")).toMatchObject({ status: "closed", _dirty: 0 });
+      });
+
+      it("compares the fields when the server changed since, even if this device's clock runs ahead", async () => {
+        const { visits, remote, pushChanges } = await setUp(
+          [
+            {
+              id: "v1",
+              patientId: "p1",
+              status: "closed",
+              updatedAt: "2030-01-01T00:00:00.000Z",
+              _serverUpdatedAt: seen,
+              _dirty: 1,
+            },
+          ],
+          { remote: { id: "v1", patient_id: "p1", status: "open", updated_at: "2026-09-20T10:05:00.000001+00:00" } },
+        );
+
+        const result = await pushChanges();
+
+        expect(result.conflicts.map((c) => c.entityId)).toEqual(["v1"]);
+        expect(result.conflicts[0].conflicts.map((c) => c.field)).toEqual(["status"]);
+        expect(remote.upsert).not.toHaveBeenCalled();
+        expect(visits.store.get("v1")).toMatchObject({ _dirty: 1 });
+      });
+
+      it("uploads when the server changed since but holds the same values", async () => {
+        const { remote, pushChanges } = await setUp(
+          [{ id: "v1", patientId: "p1", status: "closed", _serverUpdatedAt: seen, _dirty: 1 }],
+          { remote: { id: "v1", patient_id: "p1", status: "closed", updated_at: "2026-09-20T10:05:00+00:00" } },
+        );
+
+        const result = await pushChanges();
+
+        expect(result.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+      });
+
+      it("keeps the stamp read back after an upload only when the row holds what was uploaded", async () => {
+        const { visits, remote, pushChanges } = await setUp(
+          [
+            { id: "v1", patientId: "p1", status: "closed", _dirty: 1 },
+            { id: "v2", patientId: "p2", status: "closed", _serverUpdatedAt: seen, _dirty: 1 },
+          ],
+          {
+            remote: null,
+            readBack: [
+              { id: "v1", patient_id: "p1", status: "closed", updated_at: "2026-09-20T10:05:00.5+00:00" },
+              // Changed on another device between the upload and the read.
+              { id: "v2", patient_id: "p2", status: "open", updated_at: "2026-09-20T10:05:01+00:00" },
+            ],
+          },
+        );
+
+        const result = await pushChanges();
+
+        expect(result.uploaded).toBe(2);
+        // A separate read by id, not rows returned by the upload itself.
+        expect(remote.upsertQuery.select).not.toHaveBeenCalled();
+        expect(remote.select).toHaveBeenCalledWith(expect.stringContaining("updated_at"));
+        expect(remote.inFilter).toHaveBeenCalledWith("id", ["v1", "v2"]);
+        expect(visits.store.get("v1")).toMatchObject({
+          _dirty: 0,
+          _serverUpdatedAt: "2026-09-20T10:05:00.5+00:00",
+        });
+        expect(visits.store.get("v2")).toMatchObject({ _dirty: 0, _serverUpdatedAt: seen });
+      });
+
+      it("does not fail the upload when the read back fails", async () => {
+        const { visits, pushChanges } = await setUp(
+          [{ id: "v1", patientId: "p1", status: "closed", _dirty: 1 }],
+          { remote: null, readBackError: { code: "42501" } },
+        );
+
+        const result = await pushChanges();
+
+        expect(result).toMatchObject({ uploaded: 1, failed: 0, awaitingAuthorised: 0 });
+        expect(visits.store.get("v1")).toMatchObject({ _dirty: 0 });
+        expect(visits.store.get("v1")).not.toHaveProperty("_serverUpdatedAt");
+      });
+
+      it("uploads this device's copy after keep-local instead of raising the same conflict again", async () => {
+        const serverRow = {
+          id: "v1",
+          patient_id: "p1",
+          status: "open",
+          updated_at: "2026-09-20T10:05:00.000001+00:00",
+        };
+        const { visits, remote, pushChanges } = await setUp(
+          [{ id: "v1", patientId: "p1", status: "closed", _serverUpdatedAt: seen, _dirty: 1 }],
+          { remote: serverRow },
+        );
+        const { resolveConflict } = await import("./conflictResolver");
+
+        const first = await pushChanges();
+        expect(first.conflicts.map((c) => c.entityId)).toEqual(["v1"]);
+
+        await resolveConflict(first.conflicts[0], "keep-local", undefined, undefined, serverRow);
+        expect(visits.store.get("v1")).toMatchObject({ _serverUpdatedAt: serverRow.updated_at });
+        const second = await pushChanges();
+
+        expect(second.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+        expect(visits.store.get("v1")).toMatchObject({ status: "closed", _dirty: 0 });
+      });
+    });
+
     describe("after a conflict is resolved on this device", () => {
       const conflict = {
         entityType: "patients",
@@ -691,7 +844,7 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
       vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
       const { db } = await import("@/db");
-      for (const name of ["patients", "patientMerges"]) {
+      for (const name of ["patients", "patientMerges", "visits"]) {
         saved[name] = (db as unknown as Record<string, unknown>)[name];
       }
     });
@@ -782,8 +935,46 @@ describe("Sync Adapter - Operations Queue Integration", () => {
         status: "applied",
         createdDay: Math.floor(Date.parse("2026-09-20T10:00:00Z") / 86400000),
       });
+      // Download-only rows are never uploaded, so never compared by stamp.
+      expect(patientMerges.store.get("m1")).not.toHaveProperty("_serverUpdatedAt");
       expect(summary.keptLocalEdits).toBe(1);
       expect((patients.put as MockFn).mock.calls.length).toBe(3);
+    });
+
+    it("keeps the server's updated_at of rows laid over, not of rows with unsent changes", async () => {
+      const { db } = await import("@/db");
+      const seenBefore = "2026-09-20T09:00:00.000001+00:00";
+      const visits = fakeTable([
+        { id: "v1", patientId: "p1", status: "closed", _serverUpdatedAt: seenBefore, _dirty: 1 },
+        { id: "v2", patientId: "p2", status: "open", _serverUpdatedAt: seenBefore, _dirty: 0 },
+      ]);
+      Object.assign(db, { visits });
+      mockFrom.mockImplementation((table: string) =>
+        selectChain(
+          table === "visits"
+            ? [
+                { id: "v1", patient_id: "p1", status: "open", updated_at: "2026-09-20T10:00:00.000001+00:00" },
+                { id: "v2", patient_id: "p2", status: "closed", updated_at: "2026-09-20T10:00:00.000002+00:00" },
+              ]
+            : [],
+        ),
+      );
+
+      const { pullChanges } = await import("./adapter");
+      await pullChanges();
+
+      // The unsent edit keeps the stamp it was made against, so the other
+      // device's change is still compared field by field at the upload.
+      expect(visits.store.get("v1")).toMatchObject({
+        status: "closed",
+        _dirty: 1,
+        _serverUpdatedAt: seenBefore,
+      });
+      expect(visits.store.get("v2")).toMatchObject({
+        status: "closed",
+        _dirty: 0,
+        _serverUpdatedAt: "2026-09-20T10:00:00.000002+00:00",
+      });
     });
 
     it("keeps a queue ticket label when the server row has none", async () => {

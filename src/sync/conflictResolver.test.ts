@@ -80,6 +80,36 @@ describe('Conflict Resolver', () => {
       const changes = patients.update.mock.calls[0][1] as Record<string, unknown>
       expect(changes).not.toHaveProperty('_serverVersion')
     })
+
+    it('records the server updated_at the decision was made against', async () => {
+      await resolveConflict(
+        { ...mockConflict, entityType: 'patient_allergies', entityId: 'allergy-1' },
+        'keep-local',
+        undefined,
+        undefined,
+        { id: 'allergy-1', updated_at: '2024-01-01T11:30:00.123456+00:00' }
+      )
+
+      expect(db.patientAllergies.update).toHaveBeenCalledWith(
+        'allergy-1',
+        expect.objectContaining({
+          _dirty: 1,
+          _serverUpdatedAt: '2024-01-01T11:30:00.123456+00:00'
+        })
+      )
+    })
+
+    it('uses the updated_at the conflict was raised on when the server copy was not available', async () => {
+      await resolveConflict(
+        { ...mockConflict, entityType: 'patient_allergies', entityId: 'allergy-1' },
+        'keep-local'
+      )
+
+      expect(db.patientAllergies.update).toHaveBeenCalledWith(
+        'allergy-1',
+        expect.objectContaining({ _serverUpdatedAt: '2024-01-01T11:00:00Z' })
+      )
+    })
   })
 
   describe('keep-remote strategy', () => {
@@ -161,6 +191,21 @@ describe('Conflict Resolver', () => {
       )
     })
 
+    it('records the server updated_at of the copy it applied', async () => {
+      await resolveConflict(mockConflict, 'keep-remote', undefined, undefined, {
+        id: 'patient-123',
+        given_name: 'Jonathan',
+        updated_at: '2024-01-01T11:30:00.123456+00:00'
+      })
+
+      expect(db.patients.put).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _dirty: 0,
+          _serverUpdatedAt: '2024-01-01T11:30:00.123456+00:00'
+        })
+      )
+    })
+
     it('throws if remote data is missing', async () => {
       await expect(resolveConflict(mockConflict, 'keep-remote')).rejects.toThrow(
         'Remote data not available'
@@ -227,6 +272,21 @@ describe('Conflict Resolver', () => {
       expect(changes.phone).toBe('08087654321')
       expect(changes).not.toHaveProperty('givenName')
       expect(changes).not.toHaveProperty('id')
+    })
+
+    it('records the server updated_at the choice was made against', async () => {
+      patients.update.mockResolvedValueOnce(1)
+
+      await resolveConflict(
+        mockConflict,
+        'manual',
+        { phone: 'remote' },
+        { id: 'patient-123', phone: '08012345678' },
+        { id: 'patient-123', phone: '08087654321', updated_at: '2024-01-01T11:30:00Z' }
+      )
+
+      const changes = patients.update.mock.calls[0][1] as Record<string, unknown>
+      expect(changes._serverUpdatedAt).toBe('2024-01-01T11:30:00Z')
     })
 
     it('fails when the record is no longer on this device', async () => {
