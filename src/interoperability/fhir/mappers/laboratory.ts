@@ -15,6 +15,10 @@
 //     result is not reviewed, "final" only when all are. The order status
 //     never decides either: the app marks an order "completed" as soon as a
 //     result is typed in, before review.
+//   - A patient's report is never "final" (and never issued): it is built
+//     only from the results released to the patient, so it cannot show that
+//     the order has no other current result still unreviewed, unreleased or
+//     withheld. It is "partial" at best, whatever the patient's rows say.
 //   - A cancelled order is "revoked" (ServiceRequest) or "cancelled"
 //     (DiagnosticReport, when it has no result), never completed or final.
 //   - Values are published as recorded. valueQuantity only when the value
@@ -370,19 +374,34 @@ export type LabReportState =
   | "cancelled"
   | "unreviewed"
   | "reviewed"
+  | "released_results_reviewed"
   | "results_on_cancelled_order"
   | "completed_without_result"
   | "unrecognised_order_status";
+
+/**
+ * Which results a report is built from:
+ *   all_current_results   every current result of the order (staff: the
+ *                         tables, read as the caller; staff row-level
+ *                         security shows every row)
+ *   released_to_patient   only the results released to the patient
+ *                         (public.fhir_patient_lab_results). Others the
+ *                         order may have are invisible here, so such a
+ *                         report is never final.
+ * There is no default: every caller says which it passes.
+ */
+export type LabReportView = "all_current_results" | "released_to_patient";
 
 const OPEN_ORDER = ["ordered", "collected", "processing"];
 const KNOWN_ORDER = [...OPEN_ORDER, "completed", "cancelled"];
 
 /**
  * The report state of an order and its CURRENT results (superseded results
- * already removed), or null when the order has no status. See
- * terminology/status/laboratory.ts.
+ * already removed), or null when the order has no status. `view` says
+ * whether `current` is every current result or only those released to the
+ * patient. See terminology/status/laboratory.ts.
  */
-export function reportState(order: Row, current: Row[]): LabReportState | null {
+export function reportState(order: Row, current: Row[], view: LabReportView): LabReportState | null {
   const raw = order.status;
   if (typeof raw !== "string" || raw === "") return null;
   const status = raw.toLowerCase();
@@ -393,16 +412,20 @@ export function reportState(order: Row, current: Row[]): LabReportState | null {
     return "awaiting_result";
   }
   if (status === "cancelled") return "results_on_cancelled_order";
-  return current.every((r) => resultReviewState(r) === "reviewed") ? "reviewed" : "unreviewed";
+  if (!current.every((r) => resultReviewState(r) === "reviewed")) return "unreviewed";
+  // Released rows alone cannot rule out an unreviewed, unreleased or
+  // withheld sibling result, so the patient's report never reaches "reviewed".
+  return view === "all_current_results" ? "reviewed" : "released_results_reviewed";
 }
 
 /**
  * An order and its current results as a DiagnosticReport, or null when the
  * order cannot be published (malformed id, unresolved patient, no test
- * name). `current` must hold only this order's current results (for a
- * patient: the results released to them).
+ * name). `current` must hold only this order's current results: all of them
+ * (view "all_current_results", staff) or the results released to the
+ * patient (view "released_to_patient", never final).
  */
-export function mapDiagnosticReport(order: Row, current: Row[], ctx: MapContext): DiagnosticReport | null {
+export function mapDiagnosticReport(order: Row, current: Row[], ctx: MapContext, view: LabReportView): DiagnosticReport | null {
   const oid = orderId(order);
   if (!oid) return null;
   const subject = patientReference(ctx, order.patient_id);
@@ -412,7 +435,7 @@ export function mapDiagnosticReport(order: Row, current: Row[], ctx: MapContext)
     .filter((r) => r.order_id === oid && typeof r.id === "string" && LOWER_UUID.test(r.id))
     .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1));
 
-  const status = applyStatusMap(DIAGNOSTIC_REPORT_STATUS, reportState(order, results)) ?? "unknown";
+  const status = applyStatusMap(DIAGNOSTIC_REPORT_STATUS, reportState(order, results, view)) ?? "unknown";
   const report: DiagnosticReport = {
     resourceType: "DiagnosticReport",
     id: oid,
@@ -427,8 +450,9 @@ export function mapDiagnosticReport(order: Row, current: Row[], ctx: MapContext)
   if (encounter) report.encounter = encounter;
   const collected = instant(order, "collected_at");
   if (collected) report.effectiveDateTime = collected;
-  // Issued only once every result was reviewed: the latest review.
-  if (status === "final") {
+  // Issued only once every result was reviewed: the latest review. (Never
+  // for a patient's report, which is never final.)
+  if (status === "final" && view === "all_current_results") {
     const issued = latestInstant(results, "reviewed_at");
     if (issued) report.issued = issued;
   }

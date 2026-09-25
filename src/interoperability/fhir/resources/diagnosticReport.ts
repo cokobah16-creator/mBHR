@@ -11,8 +11,11 @@
 // Staff (consult or lab_review) read the tables as themselves. A patient
 // (FHIR_PATIENT_ACCESS_ENABLED, restriction "released_results_only") never
 // reads the tables: the report is built from public.fhir_patient_lab_results,
-// so it lists only the results released to them, its status describes
-// those results, and an order with nothing released has no report.
+// so it lists only the results released to them, and an order with nothing
+// released has no report. Because those rows cannot show whether the order
+// has other current results (not yet reviewed, not yet released, or
+// withheld), a patient's report is never final and never issued: "partial"
+// at best, whatever the released results say.
 
 import { READ_PERMISSIONS } from "../authorization/permissions";
 import { LOWER_UUID, V2_DIAGNOSTIC_SERVICE_SECTION, LAB_ORDER_COLUMNS, mapDiagnosticReport, type DiagnosticReport } from "../mappers/laboratory";
@@ -43,14 +46,14 @@ export const definition: ResourceDefinition = {
   source: "public.lab_orders with its current public.lab_results (one report per laboratory order)",
   idStrategy: "lab_orders.id (uuid); the same id as the order's ServiceRequest",
   fields: [
-    "status (from the review of the order's current results: registered, partial, final, cancelled or unknown; never from the order status alone)",
+    "status (from the review of the order's current results: registered, partial, final, cancelled or unknown; never from the order status alone; never final for a patient)",
     "category (LAB, HL7 v2 table 0074)",
     "code (the test as named; a local mBHR lab-test code only for an unchanged quick pick)",
     "subject",
     "encounter (the visit the order was placed in)",
     "basedOn (the ServiceRequest)",
     "effectiveDateTime (specimen collection time, when recorded)",
-    "issued (final reports only: the latest clinician review)",
+    "issued (final reports only, so never for a patient: the latest clinician review)",
     "result (the laboratory Observations; no values are copied into the report)",
   ],
   profiles: [],
@@ -65,7 +68,7 @@ export const definition: ResourceDefinition = {
       name: "status",
       type: "token",
       documentation:
-        "registered, partial, final, cancelled or unknown (the published status). It is worked out from the results after they are read, so a page can hold fewer matches than _count and still link to a next page.",
+        "registered, partial, final, cancelled or unknown (the published status). It is worked out from the results after they are read, so a page can hold fewer matches than _count and still link to a next page. A patient's reports are never final, so status=final finds none for a patient.",
     },
     { name: "category", type: "token", documentation: "LAB (http://terminology.hl7.org/CodeSystem/v2-0074): every report here is a laboratory report." },
     {
@@ -92,7 +95,7 @@ export const definition: ResourceDefinition = {
     "Laboratory reports need consult or lab_review.",
     "A report is final only when a clinician has reviewed every current result; until then it is partial. The order being completed does not make it final.",
     "No conclusion is published: mBHR records none. Results carry the values, units, ranges and interpretations.",
-    "Patients see a report only for results released to them, listing only those results.",
+    "Patients see a report only for results released to them, listing only those results. A patient's report is never final and has no issued time: it is partial at best, because the results released to a patient cannot show that the order has no other result still pending review or release.",
     "This interface is not a critical-result alert channel: critical results are flagged on each Observation (AA) but no acknowledgement is recorded or published.",
   ],
 };
@@ -154,7 +157,8 @@ async function mapStaffOrders(ctx: QueryCtx, orders: Row[], status: string | nul
     ),
   ]);
   return orders.map((o) => {
-    const report = mapDiagnosticReport(o, results.get(String(o.id)) ?? [], refs);
+    // Staff row-level security shows every current result of the order.
+    const report = mapDiagnosticReport(o, results.get(String(o.id)) ?? [], refs, "all_current_results");
     return report && (status === null || report.status === status) ? report : null;
   });
 }
@@ -208,7 +212,11 @@ async function patientReports(
     ctx.db,
     groups.map((g) => g.order.patient_id).filter((v): v is string => typeof v === "string"),
   );
-  return groups.map((g) => ({ report: mapDiagnosticReport(g.order, g.results, refs), owner: String(g.order.patient_id) }));
+  // Only the released results: the report is never final (see the top of this file).
+  return groups.map((g) => ({
+    report: mapDiagnosticReport(g.order, g.results, refs, "released_to_patient"),
+    owner: String(g.order.patient_id),
+  }));
 }
 
 async function patientRead(ctx: QueryCtx, id: string): Promise<QueryResult> {

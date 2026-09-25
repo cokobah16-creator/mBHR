@@ -23,6 +23,11 @@
 //     unreviewed                  at least one current result is not
 //                                 "reviewed" (above)
 //     reviewed                    every current result is "reviewed"
+//     released_results_reviewed   a patient's view: every result released
+//                                 to the patient is "reviewed", but the
+//                                 patient's rows cannot show whether the
+//                                 order has other current results still
+//                                 unreviewed, unreleased or withheld
 //     results_on_cancelled_order  order cancelled but results exist
 //     completed_without_result    order completed but no current result
 //     (missing)                   the order has no status
@@ -30,7 +35,10 @@
 //
 // The order's own status never makes a report or a result final: the app
 // sets an order to "completed" the moment a result is typed in, before any
-// clinician has looked at it (src/services/labs.ts, addLabResult).
+// clinician has looked at it (src/services/labs.ts, addLabResult). A
+// patient's report is never final either: it is built only from the results
+// released to them (public.fhir_patient_lab_results), which cannot prove that
+// every current result of the order was reviewed and released.
 
 import type { StatusMap } from "../statusMaps";
 
@@ -137,7 +145,14 @@ export const DIAGNOSTIC_REPORT_STATUS: StatusMap<DiagnosticReportStatus> = {
     {
       source: ["reviewed"],
       fhir: "final",
-      reason: "Every current result was reviewed by a clinician holding lab_review, with an interpretation and a value recorded.",
+      reason:
+        "Every current result was reviewed by a clinician holding lab_review, with an interpretation and a value recorded. Only on the staff path, which reads every current result of the order.",
+    },
+    {
+      source: ["released_results_reviewed"],
+      fhir: "partial",
+      reason:
+        "A patient's report: every result released to the patient was reviewed, but the patient's rows hold only released results, so other current results of the order (not yet reviewed, not yet released, or withheld, possibly critical) cannot be ruled out. Never final and never issued for a patient; it also never hints whether such a result exists.",
     },
     {
       source: ["results_on_cancelled_order", "completed_without_result"],

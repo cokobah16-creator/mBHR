@@ -388,6 +388,7 @@ describe("laboratory status maps", () => {
       ["cancelled", "cancelled"],
       ["unreviewed", "partial"],
       ["reviewed", "final"],
+      ["released_results_reviewed", "partial"],
       ["results_on_cancelled_order", "unknown"],
       ["completed_without_result", "unknown"],
       ["unrecognised_order_status", "unknown"],
@@ -396,6 +397,8 @@ describe("laboratory status maps", () => {
     for (const [raw, fhir] of cases) expect(applyStatusMap(DIAGNOSTIC_REPORT_STATUS, raw), String(raw)).toBe(fhir);
     // Critic C3: unreviewed results make a partial report, never preliminary or final.
     expect(applyStatusMap(DIAGNOSTIC_REPORT_STATUS, "unreviewed")).toBe("partial");
+    // A patient's view (released results only) is never final.
+    expect(explainStatus(DIAGNOSTIC_REPORT_STATUS, "released_results_reviewed").reason).toMatch(/Never final/);
   });
 
   it("Observation.status (laboratory): preliminary until reviewed, final after", () => {
@@ -682,6 +685,7 @@ describe("DiagnosticReport mapper", () => {
       order,
       RESULTS.filter((x) => x.order_id === order.id && x.superseded_by === null),
       REFS,
+      "all_current_results",
     )!;
 
   it("maps every field; values stay in the Observations", () => {
@@ -714,15 +718,42 @@ describe("DiagnosticReport mapper", () => {
     expect(report(O7).status).toBe("unknown"); // results on a cancelled order
     expect(report(O8).status).toBe("partial");
     expect(report(O10).status).toBe("unknown"); // order status the app does not write
-    expect(mapDiagnosticReport({ ...O1, status: null }, [R1a], REFS)!.status).toBe("unknown");
-    expect(mapDiagnosticReport({ ...O1, status: "completed" }, [], REFS)!.status).toBe("unknown");
+    expect(mapDiagnosticReport({ ...O1, status: null }, [R1a], REFS, "all_current_results")!.status).toBe("unknown");
+    expect(mapDiagnosticReport({ ...O1, status: "completed" }, [], REFS, "all_current_results")!.status).toBe("unknown");
   });
 
   it("forbidden: a completed order with unreviewed results is never final; a cancelled order never final", () => {
-    expect(reportState({ status: "completed" }, [R1b])).toBe("unreviewed");
-    expect(mapDiagnosticReport(O1, [R1b], REFS)!.status).toBe("partial");
-    expect(mapDiagnosticReport({ ...O2, status: "cancelled" }, [R2], REFS)!.status).not.toBe("final");
-    expect(mapDiagnosticReport({ ...O3 }, [], REFS)!.status).not.toMatch(/final|completed/);
+    expect(reportState({ status: "completed" }, [R1b], "all_current_results")).toBe("unreviewed");
+    expect(mapDiagnosticReport(O1, [R1b], REFS, "all_current_results")!.status).toBe("partial");
+    expect(mapDiagnosticReport({ ...O2, status: "cancelled" }, [R2], REFS, "all_current_results")!.status).not.toBe("final");
+    expect(mapDiagnosticReport({ ...O3 }, [], REFS, "all_current_results")!.status).not.toMatch(/final|completed/);
+  });
+
+  it("forbidden: a report built from the results released to a patient is never final or issued", () => {
+    // O1 has a reviewed, released result (R1a) and an unreviewed one (R1b)
+    // the patient's rows do not include: the patient's report must not
+    // claim to be complete.
+    expect(reportState(O1, [R1a], "released_to_patient")).toBe("released_results_reviewed");
+    const partial = mapDiagnosticReport(O1, [R1a], REFS, "released_to_patient")!;
+    expect(partial.status).toBe("partial");
+    expect(partial.issued).toBeUndefined();
+    expect(partial.result).toEqual([{ reference: `Observation/${lab(R1a.id)}` }]);
+    // Even when every result of the order happens to be released: the
+    // patient's rows cannot prove it, and the status must not hint either way.
+    const all = mapDiagnosticReport(O2, [R2], REFS, "released_to_patient")!;
+    expect(all.status).toBe("partial");
+    expect(all.issued).toBeUndefined();
+    expect(mapDiagnosticReport(O2, [R2], REFS, "all_current_results")!.status).toBe("final");
+    // No combination of order status and result states is final in this view.
+    const states = [R1a, R1b, R2, R7, R8b, R8c, R8d];
+    for (const status of ["ordered", "collected", "processing", "completed", "cancelled", "archived", null]) {
+      for (let mask = 1; mask < 1 << states.length; mask++) {
+        const rows = states.filter((_, i) => mask & (1 << i)).map((x) => ({ ...x, order_id: O1.id }));
+        const rep = mapDiagnosticReport({ ...O1, status }, rows, REFS, "released_to_patient")!;
+        expect(rep.status, `${status} ${mask}`).not.toBe("final");
+        expect(rep.issued, `${status} ${mask}`).toBeUndefined();
+      }
+    }
   });
 });
 
@@ -1088,19 +1119,76 @@ describe("laboratory self-access for patients", () => {
     const { call, calls } = setup();
     const own = await call(`/fhir/R4/DiagnosticReport/${O1.id}`, PAT_A);
     expect(own.status).toBe(200);
-    // Only the released result is listed; the report's status describes those results.
+    // Only the released result is listed. R1b is not reviewed yet, so the
+    // report is incomplete: partial, never final, and not issued.
     expect(own.body.result).toEqual([{ reference: `Observation/${lab(R1a.id)}` }]);
-    expect(own.body.status).toBe("final");
-    expect(own.body.issued).toBe("2026-05-02T10:00:00.000Z");
+    expect(own.body.status).toBe("partial");
+    expect(own.body.issued).toBeUndefined();
+    // O2's only result is released: final for staff (see the critical test
+    // above), still partial for the patient.
+    const o2 = await call(`/fhir/R4/DiagnosticReport/${O2.id}`, PAT_A);
+    expect(o2.body.status).toBe("partial");
+    expect(o2.body.issued).toBeUndefined();
     expect((await call(`/fhir/R4/DiagnosticReport/${O7.id}`, PAT_A)).body.status).toBe("unknown");
     for (const id of [O3.id, O4.id, O5.id, O8.id, OM.id]) expect((await call(`/fhir/R4/DiagnosticReport/${id}`, PAT_A)).status, id).toBe(404);
     const search = (await call("/fhir/R4/DiagnosticReport", PAT_A)).body;
     expect(idsOf(search)).toEqual([O1.id, O2.id, O6.id, O7.id]);
-    expect(idsOf((await call("/fhir/R4/DiagnosticReport?status=final&code=CBC", PAT_A)).body)).toEqual([O1.id, O6.id]);
+    expect(idsOf((await call("/fhir/R4/DiagnosticReport?status=partial&code=CBC", PAT_A)).body)).toEqual([O1.id, O6.id]);
+    expect(idsOf((await call("/fhir/R4/DiagnosticReport?status=final", PAT_A)).body)).toEqual([]);
     expect(idsOf((await call(`/fhir/R4/DiagnosticReport?based-on=ServiceRequest/${O2.id}`, PAT_A)).body)).toEqual([O2.id]);
     expect(idsOf((await call(`/fhir/R4/DiagnosticReport?encounter=Encounter/${VISIT_A.id}&date=2026-05-01`, PAT_A)).body)).toEqual([O1.id, O2.id]);
     expect(await allPages(call, "/fhir/R4/DiagnosticReport?_count=1", PAT_A)).toEqual([O1.id, O2.id, O6.id, O7.id]);
     expect(calls.some((c) => c.url.includes("/rest/v1/lab_"))).toBe(false);
+  });
+
+  it("a released result never makes the patient's report final while a sibling result is pending (critical)", async () => {
+    // One order, two current results: one reviewed and released, one not
+    // reviewed yet and critical. Staff see partial with both; the patient
+    // must see partial too (never final, never issued), with only theirs.
+    const OX = { ...ORDER_BASE, id: o(20), test_name: "Blood Glucose", test_code: "GLUCOSE", collected_at: "2026-05-05T09:00:00+00:00" };
+    const RX1 = { ...RESULT_BASE, ...released, id: r(201), order_id: OX.id };
+    const RX2 = { ...RESULT_BASE, ...unreviewed, id: r(202), order_id: OX.id, result_value: "1.9", result_unit: "mmol/L", interpretation: "critical" };
+    // Same shape, but the second result is reviewed and withheld from the portal.
+    const OY = { ...OX, id: o(21) };
+    const RY1 = { ...RX1, id: r(211), order_id: OY.id };
+    const RY2 = { ...RESULT_BASE, id: r(212), order_id: OY.id, withheld_at: "2026-05-06T10:00:00+00:00", withheld_by: WITHHOLDER_UID, withheld_reason: "SECRET withheld reason" };
+    // Every result released: the patient's view looks exactly the same.
+    const OZ = { ...OX, id: o(22) };
+    const RZ1 = { ...RX1, id: r(221), order_id: OZ.id };
+    const { call } = setup({
+      tables: {
+        patients: [PATIENT_A, PATIENT_B, PATIENT_M],
+        visits: [VISIT_A],
+        vitals: [VITALS_A],
+        lab_orders: [OX, OY, OZ],
+        lab_results: [RX1, RX2, RY1, RY2, RZ1],
+      },
+    });
+    const staff = await call(`/fhir/R4/DiagnosticReport/${OX.id}`, DOCTOR);
+    expect(staff.body.status).toBe("partial");
+    expect(staff.body.result).toEqual([{ reference: `Observation/${lab(RX1.id)}` }, { reference: `Observation/${lab(RX2.id)}` }]);
+    expect((await call(`/fhir/R4/DiagnosticReport/${OZ.id}`, DOCTOR)).body.status).toBe("final");
+
+    const seen: Json[] = [];
+    for (const order of [OX, OY, OZ]) {
+      const { status, body } = await call(`/fhir/R4/DiagnosticReport/${order.id}`, PAT_A);
+      expect(status, order.id).toBe(200);
+      expect(body.status, order.id).toBe("partial");
+      expect(body.issued, order.id).toBeUndefined();
+      expect(body.result, order.id).toHaveLength(1);
+      seen.push(body);
+    }
+    // The pending critical and the withheld result are neither listed nor hinted at.
+    const text = JSON.stringify(seen);
+    for (const hidden of [RX2.id, RY2.id, "critical", "SECRET"]) expect(text, hidden).not.toContain(hidden);
+    const shape = (b: Json) => ({ status: b.status, issued: b.issued, results: b.result.length });
+    expect(new Set(seen.map((b) => JSON.stringify(shape(b)))).size).toBe(1);
+    // Searches agree with reads.
+    expect(idsOf((await call("/fhir/R4/DiagnosticReport?status=final", PAT_A)).body)).toEqual([]);
+    expect(idsOf((await call("/fhir/R4/DiagnosticReport?status=partial", PAT_A)).body)).toEqual([OX.id, OY.id, OZ.id]);
+    // The released result itself is final: it was reviewed.
+    expect((await call(`/fhir/R4/Observation/${lab(RX1.id)}`, PAT_A)).body.status).toBe("final");
+    expect((await call(`/fhir/R4/Observation/${lab(RX2.id)}`, PAT_A)).status).toBe(404);
   });
 
   it("cannot reach another patient's laboratory data by changing the URL", async () => {
