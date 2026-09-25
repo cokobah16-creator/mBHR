@@ -31,7 +31,8 @@
 
 import type { Address, CodeableConcept, HumanName, Reference, Resource } from "../types/fhir";
 import { MBHR_CODES } from "../terminology/codeSystems";
-import { applyStatusMap, type StatusMap } from "../terminology/statusMaps";
+import { applyStatusMap } from "../terminology/statusMaps";
+import { LOCATION_STATUS } from "../terminology/status/directory";
 import { FHIR_ID } from "../search/params";
 import { UUID } from "../resources/shared";
 import { NOT_A_PLACE } from "./encounter";
@@ -60,7 +61,8 @@ export interface Organization extends Resource {
   name: string;
 }
 
-export type LocationStatus = "active" | "suspended" | "inactive";
+import type { LocationStatus } from "../terminology/status/directory";
+export type { LocationStatus };
 
 export interface Location extends Resource {
   resourceType: "Location";
@@ -111,39 +113,8 @@ export function staffRoleConcept(role: unknown): CodeableConcept | null {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Location.status <- public.sites.is_active
-// ---------------------------------------------------------------------------
-
-/**
- * sites.is_active is a boolean; it is compared as the text PostgREST would
- * give for it ("true" / "false"). R4 location-status has no "unknown", so a
- * missing flag leaves the element out.
- */
-export const LOCATION_STATUS: StatusMap<LocationStatus> = {
-  element: "Location.status",
-  source: "public.sites.is_active",
-  valueSet: "http://hl7.org/fhir/ValueSet/location-status",
-  allowed: ["active", "suspended", "inactive"],
-  rules: [
-    {
-      source: ["true"],
-      fhir: "active",
-      reason: "The site is marked in use in the server registry (it is also listed publicly).",
-    },
-    {
-      source: ["false"],
-      fhir: "inactive",
-      reason:
-        "The site is switched off in the registry. Not suspended: mBHR does not record a temporary closure.",
-    },
-  ],
-  missing: { fhir: null, reason: "No flag recorded: left out (R4 location-status has no unknown code)." },
-  unrecognised: { fhir: null, reason: "Not a recorded true/false flag: left out, not guessed." },
-};
-
-/** This area's status maps (for the shared status map tests and docs). */
-export const DIRECTORY_STATUS_MAPS: readonly StatusMap[] = [LOCATION_STATUS];
+// Location.status <- public.sites.is_active: terminology/status/directory.ts
+export { LOCATION_STATUS, DIRECTORY_STATUS_MAPS } from "../terminology/status/directory";
 
 /**
  * A boolean column as the text the status maps compare. Only a real

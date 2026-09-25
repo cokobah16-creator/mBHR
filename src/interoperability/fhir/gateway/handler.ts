@@ -385,6 +385,19 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       if (!module.search) throw errors.notSupported(`${type} is read by id only.`);
       result = await module.search(ctx, search as ParsedSearch);
     }
+    // A resource's id is exactly the id asked for (FHIR read): a lookup
+    // that matched another spelling of it (an upper-case uuid) found nothing.
+    const askedIds = route.kind === "read" ? [route.id] : route.query.getAll("_id").flatMap((v) => v.split(","));
+    if (askedIds.length) {
+      const keep = result.page.resources.map((r) => askedIds.includes(String(r.id)));
+      if (keep.includes(false)) {
+        result = {
+          ...result,
+          page: { ...result.page, resources: result.page.resources.filter((_, i) => keep[i]) },
+          owners: result.owners.filter((_, i) => keep[i]),
+        };
+      }
+    }
     if (result.requestedPatientIds?.length) {
       requestedPatientIds = [...new Set([...requestedPatientIds, ...result.requestedPatientIds])];
     }

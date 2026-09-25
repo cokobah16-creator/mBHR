@@ -58,7 +58,7 @@ export const observationDefinition: ResourceDefinition = {
       name: "date",
       type: "date",
       documentation:
-        "When measured (vitals.taken_at) or collected (laboratory). A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
+        "When measured (vital signs) or collected (laboratory). A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
       maxRepeats: 2,
     },
     { name: "category", type: "token", documentation: "vital-signs or laboratory." },

@@ -17,7 +17,7 @@ import { inList, pgrstQuote } from "../gateway/postgrest";
 import { parseId, parseToken, type ParsedSearch } from "../search/params";
 import { knownSourceValues, sourceValuesFor, type StatusMap } from "../terminology/statusMaps";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
-import { UUID, likeLiteral, one, type Filters } from "./shared";
+import { UUID, likeLiteral, one, scopeFilter, type Filters } from "./shared";
 
 export const definition: ResourceDefinition = {
   type: "Medication",
@@ -156,12 +156,17 @@ export async function practitionerIds(ctx: QueryCtx, accountIds: Iterable<unknow
   return out;
 }
 
-/** Visits the caller can read (a patient: their closed visits, as the portal shows): visit id -> internal patient id. */
+/**
+ * Visits the caller can read (a patient: their own closed visits, as the
+ * portal shows): visit id -> internal patient id. A patient's lookup is
+ * confined to their own records in the query itself (scopeFilter), not only
+ * by row-level security, so another patient's visit row is never read.
+ */
 export async function readableVisits(ctx: QueryCtx, visitIds: Iterable<unknown>): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const ids = distinctStrings(visitIds, /^[A-Za-z0-9.-]{1,64}$/);
   for (const part of chunks(ids)) {
-    const filters: Filters = [["id", inList(part)]];
+    const filters: Filters = [["id", inList(part)], ...scopeFilter(ctx)];
     if (ctx.scope.kind === "patient") filters.push(["status", "eq.closed"]);
     for (const r of await ctx.db.select("visits", ["id", "patient_id"], filters, { limit: part.length })) {
       if (typeof r.id === "string" && typeof r.patient_id === "string") out.set(r.id, r.patient_id);

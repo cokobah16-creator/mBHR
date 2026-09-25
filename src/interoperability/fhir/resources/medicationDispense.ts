@@ -10,7 +10,11 @@
 //
 // Portal patients (when patient access is on) see their own rows that are
 // visible in the portal (restriction portal_visible_only), with what the
-// portal shows them: the medicine, status, visit, time and directions.
+// portal shows them: the medicine, status, visit and directions.
+//
+// No handover time is published and there is no whenhandedover search: mBHR
+// records when a medicine was recorded as given, not a handover (see
+// mappers/medication.ts).
 
 import type { MedicationDispense, MedicationMapContext, PrescriptionLines } from "../mappers/medication";
 import {
@@ -25,9 +29,10 @@ import {
 import type { Row } from "../mappers/common";
 import { MEDICATION_DISPENSE_STATUS } from "../terminology/status/medication";
 import { READ_PERMISSIONS } from "../authorization/permissions";
-import { pgrstQuote, inList } from "../gateway/postgrest";
+import { errors } from "../errors/operationOutcome";
+import { inList } from "../gateway/postgrest";
 import { referenceContext } from "../patients/canonical";
-import { intersectDates, parseDateSearch, parseId, parseReferenceId, type ParsedSearch } from "../search/params";
+import { parseId, parseReferenceId, type ParsedSearch } from "../search/params";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
 import {
   SOURCE_ID,
@@ -54,13 +59,12 @@ export const definition: ResourceDefinition = {
   source: "public.dispenses (prescription dispensing, imported tablet history and visit dispensing)",
   idStrategy: "dispenses.id, with ':' written as '.' (ids from the rx_dispense fallback contain ':')",
   fields: [
-    "status (dispense_status as recorded; not recorded: unknown, never assumed completed)",
+    "status (dispense_status where it was set on purpose; not recorded, or the 'completed' a migration stamped on old rows: unknown, never assumed completed)",
     "medicationCodeableConcept.text (the medicine's name as recorded when it was given)",
     "subject",
     "context (only when the visit exists and belongs to the same patient)",
     "authorizingPrescription (only when exactly one line of the prescription names this medicine)",
     "quantity (units given with the medicine's dispensing unit, when both are recorded; staff only)",
-    "whenHandedOver (when_handed_over, else when mBHR recorded the medicine as given)",
     "performer (only when the dispenser's account resolves in the staff directory; staff only)",
     "dosageInstruction.text (dose and directions as written)",
   ],
@@ -73,20 +77,14 @@ export const definition: ResourceDefinition = {
     {
       name: "status",
       type: "token",
-      documentation: "A medicationdispense-status code. Most records are unknown: mBHR does not record a dispense status.",
+      documentation:
+        "A medicationdispense-status code, matched against the status as published. Almost every record is unknown (mBHR does not record a dispense status), so completed matches nothing.",
     },
     {
       name: "prescription",
       type: "reference",
       documentation:
-        "MedicationRequest/[id]: dispenses whose authorizingPrescription is that prescription line (only those where the line is exactly identified).",
-    },
-    {
-      name: "whenhandedover",
-      type: "date",
-      documentation:
-        "whenHandedOver as published: the recorded handover time, else when mBHR recorded the medicine as given. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
-      maxRepeats: 2,
+        "MedicationRequest/[id]: dispenses whose authorizingPrescription is that prescription line (only those where the line is exactly identified). Staff only: a patient's view carries no authorizingPrescription.",
     },
   ],
   requiredSearch: [["_id"], ["patient"], ["subject"], ["prescription"]],
@@ -96,14 +94,14 @@ export const definition: ResourceDefinition = {
   patientAccess: true,
   sensitiveSearch: false,
   notes: [
-    "status is unknown unless a dispense status was recorded: mBHR records that a medicine was given, not a separate handover status. unknown does not mean the medicine was not given.",
-    "whenHandedOver is the time mBHR recorded the medicine as given, from the tablet's clock.",
+    "status is unknown unless a dispense status was set on purpose: mBHR records that a medicine was given, not a separate handover status. A 'completed' is published as unknown too: the only thing that writes it is a database migration that fills it in for every row without a status. unknown does not mean the medicine was not given.",
+    "No handover time (whenHandedOver) is published and whenhandedover cannot be searched: mBHR records when a medicine was recorded as given, on the tablet's clock, not when it was handed over. meta.lastUpdated is when the record last changed, not when the medicine was given.",
     "One prescription line can have several dispenses (one per stock lot, plus any units given offline beyond server stock): add them up per authorizingPrescription.",
     "A quantity is shown only with its unit: visit dispensing records no unit, so it has none.",
     "The medicine is the name as recorded, as text: no medicine code is published (none is recorded).",
     "Records from the staff dashboard's 'Add medicine' form are not published (their quantity is invented).",
     "The dispenser's account id or typed name, lots, allergy-override flags and visibility notes are not published.",
-    "Patients see their own records that are visible in the portal: medicine, status, visit, time and directions only.",
+    "Patients see their own records that are visible in the portal: medicine, status, visit and directions only.",
   ],
 };
 
@@ -182,23 +180,6 @@ async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
   return dispense ? { page: { resources: [dispense], next: null }, owners: ownersOf(rows) } : emptyResult();
 }
 
-/**
- * whenhandedover: the published value is when_handed_over, else
- * dispensed_at, so each bound is applied to that same choice.
- */
-function handedOverFilters(raw: string[] | undefined): Filters {
-  if (!raw?.length) return [];
-  const b = intersectDates(raw.map((r) => parseDateSearch(r, "whenhandedover")));
-  const f: Filters = [];
-  const bound = (op: "gte" | "lt", at: string): [string, string] => [
-    "or",
-    `(when_handed_over.${op}.${pgrstQuote(at)},and(when_handed_over.is.null,dispensed_at.${op}.${pgrstQuote(at)}))`,
-  ];
-  if (b.from) f.push(bound("gte", b.from));
-  if (b.to) f.push(bound("lt", b.to));
-  return f;
-}
-
 async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult> {
   const notes = patientNotes(ctx);
   const named = namedPatientFilter(ctx);
@@ -225,6 +206,11 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   // that exact line (so search and resource agree).
   let prescriptionRef: string | null = null;
   const prescription = one(search, "prescription");
+  // A patient's view never carries authorizingPrescription, so the search
+  // could only ever come back empty; refuse it rather than imply "none".
+  if (prescription && ctx.scope.kind !== "staff") {
+    throw errors.badRequest("The prescription parameter is not available to patient accounts.");
+  }
   if (prescription) {
     const requestId = parseReferenceId(prescription, "MedicationRequest", "prescription");
     const parsed = parseMedicationRequestId(requestId);
@@ -232,8 +218,6 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
     filters.push(["prescription_id", `eq.${parsed.prescriptionId}`]);
     prescriptionRef = `MedicationRequest/${requestId}`;
   }
-
-  filters.push(...handedOverFilters(search.values.get("whenhandedover")));
 
   const { page, rows } = await keysetPage<MedicationDispense>({
     db: ctx.db,
@@ -289,8 +273,10 @@ function validate(resource: Json, add: (path: string, message: string) => void):
       add("quantity", "dispensing units are not UCUM; no system or code");
     }
   }
-  // mBHR records no preparation step; the time it records is published as whenHandedOver only.
+  // mBHR records no preparation step and no handover time (the time it
+  // records is when the medicine was recorded as given, not a handover).
   if (resource.whenPrepared !== undefined) add("whenPrepared", "not recorded by mBHR");
+  if (resource.whenHandedOver !== undefined) add("whenHandedOver", "mBHR records no handover time");
   for (const [i, d] of (Array.isArray(resource.dosageInstruction) ? resource.dosageInstruction : []).entries()) {
     if (!isObj(d)) continue;
     for (const k of Object.keys(d)) if (k !== "text") add(`dosageInstruction[${i}].${k}`, "dosing is published as text only");

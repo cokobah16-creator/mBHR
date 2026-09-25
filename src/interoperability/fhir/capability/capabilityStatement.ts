@@ -50,10 +50,12 @@ export function capabilityStatement(baseUrl: string, releaseDate = "2026-09-26",
 function resources() {
   return PUBLISHED_TYPES.map((type) => {
     const def = RESOURCE_DEFINITIONS[type];
-    const notes = def.notes?.length ? ` ${def.notes.join(" ")}` : "";
+    // def.source names tables and functions: it stays in the code and the
+    // docs, and is not published to unauthenticated callers.
+    const notes = def.notes?.length ? def.notes.join(" ") : "";
     return {
       type,
-      documentation: `Source: ${def.source}.${notes}`,
+      ...(notes ? { documentation: notes } : {}),
       interaction: def.interactions.map((code) => ({ code })),
       // meta.versionId is a digest of the resource as served (it changes
       // whenever the served content changes); no history is kept or offered.

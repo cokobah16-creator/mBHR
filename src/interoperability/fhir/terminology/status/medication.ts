@@ -14,14 +14,19 @@
 //                              open, rx_import_history records a tablet's own
 //                              history. No app code writes partial.
 //   dispenses.dispense_status  one of the nine FHIR codes or NULL (CHECK).
-//                              The app never writes it: every row created
-//                              since May 2026 has NULL. Rows that existed
-//                              when the column was added were set to
-//                              "completed" by that migration in one step.
+//                              No app code, RPC or script writes it. The
+//                              only writer is the migration that added the
+//                              column (20260503010200), which sets every row
+//                              that has no status to "completed" at the
+//                              moment the migration is applied, whatever
+//                              happened to the medicine. So "completed" is a
+//                              migration default: it says no more than NULL.
 //
-// A dispenses row is NOT taken as proof of a handover: a NULL status stays
-// "unknown", whatever else the row says (owner rule: a dispense record never
-// implies completed unless the data says handed over).
+// A dispenses row is NOT taken as proof of a handover: a NULL status, and
+// the "completed" the migration stamped on it, stay "unknown", whatever else
+// the row says (owner rule: a dispense record never implies completed unless
+// the data says handed over). Trusting that default needs an owner or
+// clinical decision first.
 
 import type { StatusMap } from "../statusMaps";
 
@@ -116,7 +121,8 @@ export type MedicationDispenseStatus =
   | "declined"
   | "unknown";
 
-const RECORDED_AS_FHIR = "Stored as this FHIR code (the column accepts only medicationdispense-status codes).";
+const RECORDED_AS_FHIR =
+  "Stored as this FHIR code (the column accepts only medicationdispense-status codes). No app code or migration writes it, so it was set on purpose.";
 
 export const MEDICATION_DISPENSE_STATUS: StatusMap<MedicationDispenseStatus> = {
   element: "MedicationDispense.status",
@@ -126,9 +132,9 @@ export const MEDICATION_DISPENSE_STATUS: StatusMap<MedicationDispenseStatus> = {
   rules: [
     {
       source: ["completed"],
-      fhir: "completed",
+      fhir: "unknown",
       reason:
-        "Recorded as handed over. Only rows that existed in May 2026 carry it, set by the migration that added the column (clinical sign-off pending on trusting that backfill).",
+        "Migration default, not a recorded handover: the only writer is the migration that added the column, which sets every row without a status to completed whenever it is applied. It carries the same information as a missing status, so it is never published as completed (owner or clinical sign-off needed before it is trusted).",
     },
     { source: ["preparation"], fhir: "preparation", reason: RECORDED_AS_FHIR },
     { source: ["in-progress"], fhir: "in-progress", reason: `${RECORDED_AS_FHIR} Never shown as completed.` },
@@ -142,7 +148,7 @@ export const MEDICATION_DISPENSE_STATUS: StatusMap<MedicationDispenseStatus> = {
   missing: {
     fhir: "unknown",
     reason:
-      "The app does not record a dispense status (every row since May 2026). The row says mBHR recorded the medicine, not that a handover was confirmed, so it is never assumed completed.",
+      "The app does not record a dispense status. The row says mBHR recorded the medicine, not that a handover was confirmed, so it is never assumed completed.",
   },
   unrecognised: { fhir: "unknown", reason: "Not a medicationdispense-status code; not guessed." },
 };

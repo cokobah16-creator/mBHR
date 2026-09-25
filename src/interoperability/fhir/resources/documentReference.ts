@@ -68,7 +68,7 @@ export const definition: ResourceDefinition = {
       name: "date",
       type: "date",
       documentation:
-        "When the document was added to mBHR (patient_documents.created_at). A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
+        "When the document was added to mBHR. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
       maxRepeats: 2,
     },
     {

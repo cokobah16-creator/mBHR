@@ -18,7 +18,12 @@
 //     unit (tablets, bottles, ...), as text, with no UCUM code (those units
 //     are not UCUM). A quantity with no unit on record is left out.
 //   - Statuses go through the explicit maps in terminology/status/
-//     medication.ts. A dispense row is never taken as proof of a handover.
+//     medication.ts. A dispense row is never taken as proof of a handover,
+//     and neither is the "completed" a migration stamped on old rows.
+//   - No handover time is published (whenHandedOver): mBHR records none.
+//     dispensed_at is when mBHR recorded the medicine as given, which the
+//     status map does not take as a handover, and when_handed_over is only
+//     a migration's copy of dispensed_at. Neither column is read.
 //   - References: the patient always as the canonical record (a row whose
 //     patient does not resolve is withheld); an encounter only when the
 //     visit exists, the caller can read it and it belongs to the same
@@ -87,7 +92,7 @@ export interface MedicationDispense extends Resource {
   performer?: { actor: Reference }[];
   authorizingPrescription?: Reference[];
   quantity?: Quantity;
-  whenHandedOver?: string;
+  // No whenHandedOver or whenPrepared: mBHR records neither (see above).
   dosageInstruction?: Dosage[];
 }
 
@@ -102,7 +107,9 @@ export const MEDICATION_DISPENSE_STATUS_SYSTEM = "http://terminology.hl7.org/Cod
  *   prescriptions   20250930065243 (+ updated_at 20260925100000)
  *   dispenses       20250930025202 (+ portal_visible 20260115072241,
  *                   prescription_id/item_id 20260420000000,
- *                   dispense_status/when_handed_over 20260503010200)
+ *                   dispense_status 20260503010200)
+ * dispenses.dispensed_at and when_handed_over are deliberately not read
+ * (no handover time is published).
  */
 export const MEDICATION_COLUMNS = ["id", "med_name", "strength", "form", "is_active", "updated_at"] as const;
 /** What a prescription or dispense needs from its catalogue entry. */
@@ -126,12 +133,10 @@ export const DISPENSE_COLUMNS = [
   "dosage",
   "directions",
   "dispensed_by",
-  "dispensed_at",
   "updated_at",
   "prescription_id",
   "item_id",
   "dispense_status",
-  "when_handed_over",
 ] as const;
 
 /**
@@ -472,11 +477,11 @@ export function mapMedicationDispense(row: Row, ctx: MedicationMapContext): Medi
     const unit = itemId ? ctx.items.get(itemId)?.unit : undefined;
     if (qty && unit) dispense.quantity = { value: qty, unit };
   }
-  // A time only when one was recorded: when_handed_over where set, else the
-  // time mBHR recorded the medicine as given (dispensed_at, the tablet's
-  // clock). Never the row's update time.
-  const handedOver = instant(row, "when_handed_over") ?? instant(row, "dispensed_at");
-  if (handedOver) dispense.whenHandedOver = handedOver;
+  // No whenHandedOver. The status stays unknown because mBHR does not record
+  // a handover; a handover time would say the opposite. dispensed_at is when
+  // mBHR recorded the medicine as given (the tablet's clock), and
+  // when_handed_over holds only the copy of it a migration made, so neither
+  // is a recorded handover time. (Owner or clinical decision pending.)
   const text = joinText([str(row, "dosage"), str(row, "directions")]);
   if (text) dispense.dosageInstruction = [{ text }];
   return dispense;

@@ -200,14 +200,16 @@ const D_VISIT = {
   item_id: null,
   batch_id: null,
 };
-// A row that existed when the FHIR columns were added (backfilled).
+// A row that existed when migration 20260503010200 was applied: it set
+// dispense_status 'completed' and copied dispensed_at into when_handed_over
+// for every such row, whatever happened to the medicine.
 const D_LEGACY = {
   ...D_VISIT,
   id: "01HZZDISPLEGACY00000000000",
   item_name: "Ibuprofen 200mg",
   qty: null,
   dispense_status: "completed",
-  when_handed_over: "2026-01-10T09:00:00Z",
+  when_handed_over: "2026-01-10T09:05:00Z",
   dispensed_at: "2026-01-10T09:05:00Z",
   updated_at: "2026-01-10T09:05:00Z",
 };
@@ -455,8 +457,8 @@ describe("medicine status maps", () => {
     expect(sourceValuesFor(MEDICATION_REQUEST_STATUS, "active")).toEqual(["open"]);
   });
 
-  it("MedicationDispense.status maps recorded codes and keeps a missing status unknown", () => {
-    for (const code of ["preparation", "in-progress", "cancelled", "on-hold", "completed", "entered-in-error", "stopped", "declined", "unknown"]) {
+  it("MedicationDispense.status maps codes set on purpose and keeps a missing status unknown", () => {
+    for (const code of ["preparation", "in-progress", "cancelled", "on-hold", "entered-in-error", "stopped", "declined", "unknown"]) {
       expect(mapMedicationDispenseStatus(code)).toBe(code);
     }
     expect(mapMedicationDispenseStatus(null)).toBe("unknown");
@@ -465,12 +467,23 @@ describe("medicine status maps", () => {
     expect(explainStatus(MEDICATION_DISPENSE_STATUS, null).reason).toMatch(/never assumed completed/);
   });
 
-  it("MedicationDispense.status: a dispense record never implies completed; declined, cancelled and stopped are never completed", () => {
+  it("MedicationDispense.status: the 'completed' a migration stamped on every row is a default, not a handover: unknown", () => {
+    // 20260503010200 sets dispense_status = 'completed' WHERE it IS NULL,
+    // whenever it is applied; nothing else writes the column.
+    expect(mapMedicationDispenseStatus("completed")).toBe("unknown");
+    expect(mapMedicationDispenseStatus("COMPLETED")).toBe("unknown");
+    expect(explainStatus(MEDICATION_DISPENSE_STATUS, "completed").reason).toMatch(/Migration default, not a recorded handover/);
+    expect(MEDICATION_DISPENSE_STATUS.rules.flatMap((r) => r.source).includes("completed")).toBe(true);
+  });
+
+  it("MedicationDispense.status: nothing mBHR stores is ever published as completed", () => {
     expect(mapMedicationDispenseStatus(null)).not.toBe("completed");
-    for (const v of ["declined", "cancelled", "stopped", "in-progress", "preparation", "on-hold"]) {
-      expect(mapMedicationDispenseStatus(v)).not.toBe("completed");
+    for (const v of ["completed", "declined", "cancelled", "stopped", "in-progress", "preparation", "on-hold", "unknown", "handed_over"]) {
+      expect(mapMedicationDispenseStatus(v), v).not.toBe("completed");
     }
-    expect(sourceValuesFor(MEDICATION_DISPENSE_STATUS, "completed")).toEqual(["completed"]);
+    expect(MEDICATION_DISPENSE_STATUS.rules.some((r) => r.fhir === "completed")).toBe(false);
+    expect(sourceValuesFor(MEDICATION_DISPENSE_STATUS, "completed")).toEqual([]);
+    expect(sourceValuesFor(MEDICATION_DISPENSE_STATUS, "unknown").sort()).toEqual(["completed", "unknown"]);
   });
 });
 
@@ -673,7 +686,6 @@ describe("MedicationDispense mapper", () => {
       performer: [{ actor: { reference: "Practitioner/7a000000-0000-4000-8000-0000000000dd" } }],
       authorizingPrescription: [{ reference: `MedicationRequest/${RX_DONE.id}-1` }],
       quantity: { value: 10, unit: "tablets" },
-      whenHandedOver: "2026-05-01T10:00:00.000Z",
       dosageInstruction: [{ text: "1 tablet · three times daily · 5 days · Take after food" }],
     });
     expect(validateResource(d, medicationDispenseModule.validate)).toEqual([]);
@@ -682,17 +694,35 @@ describe("MedicationDispense mapper", () => {
   it("never takes a dispense row as proof of a handover: no recorded status is unknown, even with a prescription", () => {
     expect(mapMedicationDispense(D_RX, mapCtx())!.status).toBe("unknown");
     expect(mapMedicationDispense(D_VISIT, mapCtx())!.status).toBe("unknown");
-    expect(mapMedicationDispense(D_LEGACY, mapCtx())!.status).toBe("completed");
+    // The backfilled legacy row: the migration's 'completed' is not a handover either.
+    expect(mapMedicationDispense(D_LEGACY, mapCtx())!.status).toBe("unknown");
     expect(mapMedicationDispense(D_DECLINED, mapCtx())!.status).toBe("declined");
     expect(mapMedicationDispense(D_CANCELLED, mapCtx())!.status).toBe("cancelled");
     expect(mapMedicationDispense(D_DRIFT, mapCtx())!.status).toBe("unknown");
   });
 
-  it("uses a recorded time only, preferring when_handed_over", () => {
-    expect(mapMedicationDispense(D_LEGACY, mapCtx())!.whenHandedOver).toBe("2026-01-10T09:00:00.000Z");
-    const noTime = mapMedicationDispense({ ...D_VISIT, dispensed_at: null }, mapCtx())!;
-    expect(noTime.whenHandedOver).toBeUndefined();
-    expect(JSON.stringify(noTime)).not.toMatch(/whenPrepared/);
+  it("never publishes a handover time: not dispensed_at, not the migration's copy in when_handed_over, whatever the status", () => {
+    const rows = [
+      D_RX,
+      D_VISIT,
+      D_LEGACY,
+      D_DECLINED,
+      { ...D_VISIT, dispense_status: "in-progress", when_handed_over: "2026-05-02T11:30:00Z" },
+      { ...D_VISIT, when_handed_over: "2026-05-02T11:30:00Z" },
+    ];
+    for (const row of rows) {
+      const d = mapMedicationDispense(row, mapCtx())!;
+      const text = JSON.stringify(d);
+      expect(text, row.id).not.toMatch(/whenHandedOver|whenPrepared/);
+      // Neither recorded time appears anywhere (meta.lastUpdated is updated_at).
+      for (const t of [row.dispensed_at, row.when_handed_over]) {
+        if (t && t !== row.updated_at) expect(text).not.toContain(new Date(t).toISOString());
+      }
+    }
+    // A status unknown beside a handover time would say a handover happened: the validator refuses it.
+    const d = mapMedicationDispense(D_RX, mapCtx())!;
+    const paths = validateResource({ ...d, whenHandedOver: "2026-05-01T10:00:00Z" }, medicationDispenseModule.validate).map((i) => i.path);
+    expect(paths).toContain("whenHandedOver");
   });
 
   it("writes ':' in ids as '.', reversibly, and withholds ids that cannot round-trip", () => {
@@ -735,7 +765,8 @@ describe("MedicationDispense mapper", () => {
     expect(d.quantity).toBeUndefined();
     expect(d.authorizingPrescription).toBeUndefined();
     expect(d.performer).toBeUndefined();
-    expect(d).toMatchObject({ status: "unknown", medicationCodeableConcept: { text: "Paracetamol 500mg" }, whenHandedOver: "2026-05-01T10:00:00.000Z" });
+    expect(d).toMatchObject({ status: "unknown", medicationCodeableConcept: { text: "Paracetamol 500mg" } });
+    expect("whenHandedOver" in d).toBe(false);
   });
 
   it("withholds a row without a medicine name or a resolvable patient", () => {
@@ -806,6 +837,12 @@ describe("who may read medicines", () => {
     expect((await call(`/fhir/R4/MedicationDispense/${D_B.id}`, PAT_B)).status).toBe(200);
   });
 
+  it("refuses prescription= to a patient, whose view carries no authorizingPrescription", async () => {
+    const { call } = setup();
+    const res = await call(`/fhir/R4/MedicationDispense?prescription=MedicationRequest/${RX_OPEN.id}-1`, PAT_A);
+    expect(res.status).toBe(400);
+  });
+
   it("a patient's search is confined to their own visible rows, and naming another patient is refused", async () => {
     const { call, calls } = setup();
     const b = await body(await call("/fhir/R4/MedicationDispense", PAT_A));
@@ -824,8 +861,40 @@ describe("who may read medicines", () => {
     expect(decodeURIComponent(q)).toContain(`patient_id=in.("${PATIENT_A.id}")`);
     expect(decodeURIComponent(q)).toContain("portal_visible=is.true");
     expect((await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_B.fhir_id}`, PAT_A)).status).toBe(403);
-    const mine = await body(await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}&status=completed`, PAT_A));
-    expect(ids(mine)).toEqual([D_LEGACY.id]);
+    // The backfilled legacy row is not shown to the patient as completed, and a completed search finds nothing.
+    const done = await body(await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}&status=completed`, PAT_A));
+    expect(ids(done)).toEqual([]);
+    const legacy = await body(await call(`/fhir/R4/MedicationDispense/${D_LEGACY.id}`, PAT_A));
+    expect(legacy.status).toBe("unknown");
+    expect(legacy.whenHandedOver).toBeUndefined();
+    const unknown = await body(await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}&status=unknown`, PAT_A));
+    expect(ids(unknown)).toContain(D_LEGACY.id);
+    for (const r of matches(b)) expect(r.status, r.id).not.toBe("completed");
+  });
+
+  it("a patient's visit lookup is confined to their own records in the query, not only by row-level security", async () => {
+    // A's own dispense naming B's visit, with row-level security on visits drifted open.
+    const D_CROSS = { ...D_VISIT, id: "01HZZDISPCROSS000000000000", visit_id: VISIT_B.id };
+    const { call, calls } = setup({
+      tables: {
+        patients: [PATIENT_A, PATIENT_B, PATIENT_M],
+        visits: [VISIT_A, VISIT_A_OPEN, VISIT_B],
+        pharmacy_items: [ITEM_PARA, ITEM_AMOX, ITEM_LONG],
+        prescriptions: PRESCRIPTIONS,
+        dispenses: [...DISPENSES, D_CROSS],
+      },
+      visible: (t, r, u) => (t === "visits" ? true : visible(t, r, u)),
+    });
+    const b = await body(await call("/fhir/R4/MedicationDispense", PAT_A));
+    const cross = matches(b).find((r) => r.id === D_CROSS.id)!;
+    expect(cross.context).toBeUndefined();
+    const visitQueries = calls.filter((c) => c.url.includes("/rest/v1/visits")).map((c) => decodeURIComponent(c.url));
+    expect(visitQueries.length).toBeGreaterThan(0);
+    for (const q of visitQueries) expect(q).toContain(`patient_id=in.("${PATIENT_A.id}")`);
+    // Another patient's internal id is never sent to the resolver on a patient's request.
+    const resolverBodies = calls.filter((c) => c.url.includes("fhir_resolve_patients")).map((c) => JSON.stringify(c.body));
+    for (const rb of resolverBodies) expect(rb).not.toContain(PATIENT_B.id);
+    expectNothingForbidden(b);
   });
 
   it("the portal restriction holds even where row-level security would show a hidden row", async () => {
@@ -848,7 +917,6 @@ describe("enumeration and ids", () => {
       "/fhir/R4/MedicationRequest?authoredon=2026-05-01",
       "/fhir/R4/MedicationDispense",
       "/fhir/R4/MedicationDispense?status=unknown",
-      "/fhir/R4/MedicationDispense?whenhandedover=2026-05-01",
     ]) {
       expect((await call(path, DOCTOR)).status, path).toBe(403);
     }
@@ -1072,18 +1140,24 @@ describe("MedicationDispense at the gateway", () => {
     for (const r of matches(b)) expect(validateResource(r, medicationDispenseModule.validate)).toEqual([]);
   });
 
-  it("filters by status with the same map the resources use: completed only where recorded", async () => {
+  it("filters by status with the same map the resources use: completed matches nothing, the backfilled rows are unknown", async () => {
     const { call } = setup();
     const q = async (s: string) =>
       ids(await body(await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}&status=${s}`, DOCTOR))).sort();
-    expect(await q("completed")).toEqual([D_LEGACY.id]);
+    expect(await q("completed")).toEqual([]);
     expect(await q("declined")).toEqual([D_DECLINED.id]);
     expect(await q("cancelled")).toEqual([D_CANCELLED.id]);
     expect(await q("unknown")).toEqual(
-      [D_RX, D_COLON, D_VISIT, D_HIDDEN, D_M, D_AMBIG, D_ZERO, D_DRIFT].map((r) => dispenseFhirId(r.id)).sort(),
+      [D_RX, D_COLON, D_VISIT, D_LEGACY, D_HIDDEN, D_M, D_AMBIG, D_ZERO, D_DRIFT].map((r) => dispenseFhirId(r.id)).sort(),
     );
-    expect(await q("http://terminology.hl7.org/CodeSystem/medicationdispense-status|completed")).toEqual([D_LEGACY.id]);
+    expect(await q("http://terminology.hl7.org/CodeSystem/medicationdispense-status|completed")).toEqual([]);
+    expect(await q("http://terminology.hl7.org/CodeSystem/medicationdispense-status|unknown")).toContain(D_LEGACY.id);
     expect(await q("http://hl7.org/fhir/CodeSystem/medicationrequest-status|completed")).toEqual([]);
+    // Every returned resource carries the status searched for; none is completed.
+    const all = await body(await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}`, DOCTOR));
+    for (const r of matches(all)) expect(r.status, r.id).not.toBe("completed");
+    const unknown = await body(await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}&status=unknown`, DOCTOR));
+    for (const r of matches(unknown)) expect(r.status).toBe("unknown");
   });
 
   it("finds the dispenses of one prescription line, only where the line is exactly identified", async () => {
@@ -1097,14 +1171,18 @@ describe("MedicationDispense at the gateway", () => {
     expect((await call(`/fhir/R4/MedicationDispense?prescription=Patient/${PATIENT_A.fhir_id}`, PHARMACIST)).status).toBe(400);
   });
 
-  it("filters by whenhandedover on the published time (when_handed_over, else dispensed_at)", async () => {
-    const { call } = setup();
-    const q = async (v: string) => ids(await body(await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}&${v}`, DOCTOR))).sort();
-    expect(await q("whenhandedover=2026-01-10")).toEqual([D_LEGACY.id]);
-    expect(await q("whenhandedover=lt2026-02-01")).toEqual([D_LEGACY.id]);
-    expect(await q("whenhandedover=2026-05-02")).toEqual([D_VISIT, D_HIDDEN, D_DECLINED, D_CANCELLED, D_DRIFT].map((r) => r.id).sort());
-    // D_LEGACY's dispensed_at (09:05) is inside this minute window; its published time (09:00) is not.
-    expect(await q("whenhandedover=ge2026-01-10T09:04:00Z&whenhandedover=lt2026-01-10T10:00:00Z")).toEqual([]);
+  it("offers no whenhandedover search (no handover time is published) and reads neither time column", async () => {
+    const { call, calls } = setup();
+    for (const token of [DOCTOR, PAT_A]) {
+      const res = await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}&whenhandedover=2026-05-01`, token);
+      expect(res.status).toBe(400);
+      expectNothingForbidden(await body(res));
+    }
+    const b = await body(await call(`/fhir/R4/MedicationDispense?patient=Patient/${PATIENT_A.fhir_id}`, DOCTOR));
+    for (const r of matches(b)) expect(r.whenHandedOver, r.id).toBeUndefined();
+    const selects = calls.filter((c) => c.url.includes("/rest/v1/dispenses")).map((c) => decodeURIComponent(c.url));
+    expect(selects.length).toBeGreaterThan(0);
+    for (const q of selects) expect(q).not.toMatch(/when_handed_over|dispensed_at/);
   });
 
   it("finds one dispense by _id", async () => {
@@ -1149,7 +1227,9 @@ describe("medicine definitions", () => {
     const d = RESOURCE_DEFINITIONS.MedicationDispense;
     expect(m.searchParams.map((p) => p.name)).toEqual(["_id"]);
     expect(r.searchParams.map((p) => p.name)).toEqual(["_id", "patient", "subject", "encounter", "status", "authoredon"]);
-    expect(d.searchParams.map((p) => p.name)).toEqual(["_id", "patient", "subject", "status", "prescription", "whenhandedover"]);
+    expect(d.searchParams.map((p) => p.name)).toEqual(["_id", "patient", "subject", "status", "prescription"]);
+    expect(d.fields.join(" ")).not.toMatch(/whenHandedOver/);
+    expect(d.notes?.join(" ")).toMatch(/No handover time \(whenHandedOver\) is published/);
     expect([m.patientAccess, r.patientAccess, d.patientAccess]).toEqual([false, false, true]);
     expect(m.readPermissions).toEqual(["consult", "dispense", "inventory"]);
     expect(r.readPermissions).toEqual(["consult", "dispense"]);

@@ -383,7 +383,10 @@ describe("metadata and flags", () => {
     const { call } = setup();
     const res = await call("/fhir/R4/metadata");
     expect(res.headers.get("x-mbhr-fhir-flags")).toBe("read=on; patient=on; consent=off; audit=on; external=off; write=off; smart=off");
-    expect((await json(res)).implementation.description).toMatch(/patients reading their own records/);
+    const body = await json(res);
+    expect(body.implementation.description).toMatch(/patients reading their own records/);
+    // Unauthenticated: no table, schema or database function names.
+    expect(JSON.stringify(body)).not.toMatch(/public\.|interop\.|fhir_[a-z_]+\(|app_users|patient_documents|pharmacy_items/);
   });
 
   it("refuses to start with write, SMART or external access switched on", async () => {

@@ -36,7 +36,7 @@ export const encounterDefinition: ResourceDefinition = {
     {
       name: "date",
       type: "date",
-      documentation: "Visit start (visits.started_at). A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
+      documentation: "When the visit started. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
       maxRepeats: 2,
     },
     { name: "status", type: "token", documentation: "in-progress, finished, cancelled or unknown." },

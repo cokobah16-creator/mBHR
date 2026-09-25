@@ -906,6 +906,10 @@ describe("Location at the gateway", () => {
     const { call } = setup();
     expect((await json(await call(`/fhir/R4/Location/${SITE_B.id}`, DOCTOR))).status).toBe("inactive");
     expect((await json(await call(`/fhir/R4/Location/${SITE_C.id}`, DOCTOR))).status).toBeUndefined();
+    // Another spelling of the id is not this resource (the served id must equal the asked id).
+    expect((await call(`/fhir/R4/Location/${SITE_A.id.toUpperCase()}`, DOCTOR)).status).toBe(404);
+    const upper = await json(await call(`/fhir/R4/Location?_id=${SITE_A.id.toUpperCase()}`, DOCTOR));
+    expect(upper.entry ?? []).toEqual([]);
     // Inactive sites are visible to members only (row-level security).
     expect((await call(`/fhir/R4/Location/${SITE_B.id}`, OUTSIDER)).status).toBe(404);
   });
@@ -1030,5 +1034,12 @@ describe("practitionerReferences (for other resource types)", () => {
     await practitionerReferences(ctxFor(DOCTOR, fake), [...ids, U_DOCTOR.id]);
     expect(fake.directoryCalls.map((c) => (c.p_source_ids as string[]).length)).toEqual([100, 100, 31]);
     expect(fake.directoryCalls.every((c) => c.p_name === null && c.p_fhir_ids === null && c.p_role === null)).toBe(true);
+  });
+});
+
+describe("status maps registry", () => {
+  it("lists the Location map with every other status map", async () => {
+    const { STATUS_MAPS } = await import("../terminology/status");
+    expect(STATUS_MAPS).toContain(LOCATION_STATUS);
   });
 });
