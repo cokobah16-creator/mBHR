@@ -30,6 +30,48 @@ type SupabaseLike = ReturnType<typeof createClient>;
 
 const PAGE_SIZE = 500;
 
+/**
+ * Patients whose data may leave in a bulk export: those with an active
+ * data-sharing consent (the same rule as verifyPatientConsent for a
+ * treatment, payment or operations purpose). Bulk export is never
+ * individual access.
+ */
+async function loadConsentedPatientIds(
+  supabase: SupabaseLike,
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("patient_consent_records")
+      .select("patient_id")
+      .eq("consent_type", "data_sharing")
+      .eq("consented", true)
+      .is("revoked_at", null)
+      .order("patient_id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(`consent query: ${error.message}`);
+    if (!data || data.length === 0) break;
+    for (const r of data as { patient_id: string | null }[]) {
+      if (r.patient_id) ids.add(r.patient_id);
+    }
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return ids;
+}
+
+function consentedRows(
+  rows: Record<string, unknown>[],
+  consented: Set<string>,
+  key = "patient_id",
+): Record<string, unknown>[] {
+  return rows.filter((r) => {
+    const id = r[key];
+    return typeof id === "string" && consented.has(id);
+  });
+}
+
 function ndjson(resources: unknown[]): string {
   return resources.map((r) => JSON.stringify(r)).join("\n");
 }
@@ -67,6 +109,7 @@ async function exportRegistryResource(
   resourceType: string,
   patientId: string | null,
   since: string | null,
+  consented: Set<string>,
 ): Promise<{ count: number; storagePath: string; sizeBytes: number } | null> {
   const cfg = RESOURCE_REGISTRY.find((r) => r.resourceType === resourceType);
   if (!cfg) return null;
@@ -75,12 +118,15 @@ async function exportRegistryResource(
     return null;
   }
 
-  const rows = await paginatePatientScoped(
-    supabase,
-    cfg.table,
-    cfg.orderColumn,
-    patientId,
-    since,
+  const rows = consentedRows(
+    await paginatePatientScoped(
+      supabase,
+      cfg.table,
+      cfg.orderColumn,
+      patientId,
+      since,
+    ),
+    consented,
   );
   if (rows.length === 0) return null;
 
@@ -104,12 +150,24 @@ async function exportPatient(
   supabase: SupabaseLike,
   jobId: string,
   patientId: string | null,
+  consented: Set<string>,
 ): Promise<{ count: number; storagePath: string; sizeBytes: number } | null> {
-  let query = supabase.from("patients").select("*");
-  if (patientId) query = query.eq("id", patientId);
-  const { data, error } = await query.range(0, 9999);
-  if (error) throw new Error(`patients query: ${error.message}`);
-  const rows = (data || []) as Record<string, unknown>[];
+  const rows: Record<string, unknown>[] = [];
+  let from = 0;
+  for (;;) {
+    let query = supabase
+      .from("patients")
+      .select("*")
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (patientId) query = query.eq("id", patientId);
+    const { data, error } = await query;
+    if (error) throw new Error(`patients query: ${error.message}`);
+    if (!data || data.length === 0) break;
+    rows.push(...consentedRows(data as Record<string, unknown>[], consented, "id"));
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
   if (rows.length === 0) return null;
   const mapped = rows.map((p) => mapPatientToFHIR(p));
   return await uploadNdjson(supabase, {
@@ -125,20 +183,27 @@ async function exportObservation(
   jobId: string,
   patientId: string | null,
   since: string | null,
+  consented: Set<string>,
 ): Promise<{ count: number; storagePath: string; sizeBytes: number } | null> {
-  const vitalsRows = await paginatePatientScoped(
-    supabase,
-    "vitals",
-    "created_at",
-    patientId,
-    since,
+  const vitalsRows = consentedRows(
+    await paginatePatientScoped(
+      supabase,
+      "vitals",
+      "created_at",
+      patientId,
+      since,
+    ),
+    consented,
   );
-  const sdohRows = await paginatePatientScoped(
-    supabase,
-    "sdoh_observations",
-    "effective_date",
-    patientId,
-    since,
+  const sdohRows = consentedRows(
+    await paginatePatientScoped(
+      supabase,
+      "sdoh_observations",
+      "effective_date",
+      patientId,
+      since,
+    ),
+    consented,
   );
 
   const mapped: unknown[] = [];
@@ -159,13 +224,17 @@ async function exportDiagnosticReport(
   jobId: string,
   patientId: string | null,
   since: string | null,
+  consented: Set<string>,
 ): Promise<{ count: number; storagePath: string; sizeBytes: number } | null> {
-  const orders = await paginatePatientScoped(
-    supabase,
-    "lab_orders",
-    "ordered_at",
-    patientId,
-    since,
+  const orders = consentedRows(
+    await paginatePatientScoped(
+      supabase,
+      "lab_orders",
+      "ordered_at",
+      patientId,
+      since,
+    ),
+    consented,
   );
   if (orders.length === 0) return null;
 
@@ -248,6 +317,7 @@ export async function processJob(
   let total = 0;
 
   try {
+    const consented = await loadConsentedPatientIds(supabase);
     for (const resourceType of targets) {
       // Honor cancellation between resource emits.
       const { data: stillRow } = await supabase
@@ -263,15 +333,22 @@ export async function processJob(
       try {
         let result: Awaited<ReturnType<typeof exportRegistryResource>> = null;
         if (resourceType === "Patient") {
-          result = await exportPatient(supabase, jobId, patientId);
+          result = await exportPatient(supabase, jobId, patientId, consented);
         } else if (resourceType === "Observation") {
-          result = await exportObservation(supabase, jobId, patientId, since);
+          result = await exportObservation(
+            supabase,
+            jobId,
+            patientId,
+            since,
+            consented,
+          );
         } else if (resourceType === "DiagnosticReport") {
           result = await exportDiagnosticReport(
             supabase,
             jobId,
             patientId,
             since,
+            consented,
           );
         } else {
           result = await exportRegistryResource(
@@ -280,6 +357,7 @@ export async function processJob(
             resourceType,
             patientId,
             since,
+            consented,
           );
         }
 

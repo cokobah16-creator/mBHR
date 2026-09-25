@@ -9,11 +9,12 @@
 //   GET    /bulk-files/{jobId}/{file}     stream NDJSON (302 -> signed URL)
 //   DELETE /bulk-status/{jobId}           cancel + drop output
 //
-// Auth: requires a bearer token (validated against oauth_access_tokens via
-// the same introspection logic as tefca-ias). In Phase E-1 the legacy
-// X-QHIN-ID header is NOT accepted here — only Bearer tokens with
-// `system/*.read` (or per-resource `system/<Type>.read`) scope. Bulk Data
-// is new in this codebase, so the deprecation window doesn't apply.
+// Auth: every endpoint (kickoff, status, cancel, files) requires a bearer
+// token (validated against oauth_access_tokens via the same introspection
+// logic as tefca-ias) with `system/*.read` (or per-resource
+// `system/<Type>.read`) scope, and a job is visible only to the client that
+// started it. Exports contain only patients with an active data-sharing
+// consent (processor.ts).
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -24,6 +25,7 @@ import {
   scopeAllowsResource,
 } from "../_shared/fhir/bearer-auth.ts";
 import { logTEFCAAccess } from "../_shared/fhir/audit.ts";
+import { hasSystemScope } from "../_shared/fhir/access.ts";
 import { processJob } from "./processor.ts";
 import {
   type BulkExportJob,
@@ -71,11 +73,37 @@ async function authorize(
       401,
     );
   }
+  // Bulk export is for backend services only: patient access tokens, and
+  // patient-level scopes on any token, never reach it.
+  if (!hasSystemScope(introspection.scopes)) {
+    return errorResponse(
+      "error",
+      "forbidden",
+      "Bulk export needs a backend-services token with system scopes",
+      403,
+    );
+  }
   return {
     clientId: introspection.client_id ?? introspection.qhinId ?? "unknown",
-    scopes: introspection.scopes,
+    scopes: introspection.scopes.filter((s) => s.startsWith("system/")),
     qhinId: introspection.qhinId ?? introspection.client_id ?? "unknown",
   };
+}
+
+/** Load a job only when it belongs to the calling client. */
+async function loadOwnJob(
+  supabase: SupabaseLike,
+  jobId: string,
+  caller: AuthorizedCaller,
+): Promise<BulkExportJob | null> {
+  const { data, error } = await supabase
+    .from("bulk_export_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const job = data as BulkExportJob;
+  return job.client_id === caller.clientId ? job : null;
 }
 
 function parseAcceptedTypes(req: Request, body: unknown): string[] | null {
@@ -214,6 +242,16 @@ async function handleKickoff(
     );
   }
 
+  const exchangePurpose = req.headers.get("X-Exchange-Purpose") || "treatment";
+  if (!["treatment", "payment", "operations"].includes(exchangePurpose)) {
+    return errorResponse(
+      "error",
+      "forbidden",
+      "Bulk export needs a treatment, payment or operations purpose",
+      403,
+    );
+  }
+
   const body = await readBody(req);
   const requestedTypes = parseAcceptedTypes(req, body);
   const since = parseSince(req, body);
@@ -283,7 +321,7 @@ async function handleKickoff(
     supabase,
     {
       qhinId: caller.qhinId,
-      exchangePurpose: "treatment",
+      exchangePurpose: exchangePurpose as "treatment" | "payment" | "operations",
       requestingOrganization: caller.clientId,
       ipAddress: clientIp(req) ?? "unknown",
     },
@@ -316,17 +354,16 @@ async function handleKickoff(
 
 async function handleStatus(
   supabase: SupabaseLike,
+  req: Request,
   jobId: string,
 ): Promise<Response> {
-  const { data, error } = await supabase
-    .from("bulk_export_jobs")
-    .select("*")
-    .eq("id", jobId)
-    .maybeSingle();
-  if (error || !data) {
+  const caller = await authorize(supabase, req);
+  if (caller instanceof Response) return caller;
+
+  const job = await loadOwnJob(supabase, jobId, caller);
+  if (!job) {
     return errorResponse("error", "not-found", `job ${jobId} not found`, 404);
   }
-  const job = data as BulkExportJob;
 
   if (job.status === "accepted" || job.status === "in-progress") {
     return new Response(null, {
@@ -376,13 +413,13 @@ async function handleStatus(
 
 async function handleCancel(
   supabase: SupabaseLike,
+  req: Request,
   jobId: string,
 ): Promise<Response> {
-  const { data: existing } = await supabase
-    .from("bulk_export_jobs")
-    .select("status")
-    .eq("id", jobId)
-    .maybeSingle();
+  const caller = await authorize(supabase, req);
+  if (caller instanceof Response) return caller;
+
+  const existing = await loadOwnJob(supabase, jobId, caller);
   if (!existing) {
     return errorResponse("error", "not-found", `job ${jobId} not found`, 404);
   }
@@ -409,6 +446,15 @@ async function handleFile(
   if (caller instanceof Response) return caller;
 
   // Ensure the file actually belongs to a completed job for this caller.
+  const job = await loadOwnJob(supabase, jobId, caller);
+  if (!job || job.status !== "completed") {
+    return errorResponse(
+      "error",
+      "not-found",
+      `${fileName} not found for job ${jobId}`,
+      404,
+    );
+  }
   const { data: fileRow } = await supabase
     .from("bulk_export_files")
     .select("storage_path, resource_type, job_id")
@@ -529,9 +575,9 @@ Deno.serve(async (req: Request) => {
     if (statusMatch) {
       const jobId = statusMatch[1];
       if (req.method === "DELETE") {
-        return await handleCancel(supabase, jobId);
+        return await handleCancel(supabase, req, jobId);
       }
-      return await handleStatus(supabase, jobId);
+      return await handleStatus(supabase, req, jobId);
     }
 
     const fileMatch = path.match(/^\/bulk-files\/([0-9a-f-]{36})\/(.+)$/i);

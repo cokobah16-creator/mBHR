@@ -27,6 +27,7 @@ import {
   scopesAllowed,
 } from "./shared.ts";
 import { AUTHORIZATION_CODE_TTL_SECONDS } from "./token.ts";
+import { userGrantableScopes } from "../_shared/fhir/access.ts";
 
 type SupabaseLike = ReturnType<typeof createClient>;
 
@@ -225,6 +226,19 @@ export async function handleAuthorize(
   const identity = await resolveCallerIdentity(supabase, req, url);
   if (!identity.ok) {
     return loginRequiredHtml(req.url);
+  }
+
+  // A user-authorised token acts for one patient: no system scopes, and
+  // patient scopes only for an account linked to a patient record. The
+  // token is then bound to that patient (token subject; see access.ts).
+  const grantable = userGrantableScopes(requested, identity.patientId !== null);
+  if (!grantable.ok) {
+    return redirectWithError(
+      params.redirectUri,
+      "invalid_scope",
+      grantable.reason,
+      params.state,
+    );
   }
 
   const code = await generateAuthorizationCode();

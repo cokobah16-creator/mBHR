@@ -182,7 +182,6 @@ export function HealthDataExport({ patientId }: Props) {
           headers: {
             Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
             "X-Exchange-Purpose": "individual-access",
-            "X-QHIN-ID": "patient-portal",
             Accept: "application/fhir+json",
           },
           signal: controller.signal,

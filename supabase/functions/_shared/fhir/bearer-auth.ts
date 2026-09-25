@@ -16,6 +16,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import type { ExchangePurpose, TEFCAContext } from "./codes.ts";
+import { boundPatientId, purposeAllowedForCaller } from "./access.ts";
 
 type SupabaseLike = ReturnType<typeof createClient>;
 
@@ -25,6 +26,8 @@ export interface BearerIntrospection {
   scopes: string[];
   qhinId?: string;
   expiresAt?: string;
+  /** Token subject: the patient id for patient-scoped tokens. */
+  subject?: string | null;
 }
 
 async function sha256Hex(input: string): Promise<string> {
@@ -48,7 +51,9 @@ export async function introspectBearer(
   const tokenHash = await sha256Hex(token);
   const { data } = await supabase
     .from("oauth_access_tokens")
-    .select("client_id, scope, qhin_partner_id, expires_at, revoked_at")
+    .select(
+      "client_id, scope, qhin_partner_id, subject, expires_at, revoked_at",
+    )
     .eq("token_hash", tokenHash)
     .maybeSingle();
 
@@ -58,6 +63,7 @@ export async function introspectBearer(
     client_id: string;
     scope: string;
     qhin_partner_id: string | null;
+    subject: string | null;
     expires_at: string;
     revoked_at: string | null;
   };
@@ -73,108 +79,81 @@ export async function introspectBearer(
     scopes: row.scope.split(/\s+/).filter(Boolean),
     qhinId: row.qhin_partner_id ?? row.client_id,
     expiresAt: row.expires_at,
+    subject: row.subject,
   };
 }
 
 export interface AuthDecision {
   context: TEFCAContext;
-  /** True when the caller used the legacy X-QHIN-ID header. */
-  isLegacy: boolean;
-  /** When isLegacy, the response should carry Deprecation/Sunset headers. */
-  deprecationHeaders?: Record<string, string>;
-  /** Scopes the caller is authorized for; empty for legacy callers. */
+  /** Scopes the caller is authorized for. */
   scopes: string[];
-  /** True when neither bearer nor X-QHIN-ID is acceptable. */
+  /**
+   * The patient a patient-scoped token is bound to ("" when it is bound to
+   * nobody), or null for a system token. See access.ts.
+   */
+  patientId: string | null;
+  /** True when there is no active bearer token. */
   unauthorized: boolean;
   unauthorizedReason?: string;
+  /** True when the token may not use the requested exchange purpose. */
+  purposeRefused?: boolean;
 }
 
 /**
- * Resolve the TEFCAContext for an incoming request. Prefers a Bearer token
- * (introspected against oauth_access_tokens); falls back to the legacy
- * X-QHIN-ID header during the transition window with Deprecation/Sunset
- * response headers.
+ * Resolve the TEFCAContext for an incoming request from its Bearer token
+ * (introspected against oauth_access_tokens). There is no other way in: the
+ * old X-QHIN-ID header is no longer accepted on its own.
  */
 export async function resolveAuth(
   supabase: SupabaseLike,
   req: Request,
 ): Promise<AuthDecision> {
-  const exchangePurpose = (req.headers.get("X-Exchange-Purpose") ||
-    "individual-access") as ExchangePurpose;
+  const requestedPurpose = req.headers.get("X-Exchange-Purpose");
   const ipAddress =
     req.headers.get("x-forwarded-for") ||
     req.headers.get("cf-connecting-ip") ||
     "unknown";
 
-  const bearer = extractBearerToken(req);
-  if (bearer) {
-    const introspection = await introspectBearer(supabase, bearer);
-    if (!introspection.active) {
-      return {
-        context: {
-          qhinId: "unknown",
-          exchangePurpose,
-          requestingOrganization: "unknown",
-          ipAddress,
-        },
-        isLegacy: false,
-        scopes: [],
-        unauthorized: true,
-        unauthorizedReason: "bearer token is inactive, expired, or revoked",
-      };
-    }
-
-    return {
-      context: {
-        qhinId: introspection.qhinId ?? introspection.client_id ?? "unknown",
-        exchangePurpose,
-        requestingOrganization:
-          introspection.client_id ?? introspection.qhinId ?? "unknown",
-        ipAddress,
-      },
-      isLegacy: false,
-      scopes: introspection.scopes,
-      unauthorized: false,
-    };
-  }
-
-  // Legacy header-trust mode. We accept it for now and emit a Deprecation
-  // header so QHIN partners migrate to bearer auth before the sunset date.
-  const legacyQhinId = req.headers.get("X-QHIN-ID");
-  if (legacyQhinId) {
-    const requestingOrg =
-      req.headers.get("X-Requesting-Organization") || legacyQhinId;
-    return {
-      context: {
-        qhinId: legacyQhinId,
-        exchangePurpose,
-        requestingOrganization: requestingOrg,
-        ipAddress,
-      },
-      isLegacy: true,
-      scopes: [],
-      unauthorized: false,
-      deprecationHeaders: {
-        Deprecation: "true",
-        Sunset: legacySunsetDate(),
-        Link: '</functions/v1/tefca-oauth/.well-known/smart-configuration>; rel="successor-version"',
-        Warning:
-          '299 - "X-QHIN-ID auth is deprecated; switch to SMART Backend Services bearer tokens before Sunset"',
-      },
-    };
-  }
-
-  return {
+  const refused = (reason: string): AuthDecision => ({
     context: {
       qhinId: "unknown",
-      exchangePurpose,
+      exchangePurpose: (requestedPurpose ||
+        "individual-access") as ExchangePurpose,
       requestingOrganization: "unknown",
       ipAddress,
     },
-    isLegacy: false,
     scopes: [],
+    patientId: null,
     unauthorized: true,
-    unauthorizedReason: "missing Authorization or X-QHIN-ID header",
+    unauthorizedReason: reason,
+  });
+
+  const bearer = extractBearerToken(req);
+  if (!bearer) return refused("missing Authorization bearer token");
+
+  const introspection = await introspectBearer(supabase, bearer);
+  if (!introspection.active) {
+    return refused("bearer token is inactive, expired, or revoked");
+  }
+
+  const patientId = boundPatientId(introspection.scopes, introspection.subject);
+  // A patient reads their own record (individual access); a partner must say
+  // why it is asking, and defaults to treatment, which needs consent.
+  const exchangePurpose = (requestedPurpose ||
+    (patientId !== null ? "individual-access" : "treatment")) as ExchangePurpose;
+
+  return {
+    context: {
+      qhinId: introspection.qhinId ?? introspection.client_id ?? "unknown",
+      exchangePurpose,
+      requestingOrganization:
+        introspection.client_id ?? introspection.qhinId ?? "unknown",
+      ipAddress,
+    },
+    scopes: introspection.scopes,
+    patientId,
+    unauthorized: false,
+    purposeRefused: !purposeAllowedForCaller(exchangePurpose, patientId),
   };
 }
 
@@ -198,14 +177,4 @@ export function scopeAllowsResource(
   if (scopes.includes(`patient/*.${verb}`)) return true;
   if (scopes.includes(`patient/${resourceType}.${verb}`)) return true;
   return false;
-}
-
-/**
- * Sunset date for legacy X-QHIN-ID auth. Set as the day this code is shipped
- * (PHASE_C_LAUNCH) plus 90 days. Hard-coded so the value is deterministic and
- * survives redeploys.
- */
-function legacySunsetDate(): string {
-  // Phase C-1 ship date: 2026-05-03; sunset 90 days later.
-  return "Sun, 02 Aug 2026 00:00:00 GMT";
 }

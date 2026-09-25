@@ -28,7 +28,8 @@ import {
   isResourceSupported,
 } from "../_shared/fhir/registry.ts";
 import { type TEFCAContext } from "../_shared/fhir/codes.ts";
-import { logTEFCAAccess } from "../_shared/fhir/audit.ts";
+import { logTEFCAAccess, verifyPatientConsent } from "../_shared/fhir/audit.ts";
+import { type StoredWriteRow, writeChangeRefusal } from "../_shared/fhir/access.ts";
 import { errorResponse, fhirJsonHeaders, fhirJsonResponse } from "./shared.ts";
 
 type SupabaseLike = ReturnType<typeof createClient>;
@@ -85,6 +86,60 @@ function pickPatientId(payload: Record<string, unknown>): string | null {
     return ref.slice("Patient/".length);
   }
   return null;
+}
+
+/**
+ * A written resource must point at a patient that exists and that the caller
+ * may reach for its exchange purpose (consent). Patient resources themselves
+ * carry no patient reference. Returns an error response, or null to proceed.
+ */
+async function patientReferenceRefusal(
+  supabase: SupabaseLike,
+  resourceType: string,
+  patientId: string | null,
+  context: TEFCAContext,
+): Promise<Response | null> {
+  if (resourceType === "Patient") return null;
+  if (!patientId) {
+    return errorResponse(
+      "error",
+      "required",
+      `${resourceType} must reference a patient (subject or patient = Patient/<id>)`,
+      422,
+    );
+  }
+  const { data } = await supabase
+    .from("patients")
+    .select("id")
+    .eq("id", patientId)
+    .maybeSingle();
+  if (!data) {
+    return errorResponse(
+      "error",
+      "not-found",
+      `Patient/${patientId} not found`,
+      422,
+    );
+  }
+  const consent = await verifyPatientConsent(
+    supabase,
+    patientId,
+    context.exchangePurpose,
+  );
+  if (!consent) {
+    return errorResponse(
+      "error",
+      "forbidden",
+      "Patient has not consented to data sharing",
+      403,
+    );
+  }
+  return null;
+}
+
+function refusalResponse(r: { status: number; reason: string }): Response {
+  const code = r.status === 403 ? "forbidden" : "conflict";
+  return errorResponse("error", code, r.reason, r.status);
 }
 
 async function readFhirBody(req: Request): Promise<unknown | null> {
@@ -175,6 +230,25 @@ export async function handleCreate(
   };
 
   const patientId = pickPatientId(body);
+  const createRefusal = await patientReferenceRefusal(
+    supabase,
+    resourceType,
+    patientId,
+    context,
+  );
+  if (createRefusal) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${resourceType}/POST`],
+      0,
+      false,
+      "patient reference refused",
+      Date.now() - startTime,
+      patientId ?? undefined,
+    );
+    return createRefusal;
+  }
 
   const { error } = await supabase.from("fhir_resources").insert({
     resource_type: resourceType,
@@ -279,22 +353,45 @@ export async function handleUpdate(
   // 200 vs 201 (RFC 6749-style upsert semantics for FHIR PUT).
   const { data: existing } = await supabase
     .from("fhir_resources")
-    .select("version_id, status")
+    .select("version_id, status, source_client_id, patient_id")
     .eq("resource_type", resourceType)
     .eq("logical_id", logicalId)
     .maybeSingle();
 
-  const existingRow = existing as { version_id: number; status: string } | null;
+  const existingRow = existing as (StoredWriteRow & { status: string }) | null;
   const nextVersion = existingRow ? existingRow.version_id + 1 : 1;
   const created = existingRow === null;
+
+  const patientId = pickPatientId(body);
+
+  const changeRefusal = writeChangeRefusal(
+    existingRow,
+    caller.clientId,
+    patientId,
+    req.headers.get("If-Match"),
+  );
+  const updateRefusal = changeRefusal
+    ? refusalResponse(changeRefusal)
+    : await patientReferenceRefusal(supabase, resourceType, patientId, context);
+  if (updateRefusal) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${resourceType}/PUT`],
+      0,
+      false,
+      changeRefusal?.reason ?? "patient reference refused",
+      Date.now() - startTime,
+      patientId ?? undefined,
+    );
+    return updateRefusal;
+  }
 
   body.meta = {
     ...((body.meta as Record<string, unknown>) ?? {}),
     versionId: String(nextVersion),
     lastUpdated: new Date().toISOString(),
   };
-
-  const patientId = pickPatientId(body);
 
   const { error } = await supabase.from("fhir_resources").upsert(
     {
@@ -355,8 +452,10 @@ export async function handleUpdate(
 
 export async function handleDelete(
   supabase: SupabaseLike,
+  req: Request,
   resourceType: string,
   logicalId: string,
+  caller: WriteCaller,
   context: TEFCAContext,
   startTime: number,
 ): Promise<Response> {
@@ -374,7 +473,7 @@ export async function handleDelete(
   // automatically because resource_versions records the trigger event.
   const { data: existing, error: existingErr } = await supabase
     .from("fhir_resources")
-    .select("id, version_id, patient_id, payload")
+    .select("id, version_id, patient_id, source_client_id, payload")
     .eq("resource_type", resourceType)
     .eq("logical_id", logicalId)
     .maybeSingle();
@@ -391,12 +490,30 @@ export async function handleDelete(
     );
   }
 
-  const row = existing as {
+  const row = existing as StoredWriteRow & {
     id: string;
-    version_id: number;
-    patient_id: string | null;
     payload: Record<string, unknown>;
   };
+
+  const deleteRefusal = writeChangeRefusal(
+    row,
+    caller.clientId,
+    undefined,
+    req.headers.get("If-Match"),
+  );
+  if (deleteRefusal) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [`${resourceType}/DELETE`],
+      0,
+      false,
+      deleteRefusal.reason,
+      Date.now() - startTime,
+      row.patient_id ?? undefined,
+    );
+    return refusalResponse(deleteRefusal);
+  }
 
   const nextVersion = row.version_id + 1;
   const updatedPayload = {
