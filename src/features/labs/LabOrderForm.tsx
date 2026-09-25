@@ -19,7 +19,7 @@ import {
   type LabOrder,
   type LabResult,
 } from '@/services/labs'
-import { describeLabError, orderOutcomeMeta, PRIORITY_LABEL } from './labWorklist'
+import { describeLabError, ORDER_STATUS_META, orderOutcomeMeta, PRIORITY_LABEL } from './labWorklist'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 
 const labOrderSchema = z.object({
