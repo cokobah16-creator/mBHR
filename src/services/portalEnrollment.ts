@@ -308,12 +308,23 @@ export async function disablePortalAccess(
 }
 
 /**
+ * Why sendPortalInvitation sent no message, when it can say:
+ * - "not_signed_in" / "not_permitted": the server refused to send the email
+ *   (no online sign-in, HTTP 401; or it does not accept this staff account,
+ *   HTTP 403).
+ * - "sms_not_available": the patient has no email. Invitations cannot go by
+ *   SMS yet: send-otp-sms sends only one-time codes.
+ */
+export type InvitationNotSentReason = StaffAuthRefusal | "sms_not_available";
+
+/**
  * Send portal invitation to a patient.
  *
- * The email and SMS functions accept only a staff member signed in online:
- * supabase.functions.invoke sends that person's access token, or the public
- * anon key when nobody is signed in online (after a PIN unlock), which the
- * server refuses. When no message is sent, the registration link is returned
+ * Invitations go by email only. The email function accepts only a staff
+ * member signed in online: supabase.functions.invoke sends that person's
+ * access token, or the public anon key when nobody is signed in online
+ * (after a PIN unlock), which the server refuses. When no message is sent,
+ * including for a patient with no email, the registration link is returned
  * for staff to share by hand. Refused for a patient under 18.
  */
 export async function sendPortalInvitation(patientId: string): Promise<{
@@ -321,12 +332,8 @@ export async function sendPortalInvitation(patientId: string): Promise<{
   error?: string;
   demoOTP?: string;
   registrationUrl?: string;
-  /**
-   * Why the server refused to send the invitation, when it said so:
-   * "not_signed_in" (no online sign-in, HTTP 401) or "not_permitted" (the
-   * server does not accept this staff account, HTTP 403).
-   */
-  notSentReason?: StaffAuthRefusal;
+  /** Why no message was sent, when known. */
+  notSentReason?: InvitationNotSentReason;
 }> {
   try {
     const patient = await db.patients.get(patientId);
@@ -383,9 +390,13 @@ export async function sendPortalInvitation(patientId: string): Promise<{
         : `${window.location.origin}/patient/register`;
     const loginUrl = `${window.location.origin}/patient/login`;
 
-    let notSentReason: StaffAuthRefusal | null = null;
+    // Invitations go by email only, so a patient with no email gets the
+    // link to share instead of a message.
+    let notSentReason: InvitationNotSentReason | null = patient.email
+      ? null
+      : "sms_not_available";
 
-    // --- Send via Supabase edge function (email preferred, SMS fallback) ---
+    // --- Send via Supabase edge function (email only) ---
     if (supabase) {
       try {
         if (patient.email) {
@@ -417,29 +428,6 @@ export async function sendPortalInvitation(patientId: string): Promise<{
           }
           logger.warn("Edge function email failed:", safeErrorLabel(fnError));
           notSentReason = staffAuthRefusal(fnError);
-        } else if (patient.phone) {
-          const { error: fnError } = await supabase.functions.invoke(
-            "send-otp-sms",
-            {
-              body: {
-                phone: normalizePhone(patient.phone) || patient.phone,
-                message:
-                  `Hi ${patient.givenName}, your mBHR patient portal is ready. ` +
-                  `Register at: ${registrationUrl} — use your phone number and date of birth.`,
-              },
-            },
-          );
-
-          if (!fnError) {
-            await db.patients.update(patientId, {
-              portalInvitation: { ...invitation, lastStatus: "sent" },
-              _dirty: 1,
-            });
-            logger.info("Portal invitation SMS accepted by the server");
-            return { success: true, registrationUrl };
-          }
-          logger.warn("Edge function SMS failed:", safeErrorLabel(fnError));
-          notSentReason = staffAuthRefusal(fnError);
         }
       } catch (edgeFnError) {
         logger.warn(
@@ -449,9 +437,9 @@ export async function sendPortalInvitation(patientId: string): Promise<{
       }
     }
 
-    // --- Offline fallback: no message was sent. Record it as "sent" (the
-    // screen labels this "Sent or link shared") and return the pre-filled
-    // registration link for staff to share with the patient.
+    // --- Fallback: no message was sent (offline, refused, or no email).
+    // Record it as "sent" (the screen labels this "Sent or link shared") and
+    // return the pre-filled registration link for staff to share.
     await db.patients.update(patientId, {
       portalInvitation: { ...invitation, lastStatus: "sent" },
       _dirty: 1,
@@ -459,13 +447,15 @@ export async function sendPortalInvitation(patientId: string): Promise<{
 
     // No name, contact or link here: the link carries the email or phone.
     logger.info(
-      `[Portal Invitation] No email/SMS was sent${notSentReason ? ` (${notSentReason})` : ""}; registration link returned for staff to share (${contactMethod})`,
+      `[Portal Invitation] No message was sent${notSentReason ? ` (${notSentReason})` : ""}; registration link returned for staff to share (${contactMethod})`,
     );
 
     return {
       success: true,
       registrationUrl,
-      demoOTP: `No email or SMS was sent. Share this registration link with the patient: ${registrationUrl}`,
+      demoOTP: patient.email
+        ? `No email was sent. Share this registration link with the patient: ${registrationUrl}`
+        : `No message was sent: SMS invitations are not available yet. Share this registration link with the patient: ${registrationUrl}`,
       ...(notSentReason ? { notSentReason } : {}),
     };
      

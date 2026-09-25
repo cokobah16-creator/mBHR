@@ -539,6 +539,23 @@ describe("sendPortalInvitation", () => {
     expect(result.demoOTP).toBeDefined();
   });
 
+  it("sends no SMS to a patient with no email, and returns the link to share", async () => {
+    mockPatientsGet.mockResolvedValue(
+      makePatient({ portalEnabled: 1, email: "" }),
+    );
+
+    const result = await sendPortalInvitation("p1");
+
+    // send-otp-sms sends one-time codes only: invitations are not sent by SMS.
+    expect(mockFunctionsInvoke).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      notSentReason: "sms_not_available",
+    });
+    expect(result.registrationUrl).toContain("/patient/register?phone=");
+    expect(result.demoOTP).toMatch(/SMS invitations are not available yet/);
+  });
+
   it("sends the invitation text as subject and message, never as HTML", async () => {
     mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
 

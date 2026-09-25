@@ -3,9 +3,9 @@
  *
  * - Filter patients who have a phone number or email by registration date,
  *   state and contact method
- * - Select patients, confirm, and enable access (optionally sending invitations;
- *   that needs an online sign-in, because the server sends email and SMS only
- *   for staff signed in online)
+ * - Select patients, confirm, and enable access (optionally sending invitations
+ *   by email; that needs an online sign-in, because the server sends email
+ *   only for staff signed in online. Patients with no email get no message)
  * - Honest progress and a result summary with each failure's reason, and
  *   how many patients were also turned on on the server (the online portal
  *   checks the server; see enablePortalAccess)
@@ -96,7 +96,7 @@ export function PortalMigration() {
   const canRun = canManagePortalEnrollment(role);
   const server = useServerStatus();
   // After a PIN unlock there is no online sign-in. The server then refuses to
-  // send any email or SMS, so a bulk invitation run would send nothing.
+  // send any email, so a bulk invitation run would send nothing.
   const notSignedInOnline = useCloudSession() === "signed_out";
   const canSendInvitations = server.available && !notSignedInOnline;
 
@@ -365,7 +365,7 @@ export function PortalMigration() {
             ? "Invitations need the server and an internet connection. You can still enable access now and send invitations later from each patient's record."
             : notSignedInOnline
               ? `You are not signed in online, so the server will not send invitations. You can still enable access now and share a registration link from each patient's record. To send invitations, sign in online. ${ONLINE_SIGN_IN_HINT}`
-              : "Invitations are sent by email, or by SMS when a patient has no email. Sending needs an online sign-in: a PIN unlock is not enough."}
+              : "Invitations are sent by email. Patients with no email get no message: SMS invitations are not available yet, so share a registration link from their record. Sending needs an online sign-in: a PIN unlock is not enough."}
         </span>
       </div>
 
@@ -426,8 +426,9 @@ export function PortalMigration() {
               >
                 <p>
                   {/* A success can include an invitation that fell back to
-                      "share a link" when the email/SMS service failed, so the
-                      summary does not claim patients were invited. */}
+                      "share a link" (no email sent, or the patient has no
+                      email), so the summary does not claim patients were
+                      invited. */}
                   {`Portal access enabled for ${run.successful} of ${plural(total, "patient")}.`}
                   {run.failed > 0 && ` ${run.failed} failed.`}{" "}
                   {server.state === "not-configured"
@@ -446,8 +447,8 @@ export function PortalMigration() {
               {run.sendInvitations && (
                 <p className="text-body text-ink-secondary">
                   {run.serverAvailable
-                    ? "An invitation was requested for each enabled patient. The server sends at most 10 a minute from one internet connection, and none if you are not signed in online. Where it did not send one, no message went out. Open that patient's record to send it again or share a registration link."
-                    : "The server could not be reached when this ran, so no email or SMS was sent. Send invitations from each patient's record when the device is online."}
+                    ? "An email invitation was requested for each enabled patient who has an email. Patients with no email got no message. The server sends at most 10 a minute from one internet connection, and none if you are not signed in online. Where it did not send one, no message went out. Open that patient's record to send it again or share a registration link."
+                    : "The server could not be reached when this ran, so no email was sent. Send invitations from each patient's record when the device is online."}
                 </p>
               )}
               {run.errors.length > 0 && (
@@ -649,12 +650,14 @@ export function PortalMigration() {
         {confirming?.sendInvitations && (
           <p>
             An invitation with a registration link is requested for each
-            patient: by email, or by SMS if they have no email. The server
-            sends at most 10 a minute from one internet connection, so in a
-            bigger run only about 10 are sent. Where the server does not send
-            one, no message goes out: open that patient's record to send it
-            again or share the link. Patients invited very recently are not
-            sent another and are listed as failed.
+            patient who has an email, by email. Patients with no email get no
+            message: SMS invitations are not available yet, so share the link
+            from their record. The server sends at most 10 a minute from one
+            internet connection, so in a bigger run only about 10 are sent.
+            Where the server does not send one, no message goes out: open that
+            patient's record to send it again or share the link. Patients
+            invited very recently are not sent another and are listed as
+            failed.
           </p>
         )}
         <p className="font-medium text-ink">

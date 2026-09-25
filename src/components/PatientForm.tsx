@@ -133,7 +133,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             id: crypto.randomUUID(),
             title: "Portal access enabled",
             tone: "success",
-            body: "The patient can sign in to the patient portal with their phone or email.",
+            body: "A portal account was made on the server. No message was sent to the patient.",
           });
         }
       }
@@ -614,14 +614,9 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                       Enable patient portal access
                     </span>
                     <span className="text-ink-muted block mt-1">
-                      {dobIsMinor ? (
-                        MINOR_PORTAL_ACCESS_MESSAGE
-                      ) : (
-                        <>
-                          Patient will receive login instructions via{" "}
-                          {watch("email") ? "email" : "SMS"}
-                        </>
-                      )}
+                      {dobIsMinor
+                        ? MINOR_PORTAL_ACCESS_MESSAGE
+                        : "A portal account is made on the server, which needs an internet connection. No message is sent to the patient. To send an invitation or share a registration link, use Patient portal on their record."}
                     </span>
                   </label>
                 </div>
@@ -648,27 +643,6 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                         {errors.termsAccepted.message}
                       </p>
                     )}
-
-                    <div className="flex items-start ml-6">
-                      <input
-                        {...register("sendInviteNow")}
-                        type="checkbox"
-                        id="sendInviteNow"
-                        className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
-                      />
-                      <label
-                        htmlFor="sendInviteNow"
-                        className="ml-2 text-body text-ink"
-                      >
-                        <span className="font-medium">
-                          Send portal invitation now
-                        </span>
-                        <span className="text-ink-muted block mt-1">
-                          Uncheck to send invitation later from patient details
-                          page
-                        </span>
-                      </label>
-                    </div>
                   </>
                 )}
               </div>

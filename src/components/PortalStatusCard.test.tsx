@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -202,5 +208,42 @@ describe("PortalStatusCard says where portal access was saved", () => {
     await waitFor(() => expect(mocks.pushToast).toHaveBeenCalled());
     expect(lastToastBody()).toMatch(/turned off on this device only/i);
     expect(lastToastBody()).toMatch(/online portal account may still work/i);
+  });
+});
+
+describe("PortalStatusCard invitation for a patient with no email", () => {
+  const url = "https://mbhr.test/patient/register?phone=08012345678";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.serverState = "available";
+    mocks.getPortalStatus.mockResolvedValue({ ...disabledStatus, enabled: true });
+    mocks.sendPortalInvitation.mockResolvedValue({
+      success: true,
+      registrationUrl: url,
+      demoOTP: "No message was sent",
+      notSentReason: "sms_not_available",
+    });
+  });
+
+  it("offers a registration link, not an SMS, and shows the link to share", async () => {
+    renderCard();
+
+    const button = await screen.findByRole("button", {
+      name: "Create registration link",
+    });
+    expect(
+      screen.queryByRole("button", { name: /send portal invitation/i }),
+    ).toBeNull();
+
+    fireEvent.click(button);
+
+    const title = await screen.findByText("No message was sent");
+    const panel = title.closest('[role="status"]') as HTMLElement;
+    expect(
+      within(panel).getByText(/invitations cannot be sent by SMS yet/i),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText(url)).toBeInTheDocument();
+    expect(mocks.sendPortalInvitation).toHaveBeenCalledWith("p1");
   });
 });

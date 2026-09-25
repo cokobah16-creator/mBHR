@@ -8,8 +8,9 @@
  * - Last login date
  * - Invitation history
  * - Send/resend invitation button with rate limiting, and an honest
- *   message when no email or SMS could be sent (including when the server
- *   refused because nobody is signed in online)
+ *   message when no email could be sent (including when the server refused
+ *   because nobody is signed in online). Invitations go by email only: for
+ *   a patient with no email the button makes a registration link to share.
  *
  * The switch saves on this device, and also on the server when the device
  * is online and the server takes the change (the online portal checks the
@@ -28,6 +29,7 @@ import {
   sendPortalInvitation,
   enablePortalAccess,
   disablePortalAccess,
+  type InvitationNotSentReason,
   type PortalStatusInfo,
   type ServerPortalWrite,
 } from "@/services/portalEnrollment";
@@ -42,7 +44,6 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
 import { useServerStatus } from "@/features/admin/useServerStatus";
 import { ONLINE_SIGN_IN_HINT, useCloudSession } from "@/lib/cloudSession";
-import type { StaffAuthRefusal } from "@/services/edgeFunctionErrors";
 
 interface PortalStatusCardProps {
   patientId: string;
@@ -62,22 +63,18 @@ const INVITE_STATUS: Record<
   failed: { label: "Failed", tone: "danger" },
 };
 
-// Why no email or SMS went out, when the server refused the caller.
-// 403 differs by channel: every role that sees the button may send email, so
-// there it means the server does not accept the account (inactive, or a
-// different role on the server); for SMS it is most often a volunteer, since
-// send-otp-sms does not accept volunteers (SMS_SENDER_ROLES in
-// supabase/functions/_shared/security/staffAuth.ts).
-function notSentReasonText(
-  reason: StaffAuthRefusal,
-  contactMethod: PortalStatusInfo["contactMethod"],
-): string {
-  if (reason === "not_signed_in") {
-    return `The server sends email and SMS only for staff signed in online. A PIN unlock is not enough. ${ONLINE_SIGN_IN_HINT}`;
+// Why no invitation went out. For "not_permitted" (403): every role that
+// sees the button may send email, so it means the server does not accept the
+// account (inactive, or a different role on the server).
+function notSentReasonText(reason: InvitationNotSentReason): string {
+  switch (reason) {
+    case "sms_not_available":
+      return "This patient has no email, and invitations cannot be sent by SMS yet.";
+    case "not_signed_in":
+      return `The server sends email only for staff signed in online. A PIN unlock is not enough. ${ONLINE_SIGN_IN_HINT}`;
+    default:
+      return "The server does not let your staff account send email. It may not be active, or its role on the server may not allow it. Ask an administrator to check your account.";
   }
-  return contactMethod === "phone"
-    ? "The server does not let your role send SMS (volunteers cannot), or your staff account is not active."
-    : "The server does not let your staff account send email. It may not be active, or its role on the server may not allow it. Ask an administrator to check your account.";
 }
 
 /** Toast text after the switch: where the change was saved. */
@@ -125,7 +122,7 @@ export function PortalStatusCard({
   const canEdit = !!role && can(role, "register");
   const server = useServerStatus();
   // After a PIN unlock there is no online sign-in, and the server refuses to
-  // send email or SMS; say so before staff press the button.
+  // send email; say so before staff press the button.
   const notSignedInOnline = useCloudSession() === "signed_out";
   const firstName = patientName.split(" ")[0];
   const titleId = `portal-card-${patientId}`;
@@ -142,7 +139,7 @@ export function PortalStatusCard({
   const [inviteLink, setInviteLink] = useState<{
     url: string;
     delivered: boolean;
-    notSentReason?: StaffAuthRefusal;
+    notSentReason?: InvitationNotSentReason;
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const { push: pushToast } = useToast();
@@ -268,7 +265,7 @@ export function PortalStatusCard({
 
       if (result.success) {
         if (result.registrationUrl) {
-          // Show the registration link: a warning if no email/SMS was sent
+          // Show the registration link: a warning if no email was sent
           setInviteLink({
             url: result.registrationUrl,
             delivered: !result.demoOTP,
@@ -371,8 +368,10 @@ export function PortalStatusCard({
     status.contactMethod === "email"
       ? "Email"
       : status.contactMethod === "phone"
-        ? "SMS"
+        ? "Phone"
         : "None recorded";
+  // Only an email invitation can be sent; otherwise the button makes a link.
+  const canSendEmail = server.available && status.contactMethod === "email";
 
   return (
     <section className="panel" aria-labelledby={titleId}>
@@ -492,15 +491,14 @@ export function PortalStatusCard({
               >
                 <p className="font-medium">
                   {inviteLink.delivered
-                    ? `Invitation sent by ${status.contactMethod === "email" ? "email" : "SMS"}`
-                    : "No email or SMS was sent"}
+                    ? "Invitation sent by email"
+                    : status.contactMethod === "email"
+                      ? "No email was sent"
+                      : "No message was sent"}
                 </p>
                 {!inviteLink.delivered && inviteLink.notSentReason && (
                   <p className="text-caption">
-                    {notSentReasonText(
-                      inviteLink.notSentReason,
-                      status.contactMethod,
-                    )}
+                    {notSentReasonText(inviteLink.notSentReason)}
                   </p>
                 )}
                 <p className="text-caption">
@@ -552,7 +550,7 @@ export function PortalStatusCard({
                     disabled={sending || countdown > 0}
                     className="btn-primary w-full sm:w-auto"
                   >
-                    {server.available ? (
+                    {canSendEmail ? (
                       <EnvelopeIcon className="h-5 w-5" aria-hidden />
                     ) : (
                       <LinkIcon className="h-5 w-5" aria-hidden />
@@ -561,23 +559,30 @@ export function PortalStatusCard({
                       ? "Sending…"
                       : countdown > 0
                         ? `Resend available in ${formatCountdown(countdown)}`
-                        : server.available
+                        : canSendEmail
                           ? `${(status.inviteCount || 0) > 0 ? "Resend" : "Send"} portal invitation`
                           : "Create registration link"}
                   </button>
-                  {!server.available && (
+                  {status.contactMethod === "phone" ? (
+                    <p className="text-caption text-ink-muted">
+                      {notSentReasonText("sms_not_available")} You'll get a
+                      link to share with the patient.
+                    </p>
+                  ) : !server.available ? (
                     <p className="text-caption text-ink-muted">
                       {server.state === "offline"
-                        ? "This device is offline, so no email or SMS can be sent. You'll get a link to share with the patient."
-                        : "No server is connected, so no email or SMS can be sent. You'll get a link to share with the patient."}
+                        ? "This device is offline, so no email can be sent. You'll get a link to share with the patient."
+                        : "No server is connected, so no email can be sent. You'll get a link to share with the patient."}
                     </p>
-                  )}
-                  {server.available && notSignedInOnline && (
-                    <p className="text-caption text-ink-muted">
-                      You are not signed in online, so the server will not send
-                      email or SMS. You'll get a link to share with the patient.
-                      To send it, sign in online. {ONLINE_SIGN_IN_HINT}
-                    </p>
+                  ) : (
+                    notSignedInOnline && (
+                      <p className="text-caption text-ink-muted">
+                        You are not signed in online, so the server will not
+                        send email. You'll get a link to share with the
+                        patient. To send it, sign in online.{" "}
+                        {ONLINE_SIGN_IN_HINT}
+                      </p>
+                    )
                   )}
                 </div>
               )

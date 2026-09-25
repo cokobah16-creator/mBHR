@@ -122,6 +122,17 @@ describe("PatientForm portal access", () => {
     expect(attestation.checked).toBe(false);
   });
 
+  it("does not promise a message: enrolment sends none", async () => {
+    render(<PatientForm />);
+    fireEvent.change(byId("phone"), { target: { value: "08012345678" } });
+    fireEvent.click(portalBox());
+    await screen.findByLabelText(/explained portal access terms/i);
+
+    expect(screen.getByText(/no message is sent to the patient/i)).toBeTruthy();
+    expect(screen.queryByText(/login instructions/i)).toBeNull();
+    expect(screen.queryByLabelText(/send portal invitation now/i)).toBeNull();
+  });
+
   it("does not enrol the patient in the portal when the box is left unticked", async () => {
     render(<PatientForm />);
     await fillRequiredFields("1990-01-01");
