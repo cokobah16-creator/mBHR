@@ -8,7 +8,7 @@ The findings were produced by reading the code, then checked a second time by op
 
 ## Progress
 
-*Updated 25 September 2026.* The fixes that needed no decision by the Foundation are in the code on branch `claude/list-creation-implementation-izwdi5`. That branch was then merged with `mainone` at `68e6da0`. `mainone` had meanwhile made portal access a server decision, built portal invitations on the server and sent SMS with the staff member's token. Where the two overlapped, `mainone`'s design was kept and this branch's rules were put back on top of it; the last row of the table says where. Each item below has a **Done in the code** paragraph that says which steps are done and which remain.
+*Updated 25 September 2026.* The fixes that needed no decision by the Foundation are in the code on branch `claude/list-creation-implementation-izwdi5`. That branch was then merged with `mainone` at `68e6da0`. `mainone` had meanwhile made portal access a server decision, built portal invitations on the server and sent SMS with the staff member's token. Where the two overlapped, `mainone`'s design was kept and this branch's rules were put back on top of it; the last row of the table says where. Each item the table names (Fix these first and items 1, 2, 6, 9, 17 and 18) has a **Done in the code** paragraph that says which steps are done and which remain.
 
 | Change | Items | Where |
 |---|---|---|
@@ -76,7 +76,7 @@ The migrations used to give anonymous users read and insert access to every row 
 | 14 | [Fix your color contrast ratio](#14-fix-your-color-contrast-ratio) | Partial | P1 | L |
 | 15 | [Add keyboard navigation](#15-add-keyboard-navigation) | Partial | P2 | M |
 | 16 | [Add your business details](#16-add-your-business-details) | Partial | P1 | M |
-| 17 | [Get age consent if you collect kids' data](#17-get-age-consent-if-you-collect-kids-data) | Missing | P0 | L |
+| 17 | [Get age consent if you collect kids' data](#17-get-age-consent-if-you-collect-kids-data) | Partial | P0 | L |
 | 18 | [Add an unsubscribe link to your emails](#18-add-an-unsubscribe-link-to-your-emails) | Partial | P0 | L |
 | 19 | [License any fonts and images you use](#19-license-any-fonts-and-images-you-use) | Partial | P2 | M |
 | 20 | [Add a data deletion request option](#20-add-a-data-deletion-request-option) | Partial | P1 | L |
@@ -103,7 +103,7 @@ The migrations used to give anonymous users read and insert access to every row 
 11. Add a `/privacy` link to the invitation email footer (`supabase/functions/send-otp-email/index.ts:129,157`).
 12. In the same commit, update `docs/legal/README.md`. Fix `:4-5`: it says every patient accepts the notice at sign-up, which is not true for accounts that staff enable. Send the result to a Nigerian lawyer.
 
-**Done in the code (lane mA).** Steps 1, 3, 8 and 10 are done, and so are parts of steps 5 and 12.
+**Done in the code (lane mA).** Steps 3 and 8 are done, and so are parts of steps 1, 5, 10 and 12.
 - `src/pages/legal/policyMeta.ts` holds `PRIVACY_VERSION` and `TERMS_VERSION`, and the pages take their dates from it.
 - A "Service providers" section names:
   - Twilio as the SMS fallback
@@ -111,12 +111,12 @@ The migrations used to give anonymous users read and insert access to every row 
   - GitHub Actions for the backup
   - jsDelivr or Statically for the map outline
   - `meet.jit.si` (8x8) for televisits
-- A "Your sharing choices" section lists the starting choices, from the same `DEFAULT_SHARING_FLAGS` the page uses.
+- A "Your sharing choices" section lists the starting choices. `PrivacyPolicy.test.tsx` checks them against `DEFAULT_SHARING_FLAGS`, which the portal's sharing page uses.
 - A "Children" section matches the age rules in item 17.
-- `LegalLinks` is on staff sign-in and the device-PIN step, first-run setup, portal sign-in and sign-up, and the signed-in portal menus.
+- `LegalLinks` is on staff sign-in and the device-PIN step, first-run setup, portal sign-in and sign-up, and the signed-in portal menus. `Home.tsx`, `Layout.tsx` and `LegalPage.tsx` still have their own links.
 - `docs/legal/README.md` says which accounts have no recorded acceptance.
 
-The version is not yet written to `patient_consent_records` (item 6). Steps 2, 4, 6, 7, 9 and 11 are still open, and a lawyer has not reviewed the notice. Steps 2, 6 and 7 need the controller, retention and AI-training decisions. Since the merge with `mainone`, the invitation email is built on the server (`invitationEmail` in `supabase/functions/_shared/security/portalInvitation.ts`), so step 11's footer link belongs there.
+Step 1's `PRIVACY_CONTACT` waits on the contact decision below, and the version is not yet written to `patient_consent_records.consent_version` (item 6). Step 10's reuse in `Home.tsx`, `Layout.tsx` and `LegalPage.tsx` is not done. Steps 2, 4, 6, 7, 9 and 11 are still open, and a lawyer has not reviewed the notice. Steps 2, 6 and 7 need the controller, retention and AI-training decisions. Since the merge with `mainone`, the invitation email is built on the server (`invitationEmail` in `supabase/functions/_shared/security/portalInvitation.ts`), so step 11's footer link belongs there.
 
 **How to check it.**
 - `src/pages/legal/PrivacyPolicy.test.tsx` (new): reuse the `import.meta.glob` scan from `src/test/startupChunks.test.ts:24`, and read `public/` with `node:fs`. Look for `api.twilio.com`, `api.ng.termii.com`, `api.resend.com`, `meet.jit.si`, `cdn.jsdelivr.net` and `@sentry/react`. Render the page in a `MemoryRouter`. Fail if a provider found in the code is not named.
@@ -150,6 +150,17 @@ The version is not yet written to `patient_consent_records` (item 6). Steps 2, 4
 14. Make `ProtectedRoute` (`App.tsx:290-298`) redirect staff to a new `/accept-terms` screen when their version is stale. Link `/terms` from `LoginShell` (`Login.tsx:455`).
 15. Change `consented` to `consent_given` at `src/services/fhir/tefcaAuth.ts:193,196` and `supabase/functions/_shared/fhir/audit.ts:52`.
 16. In the same commit, update `PrivacyPolicy.tsx` to say that the acceptance version and time are kept, and correct `docs/legal/README.md:3-5`.
+
+**Done in the code (lane mA).** Steps 1, 3, 6 and 16 are done, and so are parts of steps 4, 5, 8, 10 and 14.
+- `src/pages/legal/policyMeta.ts` holds `TERMS_VERSION` and `PRIVACY_VERSION`, and `TermsOfUse.tsx` and `PrivacyPolicy.tsx` take their `updated` date from them.
+- Portal sign-up has three separate boxes (see item 6). Online, `signUp` `options.data` carries `terms_version`, `privacy_version` and `accepted_at` (`src/hooks/useAuth.ts`), not step 4's `terms_accepted_at`. The patient can edit that metadata, so it is not evidence yet. Offline, `LocalPortalUser` stores `termsAcceptedVersion`, `privacyAcceptedVersion` and `acceptedAt`, the date-of-birth auto-create leaves them empty, and the hard-coded `consentGiven: true` is gone.
+- After the merge, `mainone` links the patient on the server through `portal_link_patient_record`. `recordConsent` does not exist yet, so nothing is written to `patient_consent_records`.
+- The staff form no longer ticks portal access by itself, but `termsAccepted` is not yet passed to `enrollPatientInPortal`.
+- `PortalStatusCard` asks staff to confirm the patient agreed instead of hard-coding `termsAccepted: true`. Bulk enable (`bulkEnablePortalAccess` in `src/services/portalEnrollment.ts`) still passes `termsAccepted: true`.
+- Staff sign-in and first-run setup link `/terms`, but staff are not asked to accept it.
+- The privacy notice says which versions a patient accepted and when are kept, and `docs/legal/README.md` is corrected.
+
+Steps 2, 7, 9, 11, 12, 13 and 15 are still open.
 
 **How to check it.**
 - `PatientRegister.test.tsx` (mocked offline at `:21-24`): `registerPatientPortalAccount` receives the versions. A new online test file that mocks `isSupabaseEnabled: true` asserts that `options.data` holds them.
@@ -414,14 +425,14 @@ The browser Termii gateway has been deleted (`src/services/messaging.ts:23-28`).
 17. Add the STOP line or preferences link from item 18 step 11 to every non-transactional message in `scripts/seed/data/messageTemplates.ts` and `src/services/messageTemplates.ts:16`. Shorten any message that would then go over 160 characters.
 18. In the same commit, update `src/pages/legal/PrivacyPolicy.tsx:77-78` and `:102-109`, and `docs/legal/README.md:5-6`.
 
-**Done in the code (lanes mA and mC).** Steps 1, 6 and 16 are done, and so are parts of steps 3, 12, 15 and 18.
+**Done in the code (lanes mA and mC).** Steps 1 and 6 are done, and so are parts of steps 3, 12, 15, 16 and 18.
 - Migration `000200` sets `auto_enrollment_enabled` and `send_welcome_notification` to `false`. It does not drop `trigger_auto_enrollment` or `check_auto_enrollment()`: `mainone`'s `20260925100100_portal_access_authoritative.sql` made the trigger run on insert only, never override a decision, an opt-out or an earlier disable, and enrol only while that setting is true, and `supabase/tests/portal_access.test.sql` expects it. With the setting off it enrols no one.
 - Step 7 is done by `mainone` (`64b0a20`): `enablePortalAccess` and `disablePortalAccess` queue `set_patient_portal_access` through `src/services/portalAccess.ts`, and a disable always applies on the server.
 - It defaults `allow_treatment_access` to false. `DataSharingPreferences` starts it unticked.
 - `reminderSkipReason` now treats a pulled `false` as an opt-out (lane mC).
 - `ScheduleReminderForm`, `PreferenceManager` and `src/services/preferences.ts` read reminder settings with that same rule (`isReminderOptedOut`). A setting pulled as `true` shows as On and is saved as 1. It is no longer read as Off, and saving no longer silently opts the patient out.
 
-Step 2 is not done, and deliberately so: whether patients who were enrolled automatically keep access is the Foundation's decision. Step 3's reminder and alert defaults, and steps 4, 5, 8 to 11, 13, 14 and 17, are still open. Step 8 in particular: the command carries a reason code, not the staff attestation, and the server does not refuse an enable without consent. With auto-enrolment off, a new patient's server access changes only through `set_patient_portal_access`, which staff queue, and `portal_link_patient_record` for a self-registered record.
+Step 2 is not done, and deliberately so: whether patients who were enrolled automatically keep access is the Foundation's decision. Step 3's reminder and alert defaults, and steps 4, 5, 8 to 11, 13, 14 and 17, are still open. Step 16's three boxes and test updates are done, but nothing is written to `patient_consent_records` yet (item 6, steps 2 to 7 and 9). Step 8 in particular: the command carries a reason code, not the staff attestation, and the server does not refuse an enable without consent. With auto-enrolment off, a new patient's server access changes only through `set_patient_portal_access`, which staff queue, and `portal_link_patient_record` for a self-registered record.
 
 **How to check it.**
 - `npm run test:run -- src/services/reminderEligibility.test.ts src/services/portalEnrollment.test.ts src/features/patient-portal/PatientRegister.test.tsx` passes with three new tests: a missing record gives `no_consent`, `disablePortalAccess` queues one `p_enabled: false` command, and all three sign-up boxes start unticked.
@@ -644,7 +655,7 @@ This change adds no data flow, so the privacy notice does not need to change.
 
 ### 17. Get age consent if you collect kids' data
 
-**Status:** missing · **Priority:** P0 · **Effort:** L
+**Status:** partial · **Priority:** P0 · **Effort:** L
 
 **Where it stands.** The app holds children's records: `src/services/smartMedication.ts:383` doses by `age < 18`, and `src/components/SimplePatientForm.tsx:226` accepts any age from 1. No code checks for a minor or stores a guardian, and `src/validation/schemas.ts:17-27` only requires a past DOB. A portal account can claim a child's record by email (`src/hooks/useAuth.ts:151-160`), by contact plus DOB (`src/services/patientPortalAuth.ts:193-225`, `319-345`), or through the new, not yet called `portal_link_patient_record` (`supabase/migrations/20260924110300_rls_patient_portal.sql:686`). The "add a child" dialog asks for no attestation (`src/features/patient-portal/CaregiverSetup.tsx:391-427`), and the notice says only "any caregiver you add" (`src/pages/legal/PrivacyPolicy.tsx:68`).
 
@@ -652,7 +663,7 @@ This change adds no data flow, so the privacy notice does not need to change.
 1. Add `isMinor(dob, now, threshold = 18): boolean | null` beside `patientAge` in `src/utils/patient.ts:9`. Treat `null` (no DOB) as "needs review".
 2. Create `supabase/migrations/20260926000400_add_patient_guardians.sql` (new) with `patient_guardians`: `patient_id` (FK, cascade), `guardian_name`, `guardian_phone`, `relationship` (`parent`, `legal_guardian`, `other_authorised`), `guardian_portal_user_id`, `verified_by_staff`, `verified_at`, `consent_record_id` (FK to `patient_consent_records`), timestamps and `revoked_at`.
 3. In it, enable RLS, revoke `anon`, and write policies with `app_is_staff()`, `app_has_permission('register')` and `app_portal_patient_ids()`. Write `CREATE POLICY` directly: `app_rls_policy` was dropped at `20260924110400_rls_verify_phi_lockdown.sql:101`.
-4. Do not recreate `check_auto_enrollment()` (`20260115072241_add_portal_enhancements_v3.sql:540-589`). Item 9 drops it and its trigger in `20260926000200_consent_defaults_off.sql`, so no patient, adult or minor, is enrolled automatically.
+4. Do not recreate `check_auto_enrollment()` (`20260115072241_add_portal_enhancements_v3.sql:540-589`). Item 9 keeps the insert-only trigger and switches it off with `auto_enrollment_enabled = false` in `20260926000200_consent_defaults_off.sql`, so no patient, adult or minor, is enrolled automatically.
 5. In it, replace `portal_link_patient_record` so it returns `needs_staff_verification` for a minor's record and never self-creates one for a minor `p_dob`. **Done early**, in its own migration, `20260926000210_portal_link_adults_only.sql`.
 6. Store the consent in the existing `patient_consent_records` as `consent_type = 'guardian_consent'`. Staff with `register` can already insert there (`20260924110300_rls_patient_portal.sql:330-332`).
 7. Add `patientGuardians` (`id, patientId, _dirty, _syncedAt`) to the Dexie `version(19)` that item 6 adds after `src/db/index.ts:1505`. Keep consent rows in item 6's `consents` table.
@@ -676,9 +687,9 @@ This change adds no data flow, so the privacy notice does not need to change.
 - `isMinor` and `ADULT_AGE` are in `src/utils/patient.ts`. `patientAge` reads a date of birth as a calendar day.
 - Portal sign-up requires a date of birth, online and offline, and refuses anyone under 18.
 - After the merge with `mainone`, online sign-up is linked to a clinic record by the server (`portal_link_patient_record`, called through `src/services/portalSignIn.ts`). It refuses a child's record and never creates a record for an under-18 date of birth (migration `000210`), and the app shows its `needs_staff_verification` answer as "ask clinic staff". The email lookup, offline registration and the date-of-birth login refuse a child's record too.
-- Staff cannot turn on portal access, send an invitation or enrol a child's record (`enablePortalAccess`, `sendPortalInvitation`, `enrollPatientInPortal`, `canEnrollInPortal`). The record page offers no invitation or link for a child. The registration form and both admin pages leave children out, and the bulk server page filters them before its 100-row limit. Turning access off still works for a child. This covers steps 12 and 18.
+- Staff cannot turn on portal access, send an invitation or enrol a child's record (`enablePortalAccess`, `sendPortalInvitation`, `enrollPatientInPortal`, `canEnrollInPortal`). The record page offers no invitation or link for a child. The registration form and both admin pages leave children out, and the bulk server page filters them before its 100-row limit. Turning access off still works for a child. This covers step 12, except the guardian wording, and step 18, except `isEligibleForAutoEnrollment` in `src/services/autoEnrollment.ts`, which is dead code and unchanged.
 - These staff-side refusals are in the app only. `mainone`'s `set_patient_portal_access` and `portal_invitation_begin` do not check age on the server yet (step 19).
-- Step 4 holds in effect: the auto-enrolment trigger is kept but switched off by its setting (item 9).
+- Step 4: the trigger is kept but off (item 9).
 - The privacy notice has a "Children" section.
 
 A record with no date of birth is not linked (the server, offline registration and the date-of-birth login link a record only when its date of birth matches; staff add the date of birth first), and existing links and existing access are unchanged. Everything to do with guardians waits on the guardian decision: steps 2 to 4, 6 to 11, 13, 16, 17 and 19 to 21, and the terms wording in step 22.
