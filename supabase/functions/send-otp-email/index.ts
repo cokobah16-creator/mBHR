@@ -4,6 +4,7 @@ import { enforceRateLimit } from "../_shared/security/rateLimit.ts";
 import {
   authenticateStaff,
   getServiceClient,
+  requireStaff,
 } from "../_shared/security/staffAuth.ts";
 import {
   checkSmsLimits,
@@ -33,7 +34,8 @@ import {
 //
 // Two kinds of email:
 // - A verification code { email, otp }: a 4 to 8 digit code in a fixed
-//   template (used by the admin email diagnostics page).
+//   template, for the admin email diagnostics page only: the caller must be
+//   a signed-in, active administrator.
 // - A patient portal invitation { purpose: "portal_invitation", patientId,
 //   appOrigin? }: only a signed-in staff member whose role holds
 //   'portal_invite' (registration_lead, lead_clinician, admin). The database
@@ -302,6 +304,21 @@ Deno.serve(async (req: Request) => {
         });
       }
       return reply(400, { success: false, error: "An otp is required" });
+    }
+
+    // Test emails come from the admin diagnostics page only.
+    const admin = await requireStaff(req, getServiceClient(), ["admin"]);
+    if (!admin.ok) {
+      return reply(admin.status, {
+        success: false,
+        error: admin.error,
+        message:
+          admin.status === 401
+            ? "Sign in online with an administrator account to send a test email."
+            : admin.status === 403
+              ? "Only an administrator can send test emails."
+              : admin.message,
+      });
     }
 
     const email = validEmail(body.email);
