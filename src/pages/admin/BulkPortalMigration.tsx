@@ -222,8 +222,9 @@ export function BulkPortalMigration() {
                   Portal account ready on the server for {results.success} of{" "}
                   {plural(results.total)}.
                   {results.failed > 0 && ` ${results.failed} failed.`} No
-                  invitation was sent: tell patients to register or sign in at
-                  the patient portal with their email or phone number.
+                  invitation was sent: tell patients to register at the patient
+                  portal with their email address, or sign in if they already
+                  have an account.
                 </p>
               </div>
               {results.errors.length > 0 && (
@@ -397,8 +398,8 @@ export function BulkPortalMigration() {
           <li>Select patients who should have portal access.</li>
           <li>A portal account is created on the server for each one.</li>
           <li>
-            Patients sign in with their email or phone number and a one-time
-            code.
+            Patients register at the patient portal with their email address,
+            then sign in with their email and password.
           </li>
           <li>Only patients with an email or phone number can be enrolled.</li>
           <li>

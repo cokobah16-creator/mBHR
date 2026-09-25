@@ -52,6 +52,14 @@ const row = {
   portal_enabled: false,
 };
 
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <BulkPortalMigration />
+    </MemoryRouter>,
+  );
+}
+
 describe("BulkPortalMigration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -77,16 +85,22 @@ describe("BulkPortalMigration", () => {
   });
 
   it("does not list patients under 18", async () => {
-    render(
-      <MemoryRouter>
-        <BulkPortalMigration />
-      </MemoryRouter>,
-    );
+    renderPage();
 
     expect(await screen.findByText("Ada Obi")).toBeInTheDocument();
     expect(screen.queryByText("Chidi Obi")).toBeNull();
     expect(
       screen.getByText(/patients under 18 are not listed/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says how patients sign in, without promising a one-time code", async () => {
+    renderPage();
+
+    await screen.findByText("Ada Obi");
+    expect(screen.queryByText(/one-time code/i)).toBeNull();
+    expect(
+      screen.getByText(/sign in with their email and password/i),
     ).toBeInTheDocument();
   });
 });
