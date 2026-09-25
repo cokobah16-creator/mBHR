@@ -41,9 +41,8 @@ On a device with no server connection, the change stays on that device.
    If the form stops to ask about a possible duplicate and you create a new
    patient, it does not ask for portal access.
 
-The form sends no invitation, even if "Send portal invitation now" is
-ticked. Send it from the patient's record once the server has confirmed
-access.
+The form sends no invitation and has no box for one. Send it from the
+patient's record once the server has confirmed access.
 
 ### On the patient's record
 
