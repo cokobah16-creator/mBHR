@@ -274,7 +274,7 @@ Without it, the app's own origin is used when it is listed in
 | app_users | own row; staff (directory) | P(users) | P(users) | P(users) |
 | app_users: `admin_permanent` rows (restrictive) | as above | cannot create | cannot change | cannot delete |
 | staff_roles | own row | none | none | none |
-| conflict_resolutions | P(resolve_conflicts \| approve_phi_conflicts) | P(resolve_conflicts), open rows only (`pending` or `needs_approval`, no decision, resolver or approver) | same as SELECT, plus the decision/approval trigger³ | none |
+| conflict_resolutions | P(resolve_conflicts \| approve_phi_conflicts) | P(resolve_conflicts), open rows only (`pending` or `needs_approval`, no decision, resolver or approver); `entity_type` one the app reports (the ten synced tables the sync adapter checks, or `server_command`); `app_users` conflicts also P(users), `inventory` conflicts also P(inventory) (restrictive) | same as SELECT, plus the decision/approval trigger³ | none |
 | conflict_audit_logs, conflict_change_deltas | P(resolve_conflicts \| approve_phi_conflicts \| audit_access) | P(resolve_conflicts \| approve_phi_conflicts) | none | none |
 | archived_conflict_summaries | P(audit_access) | none (retention job) | none | none |
 | auto_resolution_rules | staff | P(users) | P(users) | P(users) |
@@ -291,6 +291,9 @@ Without it, the app's own origin is used when it is listed in
 `resolution_strategy`, or closing as `resolved`, `ignored` or
 `auto_resolved`), leaving `needs_approval` (approve or reject) and setting
 `approved_by` or `second_approver_id`. It requires:
+- `users` for any change to a staff-account (`app_users`) conflict and
+  `inventory` for any change to a stock (`inventory`) conflict, whether or
+  not it decides anything (checked first, on the stored `entity_type`);
 - `approve_phi_conflicts` to decide, approve or reject a high-PHI conflict,
   otherwise `resolve_conflicts` (same as `canResolveConflict()`);
 - `auto_resolved` only with an active `auto_resolution_rules` row that matches
