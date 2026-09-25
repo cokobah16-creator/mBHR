@@ -11,7 +11,7 @@
       "permanent": true
     },
     {
-      "source": "/(.*)",
+      "source": "/([^.]*)",
       "has": [{ "type": "host", "value": "m-bhr.vercel.app" }],
       "destination": "https://mbhr.app/$1",
       "permanent": true

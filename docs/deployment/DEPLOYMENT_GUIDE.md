@@ -260,6 +260,24 @@ vercel --prod
 2. Add your domain
 3. Configure DNS records as shown
 
+**Moving from an old hostname (m-bhr.vercel.app to mbhr.app):**
+
+Records saved in the browser (patients, the staff list, device PINs and
+unsent changes) belong to one web address. `vercel.json` redirects page
+addresses on `m-bhr.vercel.app` to `https://mbhr.app`, but does not redirect
+paths with a file extension there (`/sw.js`, `/workbox-*.js`,
+`/manifest.webmanifest`, `/index.html`, `/assets/*`, icons). An app installed
+on the old address keeps updating to the current build, which shows the
+"wrong address" warning. Do not widen that redirect to every path: a service
+worker update check does not follow redirects, so installed apps would stay
+on their old build. For each device still on the old address:
+
+1. Sign in online there and run Sync until nothing is waiting to upload.
+2. Then open `https://mbhr.app`, sign in online and set a device PIN there.
+
+The app does not yet stop anyone moving while changes are unsent, so staff
+must sync first.
+
 ### 2.5 Enable HTTPS
 
 Both Netlify and Vercel automatically provision SSL certificates via Let's Encrypt. No action needed!
