@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useT } from "@/hooks/useT";
 import { StepperForm } from "@/components/StepperForm";
 import { PatientDedupeModal } from "@/components/PatientDedupeModal";
@@ -7,6 +7,7 @@ import { usePatientsStore } from "@/stores/patients";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
 import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG } from "@/utils/nigeria";
+import { AGE_LIMITS, estimateDobFromAge, type AgeUnit } from "@/utils/ageEstimate";
 import {
   UserIcon,
   CameraIcon,
@@ -45,6 +46,7 @@ export function SimplePatientForm({
     familyName: "",
     sex: "",
     age: 25,
+    ageUnit: "years" as AgeUnit,
     phone: "",
     address: "",
     state: "",
@@ -52,7 +54,23 @@ export function SimplePatientForm({
     photo: null as string | null,
   });
 
-  const [, setLoading] = useState(false);
+  // One registration at a time: a double tap on Complete (or on "register
+  // new" in the duplicate check) must not create two patients and tickets.
+  // Left set after a success, when the page replaces this form.
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const beginSave = () => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
+    return true;
+  };
+  const endSave = () => {
+    savingRef.current = false;
+    setSaving(false);
+  };
+
+  const estimatedDob = estimateDobFromAge(formData.age, formData.ageUnit);
 
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -93,27 +111,25 @@ export function SimplePatientForm({
     }
   };
 
-  const calculateDOB = (age: number): string => {
-    const today = new Date();
-    const birthYear = today.getFullYear() - age;
-    return `${birthYear}-01-01`; // Approximate DOB
-  };
-
   const handleComplete = async () => {
     if (!mayRegister) {
       refuseRegistration();
       return;
     }
-    setLoading(true);
+    // The age step checks this too; never save a date the age cannot give.
+    if (!estimatedDob) return;
+    if (!beginSave()) return;
+    let registered = false;
     try {
-      const dob = calculateDOB(formData.age);
       const formattedPhone = formatPhoneNG(formData.phone);
 
       const patientId = await addPatient({
         givenName: formData.givenName,
         familyName: formData.familyName,
         sex: formData.sex as "male" | "female" | "other",
-        dob,
+        // Worked out from the age given, so saved as an estimate.
+        dob: estimatedDob,
+        dobEstimated: 1,
         phone: formattedPhone,
         address: formData.address,
         state: formData.state,
@@ -121,6 +137,7 @@ export function SimplePatientForm({
         photoUrl: formData.photo || undefined,
       });
 
+      registered = true;
       onSuccess?.(patientId);
     } catch (error) {
       // A possible duplicate is not a failure: let staff decide.
@@ -131,8 +148,15 @@ export function SimplePatientForm({
       console.error("Error registering patient:", error instanceof Error ? error.name : "unknown");
       alert(t("error.registrationFailed"));
     } finally {
-      setLoading(false);
+      if (!registered) endSave();
     }
+  };
+
+  const chooseAgeUnit = (ageUnit: AgeUnit) => {
+    if (ageUnit === formData.ageUnit) return;
+    // Start the other unit from its lowest value rather than carry a number
+    // across (25 years is not 25 months).
+    setFormData((prev) => ({ ...prev, ageUnit, age: AGE_LIMITS[ageUnit].min }));
   };
 
   const steps = [
@@ -223,7 +247,7 @@ export function SimplePatientForm({
       id: "demographics",
       title: t("patient.demographics"),
       audioKey: "patient.demographics",
-      isValid: !!(formData.sex && formData.age > 0),
+      isValid: !!(formData.sex && estimatedDob),
       component: (
         <div className="space-y-8">
           <fieldset>
@@ -260,15 +284,45 @@ export function SimplePatientForm({
             </div>
           </fieldset>
 
-          <VisualNumberInput
-            value={formData.age}
-            onChange={(age) => setFormData((prev) => ({ ...prev, age }))}
-            min={0}
-            max={120}
-            label={t("patient.age")}
-            unit={t("common.years")}
-            showDots={formData.age <= 10}
-          />
+          <div className="space-y-4">
+            <div
+              role="group"
+              aria-label={t("patient.age")}
+              className="grid grid-cols-2 gap-4"
+            >
+              {(["years", "months"] as const).map((unit) => (
+                <button
+                  key={unit}
+                  type="button"
+                  aria-pressed={formData.ageUnit === unit}
+                  onClick={() => chooseAgeUnit(unit)}
+                  className={`rounded-lg border-2 p-4 text-lg font-medium transition-colors touch-target-large ${
+                    formData.ageUnit === unit
+                      ? "border-primary bg-primary-soft text-primary-fg"
+                      : "bg-surface border-line text-ink hover:bg-surface-hover"
+                  }`}
+                >
+                  {unit === "years" ? t("common.years") : t("common.months")}
+                </button>
+              ))}
+            </div>
+
+            <VisualNumberInput
+              key={formData.ageUnit}
+              value={formData.age}
+              onChange={(age) => setFormData((prev) => ({ ...prev, age }))}
+              min={AGE_LIMITS[formData.ageUnit].min}
+              max={AGE_LIMITS[formData.ageUnit].max}
+              label={t("patient.age")}
+              unit={
+                formData.ageUnit === "years"
+                  ? t("common.years")
+                  : t("common.months")
+              }
+              showDots={formData.age <= 10}
+            />
+            <p className="field-hint text-center">{t("simple.ageHint")}</p>
+          </div>
         </div>
       ),
     },
@@ -407,13 +461,16 @@ export function SimplePatientForm({
         refuseRegistration();
         return;
       }
+      if (!beginSave()) return;
       try {
+        // The draft keeps its estimated date of birth (dobEstimated).
         const patientId = await addPatient(
           { ...pending.patient, photoUrl: formData.photo || undefined },
           { skipDuplicateCheck: true },
         );
         onSuccess?.(patientId);
       } catch {
+        endSave();
         alert(t("error.registrationFailed"));
       }
     }
@@ -425,6 +482,7 @@ export function SimplePatientForm({
         steps={steps}
         onComplete={handleComplete}
         onCancel={onCancel}
+        busy={saving}
         className={className}
       />
       {dedupeData && (

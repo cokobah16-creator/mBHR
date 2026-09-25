@@ -51,7 +51,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       console.log(`Loaded ${patients.length} patients from database`);
       set({ patients });
     } catch (error) {
-      console.error("Error loading patients:", error);
+      console.error("Error loading patients:", error instanceof Error ? error.name : "unknown");
     }
   },
 
@@ -69,7 +69,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
 
       return results;
     } catch (error) {
-      console.error("Error searching patients:", error);
+      console.error("Error searching patients:", error instanceof Error ? error.name : "unknown");
       return [];
     }
   },
@@ -77,7 +77,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
   addPatient: async (patientData, options) => {
     try {
       // Check for duplicates first
-      const { rec, candidates } = await createPatientDraft({
+      const { rec: draft, candidates } = await createPatientDraft({
         givenName: patientData.givenName,
         familyName: patientData.familyName,
         phone: patientData.phone,
@@ -88,6 +88,10 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
         state: patientData.state,
         lga: patientData.lga,
       });
+      // A date of birth worked out from an age stays marked as estimated,
+      // also on the draft the duplicate check hands back.
+      const rec: Patient =
+        patientData.dobEstimated === 1 ? { ...draft, dobEstimated: 1 } : draft;
 
       // If duplicates found, return for user resolution
       if (candidates.length > 0 && !options?.skipDuplicateCheck) {
@@ -140,12 +144,13 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
       await db.patients.update(id, {
         ...updates,
         updatedAt: new Date(),
+        _dirty: 1,
       });
 
       await createAuditLog("system", "update", "patient", id);
       get().loadPatients();
     } catch (error) {
-      console.error("Error updating patient:", error);
+      console.error("Error updating patient:", error instanceof Error ? error.name : "unknown");
       throw error;
     }
   },
@@ -166,6 +171,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
         startedAt: new Date(),
         siteName,
         status: "open",
+        _dirty: 1,
       };
 
       await db.visits.add(visit);
@@ -173,7 +179,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
 
       return visit.id;
     } catch (error) {
-      console.error("Error starting visit:", error);
+      console.error("Error starting visit:", error instanceof Error ? error.name : "unknown");
       throw error;
     }
   },

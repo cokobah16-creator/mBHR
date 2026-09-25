@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -27,6 +27,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const { t } = useTranslation();
   const { addPatient } = usePatientsStore();
   const [loading, setLoading] = useState(false);
+  // One registration at a time: a double tap must not create two patients
+  // and tickets. Left set after a success, when the page moves on.
+  const savingRef = useRef(false);
+  // Set once staff tick or untick portal access themselves; entering contact
+  // details then no longer ticks it for them.
+  const portalChoiceMade = useRef(false);
   const [submitError, setSubmitError] = useState("");
   const { push: pushToast } = useToast();
   const [photo, setPhoto] = useState<string | null>(null);
@@ -51,9 +57,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
   const watchedState = watch("state");
   const availableLGAs = LGAS_BY_STATE[watchedState] || [];
+  const portalField = register("portalEnabled");
 
-  // Auto-enable portal when contact info is entered
+  // Auto-enable portal when contact info is entered, unless staff have
+  // already made their own choice.
   useEffect(() => {
+    if (portalChoiceMade.current) return;
     const { phone, email } = watch();
     const hasContact = (phone && phone.trim()) || (email && email.trim());
     if (hasContact && !watch("portalEnabled")) {
@@ -79,7 +88,10 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
       setSubmitError("Your role cannot register patients. Ask a registration volunteer, nurse, doctor or administrator.");
       return;
     }
+    if (savingRef.current) return;
+    savingRef.current = true;
     setLoading(true);
+    let patientId: string | null = null;
     try {
       const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
 
@@ -97,11 +109,11 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         photoUrl: photo || "",
       };
 
-      const patientId = await addPatient(patientData);
+      patientId = await addPatient(patientData);
 
-
-      // Automatically enroll in portal if contact info provided
-      if ((normalizedPhone || data.email) && data.portalEnabled !== false) {
+      // Enrol in the portal only when staff left portal access ticked (the
+      // form then also requires the terms to have been agreed).
+      if ((normalizedPhone || data.email) && data.portalEnabled === true) {
         const portalResult = await enrollPatientInPortal({
           patientId,
           givenName: data.givenName || "",
@@ -152,6 +164,19 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
       onSuccess?.(patientId);
     } catch (error) {
+      if (patientId) {
+        // The patient is saved; only portal enrolment failed. Saying "not
+        // registered" here would invite a second registration.
+        console.warn("Portal enrollment failed");
+        pushToast({
+          id: crypto.randomUUID(),
+          title: "Portal access not set up",
+          tone: "warning",
+          body: "The patient is registered, but portal enrolment failed. You can enable it later from their record.",
+        });
+        onSuccess?.(patientId);
+        return;
+      }
       // Check if it's a duplicate error
       if (error.message.startsWith("DUPLICATES_FOUND:")) {
         const duplicateData = JSON.parse(
@@ -165,6 +190,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         );
       }
     } finally {
+      if (!patientId) savingRef.current = false;
       setLoading(false);
     }
   };
@@ -182,6 +208,9 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         setDedupeData(null);
         return;
       }
+      if (savingRef.current) return;
+      savingRef.current = true;
+      setLoading(true);
       // Force create new patient (bypass duplicate check)
       try {
         // Staff confirmed this is a different person: keep their real name
@@ -195,6 +224,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         );
         onSuccess?.(patientId);
       } catch (error) {
+        savingRef.current = false;
         console.error(
           "Error creating new patient:",
           error instanceof Error ? error.name : error,
@@ -202,6 +232,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         setSubmitError(
           "The patient was not registered — the record could not be saved. Try again.",
         );
+      } finally {
+        setLoading(false);
       }
     } else if (action === "merge" && winnerId) {
       // Use existing patient
@@ -599,19 +631,23 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div className="space-y-4">
                 <div className="flex items-start">
                   <input
-                    {...register("portalEnabled")}
+                    {...portalField}
                     type="checkbox"
                     id="portalEnabled"
                     className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
                     onChange={(e) => {
-                      // Auto-check portalEnabled if email or phone exists
                       const hasContact = watch("email") || watch("phone");
                       if (!hasContact && e.target.checked) {
                         alert(
                           "Please provide at least an email or phone number for portal access",
                         );
                         e.target.checked = false;
+                        return;
                       }
+                      // Pass the tick or untick to the form, so an unticked
+                      // box really means no portal enrolment.
+                      portalChoiceMade.current = true;
+                      portalField.onChange(e);
                     }}
                   />
                   <label

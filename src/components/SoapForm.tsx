@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useForm, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -81,6 +81,9 @@ export function SoapForm({
 }: SoapFormProps) {
   const { currentUser } = useAuthStore();
   const [loading, setLoading] = useState(false);
+  // A double tap on Complete must not save the consultation twice (and move
+  // the patient on two stages). Left set once saved.
+  const savingRef = useRef(false);
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState(false);
   const [diagnoses, setDiagnoses] = useState<string[]>([""]);
@@ -132,6 +135,8 @@ export function SoapForm({
   };
 
   const onSubmit = async (data: SoapFormData) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaveError("");
     setLoading(true);
     try {
@@ -178,6 +183,7 @@ export function SoapForm({
       setSaved(true);
       onSuccess?.();
     } catch (error) {
+      savingRef.current = false;
       console.error("Error saving consultation:", error instanceof Error ? error.name : error);
       setSaveError(
         "The consultation was not saved. Your notes are still here — try again. If it keeps failing, copy the notes before leaving this page.",
@@ -185,6 +191,19 @@ export function SoapForm({
     } finally {
       setLoading(false);
     }
+  };
+
+  // Leaving drops whatever was typed, so ask first when anything is unsaved.
+  const handleCancel = () => {
+    if (
+      hasUnsaved &&
+      !window.confirm(
+        "Discard this consultation? The notes, diagnoses and referral you entered have not been saved and will be lost.",
+      )
+    ) {
+      return;
+    }
+    onCancel?.();
   };
 
   const show = (s: SoapSection) => section === "all" || section === s;
@@ -321,7 +340,7 @@ export function SoapForm({
         </p>
         <div className="flex flex-col-reverse gap-2 sm:flex-row">
           {onCancel && (
-            <button type="button" onClick={onCancel} className="btn-secondary">
+            <button type="button" onClick={handleCancel} className="btn-secondary">
               Cancel
             </button>
           )}

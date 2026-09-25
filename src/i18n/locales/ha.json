@@ -155,6 +155,7 @@
   "common": {
     "all": "Duka",
     "available": "akwai",
+    "months": "[EN] months",
     "of": "daga",
     "years": "shekaru"
   },
@@ -206,6 +207,7 @@
     "insufficientStock": "[EN] Insufficient stock: {{available}} available, {{requested}} requested"
   },
   "simple": {
+    "ageHint": "[EN] For a child under 2 you can give the age in months. The date of birth is saved as an estimate from the age.",
     "chooseAction": "Zaɓi abin da kake so ka yi",
     "directionsExample": "Sha sau biyu kowace rana tare da abinci",
     "dosageExample": "Misali: kwaya 1, 5ml",
@@ -361,5 +363,6 @@
   "portal.visit.assessment": "[EN] Clinician's assessment",
   "portal.visit.yourConcern": "[EN] What you told the clinician",
   "portal.vital.flagHint": "[EN] Readings with a warning sign are outside the usual range. This is a guide, not a diagnosis. Talk to your clinician about them.",
+  "portal.vital.notRated": "[EN] These readings are not rated here, because the usual ranges depend on age and the portal only rates adults' readings. Ask your clinician what they mean for you.",
   "portal.vital.recordedOn": "[EN] Recorded by the clinic team on {{date}}"
 }

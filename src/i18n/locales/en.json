@@ -126,6 +126,7 @@
   "simple.dosageExample": "e.g., 1 tablet, 5ml",
   "simple.directionsExample": "Take twice daily with food",
   "simple.registerDescription": "Add a new patient step by step",
+  "simple.ageHint": "For a child under 2 you can give the age in months. The date of birth is saved as an estimate from the age.",
 
   "action.register": "Register Patient",
   "action.register.description": "Add new patient",
@@ -148,6 +149,7 @@
   "stepper.step": "Step",
   "common.of": "of",
   "common.years": "years",
+  "common.months": "months",
   "common.available": "available",
   "common.all": "All",
 
@@ -389,5 +391,6 @@
   "portal.visit.assessment": "Clinician's assessment",
   "portal.visit.yourConcern": "What you told the clinician",
   "portal.vital.flagHint": "Readings with a warning sign are outside the usual range. This is a guide, not a diagnosis. Talk to your clinician about them.",
+  "portal.vital.notRated": "These readings are not rated here, because the usual ranges depend on age and the portal only rates adults' readings. Ask your clinician what they mean for you.",
   "portal.vital.recordedOn": "Recorded by the clinic team on {{date}}"
 }

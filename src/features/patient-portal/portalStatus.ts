@@ -3,9 +3,17 @@
  *
  * Display only: these map values already stored in the record to words a
  * patient can read. They never decide whether a result is normal; that comes
- * from the record itself (for example `abnormal` on a lab result).
+ * from the record itself (for example `abnormal` on a lab result) or, for
+ * vital signs, from the same classification staff screens use
+ * (`utils/vitals`).
  */
 import type { Tone } from "@/components/ui/StatusBadge";
+import {
+  classifyBloodPressure,
+  classifyTemperature,
+  type ClinicalTone,
+} from "@/utils/vitals";
+import { patientAge } from "@/utils/patient";
 
 export interface StatusInfo {
   label: string;
@@ -72,10 +80,10 @@ export function formatPortalTime(
 
 // ─── Vitals ───────────────────────────────────────────────────────────────────
 
+export type PortalVitalStatus = "normal" | "monitor" | "attention";
+
 /** Badge tone for the dashboard's existing vital flags (flags decided elsewhere). */
-export function vitalStatusTone(
-  status: "normal" | "monitor" | "attention",
-): Tone {
+export function vitalStatusTone(status: PortalVitalStatus): Tone {
   switch (status) {
     case "normal":
       return "success";
@@ -84,6 +92,61 @@ export function vitalStatusTone(
     case "attention":
       return "danger";
   }
+}
+
+/**
+ * Portal badge for a staff classification (`utils/vitals` classify*), so
+ * the portal and staff screens rate a reading the same way. Null when there
+ * is nothing to rate.
+ */
+export function portalVitalStatus(
+  tone: ClinicalTone | null | undefined,
+): PortalVitalStatus | null {
+  switch (tone) {
+    case "success":
+      return "normal";
+    case "warning":
+      return "monitor";
+    case "danger":
+    case "critical":
+      return "attention";
+    default:
+      return null;
+  }
+}
+
+/** Blood pressure badge from both numbers, as on staff screens. */
+export function portalBpStatus(
+  systolic: number | null | undefined,
+  diastolic: number | null | undefined,
+): PortalVitalStatus | null {
+  return portalVitalStatus(classifyBloodPressure(systolic, diastolic)?.tone);
+}
+
+/** Temperature badge, low temperatures included, as on staff screens. */
+export function portalTempStatus(
+  tempC: number | null | undefined,
+): PortalVitalStatus | null {
+  return portalVitalStatus(classifyTemperature(tempC)?.tone);
+}
+
+/**
+ * The staff classification uses adult ranges; the adult band of the
+ * reference ranges (db/seedVitalsRanges) starts at 18.
+ */
+const ADULT_AGE_YEARS = 18;
+
+/**
+ * Whether the portal may rate a reading. Readings for a child, or when the
+ * age is not known, are shown without a rating rather than judged against
+ * adult ranges.
+ */
+export function portalRatesVitals(
+  dob: string | null | undefined,
+  takenAt: Date | string | null | undefined,
+): boolean {
+  const age = patientAge(dob, toDate(takenAt) ?? new Date());
+  return age !== null && age >= ADULT_AGE_YEARS;
 }
 
 // ─── Lab results ──────────────────────────────────────────────────────────────

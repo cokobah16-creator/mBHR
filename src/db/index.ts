@@ -86,6 +86,12 @@ export interface Patient {
   familyName: string;
   sex: "male" | "female" | "other";
   dob: string;
+  /**
+   * 1 when `dob` was worked out from an age given at quick registration,
+   * not a known date. Kept on this device only: it is not uploaded until
+   * the server has a column for it, so on other devices it is unknown.
+   */
+  dobEstimated?: 0 | 1;
   phone?: string | null;
   email?: string | null;
   address: string;

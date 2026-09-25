@@ -155,6 +155,7 @@
   "common": {
     "all": "Gbogbo",
     "available": "wà",
+    "months": "[EN] months",
     "of": "nínú",
     "years": "ọdún"
   },
@@ -206,6 +207,7 @@
     "insufficientStock": "[EN] Insufficient stock: {{available}} available, {{requested}} requested"
   },
   "simple": {
+    "ageHint": "[EN] For a child under 2 you can give the age in months. The date of birth is saved as an estimate from the age.",
     "chooseAction": "Yan ohun tí o fẹ́ ṣe",
     "directionsExample": "Mu lẹ́ẹ̀mejì lójúmọ́ pẹ̀lú oúnjẹ",
     "dosageExample": "Àpẹẹrẹ: tábìlẹ́ẹ̀tì 1, 5ml",
@@ -361,5 +363,6 @@
   "portal.visit.assessment": "[EN] Clinician's assessment",
   "portal.visit.yourConcern": "[EN] What you told the clinician",
   "portal.vital.flagHint": "[EN] Readings with a warning sign are outside the usual range. This is a guide, not a diagnosis. Talk to your clinician about them.",
+  "portal.vital.notRated": "[EN] These readings are not rated here, because the usual ranges depend on age and the portal only rates adults' readings. Ask your clinician what they mean for you.",
   "portal.vital.recordedOn": "[EN] Recorded by the clinic team on {{date}}"
 }

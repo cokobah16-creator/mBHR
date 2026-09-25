@@ -73,6 +73,12 @@ vi.mock("@/db", () => ({
   bumpDailyCount: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("@/services/queueManagement", () => ({
+  queueManagement: {
+    addToQueue: vi.fn(() => Promise.resolve({ id: "queue-1" })),
+  },
+}));
+
 describe("usePatientsStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -297,6 +303,34 @@ describe("usePatientsStore", () => {
       expect(mockVisits[0].patientId).toBe("patient-1");
       expect(mockVisits[0].siteName).toBe("Test Clinic");
       expect(mockVisits[0].status).toBe("open");
+      expect(mockVisits[0]._dirty).toBe(1);
+    });
+  });
+
+  describe("addPatient", () => {
+    const entry = {
+      givenName: "Amina",
+      familyName: "Bello",
+      sex: "female" as const,
+      dob: "2026-06-01",
+      phone: "+2348031234567",
+      address: "",
+      state: "Lagos",
+      lga: "Ikeja",
+    };
+
+    it("keeps a date of birth worked out from an age marked as estimated", async () => {
+      const id = await usePatientsStore
+        .getState()
+        .addPatient({ ...entry, dobEstimated: 1 });
+
+      expect(mockPatients.get(id).dobEstimated).toBe(1);
+    });
+
+    it("does not mark a known date of birth as estimated", async () => {
+      const id = await usePatientsStore.getState().addPatient(entry);
+
+      expect(mockPatients.get(id).dobEstimated).toBeUndefined();
     });
   });
 
@@ -315,6 +349,7 @@ describe("usePatientsStore", () => {
 
       const updated = mockPatients.get("p1");
       expect(updated.phone).toBe("08099999999");
+      expect(updated._dirty).toBe(1);
     });
   });
 });
