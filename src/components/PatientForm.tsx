@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -10,6 +10,8 @@ import { AudioButton } from "@/components/AudioButton";
 import { PhotoCapture } from "@/components/PhotoCapture";
 import { NIGERIAN_STATES, LGAS_BY_STATE } from "@/utils/nigeria";
 import { normalizePhone } from "@/utils/phone";
+import { isMinor } from "@/utils/patient";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 import { patientSchema, PatientFormData } from "@/validation/schemas";
 import { CameraIcon, UserIcon } from "@heroicons/react/24/outline";
 import { enrollPatientInPortal } from "@/services/unifiedPortalEnrollment";
@@ -52,15 +54,16 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const watchedState = watch("state");
   const availableLGAs = LGAS_BY_STATE[watchedState] || [];
 
-  // Auto-enable portal when contact info is entered
+  // Portal access starts unticked. Staff tick it only when the patient
+  // agrees; typing a phone or email does not tick it.
+  const portalEnabledField = register("portalEnabled");
+
+  // Portal accounts are for adults. For a child the box is unticked and
+  // cannot be ticked.
+  const dobIsMinor = isMinor(watch("dob")) === true;
   useEffect(() => {
-    const { phone, email } = watch();
-    const hasContact = (phone && phone.trim()) || (email && email.trim());
-    if (hasContact && !watch("portalEnabled")) {
-      setValue("portalEnabled", true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watch("phone"), watch("email")]);
+    if (dobIsMinor) setValue("portalEnabled", false);
+  }, [dobIsMinor, setValue]);
 
   const handlePhotoCapture = (photoDataUrl: string) => {
     setPhoto(photoDataUrl);
@@ -100,8 +103,13 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
       const patientId = await addPatient(patientData);
 
 
-      // Automatically enroll in portal if contact info provided
-      if ((normalizedPhone || data.email) && data.portalEnabled !== false) {
+      // Ask for portal access only when staff ticked the box, and never for
+      // a child (enrollPatientInPortal refuses one too).
+      if (
+        (normalizedPhone || data.email) &&
+        data.portalEnabled === true &&
+        isMinor(data.dob) !== true
+      ) {
         const portalResult = await enrollPatientInPortal({
           patientId,
           givenName: data.givenName || "",
@@ -145,7 +153,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             id: crypto.randomUUID(),
             title: "Portal access enabled",
             tone: "success",
-            body: "The patient can sign in to the patient portal with their phone or email.",
+            body: "Portal access is on. No message was sent to the patient.",
           });
         }
       }
@@ -599,12 +607,14 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div className="space-y-4">
                 <div className="flex items-start">
                   <input
-                    {...register("portalEnabled")}
+                    {...portalEnabledField}
                     type="checkbox"
                     id="portalEnabled"
-                    className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
+                    disabled={dobIsMinor}
+                    className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary disabled:opacity-50"
                     onChange={(e) => {
-                      // Auto-check portalEnabled if email or phone exists
+                      // Portal access needs a phone or email for the login
+                      // details. Without one, the box stays unticked.
                       const hasContact = watch("email") || watch("phone");
                       if (!hasContact && e.target.checked) {
                         alert(
@@ -612,6 +622,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                         );
                         e.target.checked = false;
                       }
+                      // Pass the change on so the form records the tick.
+                      void portalEnabledField.onChange(e);
                     }}
                   />
                   <label
@@ -622,8 +634,9 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                       Enable patient portal access
                     </span>
                     <span className="text-ink-muted block mt-1">
-                      Patient will receive login instructions via{" "}
-                      {watch("email") ? "email" : "SMS"}
+                      {dobIsMinor
+                        ? MINOR_PORTAL_ACCESS_MESSAGE
+                        : "When you save, portal access is asked for and the clinic server decides. With an internet connection a portal account is also made on the server. Tick only if the patient agrees to use the portal."}
                     </span>
                   </label>
                 </div>

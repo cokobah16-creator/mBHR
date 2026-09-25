@@ -7,6 +7,7 @@ const { mocks } = vi.hoisted(() => ({
     addPatient: vi.fn(),
     enrollPatientInPortal: vi.fn(),
     pushToast: vi.fn(),
+    role: "nurse",
   },
 }));
 
@@ -19,10 +20,10 @@ vi.mock("@/stores/patients", () => ({
 }));
 
 vi.mock("@/stores/auth", () => {
-  const state = { currentUser: { role: "nurse" } };
-  const useAuthStore = (selector: (s: typeof state) => unknown) =>
-    selector(state);
-  useAuthStore.getState = () => state;
+  const state = () => ({ currentUser: { role: mocks.role } });
+  const useAuthStore = (selector: (s: ReturnType<typeof state>) => unknown) =>
+    selector(state());
+  useAuthStore.getState = state;
   return { useAuthStore };
 });
 
@@ -95,8 +96,9 @@ async function fillRequiredFields(dob: string) {
 describe("PatientForm portal access", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.role = "nurse";
     mocks.addPatient.mockResolvedValue("patient-1");
-    mocks.enrollPatientInPortal.mockResolvedValue({ success: true });
+    mocks.enrollPatientInPortal.mockResolvedValue({ success: true, pending: true });
   });
 
   it("leaves portal access unticked when a phone number is typed", () => {
@@ -122,15 +124,45 @@ describe("PatientForm portal access", () => {
     expect(attestation.checked).toBe(false);
   });
 
-  it("does not promise a message: enrolment sends none", async () => {
+  it("says the server decides and does not promise login instructions", async () => {
     render(<PatientForm />);
     fireEvent.change(byId("phone"), { target: { value: "08012345678" } });
     fireEvent.click(portalBox());
     await screen.findByLabelText(/explained portal access terms/i);
 
-    expect(screen.getByText(/no message is sent to the patient/i)).toBeTruthy();
+    expect(screen.getByText(/the clinic server decides/i)).toBeTruthy();
     expect(screen.queryByText(/login instructions/i)).toBeNull();
+  });
+
+  it("offers the invitation box only to roles with portal_invite", async () => {
+    render(<PatientForm />);
+    fireEvent.change(byId("phone"), { target: { value: "08012345678" } });
+    fireEvent.click(portalBox());
+    await screen.findByLabelText(/explained portal access terms/i);
+
+    // A nurse holds portal_manage but not portal_invite.
     expect(screen.queryByLabelText(/send portal invitation now/i)).toBeNull();
+    expect(screen.getByText(/sends the portal invitation from the patient/i)).toBeTruthy();
+  });
+
+  it("asks for portal access only when the box was ticked and attested", async () => {
+    render(<PatientForm />);
+    await fillRequiredFields("1990-01-01");
+    fireEvent.click(portalBox());
+    fireEvent.click(await screen.findByLabelText(/explained portal access terms/i));
+
+    fireEvent.submit(byId<HTMLInputElement>("givenName").form!);
+
+    await waitFor(() => expect(mocks.enrollPatientInPortal).toHaveBeenCalledTimes(1));
+    expect(mocks.enrollPatientInPortal).toHaveBeenCalledWith(
+      expect.objectContaining({ patientId: "patient-1", dob: "1990-01-01" }),
+    );
+    // mainone's toast for a change waiting for the server.
+    await waitFor(() =>
+      expect(mocks.pushToast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Portal access requested" }),
+      ),
+    );
   });
 
   it("does not enrol the patient in the portal when the box is left unticked", async () => {
