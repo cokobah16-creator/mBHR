@@ -124,5 +124,7 @@ describe("BulkPortalMigration", () => {
     expect(
       screen.getByText(/sign in with their email and password/i),
     ).toBeInTheDocument();
+    // The fixture's patients have only a phone number: say they must enter it.
+    expect(screen.getByText(/only their phone number/i)).toBeInTheDocument();
   });
 });

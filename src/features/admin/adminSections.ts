@@ -146,7 +146,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
         id: "bulk-portal-migration",
         title: "Create portal accounts on the server",
         description:
-          "Create portal sign-in accounts for patients in the server database.",
+          "Create portal accounts for patients in the server database.",
         to: "/admin/bulk-portal-migration",
         access: { kind: "roles", roles: ["admin"] },
         needsServer: true,

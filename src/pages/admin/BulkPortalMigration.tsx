@@ -183,7 +183,7 @@ export function BulkPortalMigration() {
       <PageHeader
         breadcrumbs={BREADCRUMBS}
         title="Create portal accounts on the server"
-        description="Create patient portal sign-in accounts for patients in the server database who have an email or phone number."
+        description="Create patient portal accounts on the server for patients who have an email or phone number. Patients still register to sign in."
       />
 
       <div className="card flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:gap-3" aria-live="polite">
@@ -241,8 +241,11 @@ export function BulkPortalMigration() {
                   {plural(results.total)}.
                   {results.failed > 0 && ` ${results.failed} failed.`} No
                   invitation was sent: tell patients to register at the patient
-                  portal with their email address, or sign in if they already
-                  have an account.
+                  portal with an email address and a password, or sign in if
+                  they already have an account. Patients the clinic has only a
+                  phone number for must also enter that phone number, and the
+                  date of birth on their record, so the account links to their
+                  record.
                 </p>
               </div>
               {results.errors.length > 0 && (
@@ -416,8 +419,11 @@ export function BulkPortalMigration() {
           <li>Select patients who should have portal access.</li>
           <li>A portal account is created on the server for each one.</li>
           <li>
-            Patients register at the patient portal with their email address,
-            then sign in with their email and password.
+            Patients register at the patient portal with an email address,
+            then sign in with their email and password. If the clinic has only
+            their phone number, they must also enter that phone number, and
+            the date of birth on their record, when they register. Otherwise
+            the account is not linked to their clinic record.
           </li>
           <li>Only patients with an email or phone number can be enrolled.</li>
           <li>
