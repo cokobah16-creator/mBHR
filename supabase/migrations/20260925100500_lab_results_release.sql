@@ -193,7 +193,9 @@ BEGIN
       NEW.amended_at := NULL;
       IF NEW.reviewed_at IS NOT NULL THEN
         -- Only lab_review holders get here (insert policy); credit the caller.
-        NEW.reviewed_by := (SELECT auth.uid())::text;
+        -- (No ::text: reviewed_by is uuid on production; assignment casts
+        -- auth.uid() to either uuid or text.)
+        NEW.reviewed_by := (SELECT auth.uid());
       END IF;
     END IF;
     RETURN NEW;
@@ -216,7 +218,7 @@ BEGIN
     -- the signed-in caller and stamped with the server clock.
     IF NEW.reviewed_at IS NOT NULL AND OLD.reviewed_at IS NULL THEN
       NEW.reviewed_at := clock_timestamp();
-      NEW.reviewed_by := (SELECT auth.uid())::text;
+      NEW.reviewed_by := (SELECT auth.uid());  -- no ::text: uuid on production
     ELSIF NEW.reviewed_at IS NOT NULL THEN
       NEW.reviewed_at := OLD.reviewed_at;
       NEW.reviewed_by := OLD.reviewed_by;
@@ -431,7 +433,10 @@ BEGIN
   IF r.reviewed_at IS NULL THEN
     UPDATE public.lab_results
        SET reviewed_at = clock_timestamp(),
-           reviewed_by = (SELECT auth.uid())::text
+           -- No ::text: lab_results.reviewed_by is uuid on production (text
+           -- in older shapes); the assignment cast handles both, while a text
+           -- expression into a uuid column fails.
+           reviewed_by = (SELECT auth.uid())
      WHERE id = p_result_id;
     PERFORM public.app_lab_release_log(p_result_id, 'reviewed', NULL);
   END IF;
