@@ -123,10 +123,14 @@ export const BP_COMPONENTS = {
   unit: { code: "mm[Hg]", display: "mmHg" },
 } as const;
 
-/** R4 condition-severity value set (SNOMED CT). */
+/**
+ * R4 condition-severity value set (SNOMED CT). Displays are current SNOMED
+ * CT terms: the value set's "Moderate" is an inactive description of
+ * 6736007, which the HL7 validator rejects.
+ */
 export const CONDITION_SEVERITY: Record<string, { code: string; display: string }> = {
   mild: { code: "255604002", display: "Mild" },
-  moderate: { code: "6736007", display: "Moderate" },
+  moderate: { code: "6736007", display: "Moderate (severity modifier)" },
   severe: { code: "24484000", display: "Severe" },
 };
 

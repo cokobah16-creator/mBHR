@@ -85,6 +85,23 @@ export function conformanceExamples(): Record<string, Resource> {
     { ...CONDITION, id: "c0ffee00-0000-4000-8000-000000000002", verification_status: "entered-in-error" },
     ctx,
   )!;
+  // Every severity code, so the validator checks each display.
+  const resolvedMild = mapCondition(
+    {
+      ...CONDITION,
+      id: "c0ffee00-0000-4000-8000-000000000003",
+      clinical_status: "resolved",
+      verification_status: "confirmed",
+      category: "problem-list-item",
+      severity: "mild",
+      abatement_date: "2026-05-20",
+    },
+    ctx,
+  )!;
+  const activeSevere = mapCondition(
+    { ...CONDITION, id: "c0ffee00-0000-4000-8000-000000000004", verification_status: "confirmed", severity: "severe" },
+    ctx,
+  )!;
 
   const out: Record<string, Resource> = {
     "Patient-example": patient,
@@ -92,6 +109,8 @@ export function conformanceExamples(): Record<string, Resource> {
     "Encounter-example": encounter,
     "Condition-provisional": condition,
     "Condition-entered-in-error": enteredInError,
+    "Condition-resolved-mild": resolvedMild,
+    "Condition-active-severe": activeSevere,
     "CapabilityStatement-mbhr": capabilityStatement(EXAMPLE_BASE_URL) as Resource,
     "OperationOutcome-forbidden": operationOutcome("forbidden", "The requested resource is not available to this client."),
     "Bundle-observation-search": searchsetBundle({
