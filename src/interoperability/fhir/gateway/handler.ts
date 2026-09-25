@@ -447,6 +447,12 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       ...new Set([...releasedOwners.filter((o): o is string => o !== null), ...requestedPatientIds]),
     ];
     if (actor.kind === "patient" && !auditIds.length) auditIds = [...actor.patientIds];
+    // The access record holds at most 100 patients; a response naming more
+    // would be served partly unaudited, so it is refused instead.
+    if (auditIds.length > 100) {
+      logLine(log, { requestId, status: 500, outcome: "audit_patients_over_limit", resourceType: type });
+      throw errors.internal();
+    }
     const found = route.kind === "search" || released.length > 0;
     auditFailure = null;
     try {

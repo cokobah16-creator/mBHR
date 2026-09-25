@@ -17,11 +17,13 @@
 //                rows were uploaded by tablets and name a device-claimed
 //                person and a device time, so they are not published.
 //   docup-<id>   public.patient_documents: a document stored for a patient
-//                (created_at is the server default; the app never sends it).
+//                (created_at: the server default, as the app never sends it;
+//                the database does not yet stop a client setting it).
 //
 // What each element says, and what is deliberately left out:
 //
-//   - recorded is always the server time the event row was stored.
+//   - recorded is the time the event row was stored (server-stamped for
+//     laboratory events and merges; for uploads, see docup above).
 //     occurred[x] is left out: no source records a separate time the
 //     activity was performed (patient_merges.requested_at is a tablet clock
 //     and is not published).

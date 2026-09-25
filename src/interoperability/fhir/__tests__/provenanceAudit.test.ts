@@ -18,17 +18,19 @@ import {
   mapLabReleaseEvent,
   mapMergeEvent,
   parseProvenanceId,
+  reviewStillStands,
 } from "../mappers/provenance";
 import {
   AUDIT_EVENT_ACTION,
   AUDIT_EVENT_OUTCOME,
   AUDIT_EVENT_STATUS_MAPS,
   AUDIT_EVENT_SUBTYPE,
+  auditEntityPatients,
   auditOutcome,
   auditOwner,
   mapAuditEvent,
 } from "../mappers/auditEvent";
-import { canonicalMicros, inclusiveUpper, auditEventModule } from "../resources/auditEvent";
+import { MAX_AUDITED_PATIENTS, canonicalMicros, fitToAudit, inclusiveUpper, auditEventModule, type Mapped } from "../resources/auditEvent";
 import { provenanceModule } from "../resources/provenance";
 import { fakeSupabase, makeToken, type FakeOptions, type FakeUser, type RpcHandler } from "./fakeSupabase";
 
@@ -327,18 +329,20 @@ function visible(table: string, _row: Json, user: FakeUser): boolean {
   return user.role !== null;
 }
 
+const TABLES: FakeOptions["tables"] = {
+  patients: [P_KEPT, P_MERGED, P_OTHER, P_ORPHAN],
+  lab_orders: [ORDER_A, ORDER_M, ORDER_O, ORDER_X],
+  lab_results: [RES_A1, RES_A2, RES_M, RES_O, RES_X],
+  lab_result_release_log: [LOG_REVIEW, LOG_RELEASE, LOG_WITHHELD, LOG_SUPERSEDED, LOG_M, LOG_O, LOG_BAD, LOG_X],
+  patient_merges: [MERGE_OK, MERGE_LEGACY, MERGE_UNMERGE],
+  patient_documents: [DOC_PATIENT, DOC_STAFF, DOC_REMOVED, DOC_MERGED],
+  access_audit: [AUD_READ, AUD_DENY, AUD_ERROR, AUD_PATIENT, AUD_FORGED, AUD_V1_STAFF, AUD_NONE, AUD_DELETED, AUD_OLD],
+};
+
 function setup(overrides: Partial<FakeOptions> = {}) {
   const fake = fakeSupabase({
     users: USERS,
-    tables: {
-      patients: [P_KEPT, P_MERGED, P_OTHER, P_ORPHAN],
-      lab_orders: [ORDER_A, ORDER_M, ORDER_O, ORDER_X],
-      lab_results: [RES_A1, RES_A2, RES_M, RES_O, RES_X],
-      lab_result_release_log: [LOG_REVIEW, LOG_RELEASE, LOG_WITHHELD, LOG_SUPERSEDED, LOG_M, LOG_O, LOG_BAD, LOG_X],
-      patient_merges: [MERGE_OK, MERGE_LEGACY, MERGE_UNMERGE],
-      patient_documents: [DOC_PATIENT, DOC_STAFF, DOC_REMOVED, DOC_MERGED],
-      access_audit: [AUD_READ, AUD_DENY, AUD_ERROR, AUD_PATIENT, AUD_FORGED, AUD_V1_STAFF, AUD_NONE, AUD_DELETED, AUD_OLD],
-    },
+    tables: TABLES,
     visible,
     rpcs: { fhir_staff_directory: staffDirectory, fhir_access_audit_events: accessAuditEvents },
     ...overrides,
@@ -638,6 +642,56 @@ describe("Provenance mapping", () => {
   });
 });
 
+describe("Provenance of an amended laboratory result", () => {
+  // The database cleared the review (and the release) when the value changed at 08:30.
+  const AMENDED = { ...LINK_A1, reviewed: false, amendedAt: "2026-09-12T08:30:00+00:00" };
+  // ... and a clinician reviewed the new value at 08:40.
+  const RE_REVIEWED = { ...LINK_A1, reviewed: true, amendedAt: "2026-09-12T08:30:00+00:00" };
+
+  it("never publishes a review or release the amendment cleared as verified or released", () => {
+    expect(mapLabReleaseEvent(LOG_REVIEW, AMENDED, REFS, STAFF)).toBeNull();
+    expect(mapLabReleaseEvent(LOG_RELEASE, AMENDED, REFS, STAFF)).toBeNull();
+    // Nor once the new value is reviewed: those events were about the old value.
+    expect(mapLabReleaseEvent(LOG_REVIEW, RE_REVIEWED, REFS, STAFF)).toBeNull();
+    expect(mapLabReleaseEvent(LOG_RELEASE, RE_REVIEWED, REFS, STAFF)).toBeNull();
+  });
+
+  it("publishes the review of the new value, as verifier", () => {
+    const again = mapLabReleaseEvent({ ...LOG_REVIEW, created_at: "2026-09-12T08:40:00+00:00" }, RE_REVIEWED, REFS, STAFF) as Json;
+    expect(again.activity.coding[0].code).toBe("lab-review");
+    expect(again.agent[0].type.coding[0].code).toBe("verifier");
+    expect(again.recorded).toBe("2026-09-12T08:40:00.000Z");
+  });
+
+  it("keeps a withhold: an amendment does not put the result back on the portal", () => {
+    for (const at of ["2026-09-12T08:10:00+00:00", "2026-09-12T09:00:00+00:00"]) {
+      const p = mapLabReleaseEvent({ ...LOG_WITHHELD, created_at: at }, AMENDED, REFS, STAFF) as Json;
+      expect(p.activity.coding[0].code, at).toBe("lab-withhold");
+      expect(p.agent[0].type).toBeUndefined();
+    }
+  });
+
+  it("leaves out a review or release when the result no longer carries a review, amended or not", () => {
+    const cleared = { ...LINK_A1, reviewed: false };
+    expect(mapLabReleaseEvent(LOG_REVIEW, cleared, REFS, STAFF)).toBeNull();
+    expect(mapLabReleaseEvent(LOG_RELEASE, cleared, REFS, STAFF)).toBeNull();
+    expect(mapLabReleaseEvent(LOG_WITHHELD, cleared, REFS, STAFF)).not.toBeNull();
+  });
+
+  it("compares to the microsecond, and an unreadable time never counts as after the amendment", () => {
+    const at = { ...LINK_A1, amendedAt: "2026-09-12T08:00:00.123456+00:00" };
+    // Same millisecond: a millisecond comparison could not tell these apart.
+    expect(reviewStillStands("2026-09-12T08:00:00.123455+00:00", at)).toBe(false);
+    expect(reviewStillStands("2026-09-12T08:00:00.123456+00:00", at)).toBe(false);
+    expect(reviewStillStands("2026-09-12T08:00:00.123457+00:00", at)).toBe(true);
+    expect(reviewStillStands("2026-09-12 09:00:00.123457+01", at)).toBe(true);
+    expect(reviewStillStands("2026-09-12T08:00:01Z", { ...LINK_A1, amendedAt: "not a time" })).toBe(false);
+    expect(reviewStillStands("not a time", at)).toBe(false);
+    expect(reviewStillStands(null, at)).toBe(false);
+    expect(reviewStillStands("2026-09-12T08:00:01Z", LINK_A1)).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // AuditEvent mapper
 // ---------------------------------------------------------------------------
@@ -861,6 +915,64 @@ describe("Provenance through the gateway", () => {
     expect(ids(await json(await call(`/fhir/R4/Provenance?target=Patient/${P_KEPT.fhir_id}`, DOCTOR)))).toEqual([]);
   });
 
+  it("refuses a lab_review holder a recorded range that names no patient or record (anti-enumeration)", async () => {
+    const { call, audits } = setup();
+    for (const q of ["recorded=ge2026-09-01&recorded=lt2026-10-01", "recorded=2026-09-12"]) {
+      const res = await call(`/fhir/R4/Provenance?${q}`, DOCTOR);
+      expect(res.status, q).toBe(403);
+      // Nothing about any laboratory report is served.
+      expect(JSON.stringify(await json(res)), q).not.toMatch(/labrel|DiagnosticReport\/|0a000000/);
+      expect(audits[audits.length - 1], q).toMatchObject({ p_resource_type: "Provenance", p_decision: "deny" });
+    }
+    // The same caller, naming a patient or a record, still narrows by recorded.
+    const day = await call(`/fhir/R4/Provenance?recorded=2026-09-12&patient=Patient/${P_KEPT.fhir_id}`, DOCTOR);
+    expect(day.status).toBe(200);
+    expect(ids(await json(day))).toEqual([`labrel-${LOG_REVIEW.id}`, `labrel-${LOG_RELEASE.id}`, `labrel-${LOG_WITHHELD.id}`]);
+    const byReport = await call(`/fhir/R4/Provenance?recorded=ge2026-09-01&recorded=lt2026-10-01&target=DiagnosticReport/${ORDER_O.id}`, DOCTOR);
+    expect(ids(await json(byReport))).toEqual([`labrel-${LOG_O.id}`]);
+    // An audit_access holder may search a closed range alone.
+    expect((await call("/fhir/R4/Provenance?recorded=ge2026-09-01&recorded=lt2026-10-01", AUDITOR)).status).toBe(200);
+  });
+
+  it("never serves a review or release that a later amendment of the result cleared", async () => {
+    // The value changed at 08:30: the database cleared the review and the release (the Observation is preliminary again).
+    const amended = { ...RES_A1, reviewed_at: null, amended_at: "2026-09-12T08:30:00.000001+00:00" };
+    const { call } = setup({ tables: { ...TABLES, lab_results: [amended, RES_A2, RES_M, RES_O, RES_X] } });
+    for (const id of [`labrel-${LOG_REVIEW.id}`, `labrel-${LOG_RELEASE.id}`]) {
+      const res = await call(`/fhir/R4/Provenance/${id}`, AUDITOR);
+      expect(res.status, id).toBe(404);
+      expect(JSON.stringify(await json(res))).not.toContain("verifier");
+    }
+    for (const token of [AUDITOR, DOCTOR]) {
+      const b = await json(await call(`/fhir/R4/Provenance?target=${labRef(RES_A1.id)}`, token));
+      // The withhold (09:00) still stands: the result stays off the portal.
+      expect(ids(b)).toEqual([`labrel-${LOG_WITHHELD.id}`]);
+      expect(JSON.stringify(matches(b))).not.toContain("verifier");
+    }
+    const kept = await json(await call(`/fhir/R4/Provenance?patient=Patient/${P_KEPT.fhir_id}`, AUDITOR));
+    expect(ids(kept)).toEqual(KEPT_EVENTS.filter((i) => i !== `labrel-${LOG_REVIEW.id}` && i !== `labrel-${LOG_RELEASE.id}`));
+
+    // Reviewed again at 08:40: that review is served as the verification; the 08:00 one still is not.
+    const reReview = logRow(9, RES_A1.id, "reviewed", DOCTOR_UID, "2026-09-12T08:40:00+00:00");
+    const second = setup({
+      tables: {
+        ...TABLES,
+        lab_results: [{ ...amended, reviewed_at: reReview.created_at }, RES_A2, RES_M, RES_O, RES_X],
+        lab_result_release_log: [...(TABLES.lab_result_release_log as Json[]), reReview],
+      },
+    });
+    const b = await json(await second.call(`/fhir/R4/Provenance?target=${labRef(RES_A1.id)}`, AUDITOR));
+    expect(ids(b)).toEqual([`labrel-${LOG_WITHHELD.id}`, `labrel-${reReview.id}`]);
+    const verified = matches(b).find((r) => r.id === `labrel-${reReview.id}`) as Json;
+    expect(verified.agent).toEqual([
+      {
+        type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/provenance-participant-type", code: "verifier", display: "Verifier" }] },
+        who: { reference: `Practitioner/${DOCTOR_PRACTITIONER}` },
+      },
+    ]);
+    expect((await second.call(`/fhir/R4/Provenance/labrel-${LOG_REVIEW.id}`, AUDITOR)).status).toBe(404);
+  });
+
   it("refuses staff without audit_access or lab_review, and patients", async () => {
     const { call, audits } = setup();
     for (const path of [`/fhir/R4/Provenance?patient=Patient/${P_KEPT.fhir_id}`, `/fhir/R4/Provenance/labrel-${LOG_REVIEW.id}`]) {
@@ -1046,6 +1158,137 @@ describe("AuditEvent through the gateway", () => {
     const { call } = setup();
     const b = await json(await call(`/fhir/R4/AuditEvent?patient=Patient/${P_MERGED.fhir_id}`, AUDITOR));
     expect(ids(b)).toEqual([]);
+  });
+
+  it("records in the caller's own access audit every patient an event names, not only the one searched", async () => {
+    const AUD_MULTI = audRow(0, {
+      id: "a0000000-0000-4000-8000-0000000000aa",
+      occurred_at: "2026-09-21T10:00:00+00:00",
+      action: "search",
+      resource_type: "Encounter",
+      patient_ids: [P_KEPT.id, P_OTHER.id, "01HZZDELETED00000000000000"],
+      result_count: 2,
+    });
+    /** A refused read of another patient's record: the row names no patient, the entity does. */
+    const AUD_READ_OTHER = audRow(0, {
+      id: "a0000000-0000-4000-8000-0000000000bb",
+      occurred_at: "2026-09-21T09:00:00+00:00",
+      resource_id: P_OTHER.fhir_id,
+      patient_ids: [],
+      actor_user_id: NURSE_UID,
+      actor_role: "nurse",
+      decision: "deny",
+      denial_reason: "missing_permission",
+      http_status: 403,
+      result_count: 0,
+    });
+    const tables = { ...TABLES, access_audit: [AUD_MULTI, AUD_READ_OTHER] };
+    const permitOf = (audits: Json[]) => audits.filter((a) => a.p_resource_type === "AuditEvent" && a.p_decision === "permit").pop() as Json;
+
+    const bySearch = setup({ tables });
+    const b = await json(await bySearch.call(`/fhir/R4/AuditEvent?patient=Patient/${P_KEPT.fhir_id}`, AUDITOR));
+    expect(ids(b)).toEqual([AUD_MULTI.id]);
+    const refs = (matches(b)[0].entity as Json[]).map((e) => e.what?.reference);
+    expect(refs).toEqual([`Patient/${P_KEPT.fhir_id}`, `Patient/${P_OTHER.fhir_id}`, undefined]);
+    expect(new Set(permitOf(bySearch.audits).p_patient_ids)).toEqual(new Set([P_KEPT.id, P_OTHER.id]));
+    expectNothingInternal(matches(b));
+
+    const byDate = setup({ tables });
+    const d = await json(await byDate.call("/fhir/R4/AuditEvent?date=2026-09-21", AUDITOR));
+    expect(ids(d)).toEqual([AUD_MULTI.id, AUD_READ_OTHER.id]);
+    // Both events' patients: the entities of the search, and the Patient the refused read asked for.
+    // The deleted patient is named by nothing, so nothing about it was disclosed.
+    expect(new Set(permitOf(byDate.audits).p_patient_ids)).toEqual(new Set([P_KEPT.id, P_OTHER.id]));
+
+    const byId = setup({ tables });
+    expect((await byId.call(`/fhir/R4/AuditEvent/${AUD_MULTI.id}`, AUDITOR)).status).toBe(200);
+    expect(new Set(permitOf(byId.audits).p_patient_ids)).toEqual(new Set([P_KEPT.id, P_OTHER.id]));
+    const read = await json(await byId.call(`/fhir/R4/AuditEvent/${AUD_READ_OTHER.id}`, AUDITOR));
+    expect(read.entity).toEqual([
+      {
+        what: { reference: `Patient/${P_OTHER.fhir_id}` },
+        type: { system: "http://hl7.org/fhir/resource-types", code: "Patient" },
+        role: { system: "http://terminology.hl7.org/CodeSystem/object-role", code: "4", display: "Domain Resource" },
+      },
+    ]);
+    expect(permitOf(byId.audits).p_patient_ids).toEqual([P_OTHER.id]);
+  });
+
+  it("ends a page before it would name more patients than the access audit records", async () => {
+    // 120 patients; three searches that each returned 40 of them.
+    const gen = Array.from({ length: 120 }, (_, i) => ({
+      id: `01HZZGEN${String(i).padStart(18, "0")}`,
+      fhir_id: `0b3c1d2e-3333-4aaa-8bbb-${String(i).padStart(12, "0")}`,
+      merged_into: null,
+      merged_at: null,
+    }));
+    const internalOf = new Map(gen.map((p) => [`Patient/${p.fhir_id}`, p.id]));
+    const rows = [0, 1, 2].map((n) =>
+      audRow(0, {
+        id: `a0000000-0000-4000-8000-0000000001${n}0`,
+        occurred_at: `2026-09-21T1${n}:00:00+00:00`,
+        action: "search",
+        resource_type: "Patient",
+        patient_ids: gen.slice(n * 40, n * 40 + 40).map((p) => p.id),
+        result_count: 40,
+      }),
+    );
+    const { call, audits } = setup({ tables: { ...TABLES, patients: [...(TABLES.patients as Json[]), ...gen], access_audit: rows } });
+    const r = await allPages(call, "/fhir/R4/AuditEvent?date=2026-09-21&_count=10", AUDITOR);
+    expect(r.ids).toEqual([rows[2].id, rows[1].id, rows[0].id]);
+    expect(r.pages).toBe(2);
+    const permits = audits.filter((a) => a.p_resource_type === "AuditEvent" && a.p_decision === "permit");
+    expect(permits.length).toBe(2);
+    r.bodies.forEach((body, i) => {
+      const recorded = new Set(permits[i].p_patient_ids as string[]);
+      expect(recorded.size).toBeLessThanOrEqual(MAX_AUDITED_PATIENTS);
+      const named = matches(body).flatMap((e) => (e.entity as Json[]).map((x) => x.what?.reference).filter(Boolean));
+      expect(named.length).toBe(i === 0 ? 80 : 40);
+      for (const ref of named) expect(recorded.has(internalOf.get(ref) as string), ref).toBe(true);
+    });
+  });
+
+  it("a single event naming more patients than one audit record holds lists only those recorded", async () => {
+    const gen = Array.from({ length: 101 }, (_, i) => ({
+      id: `01HZZGEN${String(i).padStart(18, "0")}`,
+      fhir_id: `0b3c1d2e-3333-4aaa-8bbb-${String(i).padStart(12, "0")}`,
+      merged_into: null,
+      merged_at: null,
+    }));
+    const row = audRow(0, {
+      id: "a0000000-0000-4000-8000-0000000002a0",
+      occurred_at: "2026-09-21T10:00:00+00:00",
+      action: "search",
+      resource_type: "Encounter",
+      patient_ids: gen.map((p) => p.id),
+    });
+    const refs = { patientFhirIds: new Map(gen.map((p) => [p.id, p.fhir_id])) };
+    const res = mapAuditEvent(row, refs, STAFF) as NonNullable<ReturnType<typeof mapAuditEvent>>;
+    const m: Mapped = { res, owner: gen[0].id, patients: auditEntityPatients(row, refs), readPatient: null };
+    expect(m.patients.length).toBe(101);
+    // Not the first event of the page: it waits for the next page.
+    const audited = new Set(["01HZZREQUESTED000000000000"]);
+    expect(fitToAudit(audited, m, false)).toBeNull();
+    expect(audited.size).toBe(1);
+    // The first event of a page: served, naming only the patients the audit records.
+    const served = fitToAudit(audited, m, true) as Mapped;
+    expect(audited.size).toBe(MAX_AUDITED_PATIENTS);
+    const named = (served.res.entity ?? []).filter((e) => e.role?.code === "1").map((e) => e.what?.reference);
+    expect(named.length).toBe(99);
+    const byFhir = new Map(gen.map((p) => [`Patient/${p.fhir_id}`, p.id]));
+    for (const ref of named) expect(audited.has(byFhir.get(ref as string) as string)).toBe(true);
+    // The searched type is still there.
+    expect(served.res.entity?.some((e) => e.role?.code === "24")).toBe(true);
+    expect(validateResource(served.res, auditEventModule.validate)).toEqual([]);
+
+    // Through the gateway: a read of that event names 100 patients, all recorded.
+    const { call, audits } = setup({ tables: { ...TABLES, patients: [...(TABLES.patients as Json[]), ...gen], access_audit: [row] } });
+    const a = await json(await call(`/fhir/R4/AuditEvent/${row.id}`, AUDITOR));
+    const refsServed = (a.entity as Json[]).filter((e) => e.role.code === "1").map((e) => e.what.reference as string);
+    expect(refsServed.length).toBe(100);
+    const permit = audits.filter((x) => x.p_decision === "permit").pop() as Json;
+    expect(permit.p_patient_ids.length).toBe(100);
+    for (const ref of refsServed) expect(permit.p_patient_ids).toContain(byFhir.get(ref));
   });
 
   it("fails closed when the database refuses the caller", async () => {

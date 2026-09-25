@@ -9,6 +9,8 @@ import { ALLERGY_STATUS_MAPS } from "./allergy";
 import { DOCUMENT_STATUS_MAPS } from "./document";
 import { CONSENT_STATUS_MAPS } from "./consent";
 import { DIRECTORY_STATUS_MAPS } from "./directory";
+import { PROVENANCE_STATUS_MAPS } from "../../mappers/provenance";
+import { AUDIT_EVENT_STATUS_MAPS } from "../../mappers/auditEvent";
 
 export const STATUS_MAPS: readonly StatusMap[] = [
   ENCOUNTER_STATUS,
@@ -20,4 +22,6 @@ export const STATUS_MAPS: readonly StatusMap[] = [
   ...DOCUMENT_STATUS_MAPS,
   ...CONSENT_STATUS_MAPS,
   ...DIRECTORY_STATUS_MAPS,
+  ...PROVENANCE_STATUS_MAPS,
+  ...AUDIT_EVENT_STATUS_MAPS,
 ];

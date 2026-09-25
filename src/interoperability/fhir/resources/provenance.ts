@@ -66,7 +66,7 @@ export const definition: ResourceDefinition = {
     "Derived and stable: labrel-<lab_result_release_log.id>, merge-<patient_merges.id>, docup-<patient_documents.id>",
   fields: [
     "target (laboratory events: the result Observation lab-<id> and its DiagnosticReport; merges: the kept and the merged-away Patient; uploads: the DocumentReference)",
-    "recorded (the server time the event was stored)",
+    "recorded (when the event was stored: server-stamped for laboratory events and merges; an upload's time is the database default, which a client could still set)",
     "activity (local provenance-activity code: lab-review, lab-release, lab-withhold, patient-merge; an upload is v3-DataOperation CREATE)",
     "agent (a Practitioner when the staff directory resolves the account the server stamped, else display-only; type verifier for a review only)",
     "entity (merges: the merged-away Patient, role source)",
