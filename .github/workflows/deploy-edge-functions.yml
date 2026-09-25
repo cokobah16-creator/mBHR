@@ -1,0 +1,193 @@
+name: Deploy edge functions
+
+# Manual: Actions > Deploy edge functions > Run workflow.
+# Automatic: a pull request that changes staff-admin or the shared function
+# code runs only the check below for staff-admin (no secrets, no deploy).
+#
+#   check   Type-checks one edge function with Deno. Needs no secrets and no
+#           approval, and writes nothing anywhere. Runs from any branch, so it
+#           can be tried on a pull request branch before merging.
+#   list    Checks the function, then lists the functions deployed on
+#           production (names, versions, dates). Needs the production approval.
+#   deploy  Checks the function, then deploys it to production. Needs the
+#           phrase "deploy to production" in the confirm box, the production
+#           approval, and must be run from mainone.
+#
+#   function   Which function (a folder under supabase/functions).
+#   typecheck  Turn off only if the type check itself is broken for a reason
+#              you understand; the deploy then goes ahead unchecked.
+#
+# Why this exists: CI never type-checks edge functions (tsconfig.json only
+# includes src, and nothing runs `deno check`), and the CLI deploys without
+# type-checking. A type error would otherwise surface only in production.
+# Deploying from here also means nobody needs the CLI or an access token on
+# their own machine.
+#
+# JWT verification stays on: each function's verify_jwt comes from
+# supabase/config.toml, and this workflow never passes --no-verify-jwt.
+#
+# The repository is public, so nothing here prints a secret's value, the
+# function's secrets or any SQL. Secrets are named only when they are missing.
+#
+# Setting the function's own secrets (ALLOWED_ORIGINS and so on) is done in
+# the Supabase dashboard, not here: see docs/deployment/STAFF_ADMIN_FUNCTION.md.
+
+on:
+  pull_request:
+    paths:
+      - "supabase/functions/staff-admin/**"
+      - "supabase/functions/_shared/**"
+      - ".github/workflows/deploy-edge-functions.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "check, list or deploy"
+        type: choice
+        options:
+          - check
+          - list
+          - deploy
+        default: check
+      function:
+        description: "The edge function (a folder under supabase/functions)"
+        type: choice
+        options:
+          - staff-admin
+          - send-otp-email
+          - send-otp-sms
+          - send-sms-reminder
+          - tefca-bulk
+          - tefca-ias
+          - tefca-oauth
+        default: staff-admin
+      confirm:
+        description: 'deploy only: type "deploy to production"'
+        type: string
+        default: ""
+      typecheck:
+        description: "Type-check the function with Deno first"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check (${{ inputs.function || 'staff-admin' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # A pull request has no inputs: it checks staff-admin.
+      FN: ${{ inputs.function || 'staff-admin' }}
+      TYPECHECK: ${{ github.event_name == 'pull_request' || inputs.typecheck }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check the function folder exists
+        run: |
+          if ! printf '%s' "$FN" | grep -qE '^[a-z0-9][a-z0-9-]*$'; then
+            echo "::error::Not a function name: $FN"
+            exit 1
+          fi
+          if [ ! -f "supabase/functions/$FN/index.ts" ]; then
+            echo "::error::supabase/functions/$FN/index.ts does not exist on this branch."
+            exit 1
+          fi
+
+      - name: Setup Deno
+        if: env.TYPECHECK == 'true'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Type-check the function
+        if: env.TYPECHECK == 'true'
+        env:
+          # The repository root has a package.json (the web app). If Deno saw
+          # it, it would look for npm: packages in a node_modules folder that
+          # this job never installs. The functions are copied somewhere with
+          # no package.json above them, and package.json discovery is off.
+          DENO_NO_PACKAGE_JSON: "1"
+        run: |
+          work="$RUNNER_TEMP/functions"
+          rm -rf "$work"
+          cp -R supabase/functions "$work"
+          cd "$work"
+          deno check "$FN/index.ts"
+          echo "Type check passed for $FN."
+
+      - name: Type check skipped
+        if: env.TYPECHECK != 'true'
+        run: echo "::warning::The type check was turned off for this run, so $FN was not checked."
+
+  production:
+    name: Production (${{ inputs.action }} ${{ inputs.function }})
+    needs: check
+    if: github.event_name == 'workflow_dispatch' && (inputs.action == 'list' || inputs.action == 'deploy')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    # One production run at a time; a second run waits for the first.
+    concurrency:
+      group: deploy-edge-functions-production
+      cancel-in-progress: false
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      FN: ${{ inputs.function }}
+    steps:
+      - name: Refuse deploy without the confirmation phrase
+        if: inputs.action == 'deploy' && inputs.confirm != 'deploy to production'
+        run: |
+          echo "::error::To deploy to production, type exactly: deploy to production"
+          exit 1
+
+      - name: Refuse to deploy from a branch other than mainone
+        if: inputs.action == 'deploy' && github.ref != 'refs/heads/mainone'
+        run: |
+          echo "::error::Deploy from mainone, the branch production is deployed from (got ${GITHUB_REF})."
+          exit 1
+
+      - name: Check the Supabase secrets are set
+        run: |
+          missing=""
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN"
+          [ -n "$SUPABASE_PROJECT_REF" ] || missing="$missing SUPABASE_PROJECT_REF"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets in the production environment:$missing"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pinned: "latest" asks the GitHub API which release is newest, and
+      # that call has hit GitHub's rate limit. Update the pin deliberately.
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.118.0
+
+      - name: Functions deployed on production
+        if: inputs.action == 'list'
+        run: supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy the function to production
+        if: inputs.action == 'deploy'
+        run: supabase functions deploy "$FN" --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Functions deployed on production afterwards
+        if: inputs.action == 'deploy'
+        run: supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Next steps
+        if: inputs.action == 'deploy'
+        run: |
+          echo "::notice::Deployed $FN. Check the function's secrets in the dashboard; see docs/deployment/STAFF_ADMIN_FUNCTION.md"
+          {
+            echo "### Deployed \`$FN\`"
+            echo
+            echo "Check the function's secrets in the dashboard; see docs/deployment/STAFF_ADMIN_FUNCTION.md"
+          } >> "$GITHUB_STEP_SUMMARY"
