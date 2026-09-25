@@ -277,12 +277,22 @@ Before enabling anywhere with real data:
    ([inventory, section 5](architecture-inventory.md#5-production-database));
    which ones it has is not verified. Without them the affected requests
    fail closed (503); nothing falls back.
-2. A clinician has signed off sections 2.5 and 2.7 of the clinical change
+2. **Nobody can make themselves staff.** The gateway takes every caller's
+   role from `public.app_users`, so that table must refuse writes from
+   ordinary accounts: `20260925160000_hotfix_app_users_public_write.sql`
+   (applied to production on 25 September 2026) and Wave A's
+   `20260924110200_rls_staff_conflicts_messaging.sql` (which resets every
+   `app_users` policy) must both be on the database. On a database with an
+   open `app_users` write policy, any self-registered account could add
+   an admin row for itself and then read every patient over FHIR.
+3. A clinician has signed off sections 2.5 and 2.7 of the clinical change
    log.
-3. `FHIR_AUDIT_IP_SECRET` is set if IP hashes are wanted in the audit.
-4. The open items in [security.md](security.md#known-security-limitations)
+4. `FHIR_AUDIT_IP_SECRET` is set if IP hashes are wanted in the audit.
+5. The open items in [security.md](security.md#known-security-limitations)
    and the risks in [privacy-data-flow.md](privacy-data-flow.md#11-risks)
-   have an owner decision.
+   have an owner decision, including the [open owner
+   decisions](security.md#open-owner-decisions) on what staff may read
+   beyond the staff app.
 
 ### Trying it on a preview
 

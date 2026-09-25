@@ -123,6 +123,21 @@ Row-level security may narrow this further: if a table's policies are
 narrower than these permissions, the caller gets fewer rows (or none).
 The table above is the single place to change what the gateway allows.
 
+### Open owner decisions
+
+The owner's rule is that FHIR never lets staff read more than the staff
+app shows. Two rows of the table go beyond today's staff app. They are
+defaults chosen during the build, not settled decisions, and need the
+owner's decision before the gateway is enabled with real data:
+
+| Type | Who can read it | What the staff app shows today | Options |
+| --- | --- | --- | --- |
+| DocumentReference, Binary | consult (doctor, lead clinician, admin): every patient's document list and files, portal uploads and insurance documents included | No staff screen reads patient documents; only the patient portal does | Keep for consult; or patients only (their own files) until a staff documents screen exists |
+| AuditEvent | audit_access (admin, lead clinician, auditor): the FHIR access trail for any patient | No staff screen shows the FHIR access trail per patient | Keep for audit_access; or refuse until an audit screen exists |
+
+The clinical change log lists the documents question for sign-off
+(`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, section 2.7).
+
 ## Patient self-access
 
 Off unless `FHIR_PATIENT_ACCESS_ENABLED` is set. The model:
@@ -344,6 +359,7 @@ by the gateway; several are also in the CapabilityStatement notes.
 
 | Limitation | Effect | Notes |
 | --- | --- | --- |
+| **Staff roles come from `public.app_users`** | If that table accepts writes from ordinary accounts, anyone who signs up could make themselves admin and read every patient over FHIR. | Production's open write policy was closed by `20260925160000` (25 September 2026); Wave A's `20260924110200` resets every `app_users` policy. Both are enablement preconditions ([README](README.md#state)). The gateway cannot detect an open policy itself. |
 | **Organisation scoping is not applied** | Any permitted staff member can read any patient row-level security lets them see, whatever their organisation or site. | mBHR clinical rows carry no organisation or site (F6). Every decision records `org_scope_not_applied`. Blocks external and multi-organisation use (F4). |
 | **`public.canonical_patient_id(text)` is executable by `authenticated`** | Any signed-in account (sign-up is open) that knows an internal patient id can learn whether that record was merged and the internal id of the kept record. No clinical data is returned. | Existing code (`20260925100000_sync_authority_foundation.sql`, SECURITY DEFINER), not part of this work; the gateway does not call it. Narrowing the grant belongs to that migration's owners. |
 | **AuditEvent `agent` search is not implemented** | An auditor cannot list what one staff member accessed through FHIR; they can search by patient or by a date range of at most 31 days. | The directory does not map a Practitioner id back to an account for the audit function. |
