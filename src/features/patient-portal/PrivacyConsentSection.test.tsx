@@ -11,6 +11,11 @@ import { PrivacyConsentSection } from "./PrivacyConsentSection";
 import { BANNED_WORDS } from "./privacyCopy";
 
 const ID = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c01";
+const ID_DENY = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c02";
+const ID_MIXED = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c03";
+const ID_ADR = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c04";
+const ID_TREAT = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c05";
+const PATIENT = "01HXPAGEPATIENT";
 
 const activeRecord = {
   id: ID,
@@ -23,6 +28,27 @@ const activeRecord = {
   withdrawn: false,
   withdrawn_at: null,
   provisions: [{ provision_type: "permit", actor_type: "external_system", purpose: "PATRQT" }],
+};
+
+const denyRecord = {
+  ...activeRecord,
+  id: ID_DENY,
+  provisions: [{ provision_type: "deny", actor_type: "external_system", purpose: null }],
+};
+const mixedRecord = {
+  ...activeRecord,
+  id: ID_MIXED,
+  provisions: [
+    { provision_type: "permit", actor_type: "external_system", purpose: "PATRQT" },
+    { provision_type: "deny", actor_type: "organization", purpose: "HRESCH" },
+  ],
+};
+const adrRecord = { ...activeRecord, id: ID_ADR, scope: "adr", provisions: [] };
+const treatmentRecord = {
+  ...activeRecord,
+  id: ID_TREAT,
+  scope: "treatment",
+  provisions: [{ provision_type: "permit", actor_type: "practitioner", purpose: "TREAT" }],
 };
 
 function makeClient(handlers: Record<string, () => { data: unknown; error: unknown }>) {
@@ -39,13 +65,77 @@ describe("PrivacyConsentSection", () => {
     const { client } = makeClient({
       interop_my_consents: () => ({ data: null, error: { code: "PGRST202", message: "x" } }),
     });
-    render(<PrivacyConsentSection client={client} />);
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
     expect(
       screen.getByText("The mBHR care team uses your records to care for you."),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText("It is separate from your sharing choices further down this page."),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/does not share your records/i);
     expect(await screen.findByText("This list is not available yet.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+  });
+
+  it("asks for the page's patient only, and says so plainly when the list is empty", async () => {
+    const { client, rpc } = makeClient({
+      interop_my_consents: () => ({ data: [], error: null }),
+    });
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
+    expect(await screen.findByText("No choices are recorded here.")).toBeInTheDocument();
+    expect(screen.getByText("Your recorded choices")).toBeInTheDocument();
+    expect(rpc).toHaveBeenCalledWith("interop_my_consents", { p_patient_id: PATIENT });
+  });
+
+  it("does not call the server without a patient id", async () => {
+    const { client, rpc } = makeClient({
+      interop_my_consents: () => ({ data: [], error: null }),
+    });
+    render(<PrivacyConsentSection patientId="" client={client} />);
+    expect(await screen.findByText("Sign in online to see this list.")).toBeInTheDocument();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("shows a refusal as the patient's refusal, with no Withdraw button", async () => {
+    const { client } = makeClient({
+      interop_my_consents: () => ({ data: [denyRecord, mixedRecord], error: null }),
+    });
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
+    expect(
+      await screen.findByText("You asked us not to share your records outside mBHR"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("You asked us not to share your records outside mBHR (for research)"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Ask clinic staff if you want to change this\./)).toHaveLength(2);
+    expect(screen.getByText(/This choice also allows some sharing\./)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Withdraw/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Sharing your records outside mBHR/)).not.toBeInTheDocument();
+  });
+
+  it("never shows a record with no rules as a permission", async () => {
+    const { client } = makeClient({
+      interop_my_consents: () => ({ data: [{ ...activeRecord, provisions: [] }], error: null }),
+    });
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
+    expect(
+      await screen.findByText("A choice about sharing your records outside mBHR"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("It does not say what is allowed. Ask clinic staff about it."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Withdraw/ })).not.toBeInTheDocument();
+  });
+
+  it("does not list treatment consents or advance care wishes", async () => {
+    const { client } = makeClient({
+      interop_my_consents: () => ({ data: [adrRecord, treatmentRecord], error: null }),
+    });
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
+    expect(await screen.findByText("No choices are recorded here.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Withdraw/ })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/future care|for your care/i);
   });
 
   it("does not call the server while offline", async () => {
@@ -53,7 +143,7 @@ describe("PrivacyConsentSection", () => {
     const { client, rpc } = makeClient({
       interop_my_consents: () => ({ data: [], error: null }),
     });
-    render(<PrivacyConsentSection client={client} />);
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
     expect(
       await screen.findByText("You are offline. Connect to the internet to see this list."),
     ).toBeInTheDocument();
@@ -81,7 +171,7 @@ describe("PrivacyConsentSection", () => {
         return { data: true, error: null };
       },
     });
-    render(<PrivacyConsentSection client={client} />);
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
 
     expect(await screen.findByText(/Sharing your records outside mBHR/)).toBeInTheDocument();
     expect(screen.getByText("In place")).toBeInTheDocument();
@@ -89,6 +179,14 @@ describe("PrivacyConsentSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^Withdraw:/ }));
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "mBHR will record that you withdrew this permission. It will no longer count as your permission.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("You cannot undo this here. To give permission again, ask clinic staff."),
+    ).toBeInTheDocument();
     expect(rpc).toHaveBeenCalledTimes(1);
 
     fireEvent.change(screen.getByLabelText(/Why are you withdrawing it/), {
@@ -110,7 +208,7 @@ describe("PrivacyConsentSection", () => {
       interop_my_consents: () => ({ data: [activeRecord], error: null }),
       interop_withdraw_consent: () => ({ data: null, error: { code: "PGRST202" } }),
     });
-    render(<PrivacyConsentSection client={client} />);
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
     fireEvent.click(await screen.findByRole("button", { name: /^Withdraw:/ }));
     fireEvent.click(screen.getByRole("button", { name: "Withdraw permission" }));
     expect(
@@ -123,7 +221,7 @@ describe("PrivacyConsentSection", () => {
     const { client } = makeClient({
       interop_my_consents: () => ({ data: [activeRecord], error: null }),
     });
-    render(<PrivacyConsentSection client={client} />);
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
     await screen.findByText(/Sharing your records outside mBHR/);
     const text = document.body.textContent ?? "";
     for (const w of BANNED_WORDS) {

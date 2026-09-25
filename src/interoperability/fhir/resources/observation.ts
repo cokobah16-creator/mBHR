@@ -7,12 +7,16 @@
 // code, status, _id or based-on can only match one source reads only that
 // one. Laboratory rows are read only by staff with consult or lab_review
 // (restriction "no_lab_rows" otherwise) and, for a patient, only results
-// that were reviewed and released to them.
+// that were reviewed and released to them. Other staff are told so: a
+// search that could select laboratory rows carries LAB_RESULTS_WITHHELD,
+// and reading a laboratory Observation answers 403, as DiagnosticReport
+// does. Both depend only on the caller's permissions and the query, never
+// on whether a laboratory row exists.
 
-import type { Observation } from "../types/fhir";
+import type { Observation, OperationOutcomeIssue } from "../types/fhir";
 import { READ_PERMISSIONS } from "../authorization/permissions";
-import { VITALS_COLUMNS, mapVitalSign, parseObservationId } from "../mappers/observation";
-import { LOCAL, LOINC, OBSERVATION_CATEGORY, VITAL_SIGNS, type VitalSignDef } from "../terminology/codeSystems";
+import { VITALS_COLUMNS, mapVitalSign, parseObservationId, vitalSignCode } from "../mappers/observation";
+import { OBSERVATION_CATEGORY, VITAL_SIGNS, type VitalSignDef } from "../terminology/codeSystems";
 import { referenceContext } from "../patients/canonical";
 import { errors } from "../errors/operationOutcome";
 import { parseId, parseReferenceId, parseToken, type Cursor, type ParsedSearch } from "../search/params";
@@ -27,9 +31,10 @@ import {
   ownersOf,
   patientNotes,
   scopeFilter,
+  statusCode,
   type Filters,
 } from "./shared";
-import { LAB_OBSERVATION_PREFIX, labObservationSource, validateLabObservation } from "./labObservation";
+import { LAB_OBSERVATION_PREFIX, OBSERVATION_STATUS_SYSTEM, labObservationSource, validateLabObservation } from "./labObservation";
 
 export const observationDefinition: ResourceDefinition = {
   type: "Observation",
@@ -65,9 +70,10 @@ export const observationDefinition: ResourceDefinition = {
     {
       name: "code",
       type: "token",
-      documentation: "A LOINC code from the vital signs profile, an mBHR vitals column code, or an mBHR laboratory test code.",
+      documentation:
+        "A code the Observation's own code carries: a LOINC code from the vital signs profile, an mBHR vitals column code, or an mBHR laboratory test code. A blood pressure matches on its panel code (85354-9) only, not on the systolic or diastolic codes of its components.",
     },
-    { name: "status", type: "token", documentation: "final or preliminary." },
+    { name: "status", type: "token", documentation: "An observation-status code: final or preliminary." },
     { name: "based-on", type: "reference", documentation: "ServiceRequest/[id]: the laboratory order (laboratory results only)." },
   ],
   requiredSearch: [["_id"], ["patient"], ["subject"], ["encounter"], ["based-on"]],
@@ -77,21 +83,26 @@ export const observationDefinition: ResourceDefinition = {
   patientAccess: true,
   sensitiveSearch: true,
   notes: [
-    "Laboratory results need consult or lab_review; other staff see vital signs only.",
-    "Patients see portal-visible vital signs and laboratory results released to them.",
+    "Laboratory results need consult or lab_review; other staff see vital signs only. Their searches carry a note saying so, and reading a laboratory result answers 403.",
   ],
+  patientAccessNotes: ["Patients see portal-visible vital signs and laboratory results released to them."],
 };
 
 const START = "start";
 
-/** Vital-sign kinds a code= token selects (LOINC from the profile, or a local column code). */
+/**
+ * Vital-sign kinds a code= token selects: exactly the codings the
+ * Observation's own code carries (LOINC from the profile, and the local
+ * column code of a single-column kind). A blood-pressure panel matches on
+ * its panel code only: its systolic and diastolic codes are on its
+ * components, which code= does not search.
+ */
 function kindsForCode(raw: string): Set<string> {
   const t = parseToken(raw, "code");
   const kinds = new Set<string>();
   for (const def of VITAL_SIGNS) {
-    const loinc = def.loinc.some((c) => c.code === t.code) && (t.system === null || t.system === LOINC);
-    const local = def.columns.includes(t.code) && (t.system === null || t.system === LOCAL.vitals);
-    if (loinc || local) kinds.add(def.kind);
+    const codings = vitalSignCode(def).coding ?? [];
+    if (codings.some((c) => c.code === t.code && (t.system === null || t.system === c.system))) kinds.add(def.kind);
   }
   return kinds;
 }
@@ -105,7 +116,7 @@ function vitalKinds(search: ParsedSearch): Set<string> {
     if (t.code !== "vital-signs" || (t.system !== null && t.system !== OBSERVATION_CATEGORY)) return new Set();
   }
   const status = one(search, "status");
-  if (status && parseToken(status, "status").code !== "final") return new Set();
+  if (status && statusCode(status, "status", OBSERVATION_STATUS_SYSTEM) !== "final") return new Set();
   if (one(search, "based-on")) return new Set();
   const code = one(search, "code");
   if (code) {
@@ -125,6 +136,14 @@ function vitalKinds(search: ParsedSearch): Set<string> {
 function labAllowed(ctx: QueryCtx): boolean {
   return !ctx.restrictions.has("no_lab_rows");
 }
+
+/** The searchset note for staff under "no_lab_rows" whose search could select laboratory rows. */
+export const LAB_RESULTS_WITHHELD: OperationOutcomeIssue = {
+  severity: "information",
+  code: "suppressed",
+  diagnostics:
+    "Laboratory results are not included: reading them needs the consult or lab_review permission. An empty or short result does not mean the patient has no laboratory results.",
+};
 
 /** Only rows that can yield at least one of the kinds (keeps pages full; phase1-audit D2). */
 function measuredFilter(defs: VitalSignDef[]): Filters {
@@ -184,7 +203,8 @@ async function vitalsPhase(
 
 async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
   if (id.startsWith(LAB_OBSERVATION_PREFIX)) {
-    if (!labAllowed(ctx)) return emptyResult();
+    // Decided from the id alone, before any lookup: says nothing about whether the result exists.
+    if (!labAllowed(ctx)) throw errors.forbidden("Laboratory results need the consult or lab_review permission.");
     return labObservationSource.read(ctx, id);
   }
   const parsed = parseObservationId(id);
@@ -203,6 +223,10 @@ async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
 
 async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult> {
   const notes = patientNotes(ctx);
+  // From the caller's permissions and the query only (selects() reads no row).
+  if (!labAllowed(ctx) && labObservationSource.selects(search)) {
+    notes.outcomes = [...(notes.outcomes ?? []), LAB_RESULTS_WITHHELD];
+  }
   const named = namedPatientFilter(ctx);
   if (named === null) return emptyResult(notes);
 

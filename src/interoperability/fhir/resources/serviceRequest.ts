@@ -17,7 +17,7 @@ import { LOWER_UUID, SERVICE_REQUEST_COLUMNS, mapServiceRequest, type ServiceReq
 import type { Row } from "../mappers/common";
 import { referenceContext } from "../patients/canonical";
 import { pgrstQuote } from "../gateway/postgrest";
-import { FHIR_ID, parseId, parseToken, parseReferenceId, type ParsedSearch } from "../search/params";
+import { FHIR_ID, parseId, parseReferenceId, type ParsedSearch } from "../search/params";
 import { SERVICE_REQUEST_STATUS } from "../terminology/status/laboratory";
 import { knownSourceValues, sourceValuesFor } from "../terminology/statusMaps";
 import type { AddIssue } from "../validation/validate";
@@ -31,6 +31,7 @@ import {
   ownersOf,
   patientNotes,
   scopeFilter,
+  statusCode,
   type Filters,
 } from "./shared";
 import { codeFilters, labCodeEntry, staffMayReadLabs } from "./labObservation";
@@ -56,7 +57,7 @@ export const definition: ResourceDefinition = {
     { name: "patient", type: "reference", documentation: "Patient/[id]. Required unless _id or encounter is given." },
     { name: "subject", type: "reference", documentation: "Same as patient (Patient/[id] only)." },
     { name: "encounter", type: "reference", documentation: "Encounter/[id]: orders placed in that visit." },
-    { name: "status", type: "token", documentation: "active, completed, revoked or unknown (the published status, see the status map)." },
+    { name: "status", type: "token", documentation: "A request-status code: active, completed, revoked or unknown (the published status, see the status map)." },
     {
       name: "authored",
       type: "date",
@@ -82,6 +83,9 @@ export const definition: ResourceDefinition = {
     "Clinical notes on the order, the specimen type and the ordering account id are never published.",
   ],
 };
+
+/** The R4 code system of ServiceRequest.status. */
+const REQUEST_STATUS_SYSTEM = "http://hl7.org/fhir/request-status";
 
 /** lab_orders.status values per published status (matched case-insensitively, as the mapper compares). */
 function statusFilter(code: string): Filters | null {
@@ -151,7 +155,8 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   filters.push(...dateFilters("ordered_at", search.values.get("authored"), "authored"));
   const status = one(search, "status");
   if (status) {
-    const f = statusFilter(parseToken(status, "status").code);
+    const code = statusCode(status, "status", REQUEST_STATUS_SYSTEM);
+    const f = code === null ? null : statusFilter(code);
     if (f) filters.push(...f);
     else matchesNothing = true;
   }

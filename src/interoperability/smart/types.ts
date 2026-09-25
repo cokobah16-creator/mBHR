@@ -26,7 +26,9 @@ export type SmartScopeSyntax = "v1" | "v2";
 /** One `name=value` pair of a SMART v2 granular scope
  *  (`patient/Observation.rs?category=...`). Values are kept exactly as
  *  written (not percent-decoded) and compared as text. Several pairs are
- *  combined with AND, as in a FHIR search. */
+ *  combined with AND, as in a FHIR search. `name` is always a search
+ *  filter (a resource search parameter or `_id`), never a parameter such
+ *  as `_include` that would add to a result. */
 export interface SmartScopeConstraint {
   name: string;
   value: string;
@@ -84,6 +86,9 @@ export type SmartScopeParseError =
   | "invalid_permissions"
   | "permissions_out_of_order"
   | "invalid_query"
+  /** A well-formed query whose parameter is not a search filter
+   *  (`_include`, `_revinclude`, `_elements`, `_summary`, `_count`, …). */
+  | "unsupported_constraint"
   | "query_not_allowed_in_v1"
   | "unsupported_launch_context";
 

@@ -138,6 +138,32 @@ describe("parseSmartScope: malformed input is refused, never repaired", () => {
     ["patient/Observation.rs?a=b=c", "invalid_query"],
     ["patient/Observation.rs?a=b#frag", "invalid_query"],
     ["patient/Observation.rs?1a=b", "invalid_query"],
+    ["patient/Observation.rs?_has:Observation:patient:code=1234-5", "invalid_query"],
+    // Well formed, but not a search filter: these add to or reshape a
+    // result, so they are refused, never taken as a narrowing constraint.
+    ["patient/Observation.rs?_include=Observation:subject", "unsupported_constraint"],
+    ["patient/Observation.rs?_include:iterate=Observation:subject", "unsupported_constraint"],
+    ["patient/Observation.rs?_revinclude=Provenance:target", "unsupported_constraint"],
+    ["patient/Observation.rs?_elements=code", "unsupported_constraint"],
+    ["patient/Observation.rs?_summary=true", "unsupported_constraint"],
+    ["patient/Observation.rs?_contained=true", "unsupported_constraint"],
+    ["patient/Observation.rs?_containedType=contained", "unsupported_constraint"],
+    ["patient/Observation.rs?_count=1000", "unsupported_constraint"],
+    ["patient/Observation.rs?_has:Observation=x", "unsupported_constraint"],
+    ["patient/Observation.rs?_has=x", "unsupported_constraint"],
+    ["patient/Observation.rs?_sort=date", "unsupported_constraint"],
+    ["patient/Observation.rs?_total=accurate", "unsupported_constraint"],
+    ["patient/Observation.rs?_query=everything", "unsupported_constraint"],
+    ["patient/Observation.rs?_filter=code", "unsupported_constraint"],
+    ["patient/Observation.rs?_type=Patient", "unsupported_constraint"],
+    ["patient/Observation.rs?_format=json", "unsupported_constraint"],
+    ["patient/Observation.rs?_cursor=abc", "unsupported_constraint"],
+    ["patient/Observation.rs?_security=R", "unsupported_constraint"],
+    ["patient/Observation.rs?_ID=abc", "unsupported_constraint"],
+    ["patient/Observation.rs?_=abc", "unsupported_constraint"],
+    // A filter next to it does not make it acceptable.
+    ["patient/Observation.rs?category=laboratory&_revinclude=Provenance:target", "unsupported_constraint"],
+    ["system/*.rs?_include=*", "unsupported_constraint"],
     ["launch/practitioner", "unsupported_launch_context"],
     ["launch/", "unsupported_launch_context"],
   ];
@@ -155,6 +181,18 @@ describe("parseSmartScope: malformed input is refused, never repaired", () => {
     expect(errorOf(`patient/Observation.rs?${ten}`)).toBeNull();
   });
 
+  it("accepts search filters as constraints: resource search parameters (with a modifier) and _id", () => {
+    expect(parsed("patient/Observation.rs?_id=abc")).toMatchObject({ constraints: [{ name: "_id", value: "abc" }] });
+    for (const token of [
+      "patient/Observation.rs?_id:not=abc",
+      "patient/Observation.rs?code:text=glucose",
+      "patient/Observation.rs?subject:Patient=abc",
+      "patient/Observation.rs?date=ge2026-01-01&status=final",
+    ]) {
+      expect([token, errorOf(token)]).toEqual([token, null]);
+    }
+  });
+
   it("does not treat inherited object keys as scopes", () => {
     expect(errorOf("constructor")).toBe("unknown_scope");
     expect(errorOf("__proto__")).toBe("unknown_scope");
@@ -166,7 +204,7 @@ describe("parseSmartScope: wildcards only where the spec allows", () => {
   it("allows * as the whole resource type", () => {
     expect(parsed("patient/*.rs")).toMatchObject({ resourceType: "*" });
     expect(parsed("user/*.read")).toMatchObject({ resourceType: "*" });
-    expect(parsed("system/*.rs?_security=R")).toMatchObject({ resourceType: "*" });
+    expect(parsed("system/*.rs?_id=abc")).toMatchObject({ resourceType: "*" });
   });
 
   it("allows .* only as the v1 permission", () => {
@@ -287,9 +325,27 @@ describe("intersectScopes", () => {
         "patient/*.rs",
       ).granted,
     ).toEqual(["patient/Observation.rs?category=laboratory&category=vital-signs"]);
-    expect(intersectScopes("patient/*.rs?_security=R", "patient/Observation.rs", "patient/*.rs").granted).toEqual([
-      "patient/Observation.rs?_security=R",
+    expect(intersectScopes("patient/*.rs?_id=abc", "patient/Observation.rs", "patient/*.rs").granted).toEqual([
+      "patient/Observation.rs?_id=abc",
     ]);
+  });
+
+  it("never grants _include or _revinclude as a narrowing constraint, from the request or a limit", () => {
+    const r = intersectScopes(
+      "patient/Observation.rs?_include=Observation:subject patient/Observation.rs?_revinclude=Provenance:target",
+      "patient/Observation.rs",
+      "patient/Observation.rs",
+    );
+    expect(r.granted).toEqual([]);
+    expect(r.refused).toEqual([
+      { scope: "patient/Observation.rs?_include=Observation:subject", reason: "malformed", error: "unsupported_constraint" },
+      { scope: "patient/Observation.rs?_revinclude=Provenance:target", reason: "malformed", error: "unsupported_constraint" },
+    ]);
+    // A limit entry with one allows nothing (it is malformed), so it cannot
+    // pass the parameter on to a grant.
+    const byClient = intersectScopes("patient/Observation.rs", "patient/Observation.rs?_revinclude=Provenance:target", "patient/*.rs");
+    expect(byClient.granted).toEqual([]);
+    expect(byClient.refused).toEqual([{ scope: "patient/Observation.rs", reason: "not_allowed", by: "client" }]);
   });
 
   it("requires exact matches for non-resource scopes", () => {
@@ -384,7 +440,7 @@ describe("intersection never widens (generated cases)", () => {
   const perms = ["r", "s", "rs", "cruds", "cud", "read", "write", "*", "rd"];
   const queries = ["", "", "", "?category=laboratory", "?code=a", "?category=vital-signs&code=b"];
   const simple = ["openid", "fhirUser", "profile", "launch", "launch/patient", "launch/encounter", "offline_access", "online_access"];
-  const malformed = ["patient/Obs*.rs", "patient/*", "bogus", "patient/Observation.sr", "*/*.*"];
+  const malformed = ["patient/Obs*.rs", "patient/*", "bogus", "patient/Observation.sr", "*/*.*", "patient/Observation.rs?_include=Observation:subject"];
 
   const scope = (): string => {
     const roll = next() % 10;

@@ -61,10 +61,14 @@ import {
   one,
   patientFilter,
   scopeFilter,
+  statusCode,
   type Filters,
 } from "./shared";
 
 export { LAB_OBSERVATION_PREFIX } from "../mappers/laboratory";
+
+/** The R4 code system of Observation.status (a status= token in another system matches nothing). */
+export const OBSERVATION_STATUS_SYSTEM = "http://hl7.org/fhir/observation-status";
 
 export interface LabSearchInput {
   ctx: QueryCtx;
@@ -299,7 +303,8 @@ function parseLabQuery(search: ParsedSearch): LabQuery | null {
   const categoryParam = one(search, "category");
   const category = categoryParam ? parseToken(categoryParam, "category") : null;
   const statusParam = one(search, "status");
-  const statusCode = statusParam ? parseToken(statusParam, "status").code : null;
+  // null for a status in another code system: then no result can match.
+  const status = statusParam ? statusCode(statusParam, "status", OBSERVATION_STATUS_SYSTEM) : null;
   const codeParam = one(search, "code");
   const code = codeParam ? labCodeEntry(codeParam) : null;
   const idParam = one(search, "_id");
@@ -310,7 +315,7 @@ function parseLabQuery(search: ParsedSearch): LabQuery | null {
   if (category && (category.code !== "laboratory" || (category.system !== null && category.system !== OBSERVATION_CATEGORY))) {
     return null;
   }
-  if (statusCode !== null && statusCode !== "final" && statusCode !== "preliminary") return null;
+  if (statusParam && status !== "final" && status !== "preliminary") return null;
   if (codeParam && !code) return null;
   let resultId: string | null = null;
   if (id !== null) {
@@ -319,8 +324,7 @@ function parseLabQuery(search: ParsedSearch): LabQuery | null {
     if (!LOWER_UUID.test(resultId)) return null;
   }
   if (orderId !== null && !LOWER_UUID.test(orderId)) return null;
-  const status = statusCode as LabQuery["status"];
-  return { resultId, orderId, visitId, code, status, dates, dateRaw };
+  return { resultId, orderId, visitId, code, status: status as LabQuery["status"], dates, dateRaw };
 }
 
 /** Result-level SQL filters: a superset of the rows that map to the searched status (checked again after mapping). */

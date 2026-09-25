@@ -39,13 +39,13 @@ import {
   ownersOf,
   patientNotes,
   scopeFilter,
+  statusCode,
   type Filters,
 } from "./shared";
 import {
   catalogueEntries,
   practitionerIds,
   readableVisits,
-  statusCode,
   statusSearchFilter,
   visitPatientIds,
 } from "./medication";

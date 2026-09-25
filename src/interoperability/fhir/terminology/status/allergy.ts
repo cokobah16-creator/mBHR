@@ -7,7 +7,8 @@
 //                 mean resolved, outgrown, wrong patient, a duplicate or an
 //                 entry made in error). The only status mBHR keeps.
 //   allergy_type  medication | food | environmental | other. The form
-//                 pre-selects "medication".
+//                 pre-selects "medication", so a stored "medication" cannot
+//                 be told apart from "nobody chose".
 //   severity      mild | moderate | severe | life-threatening, a staff
 //                 rating of the allergy. The form pre-selects "mild", so a
 //                 stored "mild" cannot be told apart from "nobody chose".
@@ -95,24 +96,23 @@ export const ALLERGY_CATEGORY: StatusMap<AllergyCategory> = {
   source: "public.patient_allergies.allergy_type",
   valueSet: "http://hl7.org/fhir/ValueSet/allergy-intolerance-category",
   allowed: ["food", "medication", "environment", "biologic"],
+  // No rule for "medication": like the pre-selected "mild" severity below,
+  // the form's pre-selected type is not a statement. A food allergy saved
+  // without changing the type would otherwise go out as a medication
+  // allergy. Only a type someone chose (food, environmental) is published.
   rules: [
-    {
-      source: ["medication"],
-      fhir: "medication",
-      reason:
-        "Recorded as a medication allergy. The form pre-selects this type, so it may also mean nobody changed it; the app itself screens every active allergy against medicines whatever its type.",
-    },
-    { source: ["food"], fhir: "food", reason: "Recorded as a food allergy." },
+    { source: ["food"], fhir: "food", reason: "Staff chose food (the form pre-selects medication)." },
     {
       source: ["environmental"],
       fhir: "environment",
-      reason: "Recorded as environmental (the FHIR code is 'environment').",
+      reason: "Staff chose environmental (the FHIR code is 'environment'; the form pre-selects medication).",
     },
   ],
   missing: { fhir: null, reason: "No type recorded: no category." },
   unrecognised: {
     fhir: null,
-    reason: "'other' and any value the app does not write: no category (never guessed as 'biologic' or anything else).",
+    reason:
+      "'medication' is the form's pre-selected type and cannot be told apart from 'not chosen', so no category is stated for it (the app itself checks every active allergy against medicines, whatever its type). 'other' and any value the app does not write: no category (never guessed as 'biologic' or anything else).",
   },
 };
 

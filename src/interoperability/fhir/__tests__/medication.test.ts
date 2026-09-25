@@ -371,9 +371,9 @@ function setup(overrides: Partial<FakeOptions> = {}) {
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const body = async (res: Response) => (await res.json()) as Json;
-const matches = (b: Json): Json[] => b.entry.filter((e: Json) => e.search.mode === "match").map((e: Json) => e.resource);
+const matches = (b: Json): Json[] => (b.entry ?? []).filter((e: Json) => e.search.mode === "match").map((e: Json) => e.resource);
 const ids = (b: Json): string[] => matches(b).map((r) => r.id);
-const outcome = (b: Json): Json | undefined => b.entry.find((e: Json) => e.search.mode === "outcome")?.resource;
+const outcome = (b: Json): Json | undefined => (b.entry ?? []).find((e: Json) => e.search.mode === "outcome")?.resource;
 
 /** Values that must never appear in a served response. */
 const NEVER_PUBLISHED = [

@@ -35,6 +35,7 @@ import {
   splitPatientLabRow,
 } from "../mappers/laboratory";
 import { labObservationSource, validateLabObservation } from "../resources/labObservation";
+import { LAB_RESULTS_WITHHELD } from "../resources/observation";
 import type { QueryCtx } from "../resources/module";
 import type { MapContext } from "../mappers/common";
 import { fakeSupabase, makeToken, type FakeOptions, type FakeUser, type RpcHandler } from "./fakeSupabase";
@@ -863,6 +864,10 @@ describe("ServiceRequest at the gateway", () => {
     expect(await q("status=completed")).toEqual([O1, O2, O6, OM].map((x) => x.id));
     expect(await q("status=unknown")).toEqual([O10.id]);
     expect(await q("status=draft")).toEqual([]);
+    // A status token matches only in ServiceRequest.status's own code system.
+    expect(await q("status=http://hl7.org/fhir/request-status|revoked")).toEqual([O3.id, O7.id]);
+    expect(await q("status=http://example.org/other|revoked")).toEqual([]);
+    expect(await q("status=http://hl7.org/fhir/diagnostic-report-status|unknown")).toEqual([]);
     // Only the unchanged quick pick matches: O4 kept the code after its name was edited.
     expect(await q("code=CBC")).toEqual([O1.id, O6.id]);
     expect(await q("code=https://mbhr.app/codes/lab-test|HIV")).toEqual([O3.id]);
@@ -941,6 +946,10 @@ describe("DiagnosticReport at the gateway (staff)", () => {
     expect(await q("status=cancelled")).toEqual([O3.id]);
     expect(await q("status=unknown")).toEqual([O7.id, O10.id]);
     expect(await q("status=preliminary")).toEqual([]);
+    // A status token matches only in DiagnosticReport.status's own code system.
+    expect(await q("status=http://hl7.org/fhir/diagnostic-report-status|final")).toEqual([O2.id, O6.id, OM.id]);
+    expect(await q("status=http://example.org/other|final")).toEqual([]);
+    expect(await q("status=http://hl7.org/fhir/observation-status|final")).toEqual([]);
     expect(await q("category=LAB&_count=50")).toHaveLength(9);
     expect(await q("category=http://terminology.hl7.org/CodeSystem/v2-0074|LAB&status=final")).toEqual([O2.id, O6.id, OM.id]);
     expect(await q("category=laboratory")).toEqual([]);
@@ -1007,6 +1016,12 @@ describe("laboratory Observations at the gateway (staff)", () => {
     );
     expect(await q("code=https://mbhr.app/codes/lab-test|GLUCOSE")).toEqual([lab(R2.id)]);
     expect(await q("category=laboratory&status=final")).toEqual([R1a, R2, R6new, R7, R8d, RM].map((x) => lab(x.id)));
+    // A status token matches only in Observation.status's own code system.
+    expect(await q("category=laboratory&status=http://hl7.org/fhir/observation-status|final")).toEqual(
+      [R1a, R2, R6new, R7, R8d, RM].map((x) => lab(x.id)),
+    );
+    expect(await q("category=laboratory&status=http://example.org/other|final")).toEqual([]);
+    expect(await q("status=http://example.org/other|preliminary")).toEqual([]);
     expect(await q("category=laboratory&status=preliminary")).toEqual([R1b, R8a, R8b, R8c].map((x) => lab(x.id)));
     expect(await q(`based-on=ServiceRequest/${O1.id}`)).toEqual([lab(R1a.id), lab(R1b.id)]);
     expect(await q(`category=laboratory&encounter=Encounter/${VISIT_A.id}`)).toEqual([R1a, R1b, R2].map((x) => lab(x.id)));
@@ -1036,16 +1051,51 @@ describe("laboratory Observations at the gateway (staff)", () => {
     );
   });
 
-  it("nurses and volunteers get vital signs only; lab_review alone is enough for labs", async () => {
-    const { call, calls } = setup();
+  it("nurses and volunteers get vital signs only, and are told so; lab_review alone is enough for labs", async () => {
+    const { call, calls, audits } = setup();
+    const labNote = (b: Json) => outcomes(b).filter((i) => i.code === "suppressed");
     for (const token of [NURSE, VOLUNTEER]) {
       const before = calls.length;
       const b = (await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}&_count=100`, token)).body;
       expect(idsOf(b).some((id) => id.startsWith("lab-"))).toBe(false);
-      expect((await call(`/fhir/R4/Observation/${lab(R1a.id)}`, token)).status).toBe(404);
-      expect(idsOf((await call(`/fhir/R4/Observation?based-on=ServiceRequest/${O1.id}`, token)).body)).toEqual([]);
+      expect(idsOf(b).length).toBeGreaterThan(0);
+      // The searchset says laboratory results were left out, so it never reads as "no results".
+      expect(labNote(b)).toStrictEqual([LAB_RESULTS_WITHHELD]);
+      // Decided from the permissions and the query alone: the same note whether or not a
+      // laboratory row exists (a patient with results, one without, an unknown patient, an unknown id).
+      for (const q of [
+        `based-on=ServiceRequest/${O1.id}`,
+        `patient=Patient/${PATIENT_A.fhir_id}&category=laboratory`,
+        `patient=Patient/${PATIENT_B.fhir_id}&category=laboratory&status=final`,
+        "patient=Patient/0b3c1d2e-1111-4aaa-8bbb-0000000000ff&category=laboratory",
+        `_id=${lab(R1a.id)}`,
+        "_id=lab-00000000-0000-4000-8000-0000000000ff",
+      ]) {
+        const r = await call(`/fhir/R4/Observation?${q}`, token);
+        expect(r.status, q).toBe(200);
+        expect(idsOf(r.body), q).toStrictEqual([]);
+        expect(labNote(r.body), q).toStrictEqual([LAB_RESULTS_WITHHELD]);
+      }
+      // A search that cannot select a laboratory row carries no such note.
+      for (const q of ["category=vital-signs", "code=http://loinc.org|29463-7", "status=http://hl7.org/fhir/observation-status|final&code=8302-2"]) {
+        const r = await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}&${q}`, token);
+        expect(idsOf(r.body).length, q).toBeGreaterThan(0);
+        expect(labNote(r.body), q).toStrictEqual([]);
+      }
+      // A read is refused (403, as DiagnosticReport is) from the id alone, before any lookup:
+      // an existing result and an unknown id answer the same.
+      for (const id of [lab(R1a.id), "lab-00000000-0000-4000-8000-0000000000ff"]) {
+        const r = await call(`/fhir/R4/Observation/${id}`, token);
+        expect(r.status, id).toBe(403);
+        expect(r.body).toMatchObject({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "forbidden" }] });
+        expect(audits.at(-1)).toMatchObject({ p_decision: "deny", p_denial_reason: "forbidden", p_http_status: 403, p_result_count: 0 });
+      }
       expect(calls.slice(before).some((c) => c.url.includes("/rest/v1/lab_"))).toBe(false);
     }
+    // Staff who may read laboratory results get no note.
+    const doctor = (await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}&category=laboratory`, DOCTOR)).body;
+    expect(idsOf(doctor).length).toBeGreaterThan(0);
+    expect(labNote(doctor)).toStrictEqual([]);
     expect((await call(`/fhir/R4/Observation/${lab(R1a.id)}`, REVIEWER)).status).toBe(200);
     expect((await call(`/fhir/R4/Observation/${lab(R1a.id)}`, PHARMACIST)).status).toBe(403);
   });

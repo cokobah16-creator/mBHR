@@ -106,6 +106,12 @@ export interface ResourceDefinition {
   sensitiveSearch: boolean;
   /** Plain-language limits, published in the CapabilityStatement documentation. */
   notes?: string[];
+  /**
+   * What a patient reading their own records gets. Published only while
+   * patient access is enabled (FHIR_PATIENT_ACCESS_ENABLED), so the
+   * statement never describes an access path that is switched off.
+   */
+  patientAccessNotes?: string[];
 }
 
 export interface ResourceModule {

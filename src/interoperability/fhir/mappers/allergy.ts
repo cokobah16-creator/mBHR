@@ -16,7 +16,9 @@
 //   - verificationStatus and type are never filled: mBHR records neither.
 //     Nothing is ever "confirmed" by default.
 //   - category, criticality and reaction.severity only from the values in
-//     terminology/status/allergy.ts; anything else is left out. A
+//     terminology/status/allergy.ts; anything else is left out. The form's
+//     pre-selected choices (type medication, severity mild) cannot be told
+//     apart from "nobody chose", so neither is published. A
 //     life-threatening rating gives criticality high and, with a recorded
 //     reaction, reaction.severity severe (the top of that scale).
 //   - "No known allergies" does not exist in mBHR: no row means no allergy

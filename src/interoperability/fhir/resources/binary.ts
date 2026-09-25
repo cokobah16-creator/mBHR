@@ -65,10 +65,12 @@ export const definition: ResourceDefinition = {
   sensitiveSearch: true,
   notes: [
     "Binary/[id] is read by id only and answers with the file itself (Content-Disposition: attachment), never as FHIR JSON.",
-    "Each download is authorised on its own: staff need consult; a patient gets only files they uploaded to their own record.",
+    "Each download is authorised on its own: staff need consult.",
     "A removed document, a file that is missing from storage, or a stored path outside the patient's folder answers 404.",
     "The file type is the uploader's declaration; files are not scanned for malware in this release.",
+    "A download carries no ETag and no version, so a conditional read (If-None-Match) is not supported.",
   ],
+  patientAccessNotes: ["A patient gets only files they uploaded to their own record."],
 };
 
 /** Same rule as the DocumentReference attachment url: may this patient download this document's file? */

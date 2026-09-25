@@ -33,19 +33,46 @@ describe("ExternalSharingChip", () => {
     state.role = "doctor";
   });
 
+  const NOTE =
+    "External access is off in this release, so this is not used to share records yet. It does not affect care.";
+
   it.each([
-    ["not_allowed", "External sharing: Not allowed"],
-    ["allowed", "External sharing: Allowed"],
-    ["withdrawn", "External sharing: Withdrawn"],
-  ])("shows %s with a note that care is not affected", async (value, label) => {
-    const { client, rpc } = makeClient({ data: { external_sharing: value }, error: null });
+    ["allowed", "permitted", "Allowed", "The patient allowed sharing outside mBHR, with no limits."],
+    [
+      "restricted",
+      "refused",
+      "Restricted",
+      "The patient asked us not to share their records outside mBHR.",
+    ],
+    [
+      "restricted",
+      "limited",
+      "Restricted",
+      "The patient's permission covers only some records or uses.",
+    ],
+    ["restricted", "no_permission", "Restricted", "No permission to share outside mBHR is in force."],
+    [
+      "withdrawn",
+      "withdrawn",
+      "Withdrawn",
+      "The patient withdrew their permission to share outside mBHR.",
+    ],
+  ])("shows %s (%s) with the reason and a note that care is not affected", async (value, reason, word, why) => {
+    const { client, rpc } = makeClient({
+      data: { sharing_state: value, sharing_reason: reason, external_sharing: "allowed" },
+      error: null,
+    });
     render(<ExternalSharingChip patientId="01HXP" client={client} />);
-    expect(await screen.findByText(label)).toBeInTheDocument();
-    expect(screen.getByTestId("external-sharing-chip")).toHaveAttribute(
-      "title",
-      "This is about sharing records outside mBHR. It does not affect care.",
-    );
+    expect(await screen.findByText(`External sharing: ${word}`)).toBeInTheDocument();
+    expect(screen.getByTestId("external-sharing-chip")).toHaveAttribute("title", `${why} ${NOTE}`);
     expect(rpc).toHaveBeenCalledWith("interop_consent_summary", { p_patient_id: "01HXP" });
+  });
+
+  it("never shows Allowed from the older key alone", async () => {
+    const { client, rpc } = makeClient({ data: { external_sharing: "allowed" }, error: null });
+    const { container } = render(<ExternalSharingChip patientId="01HXP" client={client} />);
+    await waitFor(() => expect(rpc).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders nothing when the function is not deployed", async () => {
@@ -56,7 +83,10 @@ describe("ExternalSharingChip", () => {
   });
 
   it("does not call while offline, signed in offline, or for a role without access", () => {
-    const { client, rpc } = makeClient({ data: { external_sharing: "allowed" }, error: null });
+    const { client, rpc } = makeClient({
+      data: { sharing_state: "allowed", sharing_reason: "permitted" },
+      error: null,
+    });
 
     state.online = false;
     const a = render(<ExternalSharingChip patientId="01HXP" client={client} />);

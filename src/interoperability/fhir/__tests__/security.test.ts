@@ -96,8 +96,8 @@ function setup(overrides: Partial<FakeOptions> = {}, env: Record<string, string>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
 const json = async (res: Response) => (await res.json()) as Json;
-const matches = (b: Json) => b.entry.filter((e: Json) => e.search.mode === "match").map((e: Json) => e.resource);
-const outcomes = (b: Json) => b.entry.filter((e: Json) => e.search.mode === "outcome").flatMap((e: Json) => e.resource.issue);
+const matches = (b: Json) => (b.entry ?? []).filter((e: Json) => e.search.mode === "match").map((e: Json) => e.resource);
+const outcomes = (b: Json) => (b.entry ?? []).filter((e: Json) => e.search.mode === "outcome").flatMap((e: Json) => e.resource.issue);
 
 describe("anonymous", () => {
   it("gets 401 for every type, with nothing read or audited", async () => {
@@ -222,7 +222,8 @@ describe("staff limits", () => {
       expect((await call("/fhir/R4/Observation", { method, token: NURSE, body: method === "DELETE" ? undefined : "{}" })).status).toBe(405);
     }
     expect((await call(`/fhir/R4/Condition/${CONDITION_A.id}`, { token: NURSE })).status).toBe(403);
-    expect((await call("/fhir/R4/Observation/lab-00000000-0000-4000-8000-000000000001", { token: NURSE })).status).toBe(404);
+    // Refused from the id alone (as DiagnosticReport is), whether or not the result exists.
+    expect((await call("/fhir/R4/Observation/lab-00000000-0000-4000-8000-000000000001", { token: NURSE })).status).toBe(403);
   });
 
   it("a pharmacist cannot read clinical notes or vital signs", async () => {

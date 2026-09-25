@@ -310,7 +310,8 @@ describe("AllergyIntolerance mapper", () => {
       },
       patient: { reference: `Patient/${PATIENT_A.fhir_id}` },
       clinicalStatus: { coding: [{ system: ALLERGY_CLINICAL_SYSTEM, code: "active" }] },
-      category: ["medication"],
+      // No category: "medication" is the form's pre-selected type, so it may
+      // mean nobody chose one.
       criticality: "high",
       code: { text: "Penicillin, codeine" },
       onsetDateTime: "2026-04-01",
@@ -351,6 +352,22 @@ describe("AllergyIntolerance mapper", () => {
     expect(a.recorder).toBeUndefined(); // "patient-submitted" is not a staff member
     expect(status(a)).toBe("active");
     expect(validateResource(a, validateAllergyIntolerance)).toEqual([]);
+  });
+
+  it("publishes no category for the pre-selected type medication, as for the pre-selected mild", () => {
+    // A food allergy saved without changing the form's pre-selected choices.
+    const a = mapAllergy({ ...AL_ACTIVE, allergen: "Peanuts", allergy_type: "medication", severity: "mild", reaction: "Hives" }, MAP_CTX)!;
+    expect("category" in a).toBe(false);
+    expect(a.criticality).toBeUndefined();
+    expect(a.reaction).toStrictEqual([{ manifestation: [{ text: "Hives" }] }]);
+    expect(validateResource(a, validateAllergyIntolerance)).toEqual([]);
+    // Types someone chose are still published.
+    expect(mapAllergy({ ...AL_ACTIVE, allergy_type: "food" }, MAP_CTX)!.category).toStrictEqual(["food"]);
+    expect(mapAllergy({ ...AL_ACTIVE, allergy_type: "environmental" }, MAP_CTX)!.category).toStrictEqual(["environment"]);
+    for (const row of ALL_ROWS.filter((r) => r.allergy_type === "medication")) {
+      const m = mapAllergy(row, MAP_CTX);
+      if (m) expect("category" in m, row.id).toBe(false);
+    }
   });
 
   it("publishes no reaction (and so no reaction severity) without reaction text", () => {
@@ -458,14 +475,16 @@ describe("AllergyIntolerance status and value tables", () => {
     }
   });
 
-  it("category: only the three recorded types that map exactly", () => {
-    expect(applyStatusMap(ALLERGY_CATEGORY, "medication")).toBe("medication");
+  it("category: only the types staff chose; the pre-selected medication is left out", () => {
     expect(applyStatusMap(ALLERGY_CATEGORY, "food")).toBe("food");
     expect(applyStatusMap(ALLERGY_CATEGORY, "environmental")).toBe("environment");
-    for (const raw of ["other", "biologic", "environment", "drug", "", null]) {
+    for (const raw of ["medication", "Medication", "other", "biologic", "environment", "drug", "", null]) {
       expect(applyStatusMap(ALLERGY_CATEGORY, raw), String(raw)).toBeNull();
     }
-    // Nothing becomes biologic.
+    expect(explainStatus(ALLERGY_CATEGORY, "medication").reason).toMatch(/pre-selected/);
+    expect(knownSourceValues(ALLERGY_CATEGORY)).toStrictEqual(["food", "environmental"]);
+    // Nothing becomes medication (the form's default) or biologic.
+    expect(ALLERGY_CATEGORY.rules.some((r) => r.fhir === "medication")).toBe(false);
     expect(ALLERGY_CATEGORY.rules.some((r) => r.fhir === "biologic")).toBe(false);
   });
 
@@ -667,7 +686,7 @@ describe("AllergyIntolerance access", () => {
 describe("AllergyIntolerance enumeration protection", () => {
   it("refuses staff searches that do not name an allergy or a patient", async () => {
     const { call, allergyQueries, audits } = setup();
-    for (const q of ["", "?clinical-status=active", "?category=food", "?criticality=high", "?clinical-status=active&category=medication&criticality=high"]) {
+    for (const q of ["", "?clinical-status=active", "?category=food", "?criticality=high", "?clinical-status=active&category=food&criticality=high"]) {
       const res = await call(`/fhir/R4/AllergyIntolerance${q}`, DOCTOR);
       expect(res.status, q).toBe(403);
     }
@@ -795,8 +814,16 @@ describe("AllergyIntolerance search", () => {
     const q = async (v: string) => json(await call(byPatient(PATIENT_A.fhir_id, `&category=${encodeURIComponent(v)}`), DOCTOR));
     expect(ids(await q("food"))).toEqual([AL_INACTIVE.id]);
     expect(allergyQueries().at(-1)).toContain('or=(allergy_type.ilike."food")');
-    expect(ids(await q("medication"))).toEqual([AL_DEVICE.id, AL_ACTIVE.id, AL_MERGED.id]);
     expect(ids(await q("http://hl7.org/fhir/allergy-intolerance-category|food"))).toEqual([AL_INACTIVE.id]);
+    // medication is the form's pre-selected type: the mapper publishes no
+    // category for it, so a search for it matches nothing, without a query.
+    const before = allergyQueries().length;
+    for (const v of ["medication", "http://hl7.org/fhir/allergy-intolerance-category|medication"]) {
+      const b = await q(v);
+      expect(ids(b), v).toEqual([]);
+      expect(outcomes(b), v).toEqual([ALLERGY_NKA_CAVEAT]);
+    }
+    expect(allergyQueries().length).toBe(before);
     // environmental: the only such row has no clinical status, so it is withheld (and said so).
     const env = await q("environment");
     expect(ids(env)).toEqual([]);
@@ -820,10 +847,13 @@ describe("AllergyIntolerance search", () => {
 
   it("combines parameters, and _id alone is a narrowing search", async () => {
     const { call, allergyQueries } = setup();
-    const both = await json(await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=active&category=medication&criticality=high"), DOCTOR));
-    expect(ids(both)).toEqual([AL_ACTIVE.id]);
+    const both = await json(await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=inactive&category=food"), DOCTOR));
+    expect(ids(both)).toEqual([AL_INACTIVE.id]);
+    // All three filters go into one query (no row here is both food and life-threatening).
+    const none = await json(await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=active&category=food&criticality=high"), DOCTOR));
+    expect(ids(none)).toEqual([]);
     const last = allergyQueries().at(-1)!;
-    for (const part of ["is_active.is.true", "allergy_type.ilike", "severity.ilike", `patient_id=in.("${PATIENT_A.id}","${PATIENT_M.id}")`]) {
+    for (const part of ["is_active.is.true", 'allergy_type.ilike."food"', "severity.ilike", `patient_id=in.("${PATIENT_A.id}","${PATIENT_M.id}")`]) {
       expect(last, part).toContain(part);
     }
     const byId = await json(await call(`/fhir/R4/AllergyIntolerance?_id=${AL_MERGED.id}`, DOCTOR));

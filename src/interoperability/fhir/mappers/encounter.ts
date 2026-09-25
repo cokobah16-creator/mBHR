@@ -23,8 +23,13 @@ export const VISIT_COLUMNS = ["id", "patient_id", "started_at", "site_name", "st
 export const NOT_A_PLACE = ["mobile clinic", "portal entry"];
 export const PORTAL_ENTRY_SITE = "portal entry";
 
-/** visits.status -> Encounter.status (see ENCOUNTER_STATUS in terminology/statusMaps.ts). */
-export function mapVisitStatus(status: string | undefined): Encounter["status"] {
+/**
+ * visits.status -> Encounter.status (see ENCOUNTER_STATUS in
+ * terminology/statusMaps.ts). The raw column value, untrimmed: the map and
+ * the status search compare it exactly, so a padded " closed" is unknown
+ * everywhere, never finished.
+ */
+export function mapVisitStatus(status: unknown): Encounter["status"] {
   return mapEncounterStatus(status);
 }
 
@@ -37,7 +42,7 @@ export function mapEncounter(row: Row, ctx: MapContext): Encounter | null {
     resourceType: "Encounter",
     id,
     meta: versionMeta(row),
-    status: mapVisitStatus(str(row, "status")),
+    status: mapVisitStatus(row.status),
     class: { system: V3_ACT_CODE, code: "AMB", display: "ambulatory" },
     subject,
   };

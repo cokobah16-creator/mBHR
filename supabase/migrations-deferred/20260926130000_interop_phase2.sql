@@ -42,6 +42,8 @@
 --   6. fhir_staff_directory      Practitioner directory (name and role only)
 --                                with stable minted ids in resource_links
 --   7. fhir_link_ids / fhir_link_sources   Medication <-> pharmacy_items ids
+--                                (staff holding consult, dispense or
+--                                inventory, as pharmacy_items row security)
 --   8. Consent: consent_record_history (append-only), change log and audit
 --      triggers, update guards (identity, withdrawal and final statuses),
 --      provisions immutable and added only with their record, and the
@@ -53,8 +55,18 @@
 --  10. fhir_interop_admin_status counts and recent requests, no ids
 --  11. fhir_patient_lab_results  a portal patient's released lab results
 --  12. Phase 1 fixes: search_path = pg_catalog, public on the three Phase 1
---      functions; patients.fhir_id kept once set (trigger)
+--      functions; the function that keeps patients.fhir_id once set
 --  13. Indexes, only where no index on the column exists (see section 13)
+--  14. The patients.fhir_id trigger (after the indexes: see section 14)
+--
+-- Locks: the file first sets lock_timeout to 5 seconds for its own
+-- transaction (supabase db push runs each migration file in one
+-- transaction), so a statement that would queue behind a busy table fails
+-- the whole migration instead of holding up that table. The last step that
+-- locks public.patients is the fhir_id trigger (section 14), so patient
+-- writes wait only from there to the commit, not through the index builds.
+-- Patient writes still pause briefly while it commits: apply it at a quiet
+-- time, and do not re-run it on production without a reason.
 --
 -- Decisions taken where the design left room (the safer choice each time):
 --   - A caller with no auth.uid() gets 42501 from every new function (v1
@@ -94,7 +106,23 @@
 --     counts only when verified). The design's rule (external_system /
 --     organization only, purpose not TREAT, any scope, denies ignored,
 --     unverified permits count) disagreed with what the gateway enforces.
---     It adds pending_verification (boolean) to the design's keys.
+--     It adds pending_verification (boolean) to the design's keys, and
+--     sharing_state / sharing_reason for the staff chip: 'allowed' only for
+--     a verified, in-force permit with no limit (no purpose, action,
+--     resource type, data class or security label) and no refusal;
+--     'withdrawn'; otherwise 'restricted', with the reason.
+--   - interop_my_consents(p_patient_id): the page's patient (one of the
+--     caller's portal records) and the records merged into it, not every
+--     record linked to the sign-in (a shared phone can link several
+--     people). NULL is refused (22023): there is no "all my records" call.
+--   - interop_withdraw_consent: a portal patient may withdraw only a
+--     permission to share (scope patient-privacy or research, no deny
+--     provision). A refusal, a treatment consent or an advance directive is
+--     changed with clinic staff (42501 for the patient); staff are not
+--     limited.
+--   - fhir_link_ids / fhir_link_sources: staff holding consult, dispense or
+--     inventory only (pharmacy_items_select): other staff cannot read the
+--     catalogue, so they may not mint or resolve its published ids either.
 --   - Consent records: a rejected, inactive or entered-in-error record never
 --     comes back into force; only draft, proposed or active records can be
 --     verified; provisions can be inserted only in the transaction that
@@ -131,7 +159,7 @@
 --   DROP FUNCTION IF EXISTS public.interop_record_consent(text, text, text, text, text, text, timestamptz, timestamptz, jsonb);
 --   DROP FUNCTION IF EXISTS public.interop_verify_consent(uuid);
 --   DROP FUNCTION IF EXISTS public.interop_withdraw_consent(uuid, text);
---   DROP FUNCTION IF EXISTS public.interop_my_consents();
+--   DROP FUNCTION IF EXISTS public.interop_my_consents(text);
 --   DROP FUNCTION IF EXISTS public.interop_consent_summary(text);
 --   DROP TRIGGER IF EXISTS consent_records_history ON interop.consent_records;
 --   DROP TRIGGER IF EXISTS consent_records_guard ON interop.consent_records;
@@ -166,6 +194,17 @@
 -- published Practitioner and Medication id when this migration is applied
 -- again. The indexes may also stay (they only speed up reads).
 -- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- Lock timeout for this transaction
+-- ----------------------------------------------------------------------------
+-- set_config(..., true) is SET LOCAL: it lasts until the migration's
+-- transaction ends. Where each statement runs on its own (psql -f without
+-- a transaction, as the CI job does) it ends with this statement, silently.
+DO $$
+BEGIN
+  PERFORM pg_catalog.set_config('lock_timeout', '5s', true);
+END $$;
 
 -- ----------------------------------------------------------------------------
 -- 0. Precondition: the Phase 1 interop schema
@@ -859,11 +898,15 @@ COMMENT ON FUNCTION public.fhir_staff_directory(text[], text[], text, text, text
 -- ----------------------------------------------------------------------------
 -- 7. fhir_link_ids / fhir_link_sources (Medication <-> pharmacy_items)
 -- ----------------------------------------------------------------------------
--- Staff callers only, at most 200 ids. The allowlist has one entry:
--- 'Medication' <-> public.pharmacy_items. fhir_link_ids mints a link (a
--- random uuid) only for source ids that exist in the source table;
--- fhir_link_sources only reads, and only returns links whose source row
--- still exists.
+-- Staff holding consult, dispense or inventory only (the rule of
+-- pharmacy_items_select, and the gateway's Medication read permissions):
+-- other staff cannot read the catalogue, so they may not test its ids,
+-- mint published ids for it or map published ids back to it. At most 200
+-- ids. The allowlist has one entry: 'Medication' <-> public.pharmacy_items.
+-- fhir_link_ids mints a link (a random uuid) only for source ids that exist
+-- in the source table; fhir_link_sources only reads, and only returns links
+-- whose source row still exists. (Practitioner ids are minted by
+-- fhir_staff_directory, not here.)
 CREATE OR REPLACE FUNCTION public.fhir_link_ids(p_resource_type text, p_source_ids text[])
 RETURNS TABLE (source_id text, fhir_id text)
 LANGUAGE plpgsql
@@ -873,8 +916,9 @@ SET search_path = pg_catalog, public
 AS $$
 #variable_conflict use_column
 BEGIN
-  IF (SELECT auth.uid()) IS NULL OR NOT COALESCE(public.app_is_staff(), false) THEN
-    RAISE EXCEPTION 'staff only' USING ERRCODE = '42501';
+  IF (SELECT auth.uid()) IS NULL OR NOT COALESCE(public.app_is_staff(), false)
+     OR NOT interop.caller_has_any(ARRAY['consult', 'dispense', 'inventory']) THEN
+    RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501';
   END IF;
   IF p_resource_type IS DISTINCT FROM 'Medication'
      OR NOT interop.ids_ok(p_source_ids, '^[A-Za-z0-9._:-]{1,128}$', 200) THEN
@@ -907,7 +951,8 @@ $$;
 
 COMMENT ON FUNCTION public.fhir_link_ids(text, text[]) IS
   'FHIR gateway: published ids for mBHR rows (allowlist: Medication <-> pharmacy_items), '
-  'minting a random id for existing rows that have none. Staff only, at most 200 ids.';
+  'minting a random id for existing rows that have none. Staff holding consult, dispense or '
+  'inventory only (as pharmacy_items row security), at most 200 ids.';
 
 CREATE OR REPLACE FUNCTION public.fhir_link_sources(p_resource_type text, p_fhir_ids text[])
 RETURNS TABLE (fhir_id text, source_id text)
@@ -918,8 +963,9 @@ SET search_path = pg_catalog, public
 AS $$
 #variable_conflict use_column
 BEGIN
-  IF (SELECT auth.uid()) IS NULL OR NOT COALESCE(public.app_is_staff(), false) THEN
-    RAISE EXCEPTION 'staff only' USING ERRCODE = '42501';
+  IF (SELECT auth.uid()) IS NULL OR NOT COALESCE(public.app_is_staff(), false)
+     OR NOT interop.caller_has_any(ARRAY['consult', 'dispense', 'inventory']) THEN
+    RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501';
   END IF;
   IF p_resource_type IS DISTINCT FROM 'Medication'
      OR NOT interop.ids_ok(p_fhir_ids, '^[A-Za-z0-9.-]{1,64}$', 200) THEN
@@ -942,7 +988,8 @@ $$;
 
 COMMENT ON FUNCTION public.fhir_link_sources(text, text[]) IS
   'FHIR gateway: the mBHR row behind published ids (allowlist: Medication <-> pharmacy_items). '
-  'Read only; staff only, at most 200 ids; a link whose row is gone returns nothing.';
+  'Read only; staff holding consult, dispense or inventory only (as pharmacy_items row '
+  'security), at most 200 ids; a link whose row is gone returns nothing.';
 
 -- ----------------------------------------------------------------------------
 -- 8a. Consent change history (append-only)
@@ -1395,7 +1442,11 @@ COMMENT ON FUNCTION public.interop_verify_consent(uuid) IS
 -- characters). A repeat returns false. A patient owns the consents of their
 -- portal records and of every record merged into them. For a patient, a
 -- consent that is not theirs is refused exactly like one that does not
--- exist.
+-- exist. A patient may withdraw only a permission to share (scope
+-- patient-privacy or research, no deny provision): withdrawing a refusal
+-- could allow sharing, and a treatment consent or an advance directive is
+-- not a sharing choice. Those are changed with clinic staff (42501 for the
+-- patient, whatever their status); staff are not limited.
 CREATE OR REPLACE FUNCTION public.interop_withdraw_consent(p_consent_id uuid, p_reason text DEFAULT NULL)
 RETURNS boolean
 LANGUAGE plpgsql
@@ -1425,6 +1476,12 @@ BEGIN
   IF v_rec.id IS NULL THEN
     RAISE EXCEPTION 'unknown consent' USING ERRCODE = '22023';
   END IF;
+  IF NOT v_staff
+     AND (v_rec.scope NOT IN ('patient-privacy', 'research')
+          OR EXISTS (SELECT 1 FROM interop.consent_provisions AS p
+                      WHERE p.consent_id = v_rec.id AND p.provision_type = 'deny')) THEN
+    RAISE EXCEPTION 'not allowed: this record is changed with clinic staff' USING ERRCODE = '42501';
+  END IF;
   IF v_rec.withdrawn_at IS NOT NULL THEN
     RETURN false;
   END IF;
@@ -1441,12 +1498,20 @@ $$;
 
 COMMENT ON FUNCTION public.interop_withdraw_consent(uuid, text) IS
   'Consent management: withdraw a consent (staff holding portal_manage or consult, or the '
-  'portal patient whose record it is). Final: a withdrawn consent cannot be re-activated.';
+  'portal patient whose record it is; a patient only a permission to share: scope '
+  'patient-privacy or research, no deny provision). Final: a withdrawn consent cannot be '
+  're-activated.';
 
--- A portal patient's own consent directives (same shape as
--- fhir_consent_directives), including those recorded on records merged
--- into theirs. Other callers are refused.
-CREATE OR REPLACE FUNCTION public.interop_my_consents()
+-- One portal patient's consent directives (same shape as
+-- fhir_consent_directives): p_patient_id must be one of the caller's portal
+-- records (public.app_portal_patient_ids(), 42501 otherwise), and the result
+-- covers that record and the records merged into it, not every record
+-- linked to the sign-in (a shared phone can link several people; the page
+-- shows one of them). NULL or a malformed id is refused (22023). An earlier
+-- draft of this file had no argument: that version is dropped first, so it
+-- cannot stay callable beside this one.
+DROP FUNCTION IF EXISTS public.interop_my_consents();
+CREATE OR REPLACE FUNCTION public.interop_my_consents(p_patient_id text)
 RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
@@ -1459,10 +1524,13 @@ BEGIN
   IF (SELECT auth.uid()) IS NULL THEN
     RAISE EXCEPTION 'not signed in' USING ERRCODE = '42501';
   END IF;
-  v_own := interop.patient_members(ARRAY(SELECT public.app_portal_patient_ids()));
-  IF cardinality(v_own) = 0 THEN
-    RAISE EXCEPTION 'portal patients only' USING ERRCODE = '42501';
+  IF p_patient_id IS NULL OR p_patient_id !~ '^[A-Za-z0-9._-]{1,128}$' THEN
+    RAISE EXCEPTION 'a patient id is required' USING ERRCODE = '22023';
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.app_portal_patient_ids() AS x WHERE x = p_patient_id) THEN
+    RAISE EXCEPTION 'portal patients only, and only their own record' USING ERRCODE = '42501';
+  END IF;
+  v_own := interop.patient_members(ARRAY[p_patient_id]);
   RETURN interop.consent_directives_json(ARRAY(
     SELECT r.id FROM interop.consent_records AS r
      WHERE r.patient_id = ANY (v_own)
@@ -1471,9 +1539,10 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION public.interop_my_consents() IS
-  'Consent management: the calling portal patient''s own consent directives (at most 500), '
-  'including those of records merged into theirs; same shape as fhir_consent_directives.';
+COMMENT ON FUNCTION public.interop_my_consents(text) IS
+  'Consent management: the consent directives (at most 500) of one of the calling portal '
+  'patient''s own records and of the records merged into it; same shape as '
+  'fhir_consent_directives. Another record, NULL or no portal record: refused.';
 
 -- Summary of external sharing for one patient, over the whole merge family
 -- of the record (a consent recorded before a merge still counts). Callers:
@@ -1495,6 +1564,22 @@ COMMENT ON FUNCTION public.interop_my_consents() IS
 --   'withdrawn' when neither, and a patient-privacy record was withdrawn;
 --   'not_allowed' otherwise.
 -- pending_verification: a counted permit exists only on unverified records.
+-- sharing_state / sharing_reason: the staff chip's stricter reading, over
+-- patient-privacy records that are draft, proposed or active, not withdrawn
+-- and not ended, and their provisions for an external actor
+-- (external_system, organization, any or unset) that have not ended:
+--   'restricted' / 'refused'   any such deny provision (verified or not,
+--                              started or not, limited or not);
+--   'allowed' / 'permitted'    a permit on a verified, active record, in
+--                              force now, with no limit: no purpose, action,
+--                              resource type, data class or security label;
+--   'restricted' / 'limited'   only such permits with a limit;
+--   'withdrawn' / 'withdrawn'  none of those, and a patient-privacy record
+--                              was withdrawn;
+--   'restricted' / 'pending_verification'   a permit in force, unverified;
+--   'restricted' / 'not_started'            a permit not in force yet
+--                              (draft, proposed, or a start in the future);
+--   'restricted' / 'no_permission'          otherwise.
 -- active_records / withdrawn_records count every scope; last_changed_at is
 -- the latest updated_at of the family's records.
 CREATE OR REPLACE FUNCTION public.interop_consent_summary(p_patient_id text)
@@ -1510,6 +1595,11 @@ DECLARE
   v_permit     boolean;
   v_unverified boolean;
   v_wd_privacy boolean;
+  v_refused    boolean;
+  v_full       boolean;
+  v_limited    boolean;
+  v_pending    boolean;
+  v_future     boolean;
   v_active     integer;
   v_withdrawn  integer;
   v_last       timestamptz;
@@ -1548,6 +1638,30 @@ BEGIN
     INTO v_deny, v_permit, v_unverified
     FROM counted AS c;
 
+  WITH chip_rows AS (
+    SELECT r.verified, p.provision_type,
+           (r.status = 'active'
+            AND (r.effective_from IS NULL OR r.effective_from <= now())
+            AND (p.effective_from IS NULL OR p.effective_from <= now())) AS in_force,
+           (p.purpose IS NOT NULL OR p.action IS NOT NULL OR p.resource_type IS NOT NULL
+            OR p.data_class IS NOT NULL OR p.security_label IS NOT NULL) AS limited
+      FROM interop.consent_records AS r
+      JOIN interop.consent_provisions AS p ON p.consent_id = r.id
+     WHERE r.patient_id = ANY (v_family)
+       AND r.scope = 'patient-privacy'
+       AND r.status IN ('draft', 'proposed', 'active')
+       AND r.withdrawn_at IS NULL
+       AND (r.effective_until IS NULL OR r.effective_until > now())
+       AND (p.actor_type IS NULL OR p.actor_type IN ('external_system', 'organization', 'any'))
+       AND (p.effective_until IS NULL OR p.effective_until > now()))
+  SELECT COALESCE(bool_or(s.provision_type = 'deny'), false),
+         COALESCE(bool_or(s.provision_type = 'permit' AND s.in_force AND s.verified AND NOT s.limited), false),
+         COALESCE(bool_or(s.provision_type = 'permit' AND s.in_force AND s.verified AND s.limited), false),
+         COALESCE(bool_or(s.provision_type = 'permit' AND s.in_force AND NOT s.verified), false),
+         COALESCE(bool_or(s.provision_type = 'permit' AND NOT s.in_force), false)
+    INTO v_refused, v_full, v_limited, v_pending, v_future
+    FROM chip_rows AS s;
+
   SELECT count(*) FILTER (WHERE r.status = 'active' AND r.withdrawn_at IS NULL),
          count(*) FILTER (WHERE r.withdrawn_at IS NOT NULL),
          COALESCE(bool_or(r.withdrawn_at IS NOT NULL AND r.scope = 'patient-privacy'), false),
@@ -1562,6 +1676,18 @@ BEGIN
                              WHEN v_wd_privacy THEN 'withdrawn'
                              ELSE 'not_allowed' END,
     'pending_verification', NOT v_deny AND NOT v_permit AND v_unverified,
+    'sharing_state', CASE WHEN v_refused THEN 'restricted'
+                          WHEN v_full THEN 'allowed'
+                          WHEN v_limited THEN 'restricted'
+                          WHEN v_wd_privacy THEN 'withdrawn'
+                          ELSE 'restricted' END,
+    'sharing_reason', CASE WHEN v_refused THEN 'refused'
+                           WHEN v_full THEN 'permitted'
+                           WHEN v_limited THEN 'limited'
+                           WHEN v_wd_privacy THEN 'withdrawn'
+                           WHEN v_pending THEN 'pending_verification'
+                           WHEN v_future THEN 'not_started'
+                           ELSE 'no_permission' END,
     'active_records', v_active,
     'withdrawn_records', v_withdrawn,
     'last_changed_at', v_last);
@@ -1576,7 +1702,10 @@ COMMENT ON FUNCTION public.interop_consent_summary(text) IS
   'type is external_system, organization, any or unset. not_allowed when any such deny '
   'exists; allowed when such a permit is on a verified record; withdrawn when neither and a '
   'patient-privacy record was withdrawn; otherwise not_allowed. pending_verification: only '
-  'unverified permits exist.';
+  'unverified permits exist. sharing_state (for the staff chip): allowed only for a verified, '
+  'in-force permit with no limit (purpose, action, resource type, data class, security label) '
+  'and no refusal; withdrawn; otherwise restricted, with sharing_reason (refused, permitted, '
+  'limited, withdrawn, pending_verification, not_started, no_permission).';
 
 -- ----------------------------------------------------------------------------
 -- 9. fhir_access_audit_events (AuditEvent source)
@@ -1861,21 +1990,7 @@ $$;
 
 COMMENT ON FUNCTION public.tg_patients_keep_fhir_id() IS
   'Trigger: keeps patients.fhir_id (the published Patient id) once it is set.';
-
-DO $$
-BEGIN
-  IF to_regclass('public.patients') IS NULL
-     OR NOT EXISTS (SELECT 1 FROM pg_attribute
-                     WHERE attrelid = 'public.patients'::regclass
-                       AND attname = 'fhir_id' AND NOT attisdropped) THEN
-    RAISE NOTICE 'interop phase 2: public.patients.fhir_id not found, fhir_id trigger skipped';
-    RETURN;
-  END IF;
-  DROP TRIGGER IF EXISTS patients_keep_fhir_id ON public.patients;
-  CREATE TRIGGER patients_keep_fhir_id
-    BEFORE UPDATE ON public.patients
-    FOR EACH ROW EXECUTE FUNCTION public.tg_patients_keep_fhir_id();
-END $$;
+-- The trigger itself is created in section 14, after the indexes.
 
 -- ----------------------------------------------------------------------------
 -- 13. Indexes for the Phase 2 searches, only where none exists
@@ -1954,7 +2069,41 @@ BEGIN
 END $$;
 
 -- ----------------------------------------------------------------------------
--- 14. Grants
+-- 14. patients.fhir_id trigger (the last step that locks public.patients)
+-- ----------------------------------------------------------------------------
+-- CREATE TRIGGER locks public.patients against writes until the migration
+-- commits, so it runs after the index builds, and DROP TRIGGER (which also
+-- blocks reads) runs only when the trigger is missing or not the one this
+-- file creates. A re-run that finds it in place takes no lock on patients.
+DO $$
+BEGIN
+  IF to_regclass('public.patients') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute
+                     WHERE attrelid = 'public.patients'::regclass
+                       AND attname = 'fhir_id' AND NOT attisdropped) THEN
+    RAISE NOTICE 'interop phase 2: public.patients.fhir_id not found, fhir_id trigger skipped';
+    RETURN;
+  END IF;
+  -- tgtype 19 = ROW | BEFORE | UPDATE; tgenabled 'O' = enabled.
+  IF EXISTS (SELECT 1 FROM pg_trigger AS t
+              WHERE t.tgrelid = 'public.patients'::regclass
+                AND t.tgname = 'patients_keep_fhir_id'
+                AND NOT t.tgisinternal
+                AND t.tgfoid = 'public.tg_patients_keep_fhir_id()'::regprocedure
+                AND t.tgtype = 19
+                AND t.tgenabled = 'O'
+                AND t.tgattr = ''::int2vector
+                AND t.tgqual IS NULL) THEN
+    RETURN;
+  END IF;
+  DROP TRIGGER IF EXISTS patients_keep_fhir_id ON public.patients;
+  CREATE TRIGGER patients_keep_fhir_id
+    BEFORE UPDATE ON public.patients
+    FOR EACH ROW EXECUTE FUNCTION public.tg_patients_keep_fhir_id();
+END $$;
+
+-- ----------------------------------------------------------------------------
+-- 15. Grants
 -- ----------------------------------------------------------------------------
 -- Internal helpers and trigger functions: no API role.
 REVOKE ALL ON FUNCTION interop.caller_kind() FROM PUBLIC, anon, authenticated;
@@ -1982,7 +2131,7 @@ REVOKE ALL ON FUNCTION public.fhir_patient_lab_results(uuid[], uuid[], uuid, int
 REVOKE ALL ON FUNCTION public.interop_record_consent(text, text, text, text, text, text, timestamptz, timestamptz, jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.interop_verify_consent(uuid) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.interop_withdraw_consent(uuid, text) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.interop_my_consents() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.interop_my_consents(text) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.interop_consent_summary(text) FROM PUBLIC, anon;
 
 GRANT EXECUTE ON FUNCTION public.fhir_gateway_context_v2(integer, integer, boolean) TO authenticated, service_role;
@@ -1998,5 +2147,5 @@ GRANT EXECUTE ON FUNCTION public.fhir_patient_lab_results(uuid[], uuid[], uuid, 
 GRANT EXECUTE ON FUNCTION public.interop_record_consent(text, text, text, text, text, text, timestamptz, timestamptz, jsonb) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.interop_verify_consent(uuid) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.interop_withdraw_consent(uuid, text) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.interop_my_consents() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.interop_my_consents(text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.interop_consent_summary(text) TO authenticated, service_role;

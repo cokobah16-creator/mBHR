@@ -2,7 +2,10 @@
 //
 // mBHR's conditions table already stores FHIR-shaped statuses, so they are
 // carried over exactly: a provisional or differential diagnosis stays
-// provisional or differential, never confirmed. The code is published under
+// provisional or differential, never confirmed. The one exception is a
+// stored verification_status 'confirmed': it is the column's default, so it
+// cannot be told apart from a row written without a verification status,
+// and it is left out (see VERIFICATION below). The code is published under
 // mBHR's local condition code system unless interop.terminology_map holds a
 // reviewed ('verified') mapping for it, in which case that coding is added
 // next to the local one. Free-text notes and the recorder are not published.
@@ -39,11 +42,19 @@ export const CONDITION_COLUMNS = [
 ] as const;
 
 const CLINICAL = ["active", "recurrence", "relapse", "inactive", "remission", "resolved"];
+/**
+ * The verification codes published as stored. "confirmed" is not one of
+ * them: public.conditions.verification_status has DEFAULT 'confirmed'
+ * (20260125091822_add_immunizations_conditions_sdoh.sql), so a stored
+ * 'confirmed' may only mean that nobody recorded a verification status.
+ * It is left out, never published as a confirmed diagnosis. Condition
+ * search offers no verification-status parameter, so search cannot
+ * disagree with this.
+ */
 const VERIFICATION = [
   "unconfirmed",
   "provisional",
   "differential",
-  "confirmed",
   "refuted",
   "entered-in-error",
 ];

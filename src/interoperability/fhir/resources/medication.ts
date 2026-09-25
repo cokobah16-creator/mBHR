@@ -14,7 +14,7 @@ import { CATALOGUE_LOOKUP_COLUMNS, MEDICATION_COLUMNS, itemDescription, mapMedic
 import type { Row } from "../mappers/common";
 import { READ_PERMISSIONS } from "../authorization/permissions";
 import { inList, pgrstQuote } from "../gateway/postgrest";
-import { parseId, parseToken, type ParsedSearch } from "../search/params";
+import { parseId, type ParsedSearch } from "../search/params";
 import { knownSourceValues, sourceValuesFor, type StatusMap } from "../terminology/statusMaps";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
 import { UUID, likeLiteral, one, scopeFilter, type Filters } from "./shared";
@@ -201,12 +201,6 @@ export function statusSearchFilter(map: StatusMap, column: string, code: string)
     parts.push(`and(${[`${column}.neq.""`, ...known.map((v) => `${column}.not.ilike.${q(v)}`)].join(",")})`);
   }
   return parts.length ? [["or", `(${parts.join(",")})`]] : null;
-}
-
-/** A status token's code, or null when its system is not the FHIR one (nothing can match). */
-export function statusCode(raw: string, name: string, system: string): string | null {
-  const t = parseToken(raw, name);
-  return t.system === null || t.system === system ? t.code : null;
 }
 
 // ---------------------------------------------------------------------------

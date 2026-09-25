@@ -3,7 +3,7 @@
 
 import { errors } from "../errors/operationOutcome";
 import { inList, type Postgrest, type ReadableTable } from "../gateway/postgrest";
-import { intersectDates, parseDateSearch, type Cursor, type ParsedSearch } from "../search/params";
+import { intersectDates, parseDateSearch, parseToken, type Cursor, type ParsedSearch } from "../search/params";
 import type { SearchPage } from "../search/bundle";
 import type { Resource } from "../types/fhir";
 import type { Row } from "../mappers/common";
@@ -43,6 +43,16 @@ export function scopeFilter(ctx: QueryCtx, column = "patient_id"): Filters {
 /** Restrict to the given internal patient ids (canonical record plus merged-away members). */
 export function patientFilter(ids: string[], column = "patient_id"): Filters {
   return ids.length ? [[column, inList(ids)]] : [[column, "is.null"], [column, "not.is.null"]];
+}
+
+/**
+ * A status token's code, or null when it names a system other than the
+ * element's FHIR code system (then nothing can match). A bare code is
+ * taken as that system's.
+ */
+export function statusCode(raw: string, name: string, system: string): string | null {
+  const t = parseToken(raw, name);
+  return t.system === null || t.system === system ? t.code : null;
 }
 
 export function dateFilters(column: string, raw: string[] | undefined, name: string): Filters {

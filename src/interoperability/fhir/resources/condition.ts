@@ -5,12 +5,12 @@ import type { Condition, OperationOutcomeIssue } from "../types/fhir";
 import { READ_PERMISSIONS } from "../authorization/permissions";
 import { CONDITION_COLUMNS, mapCondition } from "../mappers/condition";
 import type { Row } from "../mappers/common";
-import { LOCAL, type VerifiedCoding } from "../terminology/codeSystems";
+import { CONDITION_CLINICAL, LOCAL, type VerifiedCoding } from "../terminology/codeSystems";
 import { referenceContext } from "../patients/canonical";
 import { parseId, parseToken, type ParsedSearch } from "../search/params";
 import type { Postgrest } from "../gateway/postgrest";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
-import { UUID, keysetPage, namedPatientFilter, one, ownersOf, patientNotes, scopeFilter, type Filters } from "./shared";
+import { UUID, keysetPage, namedPatientFilter, one, ownersOf, patientNotes, scopeFilter, statusCode, type Filters } from "./shared";
 
 export const conditionDefinition: ResourceDefinition = {
   type: "Condition",
@@ -120,9 +120,9 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   }
   const clinical = one(search, "clinical-status");
   if (clinical) {
-    const t = parseToken(clinical, "clinical-status");
-    if (!CLINICAL_STATUSES.includes(t.code)) return emptyResult({ ...notes, outcomes });
-    filters.push(["clinical_status", `eq.${t.code}`]);
+    const code = statusCode(clinical, "clinical-status", CONDITION_CLINICAL);
+    if (code === null || !CLINICAL_STATUSES.includes(code)) return emptyResult({ ...notes, outcomes });
+    filters.push(["clinical_status", `eq.${code}`]);
     // con-5: entered-in-error records publish no clinical status, so they
     // never match a clinical-status search.
     filters.push(["or", "(verification_status.is.null,verification_status.neq.entered-in-error)"]);

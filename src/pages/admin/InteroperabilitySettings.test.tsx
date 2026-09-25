@@ -68,6 +68,24 @@ describe("InteroperabilitySettings", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("says who can read through the interface, and that other systems cannot connect", async () => {
+    const { client } = makeClient({ data: null, error: { code: "PGRST202" } });
+    render(
+      <InteroperabilitySettings
+        client={client}
+        fetchImpl={fakeFetch(404, null, null)}
+        origin="https://app.example"
+      />,
+    );
+    expect(await screen.findByText("Off")).toBeInTheDocument();
+    const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain(
+      "The FHIR interface lets signed-in mBHR staff (and patients, when patient access is on) read records in the FHIR R4 format.",
+    );
+    expect(text).toContain("Other systems and apps cannot connect in this release.");
+    expect(text).not.toMatch(/lets other systems read/i);
+  });
+
   it("shows version, resources, flags and recent activity without ids", async () => {
     const { client } = makeClient({
       data: {

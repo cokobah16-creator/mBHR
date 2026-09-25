@@ -5,7 +5,15 @@
 
 import { describe, expect, it } from "vitest";
 import { STATUS_MAPS } from "../terminology/status";
-import { ENCOUNTER_STATUS, applyStatusMap, explainStatus, mapEncounterStatus, sourceValuesFor } from "../terminology/statusMaps";
+import {
+  CONDITION_VERIFICATION_STATUS,
+  ENCOUNTER_STATUS,
+  applyStatusMap,
+  explainStatus,
+  mapEncounterStatus,
+  sourceValuesFor,
+} from "../terminology/statusMaps";
+import { mapCondition } from "../mappers/condition";
 
 /** FHIR values that assert something definite about care that happened or is settled. */
 const DEFINITE = new Set([
@@ -101,5 +109,23 @@ describe("Encounter.status", () => {
     expect(mapEncounterStatus(" closed")).toBe("unknown");
     expect(explainStatus(ENCOUNTER_STATUS, "cancelled").reason).toMatch(/never shown as finished/);
     expect(sourceValuesFor(ENCOUNTER_STATUS, "finished")).toEqual(["closed", "completed", "finished"]);
+  });
+});
+
+describe("Condition.verificationStatus", () => {
+  const ctx = { patientFhirIds: new Map([["p1", "f0000000-0000-4000-8000-000000000001"]]) };
+  const row = (verification_status: unknown) => ({ id: "c1", patient_id: "p1", clinical_status: "active", verification_status });
+
+  it("the mapper publishes what the map says, except the column's default 'confirmed'", () => {
+    for (const code of CONDITION_VERIFICATION_STATUS.allowed) {
+      const served = mapCondition(row(code), ctx)!.verificationStatus?.coding?.[0]?.code;
+      // DEFAULT 'confirmed' on public.conditions: a stored 'confirmed' may
+      // mean nobody recorded one, so it is never published.
+      if (code === "confirmed") expect(served, code).toBeUndefined();
+      else expect(served, code).toBe(applyStatusMap(CONDITION_VERIFICATION_STATUS, code));
+    }
+    for (const raw of [null, "", "suspected", "CONFIRMED"]) {
+      expect(mapCondition(row(raw), ctx)!.verificationStatus, String(raw)).toBeUndefined();
+    }
   });
 });

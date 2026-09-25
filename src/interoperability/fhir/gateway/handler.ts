@@ -134,6 +134,10 @@ async function contentVersion(resource: Resource): Promise<string> {
     .join("");
 }
 
+function etagOf(resource: Resource): string {
+  return `W/"${resource.meta?.versionId}"`;
+}
+
 function etagMatches(header: string | null, etag: string): boolean {
   if (!header) return false;
   return header
@@ -478,6 +482,13 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       throw errors.internal();
     }
     const found = route.kind === "search" || released.length > 0;
+    // A read the client already holds (If-None-Match) is answered 304 with
+    // no body, and audited with that status. Binary sends no ETag.
+    const notModified =
+      route.kind === "read" &&
+      type !== "Binary" &&
+      released.length > 0 &&
+      etagMatches(request.headers.get("if-none-match"), etagOf(released[0]));
     auditFailure = null;
     try {
       await recordAccess(db, {
@@ -486,7 +497,7 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
         denialReason: null,
         resultCount: released.length,
         patientIds: auditIds,
-        httpStatus: found ? 200 : 404,
+        httpStatus: !found ? 404 : notModified ? 304 : 200,
         consentDecision: allowed.consent?.decision ?? null,
         consentId: allowed.consent?.consentId ?? null,
         provisionId: allowed.consent?.provisionId ?? null,
@@ -518,11 +529,10 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
           },
         });
       }
-      const etag = `W/"${resource.meta?.versionId}"`;
-      const headers: Record<string, string> = { ETag: etag };
+      const headers: Record<string, string> = { ETag: etagOf(resource) };
       if (resource.meta?.lastUpdated) headers["Last-Modified"] = new Date(resource.meta.lastUpdated).toUTCString();
-      logLine(log, { requestId, status: 200, outcome: "read", resourceType: type, ms: now().getTime() - started });
-      if (etagMatches(request.headers.get("if-none-match"), etag)) return respond(304, null, headers, requestId);
+      logLine(log, { requestId, status: notModified ? 304 : 200, outcome: "read", resourceType: type, ms: now().getTime() - started });
+      if (notModified) return respond(304, null, headers, requestId);
       return respond(200, resource, headers, requestId);
     }
 

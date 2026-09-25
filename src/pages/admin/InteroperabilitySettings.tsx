@@ -185,8 +185,10 @@ export function InteroperabilitySettings({ client, fetchImpl, origin }: Props) {
       </div>
       <div className="panel-body space-y-5">
         <p className="text-body text-ink-secondary">
-          Read-only. The FHIR interface lets other systems read records from
-          mBHR. It is switched on and off in the server settings, not here.
+          Read-only. The FHIR interface lets signed-in mBHR staff (and
+          patients, when patient access is on) read records in the FHIR R4
+          format. Other systems and apps cannot connect in this release. It
+          is switched on and off in the server settings, not here.
         </p>
 
         {metadata === null ? (

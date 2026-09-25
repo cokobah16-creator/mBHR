@@ -146,7 +146,7 @@ export const definition: ResourceDefinition = {
   patientAccess: true,
   sensitiveSearch: false,
   notes: [
-    "Staff with consult, portal_manage or audit_access may read consents; patients see only their own.",
+    "Staff with consult, portal_manage or audit_access may read consents.",
     "A withdrawn consent is kept and published as inactive: it is never deleted and never shown as active.",
     "Who recorded, verified or withdrew a consent, the reason for a withdrawal, who signed it and its source document are never published; neither is a performer.",
     "A rule's actor names the kind of recipient recorded (for example External system), never a specific one.",
@@ -156,8 +156,11 @@ export const definition: ResourceDefinition = {
       : [
           "A consent with a rule for a kind of recipient (for example External system) is not served yet: a read answers 500 saying so, and a searchset says how many were left out. It is never served without that rule.",
         ]),
-    "Patients do not yet see directives still filed under another record of theirs that was merged into their current one (staff see them under the kept record, and the patient portal lists them); a patient's searchset says so.",
     "An empty result is not evidence that the patient agreed to or refused any use of their data.",
+  ],
+  patientAccessNotes: [
+    "Patients see only their own consents.",
+    "Patients do not yet see directives still filed under another record of theirs that was merged into their current one (staff see them under the kept record, and the patient portal lists them); a patient's searchset says so.",
   ],
 };
 

@@ -65,6 +65,11 @@ async function body(res: Response) {
   return res.json() as Promise<Record<string, any>>; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
+/** Ids of a searchset's matches (a searchset with nothing to list has no entry). */
+function matchIds(b: Record<string, any>): string[] { // eslint-disable-line @typescript-eslint/no-explicit-any
+  return (b.entry ?? []).filter((e: { search: { mode: string } }) => e.search.mode === "match").map((e: { resource: { id: string } }) => e.resource.id);
+}
+
 describe("feature flag", () => {
   it("answers nothing but a 404 OperationOutcome when FHIR_ENABLED is off", async () => {
     const { call, calls } = setup();
@@ -174,7 +179,8 @@ describe("authorisation", () => {
     // Changing the patient in the search does not reach B's vital signs.
     const search = await body(await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_B.fhir_id}`, { token: DOCTOR }));
     expect(search.resourceType).toBe("Bundle");
-    expect(search.entry).toEqual([]);
+    // Nothing to list: no entry at all (FHIR JSON has no empty arrays).
+    expect(search).not.toHaveProperty("entry");
     // Nor does naming B's vitals row directly.
     const direct = await call(`/fhir/R4/Observation/${VITALS_B.id}-heart-rate`, { token: DOCTOR });
     expect(direct.status).toBe(404);
@@ -284,9 +290,9 @@ describe("searches", () => {
     const byName = await body(await call("/fhir/R4/Patient?name=oka&birthdate=1984-03-02", { token: NURSE }));
     expect(byName.entry).toHaveLength(1);
     const wrongDob = await body(await call("/fhir/R4/Patient?name=oka&birthdate=1984-03-03", { token: NURSE }));
-    expect(wrongDob.entry).toEqual([]);
+    expect(wrongDob).not.toHaveProperty("entry");
     const otherSystem = await body(await call(`/fhir/R4/Patient?identifier=urn:oid:2.16.840|${PATIENT_A.fhir_id}`, { token: NURSE }));
-    expect(otherSystem.entry).toEqual([]);
+    expect(otherSystem).not.toHaveProperty("entry");
   });
 
   it("pages vital signs with a stable cursor and no duplicates", async () => {
@@ -297,7 +303,8 @@ describe("searches", () => {
     while (url && pages < 10) {
       const b = await body(await call(url, { token: NURSE }));
       expect(b.type).toBe("searchset");
-      seen.push(...b.entry.map((e: { resource: { id: string } }) => e.resource.id));
+      // Matches only: a nurse's searchset also carries the note that laboratory results were left out.
+      seen.push(...matchIds(b));
       const next = b.link.find((l: { relation: string }) => l.relation === "next");
       url = next ? next.url.replace("https://mbhr.app", "") : null;
       pages++;
@@ -308,10 +315,7 @@ describe("searches", () => {
 
   it("filters Observations by code, category, status, encounter and date", async () => {
     const { call } = setup();
-    const ids = async (q: string) =>
-      (await body(await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}&${q}`, { token: NURSE }))).entry.map(
-        (e: { resource: { id: string } }) => e.resource.id,
-      );
+    const ids = async (q: string) => matchIds(await body(await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}&${q}`, { token: NURSE })));
     expect(await ids("code=http://loinc.org|29463-7")).toEqual([`${VITALS_A.id}-weight`]);
     expect(await ids("code=weight_kg")).toEqual([`${VITALS_A.id}-weight`]);
     expect(await ids("category=laboratory")).toEqual([]);
@@ -344,7 +348,7 @@ describe("searches", () => {
     const ok = await body(await call(`/fhir/R4/Encounter?subject=Patient/${PATIENT_A.fhir_id}&status=finished`, { token: NURSE }));
     expect(ok.entry).toHaveLength(1);
     const none = await body(await call(`/fhir/R4/Encounter?patient=Patient/${PATIENT_A.fhir_id}&status=in-progress`, { token: NURSE }));
-    expect(none.entry).toEqual([]);
+    expect(none).not.toHaveProperty("entry");
   });
 
   it("audits searches with parameter names only, never values", async () => {

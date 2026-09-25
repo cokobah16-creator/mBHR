@@ -3,7 +3,7 @@ import {
   cleanWithdrawReason,
   consentState,
   externalSharingChip,
-  EXTERNAL_SHARING_HINT,
+  EXTERNAL_SHARING_NOTE,
   loadConsentSummary,
   loadMyConsents,
   parseConsentSummary,
@@ -15,6 +15,8 @@ import type { InteropRpcClient } from "./interopRpc";
 const NOW = new Date("2026-09-25T12:00:00Z");
 const ID_A = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c01";
 const ID_B = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c02";
+const ID_C = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c03";
+const ID_D = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c04";
 
 function record(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -29,10 +31,7 @@ function record(overrides: Record<string, unknown> = {}): Record<string, unknown
     recorded_at: "2025-12-31T09:00:00Z",
     withdrawn: false,
     withdrawn_at: null,
-    provisions: [
-      { provision_type: "permit", actor_type: "external_system", purpose: "PATRQT" },
-      { provision_type: "deny", actor_type: "organization", purpose: "HRESCH" },
-    ],
+    provisions: [{ provision_type: "permit", actor_type: "external_system", purpose: "PATRQT" }],
     ...overrides,
   };
 }
@@ -74,10 +73,13 @@ describe("consentState", () => {
 describe("parseMyConsents", () => {
   it("keeps what, since when and status, and never copies the patient id", () => {
     const [item] = parseMyConsents([record()], NOW);
-    expect(item).toEqual({
+    expect(item).toStrictEqual({
       id: ID_A,
       topic: "sharing",
+      kind: "permission",
       permits: ["your_request"],
+      refuses: [],
+      alsoPermits: false,
       state: "in_place",
       since: "2026-01-01T00:00:00Z",
       withdrawnAt: null,
@@ -85,6 +87,75 @@ describe("parseMyConsents", () => {
       canWithdraw: true,
     });
     expect(JSON.stringify(item)).not.toContain("01HXPATIENTINTERNAL");
+  });
+
+  it("shows a deny-only record as a refusal, never offered for withdrawal", () => {
+    const [item] = parseMyConsents(
+      [record({ provisions: [{ provision_type: "deny", actor_type: "external_system" }] })],
+      NOW,
+    );
+    expect(item.kind).toBe("refusal");
+    expect(item.permits).toStrictEqual([]);
+    expect(item.refuses).toStrictEqual([]);
+    expect(item.alsoPermits).toBe(false);
+    expect(item.state).toBe("in_place");
+    expect(item.canWithdraw).toBe(false);
+  });
+
+  it("shows a record with a permit and a deny as a refusal, and says it also permits", () => {
+    const [item] = parseMyConsents(
+      [
+        record({
+          provisions: [
+            { provision_type: "permit", actor_type: "external_system", purpose: "PATRQT" },
+            { provision_type: "deny", actor_type: "organization", purpose: "HRESCH" },
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(item.kind).toBe("refusal");
+    expect(item.refuses).toStrictEqual(["research"]);
+    expect(item.permits).toStrictEqual(["your_request"]);
+    expect(item.alsoPermits).toBe(true);
+    expect(item.canWithdraw).toBe(false);
+  });
+
+  it("leaves out treatment consents, advance care wishes and unknown scopes", () => {
+    const items = parseMyConsents(
+      [
+        record({ id: ID_A, scope: "treatment", provisions: [{ provision_type: "permit", purpose: "TREAT" }] }),
+        record({ id: ID_B, scope: "adr", provisions: [] }),
+        record({ id: ID_C, scope: "something-new" }),
+        record({ id: ID_D, scope: "research", provisions: [{ provision_type: "permit", purpose: "HRESCH" }] }),
+      ],
+      NOW,
+    );
+    expect(items.map((i) => [i.id, i.topic, i.kind, i.canWithdraw])).toStrictEqual([
+      [ID_D, "research", "permission", true],
+    ]);
+  });
+
+  it("never reads a record with no rules as a permission", () => {
+    const [item] = parseMyConsents([record({ provisions: [] })], NOW);
+    expect(item.kind).toBe("unclear");
+    expect(item.canWithdraw).toBe(false);
+  });
+
+  it("lists no purposes when one provision covers every purpose", () => {
+    const [item] = parseMyConsents(
+      [
+        record({
+          provisions: [
+            { provision_type: "permit", purpose: "PATRQT" },
+            { provision_type: "permit", purpose: null },
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(item.permits).toStrictEqual([]);
+    expect(item.kind).toBe("permission");
   });
 
   it("offers Withdraw only for records not yet withdrawn or ended", () => {
@@ -105,8 +176,11 @@ describe("parseMyConsents", () => {
     expect(parseMyConsents(null)).toEqual([]);
     expect(parseMyConsents({})).toEqual([]);
     expect(parseMyConsents([record({ id: "not-a-uuid" }), 5, null])).toEqual([]);
-    const [item] = parseMyConsents([record({ scope: "other", provisions: "x", effective_from: null })], NOW);
-    expect(item.topic).toBe("other");
+    expect(parseMyConsents([record({ scope: 7 })])).toEqual([]);
+    expect(parseMyConsents([record({ scope: "constructor" })])).toEqual([]);
+    const [item] = parseMyConsents([record({ provisions: "x", effective_from: null })], NOW);
+    expect(item.topic).toBe("sharing");
+    expect(item.kind).toBe("unclear");
     expect(item.permits).toEqual([]);
     expect(item.since).toBe("2025-12-31T09:00:00Z");
   });
@@ -116,6 +190,7 @@ describe("loadMyConsents", () => {
   it("returns missing quietly when the function is not deployed", async () => {
     const out = await loadMyConsents(
       fakeClient({ data: null, error: { code: "PGRST202", message: "not found" } }),
+      "01HXP",
       true,
     );
     expect(out).toEqual({ status: "missing" });
@@ -123,14 +198,20 @@ describe("loadMyConsents", () => {
 
   it("does not call when offline", async () => {
     const calls: { fn: string }[] = [];
-    const out = await loadMyConsents(fakeClient({ data: [], error: null }, calls), false);
+    const out = await loadMyConsents(fakeClient({ data: [], error: null }, calls), "01HXP", false);
     expect(out).toEqual({ status: "offline" });
     expect(calls).toHaveLength(0);
   });
 
-  it("parses the records", async () => {
-    const out = await loadMyConsents(fakeClient({ data: [record()], error: null }), true, NOW);
+  it("asks for the page's patient only, and never calls without one", async () => {
+    const calls: { fn: string; args?: Record<string, unknown> }[] = [];
+    const client = fakeClient({ data: [record()], error: null }, calls);
+    const out = await loadMyConsents(client, "01HXP", true, NOW);
     expect(out.status).toBe("ok");
+    expect(calls).toStrictEqual([{ fn: "interop_my_consents", args: { p_patient_id: "01HXP" } }]);
+    expect(await loadMyConsents(client, "", true, NOW)).toStrictEqual({ status: "invalid" });
+    expect(await loadMyConsents(client, "bad id!", true, NOW)).toStrictEqual({ status: "invalid" });
+    expect(calls).toHaveLength(1);
   });
 });
 
@@ -172,40 +253,76 @@ describe("withdrawConsent", () => {
 });
 
 describe("consent summary", () => {
-  it("maps each summary to its chip label", () => {
-    const label = (v: string) =>
-      externalSharingChip(parseConsentSummary({ external_sharing: v }))?.label;
-    expect(label("not_allowed")).toBe("External sharing: Not allowed");
-    expect(label("allowed")).toBe("External sharing: Allowed");
-    expect(label("withdrawn")).toBe("External sharing: Withdrawn");
+  const chipFor = (state: string, reason?: string) =>
+    externalSharingChip(parseConsentSummary({ sharing_state: state, sharing_reason: reason }));
+
+  it("shows the owner's three states: Allowed, Restricted, Withdrawn", () => {
+    expect(chipFor("allowed", "permitted")?.label).toBe("External sharing: Allowed");
+    expect(chipFor("restricted", "limited")?.label).toBe("External sharing: Restricted");
+    expect(chipFor("withdrawn", "withdrawn")?.label).toBe("External sharing: Withdrawn");
   });
 
-  it("uses no alarming tone and explains it does not affect care", () => {
-    for (const v of ["allowed", "not_allowed", "withdrawn"]) {
-      const chip = externalSharingChip(parseConsentSummary({ external_sharing: v }));
-      expect(["info", "neutral"]).toContain(chip?.tone);
+  it("says Restricted, never Allowed, for a refusal, a limit, no check, no start or no record", () => {
+    for (const reason of ["refused", "limited", "pending_verification", "not_started", "no_permission"]) {
+      expect(chipFor("restricted", reason)?.label).toBe("External sharing: Restricted");
     }
-    expect(EXTERNAL_SHARING_HINT).toBe(
-      "This is about sharing records outside mBHR. It does not affect care.",
-    );
   });
 
-  it("shows nothing for an answer it does not understand", () => {
+  it("gives the reason in plain words and says external access is off", () => {
+    expect(chipFor("restricted", "refused")?.hint).toBe(
+      "The patient asked us not to share their records outside mBHR. " +
+        "External access is off in this release, so this is not used to share records yet. " +
+        "It does not affect care.",
+    );
+    expect(chipFor("restricted", "limited")?.hint).toContain(
+      "The patient's permission covers only some records or uses.",
+    );
+    expect(chipFor("restricted", "pending_verification")?.hint).toContain("staff have not checked it yet");
+    expect(chipFor("restricted", "not_started")?.hint).toContain("it has not started yet");
+    expect(chipFor("restricted", "no_permission")?.hint).toContain("No permission to share");
+    expect(chipFor("allowed", "permitted")?.hint).toContain("with no limits");
+    expect(chipFor("withdrawn", "withdrawn")?.hint).toContain("withdrew their permission");
+    expect(chipFor("restricted", "mystery")?.hint).toBe(
+      `The reason is not known. ${EXTERNAL_SHARING_NOTE}`,
+    );
+    expect(EXTERNAL_SHARING_NOTE).toContain("External access is off in this release");
+    expect(EXTERNAL_SHARING_NOTE).toContain("It does not affect care.");
+    expect(EXTERNAL_SHARING_NOTE).not.toMatch(/nothing is shared|does not share/i);
+  });
+
+  it("uses no alarming tone", () => {
+    for (const v of ["allowed", "restricted", "withdrawn"]) {
+      expect(["info", "neutral"]).toContain(chipFor(v)?.tone);
+    }
+    expect(chipFor("restricted", "refused")?.tone).toBe("neutral");
+  });
+
+  it("shows nothing for an answer it does not understand, including the older key alone", () => {
     expect(parseConsentSummary(null)).toBeNull();
-    expect(parseConsentSummary({ external_sharing: "maybe" })).toBeNull();
+    expect(parseConsentSummary({ sharing_state: "maybe" })).toBeNull();
+    expect(parseConsentSummary({ external_sharing: "allowed" })).toBeNull();
+    expect(parseConsentSummary({ sharing_state: "not_allowed" })).toBeNull();
     expect(externalSharingChip(null)).toBeNull();
+  });
+
+  it("keeps an unknown reason unknown", () => {
+    expect(parseConsentSummary({ sharing_state: "restricted", sharing_reason: "new_code" })?.reason).toBeNull();
+    expect(parseConsentSummary({ sharing_state: "restricted" })?.reason).toBeNull();
   });
 
   it("keeps counts and the last change", () => {
     expect(
       parseConsentSummary({
         external_sharing: "withdrawn",
+        sharing_state: "withdrawn",
+        sharing_reason: "withdrawn",
         active_records: 0,
         withdrawn_records: 2,
         last_changed_at: "2026-05-01T00:00:00Z",
       }),
-    ).toEqual({
+    ).toStrictEqual({
       externalSharing: "withdrawn",
+      reason: "withdrawn",
       activeRecords: 0,
       withdrawnRecords: 2,
       lastChangedAt: "2026-05-01T00:00:00Z",
@@ -214,7 +331,10 @@ describe("consent summary", () => {
 
   it("loads quietly: offline, missing, invalid id", async () => {
     const calls: { fn: string; args?: Record<string, unknown> }[] = [];
-    const ok = fakeClient({ data: { external_sharing: "allowed" }, error: null }, calls);
+    const ok = fakeClient(
+      { data: { sharing_state: "allowed", sharing_reason: "permitted" }, error: null },
+      calls,
+    );
     expect((await loadConsentSummary(ok, "01HXP", true)).status).toBe("ok");
     expect(calls[0]).toEqual({ fn: "interop_consent_summary", args: { p_patient_id: "01HXP" } });
     expect(await loadConsentSummary(ok, "01HXP", false)).toEqual({ status: "offline" });

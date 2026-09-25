@@ -11,6 +11,9 @@
 //     type         a FHIR resource type name, or "*" (the only wildcard)
 //     permissions  v2: one or more of c r u d s, in that order, no repeats
 //                  v1: read (= rs), write (= cud), * (= cruds); no query
+//     name         a search filter: a resource search parameter (with an
+//                  optional :modifier) or _id. Every other parameter that
+//                  starts with "_" is refused (see FILTER_PARAMS_WITH_UNDERSCORE)
 //   launch, launch/patient, launch/encounter
 //   openid, fhirUser, profile, offline_access, online_access
 //
@@ -47,6 +50,17 @@ const SCOPE_TOKEN = /^[\x21\x23-\x5b\x5d-\x7e]+$/;
 const V2_PERMISSIONS = /^c?r?u?d?s?$/;
 const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,63}(?::[A-Za-z][A-Za-z-]{0,31})?$/;
 const PARAM_VALUE = /^[^&#?=]{1,256}$/;
+/**
+ * The only "_" parameters accepted as a constraint. A constraint is ANDed
+ * with the search, so it must be a filter that can only narrow it. The
+ * other "_" parameters are not: _include, _revinclude and _contained add
+ * resources to a result; _elements, _summary, _count, _sort and _total
+ * change what is returned, not which records; _has, _query, _filter and
+ * the rest depend on other resources or on server-defined queries. They
+ * are refused, never ignored. Names without "_" are resource search
+ * parameters, which are filters.
+ */
+const FILTER_PARAMS_WITH_UNDERSCORE: ReadonlySet<string> = new Set(["_id"]);
 
 const V1_PERMISSIONS: Readonly<Record<string, readonly SmartPermission[]>> = {
   read: ["r", "s"],
@@ -69,17 +83,24 @@ function fail(error: SmartScopeParseError): SmartScopeParseResult {
   return { ok: false, error };
 }
 
-function parseConstraints(query: string): SmartScopeConstraint[] | null {
-  if (query === "") return null;
+/** True for a search filter parameter name (the part before any :modifier). */
+function isFilterParam(name: string): boolean {
+  const base = name.split(":")[0];
+  return !base.startsWith("_") || FILTER_PARAMS_WITH_UNDERSCORE.has(base);
+}
+
+function parseConstraints(query: string): SmartScopeConstraint[] | SmartScopeParseError {
+  if (query === "") return "invalid_query";
   const parts = query.split("&");
-  if (parts.length > MAX_SCOPE_CONSTRAINTS) return null;
+  if (parts.length > MAX_SCOPE_CONSTRAINTS) return "invalid_query";
   const out: SmartScopeConstraint[] = [];
   for (const part of parts) {
     const eq = part.indexOf("=");
-    if (eq <= 0) return null;
+    if (eq <= 0) return "invalid_query";
     const name = part.slice(0, eq);
     const value = part.slice(eq + 1);
-    if (!PARAM_NAME.test(name) || !PARAM_VALUE.test(value)) return null;
+    if (!PARAM_NAME.test(name) || !PARAM_VALUE.test(value)) return "invalid_query";
+    if (!isFilterParam(name)) return "unsupported_constraint";
     out.push({ name, value });
   }
   return normaliseConstraints(out);
@@ -158,7 +179,7 @@ export function parseSmartScope(token: string): SmartScopeParseResult {
   let constraints: SmartScopeConstraint[] = [];
   if (query !== null) {
     const parsed = parseConstraints(query);
-    if (parsed === null) return fail("invalid_query");
+    if (typeof parsed === "string") return fail(parsed);
     constraints = parsed;
   }
 

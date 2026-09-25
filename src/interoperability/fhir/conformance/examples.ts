@@ -592,6 +592,15 @@ export function conformanceExamples(): Record<string, Resource> {
       page: { resources: observations, next: null },
       now: new Date("2026-09-25T12:00:00Z"),
     }),
+    // A search with no match and no note: no "entry" at all (FHIR JSON forbids empty arrays).
+    "Bundle-empty-search": searchsetBundle({
+      baseUrl: EXAMPLE_BASE_URL,
+      resourceType: "Encounter",
+      query: new URLSearchParams(`patient=Patient/${PATIENT.fhir_id}&status=cancelled`),
+      count: 20,
+      page: { resources: [], next: null },
+      now: new Date("2026-09-25T12:00:00Z"),
+    }),
   };
   for (const o of observations) out[`Observation-${o.id!.slice(VITALS.id.length + 1)}`] = o;
   Object.assign(out, phase2Examples(ctx));

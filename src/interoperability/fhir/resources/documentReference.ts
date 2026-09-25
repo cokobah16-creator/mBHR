@@ -95,13 +95,17 @@ export const definition: ResourceDefinition = {
   patientAccess: true,
   sensitiveSearch: true,
   notes: [
-    "Staff need consult. Patients see their own documents that were not removed, as in the portal.",
-    "The file is at content.attachment.url (Binary/[id]); a patient gets a url only for documents they uploaded.",
+    "Staff need consult.",
+    "The file is at content.attachment.url (Binary/[id]).",
     "No storage URL, signed URL or storage path is ever published.",
     "author is not published: mBHR records who uploaded a file, not who wrote it (a portal upload may come from a caregiver).",
     "Type, file name, file type, size and description are what the uploader entered and are not verified; a 'Test result' document is not a laboratory result.",
     "Documents added before mBHR recorded who uploaded them are categorised staff, including earlier portal uploads.",
     "meta.lastUpdated is not published.",
+  ],
+  patientAccessNotes: [
+    "Patients see their own documents that were not removed, as in the portal.",
+    "A patient gets a file url only for documents they uploaded.",
   ],
 };
 

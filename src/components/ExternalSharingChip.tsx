@@ -7,7 +7,6 @@ import { useAuthStore } from "@/stores/auth";
 import { can, type Role } from "@/auth/roles";
 import type { InteropRpcClient } from "@/services/interopRpc";
 import {
-  EXTERNAL_SHARING_HINT,
   externalSharingChip,
   loadConsentSummary,
   type ConsentSummary,
@@ -26,8 +25,12 @@ function canSeeExternalSharing(role: Role | null | undefined): boolean {
 }
 
 /**
- * Read-only chip: whether the patient allowed sharing their records outside
- * mBHR. It never blocks or changes care, and says so on hover.
+ * Read-only chip: "External sharing: Allowed", "Restricted" or "Withdrawn"
+ * (interop_consent_summary sharing_state). Allowed only for a verified
+ * permit in force with no limit and no refusal; everything else, including
+ * no record at all, is Restricted. The hover text gives the reason in plain
+ * words, says external access is off in this release, and that care is not
+ * affected. It never blocks or changes care.
  *
  * Renders nothing unless the device is online and the staff member is
  * signed in online, and nothing when the summary cannot be read (not
@@ -59,10 +62,10 @@ export function ExternalSharingChip({ patientId, client }: Props) {
   const chip = ready ? externalSharingChip(summary) : null;
   if (!chip) return null;
   return (
-    <span title={EXTERNAL_SHARING_HINT} data-testid="external-sharing-chip">
+    <span title={chip.hint} data-testid="external-sharing-chip">
       <StatusBadge tone={chip.tone}>
         {chip.label}
-        <span className="sr-only"> ({EXTERNAL_SHARING_HINT})</span>
+        <span className="sr-only"> ({chip.hint})</span>
       </StatusBadge>
     </span>
   );

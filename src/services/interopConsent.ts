@@ -3,8 +3,10 @@
  * "External sharing" chip.
  *
  * Database functions (supabase/migrations-deferred/20260926130000_interop_phase2.sql):
- * - interop_my_consents(): the signed-in portal patient's own records
+ * - interop_my_consents(p_patient_id): the records of one of the signed-in
+ *   portal patient's own records (and of records merged into it)
  * - interop_withdraw_consent(p_consent_id, p_reason): withdraw one record
+ *   (a patient: only a permission to share, never a refusal)
  * - interop_consent_summary(p_patient_id): the external sharing summary
  *
  * They may not be deployed yet: every loader returns a status instead of
@@ -24,13 +26,22 @@ import {
   type RpcFailure,
 } from "./interopRpc";
 
-/** What a stored record is about (consent_records.scope). */
+/**
+ * What a stored record is about (consent_records.scope). The portal lists
+ * only these two: a treatment consent (scope treatment) or an advance care
+ * directive (scope adr) is not a sharing choice and is left out.
+ */
 export type ConsentTopic =
   | "sharing" // patient-privacy
-  | "research" // research
-  | "care" // treatment
-  | "future_care" // adr (advance care wishes)
-  | "other";
+  | "research"; // research
+
+/**
+ * What the record says, in the patient's terms:
+ * - permission: it permits something and refuses nothing
+ * - refusal: it has at least one deny provision (whatever else it permits)
+ * - unclear: it has no provisions, so it says nothing either way
+ */
+export type ConsentKind = "permission" | "refusal" | "unclear";
 
 /** Where a record stands today, in the patient's terms. */
 export type ConsentState =
@@ -44,8 +55,16 @@ export type ConsentState =
 export interface PatientConsentItem {
   id: string;
   topic: ConsentTopic;
-  /** Purposes the record permits, as plain groups (no codes). */
+  kind: ConsentKind;
+  /**
+   * Purposes the permit provisions name, as plain groups (no codes). Empty
+   * when none names a purpose, or when one applies to every purpose.
+   */
   permits: ConsentPurpose[];
+  /** Purposes the deny provisions name (same rule as permits). */
+  refuses: ConsentPurpose[];
+  /** A refusal that also permits something (shown, never hidden). */
+  alsoPermits: boolean;
   state: ConsentState;
   /** When it started (effective_from, else when it was recorded). */
   since: string | null;
@@ -53,6 +72,7 @@ export interface PatientConsentItem {
   withdrawnAt: string | null;
   /** When it ends, if it has an end date. */
   until: string | null;
+  /** Only a permission that is in place or not started yet. */
   canWithdraw: boolean;
 }
 
@@ -67,8 +87,6 @@ export type ConsentPurpose =
 const TOPICS: Record<string, ConsentTopic> = {
   "patient-privacy": "sharing",
   research: "research",
-  treatment: "care",
-  adr: "future_care",
 };
 
 const PURPOSES: Record<string, ConsentPurpose> = {
@@ -81,10 +99,19 @@ const PURPOSES: Record<string, ConsentPurpose> = {
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Patient ids the consent functions accept. */
+const PATIENT_ID = /^[A-Za-z0-9._-]{1,128}$/;
 
 /** True for a consent record id the server can accept. */
 export function isConsentId(value: unknown): value is string {
   return typeof value === "string" && UUID.test(value);
+}
+
+/** map[key] for the map's own keys only (never a prototype member). */
+function lookup<T>(map: Record<string, T>, key: unknown): T | undefined {
+  return typeof key === "string" && Object.prototype.hasOwnProperty.call(map, key)
+    ? map[key]
+    : undefined;
 }
 
 function obj(value: unknown): Record<string, unknown> | null {
@@ -114,8 +141,28 @@ export function consentState(record: Record<string, unknown>, now: Date = new Da
 }
 
 /**
- * The patient's records from interop_my_consents(), newest first with the
- * ones in place at the top. Rows without a valid id are dropped. Patient
+ * The purposes one kind of provision names. Empty when there is none of
+ * that kind, or when one of them names no purpose (it covers every
+ * purpose, so listing the others would understate it).
+ */
+function purposesOf(provisions: Record<string, unknown>[], type: "permit" | "deny"): ConsentPurpose[] {
+  const out: ConsentPurpose[] = [];
+  for (const prov of provisions) {
+    if (prov.provision_type !== type) continue;
+    const purpose = lookup(PURPOSES, prov.purpose);
+    if (!purpose) return [];
+    if (!out.includes(purpose)) out.push(purpose);
+  }
+  return out;
+}
+
+/**
+ * The patient's sharing choices from interop_my_consents(), newest first
+ * with the ones in place at the top. Only scopes patient-privacy and
+ * research are kept (a treatment consent or an advance care directive is
+ * not a sharing choice). A record with any deny provision is a refusal:
+ * never offered for withdrawal, because withdrawing it could allow sharing
+ * (the server refuses it too). Rows without a valid id are dropped. Patient
  * ids and internal fields are never copied out.
  */
 export function parseMyConsents(data: unknown, now: Date = new Date()): PatientConsentItem[] {
@@ -124,24 +171,27 @@ export function parseMyConsents(data: unknown, now: Date = new Date()): PatientC
   for (const raw of data) {
     const r = obj(raw);
     if (!r || !isConsentId(r.id)) continue;
+    const topic = lookup(TOPICS, r.scope);
+    if (!topic) continue;
     const state = consentState(r, now);
-    const provisions = Array.isArray(r.provisions) ? r.provisions : [];
-    const permits: ConsentPurpose[] = [];
-    for (const p of provisions) {
-      const prov = obj(p);
-      if (!prov || prov.provision_type !== "permit") continue;
-      const purpose = typeof prov.purpose === "string" ? PURPOSES[prov.purpose] : undefined;
-      if (purpose && !permits.includes(purpose)) permits.push(purpose);
-    }
+    const provisions = (Array.isArray(r.provisions) ? r.provisions : [])
+      .map(obj)
+      .filter((p): p is Record<string, unknown> => p !== null);
+    const hasPermit = provisions.some((p) => p.provision_type === "permit");
+    const hasDeny = provisions.some((p) => p.provision_type === "deny");
+    const kind: ConsentKind = hasDeny ? "refusal" : hasPermit ? "permission" : "unclear";
     items.push({
       id: r.id,
-      topic: (typeof r.scope === "string" && TOPICS[r.scope]) || "other",
-      permits,
+      topic,
+      kind,
+      permits: purposesOf(provisions, "permit"),
+      refuses: purposesOf(provisions, "deny"),
+      alsoPermits: hasDeny && hasPermit,
       state,
       since: toTimestamp(r.effective_from) ?? toTimestamp(r.recorded_at) ?? toTimestamp(r.created_at),
       withdrawnAt: toTimestamp(r.withdrawn_at),
       until: toTimestamp(r.effective_until),
-      canWithdraw: state === "in_place" || state === "not_started",
+      canWithdraw: kind === "permission" && (state === "in_place" || state === "not_started"),
     });
   }
   const rank = (s: ConsentState) => (s === "in_place" ? 0 : s === "not_started" ? 1 : 2);
@@ -154,15 +204,31 @@ export function parseMyConsents(data: unknown, now: Date = new Date()): PatientC
 
 export type MyConsentsResult =
   | { status: "ok"; items: PatientConsentItem[] }
-  | { status: RpcFailure };
+  | { status: RpcFailure | "invalid" };
 
-/** Loads the signed-in portal patient's own records. Never throws. */
+/**
+ * Loads the sharing choices of the page's patient: `patientId` is the
+ * portal record the page shows (one sign-in can be linked to several
+ * people, for example on a shared phone). The server checks that it is one
+ * of the caller's own records and returns only that record's family (the
+ * records merged into it, whose ids the app does not know, so no second
+ * filter is applied here). No call without a valid id. Never throws.
+ */
 export async function loadMyConsents(
   client: InteropRpcClient | null | undefined,
+  patientId: string,
   online: boolean,
   now: Date = new Date(),
 ): Promise<MyConsentsResult> {
-  const out = await callInteropRpc(client, "interop_my_consents", undefined, online);
+  if (typeof patientId !== "string" || !PATIENT_ID.test(patientId)) {
+    return { status: "invalid" };
+  }
+  const out = await callInteropRpc(
+    client,
+    "interop_my_consents",
+    { p_patient_id: patientId },
+    online,
+  );
   if (out.ok === false) return { status: out.reason };
   return { status: "ok", items: parseMyConsents(out.data, now) };
 }
@@ -200,24 +266,57 @@ export async function withdrawConsent(
   return out.data === false ? { status: "already_withdrawn" } : { status: "withdrawn" };
 }
 
-/** interop_consent_summary(p_patient_id).external_sharing */
-export type ExternalSharing = "allowed" | "not_allowed" | "withdrawn";
+/**
+ * interop_consent_summary(p_patient_id).sharing_state, the owner's three
+ * states: "allowed" only for a verified permit in force with no limit and
+ * no refusal; "withdrawn"; "restricted" for everything else.
+ */
+export type ExternalSharing = "allowed" | "restricted" | "withdrawn";
+
+/** interop_consent_summary(p_patient_id).sharing_reason: why. */
+export type SharingReason =
+  | "permitted" // a verified permit in force, with no limit
+  | "withdrawn" // a permission was withdrawn and nothing else applies
+  | "refused" // the patient refused (verified or not)
+  | "limited" // the only permits in force are limited (purpose, type, ...)
+  | "pending_verification" // a permit in force that staff have not verified
+  | "not_started" // a permit that is not in force yet
+  | "no_permission"; // nothing permits sharing
+
+const SHARING_REASONS: readonly SharingReason[] = [
+  "permitted",
+  "withdrawn",
+  "refused",
+  "limited",
+  "pending_verification",
+  "not_started",
+  "no_permission",
+];
 
 export interface ConsentSummary {
   externalSharing: ExternalSharing;
+  /** null when the server gave no reason we know (the hover says so). */
+  reason: SharingReason | null;
   activeRecords: number | null;
   withdrawnRecords: number | null;
   lastChangedAt: string | null;
 }
 
-/** The summary, or null when the answer is not one we understand. */
+/**
+ * The summary, or null when the answer is not one we understand. Only
+ * sharing_state is read for the state: the older external_sharing key
+ * says "allowed" for a limited permit too, so an answer without
+ * sharing_state shows nothing.
+ */
 export function parseConsentSummary(data: unknown): ConsentSummary | null {
   const d = obj(data);
   if (!d) return null;
-  const v = d.external_sharing;
-  if (v !== "allowed" && v !== "not_allowed" && v !== "withdrawn") return null;
+  const v = d.sharing_state;
+  if (v !== "allowed" && v !== "restricted" && v !== "withdrawn") return null;
+  const reason = SHARING_REASONS.find((r) => r === d.sharing_reason) ?? null;
   return {
     externalSharing: v,
+    reason,
     activeRecords: toCount(d.active_records),
     withdrawnRecords: toCount(d.withdrawn_records),
     lastChangedAt: toTimestamp(d.last_changed_at),
@@ -226,27 +325,46 @@ export function parseConsentSummary(data: unknown): ConsentSummary | null {
 
 export const EXTERNAL_SHARING_LABEL: Record<ExternalSharing, string> = {
   allowed: "External sharing: Allowed",
-  not_allowed: "External sharing: Not allowed",
+  restricted: "External sharing: Restricted",
   withdrawn: "External sharing: Withdrawn",
 };
 
-/** Hover text: the chip is about sharing outside mBHR, not about care. */
-export const EXTERNAL_SHARING_HINT =
-  "This is about sharing records outside mBHR. It does not affect care.";
+/** Hover text, first sentence: the reason, in plain words. */
+export const SHARING_REASON_TEXT: Record<SharingReason, string> = {
+  permitted: "The patient allowed sharing outside mBHR, with no limits.",
+  withdrawn: "The patient withdrew their permission to share outside mBHR.",
+  refused: "The patient asked us not to share their records outside mBHR.",
+  limited: "The patient's permission covers only some records or uses.",
+  pending_verification: "A permission is recorded, but staff have not checked it yet.",
+  not_started: "A permission is recorded, but it has not started yet.",
+  no_permission: "No permission to share outside mBHR is in force.",
+};
 
-/** The chip's text and tone. Neutral tones only: nothing here blocks care. */
+/** Hover text when the reason is not one we know. */
+export const SHARING_REASON_UNKNOWN = "The reason is not known.";
+
+/**
+ * Hover text, the rest: this release shares nothing through it, and care is
+ * never affected. (It does not claim that no record ever leaves mBHR: the
+ * older sharing functions are outside this record.)
+ */
+export const EXTERNAL_SHARING_NOTE =
+  "External access is off in this release, so this is not used to share records yet. It does not affect care.";
+
+/** The chip's text, tone and hover text. Neutral tones only: nothing here blocks care. */
 export function externalSharingChip(summary: ConsentSummary | null): {
   label: string;
   tone: "info" | "neutral";
+  hint: string;
 } | null {
   if (!summary) return null;
+  const why = summary.reason ? SHARING_REASON_TEXT[summary.reason] : SHARING_REASON_UNKNOWN;
   return {
     label: EXTERNAL_SHARING_LABEL[summary.externalSharing],
     tone: summary.externalSharing === "allowed" ? "info" : "neutral",
+    hint: `${why} ${EXTERNAL_SHARING_NOTE}`,
   };
 }
-
-const PATIENT_ID = /^[A-Za-z0-9._-]{1,128}$/;
 
 export type ConsentSummaryResult =
   | { status: "ok"; summary: ConsentSummary }

@@ -129,7 +129,27 @@ describe("search parameters", () => {
     expect(b.link[0]).toEqual({ relation: "self", url: "https://mbhr.app/fhir/R4/Observation?code=8867-4&patient=Patient%2Fp1&_count=2" });
     expect(b.link[1].relation).toBe("next");
     expect(new URL(b.link[1].url).searchParams.get("_cursor")).toBe(encodeCursor({ k: "row1", s: 2 }));
-    expect(b.entry[0]).toEqual({ fullUrl: "https://mbhr.app/fhir/R4/Observation/o1", resource: { resourceType: "Observation", id: "o1" }, search: { mode: "match" } });
+    expect(b.entry).toStrictEqual([
+      { fullUrl: "https://mbhr.app/fhir/R4/Observation/o1", resource: { resourceType: "Observation", id: "o1" }, search: { mode: "match" } },
+    ]);
+  });
+
+  it("leaves entry out of a searchset with nothing to list (FHIR JSON has no empty arrays)", () => {
+    const opts = {
+      baseUrl: "https://mbhr.app/fhir/R4",
+      resourceType: "Encounter",
+      query: new URLSearchParams("patient=Patient/p1"),
+      count: 20,
+      page: { resources: [], next: null },
+      now: new Date("2026-09-25T00:00:00Z"),
+      newId: () => "0e0e0e0e-0000-4000-8000-000000000001",
+    };
+    const empty = searchsetBundle(opts);
+    expect("entry" in empty).toBe(false);
+    expect(JSON.stringify(empty)).not.toContain("[]");
+    // A note alone is still listed, as the one outcome entry.
+    const noted = searchsetBundle({ ...opts, outcomes: [{ severity: "information", code: "informational", diagnostics: "A note." }] });
+    expect(noted.entry?.map((e) => e.search?.mode)).toStrictEqual(["outcome"]);
   });
 });
 

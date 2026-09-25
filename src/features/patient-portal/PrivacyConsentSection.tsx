@@ -20,37 +20,56 @@ import { ConfirmDialog } from "./account/ConfirmDialog";
 import {
   PRIVACY_COPY as COPY,
   PURPOSE_LABEL,
+  REFUSAL_LABEL,
   STATE_LABEL,
   TOPIC_LABEL,
+  UNCLEAR_LABEL,
 } from "./privacyCopy";
 
 type ListState =
   | { kind: "loading" }
   | { kind: "ready"; items: PatientConsentItem[] }
-  | { kind: "unavailable"; reason: RpcFailure };
+  | { kind: "unavailable"; reason: RpcFailure | "invalid" };
 
 interface Props {
+  /** The page's patient (the portal record the page shows). */
+  patientId: string;
   /** For tests: the client to call (defaults to the app's Supabase client). */
   client?: InteropRpcClient | null;
 }
 
-function unavailableMessage(reason: RpcFailure): string {
+function unavailableMessage(reason: RpcFailure | "invalid"): string {
   if (reason === "offline") return COPY.offline;
   if (reason === "missing") return COPY.missing;
-  if (reason === "signed_out" || reason === "denied") return COPY.signedOut;
+  if (reason === "signed_out" || reason === "denied" || reason === "invalid") return COPY.signedOut;
   return COPY.failed;
+}
+
+/** The row's title: what the record says, with the purposes it names. */
+function itemTitle(item: PatientConsentItem): string {
+  if (item.kind === "unclear") return UNCLEAR_LABEL[item.topic];
+  const label = item.kind === "refusal" ? REFUSAL_LABEL[item.topic] : TOPIC_LABEL[item.topic];
+  const named = item.kind === "refusal" ? item.refuses : item.permits;
+  const purposes = named.map((p) => PURPOSE_LABEL[p]).join(", ");
+  return purposes ? `${label} (${purposes})` : label;
 }
 
 /**
  * "Privacy and data sharing": what mBHR does with the patient's records,
- * and the permissions to share them that the patient has given (stored
- * consent records), each with a Withdraw button.
+ * and the sharing choices recorded for the page's patient in mBHR's
+ * consent register (scopes patient-privacy and research only; a treatment
+ * consent or an advance care directive is not listed here).
+ * - A permission has a Withdraw button.
+ * - A refusal (any "do not" rule) has none: withdrawing it could allow
+ *   sharing, so the patient is told to ask clinic staff (the server
+ *   refuses it too).
+ * - A record with no rules says so, and has no button.
  *
  * Separate from the sharing choices on the rest of the page
  * (patient_data_sharing_preferences), which are a record of wishes, not
  * consent records. Any failure here stays inside this section.
  */
-export function PrivacyConsentSection({ client }: Props) {
+export function PrivacyConsentSection({ patientId, client }: Props) {
   const rpcClient: InteropRpcClient | null =
     client !== undefined ? client : (supabase as unknown as InteropRpcClient | null);
   const isOnline = useOnlineStatus();
@@ -63,10 +82,10 @@ export function PrivacyConsentSection({ client }: Props) {
 
   const load = useCallback(async () => {
     setList({ kind: "loading" });
-    const result = await loadMyConsents(rpcClient, isOnline);
+    const result = await loadMyConsents(rpcClient, patientId, isOnline);
     if (result.status === "ok") setList({ kind: "ready", items: result.items });
     else setList({ kind: "unavailable", reason: result.status });
-  }, [rpcClient, isOnline]);
+  }, [rpcClient, patientId, isOnline]);
 
   useEffect(() => {
     void load();
@@ -141,7 +160,7 @@ export function PrivacyConsentSection({ client }: Props) {
                 <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
                 <span>{unavailableMessage(list.reason)}</span>
               </p>
-              {list.reason !== "missing" && (
+              {list.reason !== "missing" && list.reason !== "invalid" && (
                 <button type="button" onClick={() => void load()} className="btn-secondary">
                   <ArrowPathIcon className="h-5 w-5" aria-hidden />
                   {COPY.retry}
@@ -157,17 +176,14 @@ export function PrivacyConsentSection({ client }: Props) {
           {list.kind === "ready" && list.items.length > 0 && (
             <ul className="mt-2 divide-y divide-line rounded-md border border-line">
               {list.items.map((item) => {
-                const purposes = item.permits.map((p) => PURPOSE_LABEL[p]).join(", ");
+                const title = itemTitle(item);
                 return (
                   <li
                     key={item.id}
                     className="flex flex-wrap items-start justify-between gap-3 px-3 py-3"
                   >
                     <div className="min-w-0">
-                      <p className="text-body font-medium text-ink">
-                        {TOPIC_LABEL[item.topic]}
-                        {purposes ? ` (${purposes})` : ""}
-                      </p>
+                      <p className="text-body font-medium text-ink">{title}</p>
                       <p className="text-caption text-ink-muted">
                         {item.state === "withdrawn" && item.withdrawnAt
                           ? `${COPY.withdrawnOn} ${formatNigerianDate(item.withdrawnAt)}`
@@ -178,6 +194,15 @@ export function PrivacyConsentSection({ client }: Props) {
                           ? ` · ${COPY.until} ${formatNigerianDate(item.until)}`
                           : ""}
                       </p>
+                      {item.kind === "refusal" && (
+                        <p className="text-caption text-ink-secondary">
+                          {item.alsoPermits ? `${COPY.alsoAllows} ` : ""}
+                          {COPY.askStaff}
+                        </p>
+                      )}
+                      {item.kind === "unclear" && (
+                        <p className="text-caption text-ink-secondary">{COPY.unclear}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusBadge tone={item.state === "in_place" ? "info" : "neutral"} icon>
@@ -189,7 +214,7 @@ export function PrivacyConsentSection({ client }: Props) {
                           className="btn-secondary"
                           onClick={() => openWithdraw(item)}
                           disabled={!isOnline}
-                          aria-label={`${COPY.withdraw}: ${TOPIC_LABEL[item.topic]}`}
+                          aria-label={`${COPY.withdraw}: ${title}`}
                         >
                           {COPY.withdraw}
                         </button>
@@ -217,7 +242,7 @@ export function PrivacyConsentSection({ client }: Props) {
           if (!busy) setPending(null);
         }}
       >
-        {pending && <p className="font-medium text-ink">{TOPIC_LABEL[pending.topic]}</p>}
+        {pending && <p className="font-medium text-ink">{itemTitle(pending)}</p>}
         {COPY.withdrawBody.map((line) => (
           <p key={line}>{line}</p>
         ))}

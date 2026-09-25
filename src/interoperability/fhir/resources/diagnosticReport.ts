@@ -26,7 +26,7 @@ import { DIAGNOSTIC_REPORT_STATUS } from "../terminology/status/laboratory";
 import { errors } from "../errors/operationOutcome";
 import type { AddIssue } from "../validation/validate";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
-import { keysetPage, namedPatientFilter, one, ownersOf, patientNotes, scopeFilter, type Filters } from "./shared";
+import { keysetPage, namedPatientFilter, one, ownersOf, patientNotes, scopeFilter, statusCode, type Filters } from "./shared";
 import {
   allPatientLabRows,
   currentResultsFor,
@@ -68,7 +68,7 @@ export const definition: ResourceDefinition = {
       name: "status",
       type: "token",
       documentation:
-        "registered, partial, final, cancelled or unknown (the published status). It is worked out from the results after they are read, so a page can hold fewer matches than _count and still link to a next page. A patient's reports are never final, so status=final finds none for a patient.",
+        "A diagnostic-report-status code: registered, partial, final, cancelled or unknown (the published status). It is worked out from the results after they are read, so a page can hold fewer matches than _count and still link to a next page. A patient's reports are never final, so status=final finds none for a patient.",
     },
     { name: "category", type: "token", documentation: "LAB (http://terminology.hl7.org/CodeSystem/v2-0074): every report here is a laboratory report." },
     {
@@ -95,10 +95,15 @@ export const definition: ResourceDefinition = {
     "Laboratory reports need consult or lab_review.",
     "A report is final only when a clinician has reviewed every current result; until then it is partial. The order being completed does not make it final.",
     "No conclusion is published: mBHR records none. Results carry the values, units, ranges and interpretations.",
-    "Patients see a report only for results released to them, listing only those results. A patient's report is never final and has no issued time: it is partial at best, because the results released to a patient cannot show that the order has no other result still pending review or release.",
     "This interface is not a critical-result alert channel: critical results are flagged on each Observation (AA) but no acknowledgement is recorded or published.",
   ],
+  patientAccessNotes: [
+    "Patients see a report only for results released to them, listing only those results. A patient's report is never final and has no issued time: it is partial at best, because the results released to a patient cannot show that the order has no other result still pending review or release.",
+  ],
 };
+
+/** The R4 code system of DiagnosticReport.status. */
+const DIAGNOSTIC_REPORT_STATUS_SYSTEM = "http://hl7.org/fhir/diagnostic-report-status";
 
 /** The status= values a report can have. Other valid codes match nothing. */
 const REPORT_STATUSES: ReadonlySet<string> = new Set<string>([...DIAGNOSTIC_REPORT_STATUS.rules.map((r) => r.fhir), "unknown"]);
@@ -127,7 +132,8 @@ function parseReportQuery(search: ParsedSearch): ReportQuery | null {
   const categoryParam = one(search, "category");
   const category = categoryParam ? parseToken(categoryParam, "category") : null;
   const statusParam = one(search, "status");
-  const status = statusParam ? parseToken(statusParam, "status").code : null;
+  // null for a status in another code system: then no report can match.
+  const status = statusParam ? statusCode(statusParam, "status", DIAGNOSTIC_REPORT_STATUS_SYSTEM) : null;
   const codeParam = one(search, "code");
   const code = codeParam ? labCodeEntry(codeParam) : null;
 
@@ -136,7 +142,7 @@ function parseReportQuery(search: ParsedSearch): ReportQuery | null {
   if (category && (category.code !== "LAB" || (category.system !== null && category.system !== V2_DIAGNOSTIC_SERVICE_SECTION))) {
     return null;
   }
-  if (status !== null && !REPORT_STATUSES.has(status)) return null;
+  if (statusParam && (status === null || !REPORT_STATUSES.has(status))) return null;
   if (codeParam && !code) return null;
   return { orderId: id ?? basedOnId, visitId, code, status, dates, dateRaw };
 }

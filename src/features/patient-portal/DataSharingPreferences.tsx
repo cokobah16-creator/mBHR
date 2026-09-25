@@ -332,7 +332,7 @@ export function DataSharingPreferences({ patientId }: Props) {
           </div>
         </div>
         {/* Stored permissions load separately: this failure does not affect them. */}
-        <PrivacyConsentSection />
+        <PrivacyConsentSection patientId={patientId} />
         {explainer}
       </div>
     );
@@ -343,7 +343,7 @@ export function DataSharingPreferences({ patientId }: Props) {
       {header}
       {/* What mBHR does with the records, and stored permissions to share
           them (consent records). Separate from the choices below. */}
-      <PrivacyConsentSection />
+      <PrivacyConsentSection patientId={patientId} />
       {explainer}
 
       {!isOnline && (

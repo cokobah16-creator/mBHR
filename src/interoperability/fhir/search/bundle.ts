@@ -9,6 +9,9 @@
 // Informational notes (a merged-away patient, what a resource type does not
 // cover, records withheld because they failed validation) travel as one
 // OperationOutcome entry with search.mode "outcome".
+//
+// A searchset with nothing to list has no "entry" at all: FHIR JSON forbids
+// empty arrays.
 
 import type { Bundle, BundleEntry, OperationOutcomeIssue, Resource } from "../types/fhir";
 import { encodeCursor, type Cursor } from "./params";
@@ -17,6 +20,9 @@ export interface SearchPage<T extends Resource> {
   resources: T[];
   next: Cursor | null;
 }
+
+/** A searchset Bundle: Bundle.entry is 0..*, and left out when there is none. */
+export type SearchsetBundle = Omit<Bundle, "entry"> & { entry?: BundleEntry[] };
 
 export function searchsetBundle<T extends Resource>(opts: {
   baseUrl: string;
@@ -30,7 +36,7 @@ export function searchsetBundle<T extends Resource>(opts: {
   outcomes?: OperationOutcomeIssue[];
   /** A fresh uuid for the outcome entry's fullUrl. */
   newId?: () => string;
-}): Bundle {
+}): SearchsetBundle {
   const { baseUrl, resourceType, query, count, page } = opts;
   const link: Bundle["link"] = [
     { relation: "self", url: pageUrl(baseUrl, resourceType, query, count, undefined) },
@@ -66,7 +72,7 @@ export function searchsetBundle<T extends Resource>(opts: {
     type: "searchset",
     timestamp: (opts.now ?? new Date()).toISOString(),
     link,
-    entry,
+    ...(entry.length ? { entry } : {}),
   };
 }
 

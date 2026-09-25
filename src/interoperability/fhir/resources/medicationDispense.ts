@@ -42,6 +42,7 @@ import {
   ownersOf,
   patientNotes,
   scopeFilter,
+  statusCode,
   type Filters,
 } from "./shared";
 import {
@@ -49,7 +50,6 @@ import {
   distinctStrings,
   practitionerIds,
   readableVisits,
-  statusCode,
   statusSearchFilter,
   visitPatientIds,
 } from "./medication";
@@ -101,8 +101,8 @@ export const definition: ResourceDefinition = {
     "The medicine is the name as recorded, as text: no medicine code is published (none is recorded).",
     "Records from the staff dashboard's 'Add medicine' form are not published (their quantity is invented).",
     "The dispenser's account id or typed name, lots, allergy-override flags and visibility notes are not published.",
-    "Patients see their own records that are visible in the portal: medicine, status, visit and directions only.",
   ],
+  patientAccessNotes: ["Patients see their own records that are visible in the portal: medicine, status, visit and directions only."],
 };
 
 /** Excludes the "Add medicine" rows: no prescription, no visit and dispensed_by 'staff'. */

@@ -241,9 +241,9 @@ function setup(overrides: Partial<FakeOptions> = {}) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
 const json = async (res: Response) => (await res.json()) as Json;
-const matches = (b: Json) => b.entry.filter((e: Json) => e.search.mode === "match").map((e: Json) => e.resource);
+const matches = (b: Json) => (b.entry ?? []).filter((e: Json) => e.search.mode === "match").map((e: Json) => e.resource);
 const ids = (b: Json) => matches(b).map((r: Json) => r.id).sort();
-const outcomes = (b: Json) => b.entry.filter((e: Json) => e.search.mode === "outcome").flatMap((e: Json) => e.resource.issue);
+const outcomes = (b: Json) => (b.entry ?? []).filter((e: Json) => e.search.mode === "outcome").flatMap((e: Json) => e.resource.issue);
 const refs = { patientFhirIds: new Map([[PATIENT_A.id, PATIENT_A.fhir_id]]) };
 
 /** Every live document of A whose patient resolves (what staff see for A). */
@@ -751,6 +751,20 @@ describe("patient access to documents", () => {
 // ---------------------------------------------------------------------------
 
 describe("Binary downloads", () => {
+  it("send no ETag and ignore If-None-Match, as the CapabilityStatement declares", async () => {
+    const { call, audits } = setup();
+    for (const inm of ["*", 'W/"anything"']) {
+      const res = await call(`/fhir/R4/Binary/${DOC_A_CLINIC.id}`, { token: DOCTOR, headers: { "If-None-Match": inm } });
+      expect(res.status, inm).toBe(200);
+      expect(await res.text()).toBe("PNG clinic image");
+      expect(res.headers.get("etag")).toBeNull();
+      expect(audits.at(-1)).toMatchObject({ p_decision: "permit", p_http_status: 200 });
+    }
+    const cs = await json(await call("/fhir/R4/metadata"));
+    const binary = cs.rest[0].resource.find((r: Json) => r.type === "Binary");
+    expect(binary).toMatchObject({ versioning: "no-version", conditionalRead: "not-supported" });
+  });
+
   it("a doctor downloads a clinic record stored with the bucket prefix", async () => {
     const { call, storageCalls } = setup();
     const res = await call(`/fhir/R4/Binary/${DOC_A_CLINIC.id}`, { token: DOCTOR });

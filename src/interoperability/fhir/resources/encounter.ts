@@ -5,7 +5,7 @@ import { READ_PERMISSIONS } from "../authorization/permissions";
 import { VISIT_COLUMNS, mapEncounter } from "../mappers/encounter";
 import type { Row } from "../mappers/common";
 import { referenceContext } from "../patients/canonical";
-import { parseId, parseToken, type ParsedSearch } from "../search/params";
+import { parseId, type ParsedSearch } from "../search/params";
 import { pgrstQuote } from "../gateway/postgrest";
 import { ENCOUNTER_STATUS, knownSourceValues, sourceValuesFor } from "../terminology/statusMaps";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
@@ -19,6 +19,7 @@ import {
   ownersOf,
   patientNotes,
   scopeFilter,
+  statusCode,
   type Filters,
 } from "./shared";
 
@@ -36,10 +37,11 @@ export const encounterDefinition: ResourceDefinition = {
     {
       name: "date",
       type: "date",
-      documentation: "When the visit started. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
+      documentation:
+        "When the visit started (Encounter.period.start). A date without a time is a clinic day in Africa/Lagos. Up to two bounds. A visit published without a period (site 'Portal entry') never matches.",
       maxRepeats: 2,
     },
-    { name: "status", type: "token", documentation: "in-progress, finished, cancelled or unknown." },
+    { name: "status", type: "token", documentation: "An encounter-status code: in-progress, finished, cancelled or unknown." },
   ],
   requiredSearch: [["_id"], ["patient"], ["subject"]],
   writeSupport: false,
@@ -47,11 +49,12 @@ export const encounterDefinition: ResourceDefinition = {
   readPermissions: READ_PERMISSIONS.Encounter,
   patientAccess: true,
   sensitiveSearch: false,
-  notes: [
-    "A visit that was never closed on the tablet stays in-progress: mBHR records no end time.",
-    "Patients see their closed visits only, as in the portal.",
-  ],
+  notes: ["A visit that was never closed on the tablet stays in-progress: mBHR records no end time."],
+  patientAccessNotes: ["Patients see their closed visits only, as in the portal."],
 };
+
+/** The R4 code system of Encounter.status. */
+const ENCOUNTER_STATUS_SYSTEM = "http://hl7.org/fhir/encounter-status";
 
 /** visits.status values per FHIR status, from ENCOUNTER_STATUS (matched case-insensitively). */
 export const VISIT_STATUS_VALUES: Record<string, string[]> = Object.fromEntries(
@@ -104,10 +107,12 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   const filters: Filters = [...scopeFilter(ctx), ...patientView(ctx), ...named];
   const idParam = one(search, "_id");
   if (idParam) filters.push(["id", `eq.${parseId(idParam)}`]);
+  const dated = search.values.has("date");
   filters.push(...dateFilters("started_at", search.values.get("date"), "date"));
   const status = one(search, "status");
   if (status) {
-    const f = statusFilter(parseToken(status, "status").code);
+    const code = statusCode(status, "status", ENCOUNTER_STATUS_SYSTEM);
+    const f = code === null ? null : statusFilter(code);
     if (!f) return emptyResult(patientNotes(ctx));
     filters.push(...f);
   }
@@ -120,7 +125,10 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
     filters,
     count: search.count,
     cursor: search.cursor,
-    map: (r) => mapVisits(ctx, r),
+    // date= matches Encounter.period: a visit the mapper publishes without
+    // one (a "Portal entry", whose start is when it was typed in) never
+    // matches, by the mapper's own rule. keysetPage pages past it.
+    map: async (r) => (await mapVisits(ctx, r)).map((e) => (dated && e && !e.period ? null : e)),
   });
   return { page, owners: ownersOf(rows), ...patientNotes(ctx) };
 }

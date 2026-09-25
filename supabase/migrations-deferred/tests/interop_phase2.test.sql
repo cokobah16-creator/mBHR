@@ -13,7 +13,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(227);
+SELECT plan(257);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (as the migration owner)
@@ -45,12 +45,23 @@ INSERT INTO public.app_users (id, full_name, role, is_active) VALUES
 -- Patients: A and B are portal patients (own sign-in, portal on). M1 is
 -- merged into A, M2 into M1 (a 2-hop chain). L1..L12 form a loop. D0..D10
 -- is a chain of exactly 10 hops. O is an orphaned tombstone. BX gets a
--- consent and is merged into B later (section 6c). C1..C6 hold the consent
--- summary cases (section 3f).
+-- consent and is merged into B later (section 6c). C1..C8 hold the consent
+-- summary cases (section 3f). W is a portal patient whose records test what
+-- a patient may withdraw (section 6d). S1 and S2 are two people whose portal
+-- sign-ins share one phone number, so one sign-in is linked to both (6e).
 INSERT INTO public.patients (id, given_name, family_name, phone, auth_uid, portal_enabled, portal_enabled_changed_at)
 VALUES
   ('pgtap-p2-a', 'Amaka', 'Phase', '08000990001', '99990000-0000-4000-8000-0000000000a1', true, now()),
-  ('pgtap-p2-b', 'Bayo', 'Phase', '08000990002', '99990000-0000-4000-8000-0000000000b1', true, now());
+  ('pgtap-p2-b', 'Bayo', 'Phase', '08000990002', '99990000-0000-4000-8000-0000000000b1', true, now()),
+  ('pgtap-p2-w', 'Wale', 'Phase', '08000990007', '99990000-0000-4000-8000-0000000000e1', true, now());
+INSERT INTO public.patients (id, given_name, family_name, phone, portal_enabled, portal_enabled_changed_at)
+VALUES
+  ('pgtap-p2-s1', 'Sade', 'Phase', '08000990008', true, now()),
+  ('pgtap-p2-s2', 'Segun', 'Phase', '08000990008', true, now());
+INSERT INTO public.patient_portal_users (id, patient_id, phone_number, account_status)
+VALUES
+  ('99990000-0000-4000-8000-0000000005a1', 'pgtap-p2-s1', '2348000990008', 'active'),
+  ('99990000-0000-4000-8000-0000000005b1', 'pgtap-p2-s2', '2348000990008', 'active');
 INSERT INTO public.patients (id, given_name, family_name, phone)
 VALUES
   ('pgtap-p2-m1', 'Amaka', 'Phase', '08000990003'),
@@ -59,7 +70,7 @@ VALUES
   ('pgtap-p2-bx', 'Bayo', 'Phase', '08000990006');
 INSERT INTO public.patients (id, given_name, family_name, phone)
 SELECT 'pgtap-p2-c' || g, 'Case', 'Phase', '0800099' || lpad((300 + g)::text, 4, '0')
-  FROM generate_series(1, 6) AS g;
+  FROM generate_series(1, 8) AS g;
 INSERT INTO public.patients (id, given_name, family_name, phone)
 SELECT 'pgtap-p2-l' || g, 'Loop', 'Phase', '0800099' || lpad((100 + g)::text, 4, '0')
   FROM generate_series(1, 12) AS g;
@@ -129,8 +140,11 @@ SELECT ok(
     'public.fhir_interop_admin_status()', 'public.fhir_patient_lab_results(uuid[], uuid[], uuid, integer)',
     'public.interop_record_consent(text, text, text, text, text, text, timestamptz, timestamptz, jsonb)',
     'public.interop_verify_consent(uuid)', 'public.interop_withdraw_consent(uuid, text)',
-    'public.interop_my_consents()', 'public.interop_consent_summary(text)']) AS f),
+    'public.interop_my_consents(text)', 'public.interop_consent_summary(text)']) AS f),
   'anon has EXECUTE on none of the new functions');
+SELECT ok(
+  to_regprocedure('public.interop_my_consents()') IS NULL,
+  'interop_my_consents has no form without a patient id (an earlier draft had one)');
 
 SELECT ok(
   NOT (SELECT bool_or(has_function_privilege('authenticated', p.oid, 'EXECUTE'))
@@ -217,7 +231,7 @@ SELECT throws_ok($$SELECT * FROM public.fhir_patient_lab_results()$$, '42501', N
 SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal')$$, '42501', NULL, 'anon cannot call interop_record_consent');
 SELECT throws_ok($$SELECT public.interop_verify_consent(gen_random_uuid())$$, '42501', NULL, 'anon cannot call interop_verify_consent');
 SELECT throws_ok($$SELECT public.interop_withdraw_consent(gen_random_uuid())$$, '42501', NULL, 'anon cannot call interop_withdraw_consent');
-SELECT throws_ok($$SELECT public.interop_my_consents()$$, '42501', NULL, 'anon cannot call interop_my_consents');
+SELECT throws_ok($$SELECT public.interop_my_consents('pgtap-p2-a')$$, '42501', NULL, 'anon cannot call interop_my_consents');
 SELECT throws_ok($$SELECT public.interop_consent_summary('pgtap-p2-a')$$, '42501', NULL, 'anon cannot call interop_consent_summary');
 RESET ROLE;
 
@@ -484,9 +498,17 @@ SELECT throws_ok($$SELECT public.fhir_consent_directives()$$, '22023', NULL, 'di
 SELECT is(
   public.interop_consent_summary('pgtap-p2-a') ->> 'external_sharing', 'allowed',
   'summary: an active permit for an external system is external sharing allowed');
+SELECT ok(
+  (SELECT s ->> 'sharing_state' = 'restricted' AND s ->> 'sharing_reason' = 'limited'
+     FROM public.interop_consent_summary('pgtap-p2-a') AS s),
+  'chip state: that permit is limited (one action, one purpose), so it is restricted, not allowed');
 SELECT is(
   public.interop_consent_summary('pgtap-p2-b') ->> 'external_sharing', 'not_allowed',
   'summary: a consent with no external permit is not_allowed');
+SELECT ok(
+  (SELECT s ->> 'sharing_state' = 'restricted' AND s ->> 'sharing_reason' = 'no_permission'
+     FROM public.interop_consent_summary('pgtap-p2-b') AS s),
+  'chip state: a record with no rules is restricted (no permission)');
 
 -- The summary follows the gateway's consent evaluator (external sharing).
 DO $$
@@ -517,10 +539,33 @@ BEGIN
   v := public.interop_record_consent('pgtap-p2-c6', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system","security_label":"R"}]');
   PERFORM public.interop_verify_consent(v);
+  -- C7: verified external permit that starts tomorrow. C8: no record.
+  v := public.interop_record_consent('pgtap-p2-c7', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL,
+         now() + interval '1 day', NULL, '[{"provision_type":"permit","actor_type":"external_system"}]');
+  PERFORM public.interop_verify_consent(v);
   -- BX (merged into B in section 6c): a verified external permit.
   v := public.interop_record_consent('pgtap-p2-bx', 'patient-privacy', 'pgtap-merge', 'paper_form', 'active', NULL, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   PERFORM public.interop_verify_consent(v);
+  -- W (section 6d): a refusal, a permit with a refusal, an advance
+  -- directive, a treatment consent, and two plain permissions.
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-deny', 'verbal_witnessed', 'active', NULL, NULL, NULL,
+         '[{"provision_type":"deny","actor_type":"external_system"}]');
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-mixed', 'paper_form', 'active', NULL, NULL, NULL,
+         '[{"provision_type":"permit","actor_type":"external_system","purpose":"PATRQT"},
+           {"provision_type":"deny","actor_type":"organization","purpose":"HRESCH"}]');
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'adr', 'pgtap-w-adr', 'paper_form');
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'treatment', 'pgtap-w-treat', 'paper_form', 'active', NULL, NULL, NULL,
+         '[{"provision_type":"permit","actor_type":"practitioner","purpose":"TREAT"}]');
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'research', 'pgtap-w-research', 'paper_form', 'active', NULL, NULL, NULL,
+         '[{"provision_type":"permit","actor_type":"organization","purpose":"HRESCH"}]');
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-permit', 'paper_form', 'active', NULL, NULL, NULL,
+         '[{"provision_type":"permit","actor_type":"external_system"}]');
+  -- S1 and S2 (section 6e): one record each.
+  PERFORM public.interop_record_consent('pgtap-p2-s1', 'research', 'pgtap-phone', 'paper_form', 'active', NULL, NULL, NULL,
+         '[{"provision_type":"permit","actor_type":"organization","purpose":"HRESCH"}]');
+  PERFORM public.interop_record_consent('pgtap-p2-s2', 'patient-privacy', 'pgtap-phone', 'paper_form', 'active', NULL, NULL, NULL,
+         '[{"provision_type":"permit","actor_type":"external_system"}]');
 END $$;
 SELECT is(public.interop_consent_summary('pgtap-p2-c1') ->> 'external_sharing', 'allowed',
   'summary: a verified patient-privacy permit for actor "any" is allowed (as the evaluator)');
@@ -538,6 +583,24 @@ SELECT ok(
   (SELECT s ->> 'external_sharing' = 'not_allowed' AND NOT (s ->> 'pending_verification')::boolean
      FROM public.interop_consent_summary('pgtap-p2-c6') AS s),
   'summary: a permit limited to a security label covers nothing (as the evaluator)');
+
+-- The chip's three states: Allowed only for a verified permit in force with
+-- no limit and no refusal; otherwise Restricted (or Withdrawn), with why.
+SELECT is(
+  (SELECT (s ->> 'sharing_state') || '/' || (s ->> 'sharing_reason')
+     FROM public.interop_consent_summary('pgtap-p2-c1') AS s),
+  'allowed/permitted',
+  'chip state: a verified permit in force with no limit is allowed');
+SELECT is(
+  (SELECT string_agg((x.s ->> 'sharing_state') || '/' || (x.s ->> 'sharing_reason'), ',' ORDER BY u.n)
+     FROM unnest(ARRAY['pgtap-p2-c2', 'pgtap-p2-c3', 'pgtap-p2-c4', 'pgtap-p2-c5',
+                       'pgtap-p2-c6', 'pgtap-p2-c7', 'pgtap-p2-c8']) WITH ORDINALITY AS u(id, n),
+          LATERAL (SELECT public.interop_consent_summary(u.id) AS s) AS x),
+  'restricted/limited,restricted/no_permission,restricted/refused,restricted/pending_verification,'
+  'restricted/limited,restricted/not_started,restricted/no_permission',
+  'chip state: a purpose limit, another scope, a refusal, no check yet, a label, a later start and no record are all restricted, each with its reason');
+SELECT is(public.interop_consent_summary('pgtap-p2-c7') ->> 'external_sharing', 'not_allowed',
+  'summary: a verified permit that has not started yet is not_allowed');
 
 SELECT ok(
   (WITH ids AS (SELECT ARRAY['pgtap-p2-c1', 'pgtap-p2-c2', 'pgtap-p2-c3', 'pgtap-p2-c4', 'pgtap-p2-c5', 'pgtap-p2-c6'] AS a),
@@ -559,7 +622,7 @@ SELECT throws_ok($$SELECT * FROM public.fhir_access_audit_events(p_patient_ids =
   'audit events: a doctor (no audit_access) is refused');
 SELECT throws_ok($$SELECT public.fhir_interop_admin_status()$$, '42501', NULL,
   'admin status: a doctor (neither audit_access nor users) is refused');
-SELECT throws_ok($$SELECT public.interop_my_consents()$$, '42501', NULL,
+SELECT throws_ok($$SELECT public.interop_my_consents('pgtap-p2-a')$$, '42501', NULL,
   'my consents: a staff account that is not a patient is refused');
 RESET ROLE;
 
@@ -604,6 +667,11 @@ SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap
 SELECT ok(
   (SELECT count(*) = 1 FROM public.fhir_staff_directory(p_name => 'chidi')),
   'directory: any staff role may read it');
+SELECT is(
+  (SELECT s.source_id FROM public.fhir_link_sources('Medication',
+     ARRAY[(SELECT l.fhir_id FROM public.fhir_link_ids('Medication', ARRAY['pgtap-p2-item-1']) AS l)]) AS s),
+  'pgtap-p2-item-1',
+  'links: a pharmacist (dispense, inventory) may use both link functions');
 RESET ROLE;
 SELECT is(
   (SELECT count FROM public.rate_limits
@@ -622,6 +690,19 @@ SELECT is((public.fhir_gateway_context_v2(5, 1, true) ->> 'rate_allowed')::boole
   'rate: the sensitive bucket was not consumed by ordinary calls');
 SELECT is(jsonb_array_length(public.fhir_consent_directives(ARRAY['pgtap-p2-b'])), 1,
   'directives: a nurse (portal_manage) may read them');
+SELECT throws_ok($$SELECT * FROM public.fhir_link_ids('Medication', ARRAY['pgtap-p2-item-1'])$$, '42501', NULL,
+  'links: a nurse (no consult, dispense or inventory) cannot test or mint Medication ids');
+SELECT throws_ok($$SELECT * FROM public.fhir_link_sources('Medication', ARRAY['x'])$$, '42501', NULL,
+  'links: a nurse cannot map Medication ids back to the catalogue');
+RESET ROLE;
+
+-- A volunteer: the catalogue is not theirs to read either.
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-000000000006","role":"authenticated"}';
+SELECT throws_ok($$SELECT * FROM public.fhir_link_ids('Medication', ARRAY['pgtap-p2-item-1'])$$, '42501', NULL,
+  'links: a volunteer cannot test or mint Medication ids');
+SELECT throws_ok($$SELECT * FROM public.fhir_link_sources('Medication', ARRAY['x'])$$, '42501', NULL,
+  'links: a volunteer cannot map Medication ids back to the catalogue');
 RESET ROLE;
 
 -- ---------------------------------------------------------------------------
@@ -654,7 +735,7 @@ SELECT throws_ok($$SELECT public.fhir_consent_directives(ARRAY['pgtap-p2-a'])$$,
 SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal')$$, '42501', NULL, 'consent: non-staff cannot record');
 SELECT throws_ok($$SELECT public.interop_verify_consent(current_setting('pgtap_p2.c_b')::uuid)$$, '42501', NULL, 'consent: non-staff cannot verify');
 SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap_p2.c_b')::uuid)$$, '42501', NULL, 'consent: a stranger cannot withdraw');
-SELECT throws_ok($$SELECT public.interop_my_consents()$$, '42501', NULL, 'my consents: refused for an account with no patient');
+SELECT throws_ok($$SELECT public.interop_my_consents('pgtap-p2-a')$$, '42501', NULL, 'my consents: refused for an account with no patient');
 SELECT throws_ok($$SELECT public.interop_consent_summary('pgtap-p2-a')$$, '42501', NULL, 'summary: refused for a stranger');
 SELECT throws_ok($$SELECT * FROM public.fhir_access_audit_events(p_patient_ids => ARRAY['pgtap-p2-a'])$$, '42501', NULL, 'audit events: refused');
 SELECT throws_ok($$SELECT public.fhir_interop_admin_status()$$, '42501', NULL, 'admin status: refused');
@@ -714,6 +795,12 @@ SELECT is(
   'directives: another patient''s consent id returns nothing');
 SELECT is(public.interop_consent_summary('pgtap-p2-a') ->> 'external_sharing', 'allowed', 'summary: a patient reads their own');
 SELECT throws_ok($$SELECT public.interop_consent_summary('pgtap-p2-b')$$, '42501', NULL, 'summary: not another patient''s');
+SELECT throws_ok($$SELECT public.interop_my_consents(NULL)$$, '22023', NULL,
+  'my consents: a patient id is required (no "all my records" call)');
+SELECT throws_ok($$SELECT public.interop_my_consents('pgtap-p2-b')$$, '42501', NULL,
+  'my consents: not another patient''s record');
+SELECT throws_ok($$SELECT public.interop_my_consents('pgtap-p2-m1')$$, '42501', NULL,
+  'my consents: a record merged away is not named directly (its consents come with the kept record)');
 SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap_p2.c_b')::uuid)$$, '42501', NULL,
   'withdraw: a patient cannot withdraw another patient''s consent');
 SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap_p2.c_a')::uuid, repeat('r', 501))$$, '22023', NULL,
@@ -725,10 +812,15 @@ SELECT is(public.interop_withdraw_consent(current_setting('pgtap_p2.c_a')::uuid)
 SELECT ok(
   (SELECT jsonb_array_length(m) = 1 AND (m -> 0 ->> 'withdrawn')::boolean AND m -> 0 ->> 'status' = 'inactive'
           AND position('pgTAP private reason' IN m::text) = 0
-     FROM public.interop_my_consents() AS m),
+     FROM public.interop_my_consents('pgtap-p2-a') AS m),
   'my consents: the patient sees the withdrawal, not the reason');
 SELECT is(public.interop_consent_summary('pgtap-p2-a') ->> 'external_sharing', 'withdrawn',
   'summary: after the withdrawal external sharing is withdrawn');
+SELECT is(
+  (SELECT (s ->> 'sharing_state') || '/' || (s ->> 'sharing_reason')
+     FROM public.interop_consent_summary('pgtap-p2-a') AS s),
+  'withdrawn/withdrawn',
+  'chip state: withdrawn');
 SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal')$$, '42501', NULL,
   'consent: a patient cannot record a consent through the staff function');
 
@@ -762,7 +854,7 @@ SELECT is(
   'lab results RPC: patient B sees only their own released result');
 SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap_p2.c_a')::uuid)$$, '42501', NULL,
   'withdraw: patient B cannot touch patient A''s consent');
-SELECT is(jsonb_array_length(public.interop_my_consents()), 1,
+SELECT is(jsonb_array_length(public.interop_my_consents('pgtap-p2-b')), 1,
   'my consents: before the merge, B sees only B''s record');
 RESET ROLE;
 
@@ -784,7 +876,7 @@ SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-0000000000b1","r
 SELECT ok(
   (SELECT jsonb_array_length(m) = 2
           AND EXISTS (SELECT 1 FROM jsonb_array_elements(m) AS e WHERE e ->> 'id' = current_setting('pgtap_p2.c_bx'))
-     FROM public.interop_my_consents() AS m),
+     FROM public.interop_my_consents('pgtap-p2-b') AS m),
   'merge: the patient sees the consent recorded on their merged-away record');
 SELECT is(public.interop_consent_summary('pgtap-p2-b') ->> 'external_sharing', 'allowed',
   'merge: the patient''s summary counts it');
@@ -806,6 +898,86 @@ SELECT throws_ok($$SELECT public.fhir_consent_directives(ARRAY['pgtap-p2-bx'])$$
   'merge: another patient still cannot read the merged-away record''s directives');
 SELECT throws_ok($$SELECT public.interop_consent_summary('pgtap-p2-bx')$$, '42501', NULL,
   'merge: nor its summary');
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-000000000001","role":"authenticated"}';
+SELECT is(
+  (SELECT (s ->> 'sharing_state') || '/' || (s ->> 'sharing_reason')
+     FROM public.interop_consent_summary('pgtap-p2-b') AS s),
+  'withdrawn/withdrawn',
+  'chip state: after the merged-away permit is withdrawn, B is withdrawn');
+RESET ROLE;
+
+-- 6d. What a patient may withdraw: only a permission to share (scope
+-- patient-privacy or research, no deny provision). The refusal, the permit
+-- with a refusal, the advance directive and the treatment consent are
+-- changed with clinic staff.
+DO $$
+DECLARE c text;
+BEGIN
+  FOREACH c IN ARRAY ARRAY['deny', 'mixed', 'adr', 'treat', 'research', 'permit'] LOOP
+    PERFORM set_config('pgtap_p2.w_' || c,
+      (SELECT id::text FROM interop.consent_records WHERE patient_id = 'pgtap-p2-w' AND category = 'pgtap-w-' || c), true);
+  END LOOP;
+END $$;
+
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-0000000000e1","role":"authenticated"}';
+SELECT ok(
+  (SELECT jsonb_array_length(m) = 6
+          AND (SELECT e -> 'provisions' -> 0 ->> 'provision_type' FROM jsonb_array_elements(m) AS e
+                WHERE e ->> 'id' = current_setting('pgtap_p2.w_deny')) = 'deny'
+     FROM public.interop_my_consents('pgtap-p2-w') AS m),
+  'my consents: every record comes back, a refusal with its deny provision');
+SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap_p2.w_deny')::uuid)$$, '42501', NULL,
+  'withdraw: a patient cannot withdraw their refusal (it could allow sharing)');
+SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap_p2.w_mixed')::uuid)$$, '42501', NULL,
+  'withdraw: nor a permission that carries a refusal');
+SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap_p2.w_adr')::uuid)$$, '42501', NULL,
+  'withdraw: nor an advance directive');
+SELECT throws_ok($$SELECT public.interop_withdraw_consent(current_setting('pgtap_p2.w_treat')::uuid)$$, '42501', NULL,
+  'withdraw: nor a treatment consent');
+SELECT is(public.interop_withdraw_consent(current_setting('pgtap_p2.w_research')::uuid), true,
+  'withdraw: a patient withdraws a research permission');
+SELECT is(public.interop_withdraw_consent(current_setting('pgtap_p2.w_permit')::uuid), true,
+  'withdraw: a patient withdraws a permission to share');
+RESET ROLE;
+SELECT is(
+  (SELECT string_agg(category, ',' ORDER BY category) FROM interop.consent_records
+    WHERE patient_id = 'pgtap-p2-w' AND withdrawn_at IS NOT NULL),
+  'pgtap-w-permit,pgtap-w-research',
+  'withdraw: the refused attempts changed nothing');
+
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-000000000001","role":"authenticated"}';
+SELECT ok(
+  (SELECT s ->> 'sharing_state' = 'restricted' AND s ->> 'sharing_reason' = 'refused'
+     FROM public.interop_consent_summary('pgtap-p2-w') AS s),
+  'chip state: a refusal is restricted (refused), even beside a withdrawn permit');
+SELECT is(public.interop_withdraw_consent(current_setting('pgtap_p2.w_deny')::uuid, 'pgTAP staff'), true,
+  'withdraw: staff may still withdraw a refusal');
+SELECT is(public.interop_withdraw_consent(current_setting('pgtap_p2.w_adr')::uuid), true,
+  'withdraw: and an advance directive');
+RESET ROLE;
+
+-- 6e. One sign-in linked to two people (S1 and S2 share a phone number):
+-- the list is the page patient's only.
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-0000000005a1","role":"authenticated","phone":"2348000990008"}';
+SELECT is(
+  (SELECT string_agg(x, ',' ORDER BY x) FROM public.app_portal_patient_ids() AS x),
+  'pgtap-p2-s1,pgtap-p2-s2',
+  'shared phone: the sign-in is linked to both records');
+SELECT ok(
+  (SELECT jsonb_array_length(m) = 1
+          AND m -> 0 ->> 'patient_id' = 'pgtap-p2-s1' AND m -> 0 ->> 'scope' = 'research'
+     FROM public.interop_my_consents('pgtap-p2-s1') AS m),
+  'shared phone: S1''s page lists S1''s record only');
+SELECT ok(
+  (SELECT jsonb_array_length(m) = 1 AND m -> 0 ->> 'patient_id' = 'pgtap-p2-s2'
+     FROM public.interop_my_consents('pgtap-p2-s2') AS m),
+  'shared phone: S2''s page lists S2''s record only');
 RESET ROLE;
 
 -- ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import { mapPatient, mapGender } from "../mappers/patient";
 import { mapEncounter, mapVisitStatus } from "../mappers/encounter";
 import { mapVitalsRow, parseObservationId, mapVitalSign } from "../mappers/observation";
 import { mapCondition } from "../mappers/condition";
+import { conditionDefinition } from "../resources/condition";
 import { validateResource } from "../validation/validate";
 import { VITAL_SIGNS } from "../terminology/codeSystems";
 import { CONDITION_A, PATIENT_A, VISIT_A, VITALS_A } from "./fixtures";
@@ -190,6 +191,26 @@ describe("Condition mapper", () => {
     const c = mapCondition({ ...CONDITION_A, clinical_status: "cured?", verification_status: null }, ctx)!;
     expect(c.clinicalStatus).toBeUndefined();
     expect(c.verificationStatus).toBeUndefined();
+  });
+
+  it("leaves out a stored 'confirmed', the column's default, and publishes every other verification code", () => {
+    // public.conditions.verification_status has DEFAULT 'confirmed': a row
+    // written without one is not a confirmed diagnosis.
+    const c = mapCondition({ ...CONDITION_A, verification_status: "confirmed" }, ctx)!;
+    expect("verificationStatus" in c).toBe(false);
+    expect(c.clinicalStatus?.coding?.[0].code).toBe("active"); // unchanged
+    expect(validateResource(c)).toEqual([]);
+    for (const raw of ["Confirmed", " confirmed "]) {
+      expect("verificationStatus" in mapCondition({ ...CONDITION_A, verification_status: raw }, ctx)!, raw).toBe(false);
+    }
+    for (const code of ["unconfirmed", "provisional", "differential", "refuted", "entered-in-error"]) {
+      expect(mapCondition({ ...CONDITION_A, verification_status: code }, ctx)!.verificationStatus, code).toStrictEqual({
+        coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code }],
+      });
+    }
+    // Search cannot find what the read leaves out: there is no
+    // verification-status parameter (an unknown parameter is refused).
+    expect(conditionDefinition.searchParams.map((p) => p.name)).not.toContain("verification-status");
   });
 });
 
