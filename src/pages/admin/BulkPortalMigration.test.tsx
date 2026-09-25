@@ -2,16 +2,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-const { mockLimit, mockBulkEnroll } = vi.hoisted(() => ({
+const { mockLimit, mockOr, mockBulkEnroll } = vi.hoisted(() => ({
   mockLimit: vi.fn(),
+  mockOr: vi.fn(),
   mockBulkEnroll: vi.fn(),
 }));
 
-// from("patients").select(...).or(...).eq(...).order(...).limit(...)
+// from("patients").select(...).or(...).or(...).eq(...).order(...).limit(...)
 vi.mock("@/lib/supabase", () => {
   const query = {
     select: () => query,
-    or: () => query,
+    or: (...a: unknown[]) => {
+      mockOr(...a);
+      return query;
+    },
     eq: () => query,
     order: () => query,
     limit: (...a: unknown[]) => mockLimit(...a),
@@ -92,6 +96,24 @@ describe("BulkPortalMigration", () => {
     expect(
       screen.getByText(/patients under 18 are not listed/i),
     ).toBeInTheDocument();
+  });
+
+  it("leaves children out on the server, before the 100-row limit", async () => {
+    renderPage();
+
+    await screen.findByText("Ada Obi");
+    const filters = mockOr.mock.calls.map((c) => String(c[0]));
+    const dobFilter = filters.find((f) => f.includes("dob.lte."));
+    expect(dobFilter).toBeDefined();
+    // Records with no date of birth are still listed.
+    expect(dobFilter).toContain("dob.is.null");
+    // Born on or before this day 18 years ago.
+    const now = new Date();
+    const cutoff = new Date(now.getFullYear() - 18, now.getMonth(), now.getDate());
+    const pad = (n: number) => String(n).padStart(2, "0");
+    expect(dobFilter).toContain(
+      `dob.lte.${cutoff.getFullYear()}-${pad(cutoff.getMonth() + 1)}-${pad(cutoff.getDate())}`,
+    );
   });
 
   it("says how patients sign in, without promising a one-time code", async () => {

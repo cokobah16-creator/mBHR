@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { bulkEnrollPatients } from "@/services/unifiedPortalEnrollment";
 import { useAuthStore } from "@/stores/auth";
 import { formatNigerianDate } from "@/utils/dateFormat";
-import { isMinor } from "@/utils/patient";
+import { ADULT_AGE, isMinor } from "@/utils/patient";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -55,6 +55,12 @@ function rowName(p: ServerPatientRow) {
   return `${p.given_name} ${p.family_name}`;
 }
 
+/** A date as YYYY-MM-DD on this device's calendar (the rule isMinor uses). */
+function localYmd(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function BulkPortalMigration() {
   const role = useAuthStore((s) => s.currentUser?.role);
   const canRun = canManagePortalEnrollment(role);
@@ -78,19 +84,31 @@ export function BulkPortalMigration() {
     setLoading(true);
     setLoadError(false);
     try {
+      const now = new Date();
+      const today = localYmd(now);
+      // Born on or before this day: 18 or older today.
+      const adultCutoff = localYmd(
+        new Date(now.getFullYear() - ADULT_AGE, now.getMonth(), now.getDate()),
+      );
       const { data, error } = await supabase
         .from("patients")
         .select(
           "id, given_name, family_name, dob, email, phone, portal_enabled",
         )
         .or("email.not.is.null,phone.not.is.null")
+        // Children never get portal accounts, so leave them out before the
+        // limit or they would fill the list for good. Keep a missing or
+        // future date of birth: isMinor treats those as "needs review".
+        // (Each .or() is its own filter; the server ANDs them.)
+        .or(`dob.is.null,dob.lte.${adultCutoff},dob.gt.${today}`)
         .eq("portal_enabled", false)
         .order("created_at", { ascending: false })
         .limit(SERVER_LIMIT);
 
       if (error) throw error;
       // Portal accounts are for adults: children are not listed, and
-      // bulkEnrollPatients refuses them.
+      // bulkEnrollPatients refuses them. This check also catches the one
+      // day (29 February) when the cutoff above is a day too late.
       const rows = (data as ServerPatientRow[] | null) || [];
       setPatients(rows.filter((p) => isMinor(p.dob) !== true));
       setLoaded(true);
