@@ -373,6 +373,11 @@ export function PortalStatusCard({
         : "None recorded";
   // Only an email invitation can be sent; otherwise the button makes a link.
   const canSendEmail = server.available && status.contactMethod === "email";
+  // Registration always needs an email address, plus a password, or a
+  // 6-digit PIN on a device with no server (PatientRegister).
+  const noServer = server.state === "not-configured";
+  const credential = noServer ? "a 6-digit PIN" : "a password";
+  const signInWith = noServer ? "email and PIN" : "email and password";
 
   return (
     <section className="panel" aria-labelledby={titleId}>
@@ -533,8 +538,9 @@ export function PortalStatusCard({
               </button>
             </div>
             <p className="text-caption text-ink-secondary">
-              The patient's contact is pre-filled. They only need to enter their
-              date of birth to finish registering.
+              {status.contactMethod === "email"
+                ? `The patient's email is pre-filled. They also enter their name, date of birth and ${credential} to finish registering.`
+                : `The patient's phone number is pre-filled. Registration also needs an email address, so they also enter an email, their name, the date of birth on their record and ${credential}.`}
             </p>
           </div>
         )}
@@ -600,11 +606,11 @@ export function PortalStatusCard({
                 <p className="text-label text-ink">What to tell the patient</p>
                 <p className="text-caption text-ink-secondary">
                   Go to <strong>{window.location.origin}/patient/login</strong>,
-                  choose "Register here", and enter your{" "}
+                  choose "Register here", and enter{" "}
                   {status.contactMethod === "email"
-                    ? "email address"
-                    : "phone number"}{" "}
-                  and date of birth.
+                    ? "the email address the clinic has for you, your date of birth"
+                    : "an email address, the phone number and date of birth the clinic has for you,"}{" "}
+                  and {credential}. Then sign in with your {signInWith}.
                 </p>
               </div>
             )}

@@ -281,5 +281,29 @@ describe("PortalStatusCard invitation for a patient with no email", () => {
     ).toBeInTheDocument();
     expect(within(panel).getByText(url)).toBeInTheDocument();
     expect(mocks.sendPortalInvitation).toHaveBeenCalledWith("p1");
+    // Registration needs an email address, not only the phone number.
+    expect(
+      within(panel).getByText(/registration also needs an email address/i),
+    ).toBeInTheDocument();
+    expect(panel.textContent).not.toMatch(/only need to enter their date of birth/i);
+  });
+
+  it("tells staff the patient registers with an email as well as the phone number", async () => {
+    mocks.getPortalStatus.mockResolvedValue({
+      ...disabledStatus,
+      enabled: true,
+      inviteCount: 1,
+    });
+    renderCard();
+
+    expect(await screen.findByText("What to tell the patient")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /enter an email address, the phone number and date of birth the clinic has for you/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/sign in with your email and password/i),
+    ).toBeInTheDocument();
   });
 });
