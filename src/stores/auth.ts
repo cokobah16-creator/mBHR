@@ -607,9 +607,11 @@ export const useAuthStore = create<AuthState>()(
           }
 
           // The server could not be asked: only someone this device already
-          // knows as staff continues, with the role stored here.
+          // knows as staff continues, with the role stored here. The server
+          // said nothing about staff status, so this is never "not staff"
+          // (a guest record an older build left here must not decide that).
           if (account.status === "error" && (!user || !isStaffRole(user.role))) {
-            return await refuse(user ? "not_staff" : "staff_check_failed");
+            return await refuse("staff_check_failed");
           }
 
           // A new device (no local record) builds one from the server's

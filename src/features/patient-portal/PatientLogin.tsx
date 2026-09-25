@@ -73,7 +73,9 @@ export function PatientLogin() {
     // when it says access is on. Anything else (off, not linked, no answer)
     // signs the account out again on this device.
     const refuse = async (message: string) => {
-      if (supabase) await supabase.auth.signOut().catch(() => undefined);
+      // Local only: a refused portal sign-in must not end this account's
+      // sign-ins on other devices (a staff account shares the login).
+      if (supabase) await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
       clearStoredSupabaseAuth();
       localStorage.removeItem("patient_portal_user");
       setError(message);

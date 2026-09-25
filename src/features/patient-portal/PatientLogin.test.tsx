@@ -257,7 +257,7 @@ describe("PatientLogin (online: the server decides portal access)", () => {
         /not turned on portal access/i,
       );
     });
-    expect(online.signOut).toHaveBeenCalled();
+    expect(online.signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(online.clearAuth).toHaveBeenCalled();
     expect(localStore["patient_portal_user"]).toBeUndefined();
     expect(online.getProfile).not.toHaveBeenCalled();
