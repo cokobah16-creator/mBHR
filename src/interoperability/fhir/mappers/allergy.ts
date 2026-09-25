@@ -15,8 +15,10 @@
 //     silently.
 //   - verificationStatus and type are never filled: mBHR records neither.
 //     Nothing is ever "confirmed" by default.
-//   - category, criticality and reaction.severity only from the exact
-//     values in terminology/status/allergy.ts; anything else is left out.
+//   - category, criticality and reaction.severity only from the values in
+//     terminology/status/allergy.ts; anything else is left out. A
+//     life-threatening rating gives criticality high and, with a recorded
+//     reaction, reaction.severity severe (the top of that scale).
 //   - "No known allergies" does not exist in mBHR: no row means no allergy
 //     was recorded. The mapper never produces an NKA record, and every
 //     searchset carries ALLERGY_NKA_CAVEAT saying so.
@@ -128,7 +130,9 @@ export function mapAllergy(row: Row, ctx: AllergyMapContext): AllergyIntolerance
   const id = typeof row.id === "string" && row.id !== "" ? row.id : undefined;
   const patient = patientReference(ctx, row.patient_id);
   // No id, or a patient that does not resolve to a visible canonical
-  // record: nothing to publish (the reference is never guessed).
+  // record: nothing to publish (the reference is never guessed). The
+  // module does not drop it silently: a searchset warns that a record was
+  // left out, and a read fails closed.
   if (!id || !patient) return null;
 
   const allergy: AllergyIntolerance = {

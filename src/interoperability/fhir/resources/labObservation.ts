@@ -30,12 +30,15 @@ import {
   LAB_TEST_CATALOGUE,
   LAB_TEST_SYSTEM,
   LOWER_UUID,
+  UCUM_UNITS,
+  V3_OBSERVATION_INTERPRETATION,
   mapLabObservation,
   splitPatientLabRow,
 } from "../mappers/laboratory";
-import { LAB_INTERPRETATION } from "../terminology/status/laboratory";
+import { LAB_INTERPRETATION, LAB_OBSERVATION_STATUS } from "../terminology/status/laboratory";
 import { knownSourceValues } from "../terminology/statusMaps";
-import { OBSERVATION_CATEGORY } from "../terminology/codeSystems";
+import { OBSERVATION_CATEGORY, UCUM } from "../terminology/codeSystems";
+import type { AddIssue } from "../validation/validate";
 import { LAB_PERMISSIONS, hasAny } from "../authorization/permissions";
 import { referenceContext } from "../patients/canonical";
 import { errors, FhirError } from "../errors/operationOutcome";
@@ -287,42 +290,37 @@ interface LabQuery {
  * result has). Malformed values are refused (400) as for any search.
  */
 function parseLabQuery(search: ParsedSearch): LabQuery | null {
-  const category = one(search, "category");
-  if (category) {
-    const t = parseToken(category, "category");
-    if (t.code !== "laboratory" || (t.system !== null && t.system !== OBSERVATION_CATEGORY)) return null;
-  }
-  let status: LabQuery["status"] = null;
+  // Every value is parsed (malformed ones are refused) before deciding
+  // whether a laboratory result can match.
+  const dateRaw = search.values.get("date");
+  const dates = dateBounds(dateRaw, "date");
+  const encounter = one(search, "encounter");
+  const visitId = encounter ? parseReferenceId(encounter, "Encounter", "encounter") : null;
+  const categoryParam = one(search, "category");
+  const category = categoryParam ? parseToken(categoryParam, "category") : null;
   const statusParam = one(search, "status");
-  if (statusParam) {
-    const code = parseToken(statusParam, "status").code;
-    if (code !== "final" && code !== "preliminary") return null;
-    status = code;
-  }
-  let code: LabQuery["code"] = null;
+  const statusCode = statusParam ? parseToken(statusParam, "status").code : null;
   const codeParam = one(search, "code");
-  if (codeParam) {
-    code = labCodeEntry(codeParam);
-    if (!code) return null;
-  }
-  let resultId: string | null = null;
+  const code = codeParam ? labCodeEntry(codeParam) : null;
   const idParam = one(search, "_id");
-  if (idParam) {
-    const id = parseId(idParam);
+  const id = idParam ? parseId(idParam) : null;
+  const basedOn = one(search, "based-on");
+  const orderId = basedOn ? parseReferenceId(basedOn, "ServiceRequest", "based-on") : null;
+
+  if (category && (category.code !== "laboratory" || (category.system !== null && category.system !== OBSERVATION_CATEGORY))) {
+    return null;
+  }
+  if (statusCode !== null && statusCode !== "final" && statusCode !== "preliminary") return null;
+  if (codeParam && !code) return null;
+  let resultId: string | null = null;
+  if (id !== null) {
     if (!id.startsWith(LAB_OBSERVATION_PREFIX)) return null;
     resultId = id.slice(LAB_OBSERVATION_PREFIX.length);
     if (!LOWER_UUID.test(resultId)) return null;
   }
-  let orderId: string | null = null;
-  const basedOn = one(search, "based-on");
-  if (basedOn) {
-    orderId = parseReferenceId(basedOn, "ServiceRequest", "based-on");
-    if (!LOWER_UUID.test(orderId)) return null;
-  }
-  const encounter = one(search, "encounter");
-  const visitId = encounter ? parseReferenceId(encounter, "Encounter", "encounter") : null;
-  const dateRaw = search.values.get("date");
-  return { resultId, orderId, visitId, code, status, dates: dateBounds(dateRaw, "date"), dateRaw };
+  if (orderId !== null && !LOWER_UUID.test(orderId)) return null;
+  const status = statusCode as LabQuery["status"];
+  return { resultId, orderId, visitId, code, status, dates, dateRaw };
 }
 
 /** Result-level SQL filters: a superset of the rows that map to the searched status (checked again after mapping). */
@@ -489,3 +487,51 @@ export const labObservationSource: LabObservationSource = {
     return staffSearch(input, q);
   },
 };
+
+// ---------------------------------------------------------------------------
+// Checks on a mapped laboratory Observation (for the Observation module's
+// validate step; the gateway refuses to serve a resource that fails them)
+// ---------------------------------------------------------------------------
+
+const LAB_STATUSES: ReadonlySet<string> = new Set<string>([...LAB_OBSERVATION_STATUS.rules.map((r) => r.fhir), "unknown"]);
+const LAB_V3_INTERPRETATIONS: ReadonlySet<string> = new Set<string>(LAB_INTERPRETATION.rules.map((r) => r.fhir));
+
+/**
+ * The laboratory rules that must hold whatever the data: a result without a
+ * value is never final, an interpretation is only one mBHR records (never a
+ * direction such as H or L), "normal" is only published once reviewed, a
+ * unit gets a UCUM code only from the verified list, and the result points
+ * at its order.
+ */
+export function validateLabObservation(resource: Record<string, unknown>, add: AddIssue): void {
+  if (typeof resource.id !== "string" || !resource.id.startsWith(LAB_OBSERVATION_PREFIX)) return;
+  const status = resource.status as string;
+  if (!LAB_STATUSES.has(status)) add("Observation.status", "not a status a laboratory result has");
+  const categories = (resource.category as { coding?: { system?: string; code?: string }[] }[] | undefined) ?? [];
+  if (!categories.some((c) => c.coding?.some((k) => k.system === OBSERVATION_CATEGORY && k.code === "laboratory"))) {
+    add("Observation.category", "a laboratory result has the laboratory category");
+  }
+  const basedOn = resource.basedOn as { reference?: string }[] | undefined;
+  if (basedOn?.length !== 1 || !/^ServiceRequest\/[0-9a-f-]{36}$/.test(basedOn[0].reference ?? "")) {
+    add("Observation.basedOn", "a laboratory result names its order");
+  }
+  const values = ["valueQuantity", "valueString", "dataAbsentReason"].filter((k) => k in resource);
+  if (values.length !== 1) add("Observation.value[x]", "exactly one of a value or a reason it is absent");
+  if ("dataAbsentReason" in resource && status === "final") add("Observation.status", "a result without a value is never final");
+  const quantity = resource.valueQuantity as { system?: string; code?: string; unit?: string } | undefined;
+  if (quantity?.system !== undefined || quantity?.code !== undefined) {
+    if (quantity.system !== UCUM || quantity.code === undefined || !UCUM_UNITS.has(quantity.unit ?? "") || UCUM_UNITS.get(quantity.unit ?? "") !== quantity.code) {
+      add("Observation.valueQuantity", "a unit is coded only from the verified UCUM list");
+    }
+  }
+  for (const concept of (resource.interpretation as { coding?: { system?: string; code?: string }[] }[] | undefined) ?? []) {
+    for (const c of concept.coding ?? []) {
+      if (c.system !== V3_OBSERVATION_INTERPRETATION) continue;
+      if (!LAB_V3_INTERPRETATIONS.has(c.code ?? "")) add("Observation.interpretation", "only an interpretation mBHR records");
+      if (c.code === "N" && status !== "final") add("Observation.interpretation", "normal is published only for a reviewed result");
+    }
+  }
+  for (const k of ["note", "performer", "specimen", "hasMember", "derivedFrom", "method", "bodySite", "device"]) {
+    if (k in resource) add(`Observation.${k}`, "not published for laboratory results");
+  }
+}

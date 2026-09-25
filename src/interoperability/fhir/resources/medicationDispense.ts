@@ -85,7 +85,7 @@ export const definition: ResourceDefinition = {
       name: "whenhandedover",
       type: "date",
       documentation:
-        "whenHandedOver as published (when_handed_over, else dispensed_at). A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
+        "whenHandedOver as published: the recorded handover time, else when mBHR recorded the medicine as given. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
       maxRepeats: 2,
     },
   ],
@@ -100,7 +100,7 @@ export const definition: ResourceDefinition = {
     "whenHandedOver is the time mBHR recorded the medicine as given, from the tablet's clock.",
     "One prescription line can have several dispenses (one per stock lot, plus any units given offline beyond server stock): add them up per authorizingPrescription.",
     "A quantity is shown only with its unit: visit dispensing records no unit, so it has none.",
-    "The medicine is the name as recorded, as text: no medicine code is published (the RxNorm system stored by column default has no code and is not used).",
+    "The medicine is the name as recorded, as text: no medicine code is published (none is recorded).",
     "Records from the staff dashboard's 'Add medicine' form are not published (their quantity is invented).",
     "The dispenser's account id or typed name, lots, allergy-override flags and visibility notes are not published.",
     "Patients see their own records that are visible in the portal: medicine, status, visit, time and directions only.",

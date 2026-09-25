@@ -10,12 +10,19 @@
 // record "no known allergies", so an empty result is never a statement that
 // the patient has none.
 //
+// An allergy whose patient cannot be resolved to a current record (a merge
+// chain that does not end, a merged record whose kept record is missing, a
+// record the caller cannot see) is never published under a guessed
+// patient, and it is never dropped silently either: a searchset says how
+// many were left out (allergyLeftOutWarning), and a read fails closed with
+// 500 instead of answering "not found" for an allergy that exists.
+//
 // Ids are handled as opaque strings. The repository defines
 // patient_allergies.id as uuid, but tablets create ULIDs and the production
 // column type is not confirmed; an id the column cannot hold (the database
 // refuses it as a value of the wrong type) simply matches nothing.
 
-import { FhirError } from "../errors/operationOutcome";
+import { FhirError, errors } from "../errors/operationOutcome";
 import { READ_PERMISSIONS } from "../authorization/permissions";
 import {
   ALLERGY_CATEGORY_SYSTEM,
@@ -28,9 +35,10 @@ import {
   type AllergyIntolerance,
 } from "../mappers/allergy";
 import type { Row } from "../mappers/common";
+import type { OperationOutcomeIssue } from "../types/fhir";
 import { referenceContext } from "../patients/canonical";
 import { pgrstQuote } from "../gateway/postgrest";
-import { FHIR_ID, parseId, parseToken, type ParsedSearch, type TokenValue } from "../search/params";
+import { FHIR_ID, parseId, parseToken, type Cursor, type ParsedSearch, type TokenValue } from "../search/params";
 import { sourceValuesFor, type StatusMap } from "../terminology/statusMaps";
 import { ALLERGY_CATEGORY, ALLERGY_CLINICAL_STATUS, ALLERGY_CRITICALITY } from "../terminology/status/allergy";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
@@ -60,7 +68,7 @@ export const definition: ResourceDefinition = {
     "onsetDateTime (date only)",
     "recordedDate (when the allergy was recorded, by the tablet's clock)",
     "recorder (Practitioner, only when the recording account is in the staff directory)",
-    "reaction.manifestation.text (the reaction as recorded) and reaction.severity (moderate or severe only)",
+    "reaction.manifestation.text (the reaction as recorded) and reaction.severity (moderate, or severe for allergies rated severe or life-threatening; never mild)",
   ],
   profiles: [],
   interactions: ["read", "search-type"],
@@ -103,6 +111,7 @@ export const definition: ResourceDefinition = {
     "The allergen and the reaction are free text as recorded: no substance code is published, and one record may name several substances.",
     "category medication is the form's pre-selected type: do not use category to decide whether an allergy matters for medicines.",
     "After a merge, allergies from both records are listed under the kept patient as recorded, including duplicates.",
+    "An allergy whose patient record cannot be resolved (for example a merged record whose kept record is missing) is not published: a searchset then carries a warning saying how many were left out, and a read returns an error rather than 'not found'.",
     "Staff notes and staff account ids are never published. Patients cannot read allergies through this interface.",
   ],
 };
@@ -158,12 +167,62 @@ async function practitionerIds(ctx: QueryCtx, rows: Row[]): Promise<Map<string, 
   return out;
 }
 
+/**
+ * Map a batch of rows. null for a row that cannot be published: its patient
+ * does not resolve to a visible canonical record (the id column is the
+ * primary key, so that is the only way a fetched row maps to nothing).
+ */
 async function mapAllergies(ctx: QueryCtx, rows: Row[]): Promise<(AllergyIntolerance | null)[]> {
   const [refs, practitioners] = await Promise.all([
     referenceContext(ctx.db, ownersOf(rows).filter((v): v is string => v !== null)),
     practitionerIds(ctx, rows),
   ]);
   return rows.map((r) => mapAllergy(r, { ...refs, practitionerIds: practitioners }));
+}
+
+// ---------------------------------------------------------------------------
+// Allergies left out because their patient does not resolve
+// ---------------------------------------------------------------------------
+
+/**
+ * The searchset warning for matching allergies that were left out because
+ * their patient record could not be resolved. Without it, the searchset's
+ * only note would be ALLERGY_NKA_CAVEAT ("an empty result means no allergy
+ * has been recorded"), which would be untrue: these allergies are recorded.
+ */
+export function allergyLeftOutWarning(count: number): OperationOutcomeIssue {
+  return {
+    severity: "warning",
+    code: "processing",
+    diagnostics: `${count} matching allergy record(s) were left out because the patient record they are filed under could not be resolved (for example a merged record whose kept record is missing). These allergies are recorded but not shown: this result is not the complete list. Quote the X-Request-Id header when reporting this.`,
+  };
+}
+
+/** A row keysetPage fetched, and whether it mapped to nothing. */
+export interface ExaminedRow {
+  key: string;
+  leftOut: boolean;
+}
+
+/**
+ * How many of the rows this page covers were left out.
+ *
+ * keysetPage maps whole batches, but when the page fills it stops part-way
+ * through a batch and the next link resumes after the page's last entry, so
+ * the rows after that entry are fetched and looked at again for the next
+ * page. Only rows up to the one the next link resumes after are counted
+ * here, so each left-out row is reported on exactly one page. With no next
+ * link, every fetched row belongs to this page. (Should the resume key not
+ * be among the fetched rows, which keysetPage never does, every left-out
+ * row is counted: a warning repeated on the next page is safer than none.)
+ */
+export function leftOutOnPage(examined: readonly ExaminedRow[], next: Cursor | null): number {
+  let end = examined.length;
+  if (next) {
+    const i = examined.map((e) => e.key).lastIndexOf(next.k);
+    if (i >= 0) end = i + 1;
+  }
+  return examined.slice(0, end).filter((e) => e.leftOut).length;
 }
 
 /**
@@ -198,6 +257,11 @@ async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
       owners.push(ownersOf([rows[i]])[0]);
     }
   });
+  // The allergy exists but its patient does not resolve: fail closed (500,
+  // audited by the gateway) rather than answer "not found" for a recorded
+  // allergy, the same as the gateway does for a record that fails
+  // validation on a read.
+  if (rows.length && !resources.length) throw errors.internal();
   return { page: { resources, next: null }, owners };
 }
 
@@ -272,6 +336,9 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   // query so it is not mistaken for an id the column cannot hold.
   checkCursorKey(search.cursor, SOURCE_ID);
   try {
+    // Every fetched row, in order, and whether it mapped to nothing, so the
+    // page can say how many matching allergies it had to leave out.
+    const examined: ExaminedRow[] = [];
     const { page, rows } = await keysetPage<AllergyIntolerance>({
       db: ctx.db,
       table: "patient_allergies",
@@ -281,9 +348,19 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
       filters,
       count: search.count,
       cursor: search.cursor,
-      map: (r) => mapAllergies(ctx, r),
+      map: async (batch) => {
+        const mapped = await mapAllergies(ctx, batch);
+        batch.forEach((r, i) => examined.push({ key: String(r.id), leftOut: mapped[i] === null }));
+        return mapped;
+      },
     });
-    return { page, owners: ownersOf(rows), ...notes, outcomes };
+    const leftOut = leftOutOnPage(examined, page.next);
+    return {
+      page,
+      owners: ownersOf(rows),
+      ...notes,
+      outcomes: leftOut ? [...outcomes, allergyLeftOutWarning(leftOut)] : outcomes,
+    };
   } catch (e) {
     // Only an _id can carry a value the id column refuses.
     if (idParam && isRefusedValue(e)) return nothing();

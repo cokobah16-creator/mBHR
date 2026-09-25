@@ -4,8 +4,9 @@
 // tables, the type's own validation rules (ait-1, ait-2), and the gateway end
 // to end against the in-memory Supabase: who may read allergies, enumeration
 // protection, every search parameter, merged patients, opaque ids, the
-// "no known allergies" caveat on every searchset, the recorder through the
-// staff directory, and that nothing private is ever served.
+// "no known allergies" caveat on every searchset, allergies whose patient
+// does not resolve (never dropped silently), the recorder through the staff
+// directory, and that nothing private is ever served.
 //
 // Synthetic fixtures only (no real patient data).
 
@@ -35,7 +36,13 @@ import {
   validateAllergyIntolerance,
   type AllergyMapContext,
 } from "../mappers/allergy";
-import { allergyIntoleranceModule, definition } from "../resources/allergyIntolerance";
+import {
+  allergyIntoleranceModule,
+  allergyLeftOutWarning,
+  definition,
+  leftOutOnPage,
+  type ExaminedRow,
+} from "../resources/allergyIntolerance";
 import type { QueryCtx } from "../resources/module";
 import { fakeSupabase, makeToken, type FakeOptions, type FakeUser, type RpcHandler } from "./fakeSupabase";
 
@@ -67,6 +74,18 @@ const PATIENT_M = {
 const PATIENT_B = { ...PATIENT_A, id: "01HZZALGPATIENTB0000000000", fhir_id: "a1a1a1a1-0000-4000-8000-00000000000b", email: null };
 /** Has no allergy rows at all. */
 const PATIENT_C = { ...PATIENT_A, id: "01HZZALGPATIENTC0000000000", fhir_id: "a1a1a1a1-0000-4000-8000-00000000000c", email: null };
+/**
+ * Merged away, but its kept record is missing (an orphaned tombstone): its
+ * merge chain does not end, so no allergy filed under it can name a patient.
+ */
+const PATIENT_T = {
+  ...PATIENT_A,
+  id: "01HZZALGPATIENTT0000000000",
+  fhir_id: "a1a1a1a1-0000-4000-8000-00000000000e",
+  email: null,
+  merged_into: null as string | null,
+  merged_at: "2026-06-01T10:00:00+00:00" as string | null,
+};
 
 /** app_users.id of a doctor (an auth uid): never published, only its Practitioner id. */
 const DOCTOR_ACCOUNT = "5b7a0c2e-3d4f-4a1b-9c8d-7e6f5a4b3c2d";
@@ -148,6 +167,15 @@ const AL_DEVICE = {
   severity: "mild",
 };
 const AL_B = { ...BASE, id: "a0000000-0000-4000-8000-000000000006", patient_id: PATIENT_B.id, allergen: "Peanuts", allergy_type: "food" };
+/** A life-threatening allergy filed under the orphaned tombstone T. */
+const AL_TOMB = {
+  ...BASE,
+  id: "c0000000-0000-4000-8000-000000000001",
+  patient_id: PATIENT_T.id,
+  allergen: "Amoxicillin",
+  reaction: "Anaphylaxis",
+  severity: "life-threatening",
+};
 
 const ALL_ROWS = [AL_ACTIVE, AL_INACTIVE, AL_UNKNOWN, AL_OTHER, AL_MERGED, AL_DEVICE, AL_B];
 
@@ -288,7 +316,9 @@ describe("AllergyIntolerance mapper", () => {
       onsetDateTime: "2026-04-01",
       recordedDate: "2026-05-01T09:00:00.000Z",
       recorder: { reference: `Practitioner/${PRACTITIONER_ID}` },
-      reaction: [{ manifestation: [{ text: "Rash, swelling of the lips" }] }],
+      // life-threatening: criticality high, and reaction severity severe
+      // (the top of the reaction scale).
+      reaction: [{ manifestation: [{ text: "Rash, swelling of the lips" }], severity: "severe" }],
     });
     expect(validateResource(a, validateAllergyIntolerance)).toEqual([]);
   });
@@ -447,13 +477,32 @@ describe("AllergyIntolerance status and value tables", () => {
     expect(ALLERGY_CRITICALITY.rules.map((r) => r.fhir)).toEqual(["high"]);
   });
 
-  it("reaction severity: moderate and severe exactly; the pre-selected mild and life-threatening are left out", () => {
+  it("reaction severity: moderate and severe exactly, life-threatening as severe; the pre-selected mild is left out", () => {
     expect(applyStatusMap(ALLERGY_REACTION_SEVERITY, "moderate")).toBe("moderate");
     expect(applyStatusMap(ALLERGY_REACTION_SEVERITY, "severe")).toBe("severe");
-    for (const raw of ["mild", "life-threatening", "", null, "Severe "]) {
+    expect(applyStatusMap(ALLERGY_REACTION_SEVERITY, "life-threatening")).toBe("severe");
+    expect(applyStatusMap(ALLERGY_REACTION_SEVERITY, "LIFE-THREATENING")).toBe("severe");
+    for (const raw of ["mild", "", null, "Severe ", "critical", "high"]) {
       expect(applyStatusMap(ALLERGY_REACTION_SEVERITY, raw), String(raw)).toBeNull();
     }
     expect(explainStatus(ALLERGY_REACTION_SEVERITY, "mild").reason).toMatch(/pre-selected/);
+    expect(explainStatus(ALLERGY_REACTION_SEVERITY, "life-threatening").reason).toMatch(/highest reaction-event-severity code/);
+    // Nothing is ever published as mild.
+    expect(ALLERGY_REACTION_SEVERITY.rules.some((r) => r.fhir === "mild")).toBe(false);
+  });
+
+  it("reaction severity never ranks a more serious rating below a less serious one", () => {
+    const rank: Record<string, number> = { mild: 1, moderate: 2, severe: 3 };
+    const ratings = ["moderate", "severe", "life-threatening"]; // in increasing seriousness
+    const served = ratings.map((severity) => mapAllergy({ ...AL_ACTIVE, severity, reaction: "Anaphylaxis" }, MAP_CTX)!.reaction![0].severity);
+    expect(served).toEqual(["moderate", "severe", "severe"]);
+    for (let i = 1; i < served.length; i++) {
+      expect(rank[served[i]!], ratings[i]).toBeGreaterThanOrEqual(rank[served[i - 1]!]);
+    }
+    // The most serious rating also carries criticality high; the others do not.
+    expect(ratings.map((severity) => mapAllergy({ ...AL_ACTIVE, severity }, MAP_CTX)!.criticality)).toEqual([undefined, undefined, "high"]);
+    // Without reaction text there is still no reaction element to carry it.
+    expect(mapAllergy({ ...AL_ACTIVE, reaction: " " }, MAP_CTX)!.reaction).toBeUndefined();
   });
 
   it("every allergy table is listed with the other status maps", () => {
@@ -881,6 +930,128 @@ describe("AllergyIntolerance read", () => {
     const b = await json(await call(byPatient(PATIENT_B.fhir_id), DOCTOR));
     expect(matches(b)).toEqual([]);
     expect(outcomes(b)).toEqual([ALLERGY_NKA_CAVEAT]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Allergies whose patient does not resolve: never dropped silently
+// ---------------------------------------------------------------------------
+
+/** The default fixtures plus the orphaned tombstone T and its allergy. */
+const TOMB_TABLES = {
+  patients: [PATIENT_A, PATIENT_M, PATIENT_B, PATIENT_C, PATIENT_T],
+  patient_allergies: [...ALL_ROWS, AL_TOMB],
+};
+
+/**
+ * A database on which the patient `id` no longer resolves when allergy rows
+ * are mapped (its merge chain does not end, or a hop is hidden from the
+ * caller), while the patient a search names still resolves.
+ */
+function unresolvable(id: string): (inner: FetchLike) => FetchLike {
+  return (inner) => async (input, init) => {
+    const res = await inner(input, init);
+    if (!input.endsWith("/rpc/fhir_resolve_patients")) return res;
+    const body = JSON.parse(String(init?.body ?? "{}")) as Json;
+    if (!((body.p_ids as string[] | null) ?? []).includes(id)) return res;
+    const rows = (await res.json()) as Json[];
+    const broken = rows.map((r) => (r.input === id ? { ...r, canonical_id: null, canonical_fhir_id: null, chain_ok: false, member_ids: [] } : r));
+    return new Response(JSON.stringify(broken), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+}
+
+describe("AllergyIntolerance whose patient does not resolve", () => {
+  it("an _id search says the allergy was left out, instead of implying that none is recorded", async () => {
+    const { call } = setup({ tables: TOMB_TABLES });
+    const b = await json(await call(`/fhir/R4/AllergyIntolerance?_id=${AL_TOMB.id}`, DOCTOR));
+    expect(matches(b)).toEqual([]);
+    // The caveat alone would say "no allergy has been recorded": the warning says otherwise.
+    expect(outcomes(b)).toEqual([ALLERGY_NKA_CAVEAT, allergyLeftOutWarning(1)]);
+    const warning = outcomes(b)[1];
+    expect(warning.severity).toBe("warning");
+    expect(warning.diagnostics).toMatch(/^1 matching allergy record\(s\) were left out because the patient record they are filed under could not be resolved/);
+    expect(warning.diagnostics).toMatch(/not the complete list/);
+    const text = JSON.stringify(b);
+    for (const secret of ["Amoxicillin", "Anaphylaxis", PATIENT_T.id, PATIENT_T.fhir_id, "patient_allergies", "merged_into"]) {
+      expect(text, secret).not.toContain(secret);
+    }
+  });
+
+  it("a read fails closed (500, audited) rather than answering 'not found' for a recorded allergy", async () => {
+    const { call, audits, logs } = setup({ tables: TOMB_TABLES });
+    const res = await call(`/fhir/R4/AllergyIntolerance/${AL_TOMB.id}`, DOCTOR);
+    expect(res.status).toBe(500);
+    const text = JSON.stringify(await json(res));
+    for (const secret of ["Amoxicillin", "Anaphylaxis", PATIENT_T.id, PATIENT_T.fhir_id]) expect(text, secret).not.toContain(secret);
+    expect(audits.at(-1)).toMatchObject({ p_decision: "deny", p_http_status: 500, p_resource_type: "AllergyIntolerance" });
+    expect(logs.join("\n")).not.toContain("Amoxicillin");
+    // An allergy that does not exist is still simply not found.
+    expect((await call("/fhir/R4/AllergyIntolerance/c0000000-0000-4000-8000-0000000000ff", DOCTOR)).status).toBe(404);
+    // Allergies whose patient resolves are unaffected.
+    expect((await call(`/fhir/R4/AllergyIntolerance/${AL_ACTIVE.id}`, DOCTOR)).status).toBe(200);
+  });
+
+  it("a search by the tombstone matches nothing and says its kept record is not available", async () => {
+    const { call } = setup({ tables: TOMB_TABLES });
+    const b = await json(await call(byPatient(PATIENT_T.fhir_id), DOCTOR));
+    expect(matches(b)).toEqual([]);
+    const issues = outcomes(b);
+    expect(issues[0].diagnostics).toMatch(/merged into another record that is not available/);
+    expect(issues).toContainEqual(ALLERGY_NKA_CAVEAT);
+    expect(JSON.stringify(b)).not.toContain("Amoxicillin");
+  });
+
+  it("a patient search with nothing left out carries no warning", async () => {
+    const { call } = setup({ tables: TOMB_TABLES });
+    const b = await json(await call(byPatient(PATIENT_B.fhir_id), DOCTOR));
+    expect(ids(b)).toEqual([AL_B.id]);
+    expect(outcomes(b)).toEqual([ALLERGY_NKA_CAVEAT]);
+  });
+
+  it("reports each left-out allergy on exactly one page, and never shows it under another patient", async () => {
+    // A's own rows interleaved with rows still filed under M, whose chain
+    // stops resolving when the rows are mapped.
+    const onA = (n: number) => ({ ...BASE, id: `b0000000-0000-4000-8000-00000000000${n}`, allergen: `Allergen ${n}` });
+    const onM = (n: number) => ({ ...onA(n), patient_id: PATIENT_M.id });
+    const rows = [onA(1), onM(2), onA(3), onM(4), onM(5), onA(6)];
+    for (const count of [1, 2, 3, 10]) {
+      const { call } = setup({ tables: { patients: [PATIENT_A, PATIENT_M], patient_allergies: rows } }, unresolvable(PATIENT_M.id));
+      const seen: string[] = [];
+      let leftOut = 0;
+      let url: string | null = byPatient(PATIENT_A.fhir_id, `&_count=${count}`);
+      let pages = 0;
+      while (url && pages < 10) {
+        const b = await json(await call(url, DOCTOR));
+        expect(outcomes(b)[0], String(count)).toEqual(ALLERGY_NKA_CAVEAT);
+        for (const i of outcomes(b).filter((o) => o.severity === "warning")) {
+          const m = /^(\d+) matching allergy record\(s\) were left out/.exec(i.diagnostics);
+          expect(m, i.diagnostics).not.toBeNull();
+          leftOut += Number(m![1]);
+        }
+        for (const r of matches(b)) expect(r.patient).toEqual({ reference: `Patient/${PATIENT_A.fhir_id}` });
+        seen.push(...ids(b));
+        const next = b.link.find((l: Json) => l.relation === "next");
+        url = next ? next.url.replace("https://mbhr.app", "") : null;
+        pages++;
+      }
+      expect(seen, String(count)).toEqual([onA(1).id, onA(3).id, onA(6).id]);
+      expect(leftOut, String(count)).toBe(3);
+    }
+  });
+
+  it("counts only the rows a page covers", () => {
+    const rows = (flags: boolean[]): ExaminedRow[] => flags.map((leftOut, i) => ({ key: `k${i}`, leftOut }));
+    const examined = rows([false, true, false, true, true, false]);
+    // No next link: every fetched row belongs to this page.
+    expect(leftOutOnPage(examined, null)).toBe(3);
+    // The next page resumes after k2: k3 and k4 are counted there, not here.
+    expect(leftOutOnPage(examined, { k: "k2" })).toBe(1);
+    expect(leftOutOnPage(examined, { k: "k0" })).toBe(0);
+    expect(leftOutOnPage(examined, { k: "k5" })).toBe(3);
+    // A resume key that was not fetched: count everything rather than nothing.
+    expect(leftOutOnPage(examined, { k: "elsewhere" })).toBe(3);
+    expect(leftOutOnPage([], null)).toBe(0);
+    expect(allergyLeftOutWarning(2)).toEqual({ severity: "warning", code: "processing", diagnostics: expect.stringMatching(/^2 matching allergy record\(s\)/) });
   });
 });
 

@@ -18,7 +18,8 @@
 //   - A cancelled order is "revoked" (ServiceRequest) or "cancelled"
 //     (DiagnosticReport, when it has no result), never completed or final.
 //   - Values are published as recorded. valueQuantity only when the value
-//     is a plain decimal number that JSON can carry without changing it AND
+//     is a plain decimal number that JSON carries with exactly the same
+//     digits (so "12.50" and "4.0" stay text: precision is meaningful) AND
 //     a unit is recorded; the unit gets a UCUM code only from the short,
 //     exact-match table below. Anything else ("<0.5", "1:80", "12,5",
 //     "Positive", a number without a unit) is valueString: the recorded
@@ -270,16 +271,16 @@ const PLAIN_NUMBER = /^-?\d+(\.\d+)?$/;
 
 /**
  * The number a plain decimal text stands for, or undefined when the text is
- * not a plain decimal or JSON cannot carry it unchanged: only trailing
- * zeros after the decimal point may be lost ("12.50" -> 12.5). Leading
- * zeros ("007"), "-0" and more digits than a double holds keep their text.
+ * not a plain decimal or JSON cannot carry it with exactly the same digits.
+ * FHIR treats a decimal's precision as meaningful (0.010 is not 0.01), and a
+ * JSON number from JavaScript cannot keep trailing zeros, so "12.50", "4.0",
+ * leading zeros ("007"), "-0" and more digits than a double holds all stay
+ * text rather than lose or change a digit.
  */
 export function plainNumber(text: string): number | undefined {
   if (!PLAIN_NUMBER.test(text)) return undefined;
   const n = Number(text);
-  if (!Number.isFinite(n)) return undefined;
-  const canonical = text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
-  return String(n) === canonical ? n : undefined;
+  return Number.isFinite(n) && String(n) === text ? n : undefined;
 }
 
 /** value[x] for a result: see the rules at the top of this file. */

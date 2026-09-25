@@ -86,7 +86,7 @@ export const definition: ResourceDefinition = {
       name: "authoredon",
       type: "date",
       documentation:
-        "When the prescription was written (prescriptions.created_at, the tablet's clock). A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
+        "When the prescription was written, by the prescribing tablet's clock. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
       maxRepeats: 2,
     },
   ],
@@ -112,7 +112,7 @@ const UNRESOLVED_MEDICINE: OperationOutcomeIssue = {
   severity: "information",
   code: "informational",
   diagnostics:
-    "Some prescription lines were left out because the medicine they name could not be found in the pharmacy catalogue (or the line names none). An empty or short result does not mean the patient has no other prescriptions.",
+    "Some prescription lines were left out because the medicine they name could not be found in the pharmacy catalogue (or the line names none). An empty or short result does not mean nothing else was prescribed for the patient.",
 };
 
 /** Everything the mapper needs for a batch of prescription rows, resolved in a few queries. */

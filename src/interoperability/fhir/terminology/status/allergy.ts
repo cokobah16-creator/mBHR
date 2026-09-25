@@ -145,12 +145,18 @@ export const ALLERGY_REACTION_SEVERITY: StatusMap<AllergyReactionSeverity> = {
   rules: [
     { source: ["moderate"], fhir: "moderate", reason: "Staff chose moderate (the same word in FHIR); only with a recorded reaction." },
     { source: ["severe"], fhir: "severe", reason: "Staff chose severe (the same word in FHIR); only with a recorded reaction." },
+    {
+      source: ["life-threatening"],
+      fhir: "severe",
+      reason:
+        "Staff rated the allergy life-threatening. severe is the highest reaction-event-severity code, so this is the closest code and not an upgrade; leaving it out would show a life-threatening reaction as less severe than one rated severe. criticality high is also set. Only with a recorded reaction.",
+    },
   ],
   missing: { fhir: null, reason: "No rating recorded: no reaction severity." },
   unrecognised: {
     fhir: null,
     reason:
-      "'mild' is the form's pre-selected choice and cannot be told apart from 'not chosen', so it is left out rather than stated; 'life-threatening' is not a reaction severity code (it is published as criticality high); any other value is not guessed.",
+      "'mild' is the form's pre-selected choice and cannot be told apart from 'not chosen', so no reaction severity is stated for it; any other value is not guessed.",
   },
 };
 
