@@ -16,7 +16,7 @@ import {
 
 /**
  * Roles that may send SMS to patients (medication/appointment reminders,
- * televisit notices, portal invitations and portal codes).
+ * televisit notices and portal codes; portal invitations go by email only).
  *
  * src/auth/roles.ts has no SMS permission; this set is the server-side
  * definition of "may send patient reminders" and maps to the app roles as:

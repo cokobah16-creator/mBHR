@@ -2,7 +2,8 @@
  * Unified Portal Enrollment Service
  *
  * Connects staff registration with patient portal access.
- * When staff register a patient with email/phone, automatically creates portal account.
+ * Creates portal accounts on the server for adults, from the registration
+ * form's portal box and BulkPortalMigration.
  */
 
 import { supabase } from "@/lib/supabase";
@@ -44,7 +45,9 @@ function serverUnavailableReason(): string | null {
 
 /**
  * Enroll a patient in the portal (creates portal user account)
- * Called automatically when staff registers a patient with contact info.
+ * Called from the registration form when staff tick portal access for an
+ * adult with contact info, and by bulkEnrollPatients (BulkPortalMigration)
+ * and sendPortalInvitation below.
  * Refused for a patient under 18: portal accounts are for adults.
  */
 export async function enrollPatientInPortal(
