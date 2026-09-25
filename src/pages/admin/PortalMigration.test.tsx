@@ -69,7 +69,12 @@ describe("PortalMigration invitations", () => {
     session.state = "signed_in";
     server.available = true;
     mockFindEligible.mockResolvedValue([patient]);
-    mockBulkEnable.mockResolvedValue({ success: 1, failed: 0, errors: [] });
+    mockBulkEnable.mockResolvedValue({
+      success: 1,
+      failed: 0,
+      serverUpdated: 1,
+      errors: [],
+    });
   });
 
   it("offers invitations when signed in online, and the dialog does not promise every patient a message", async () => {
@@ -105,6 +110,13 @@ describe("PortalMigration invitations", () => {
 
   it("still enables access without invitations when not signed in online", async () => {
     session.state = "signed_out";
+    // Not signed in online: saved on this device only.
+    mockBulkEnable.mockResolvedValue({
+      success: 1,
+      failed: 0,
+      serverUpdated: 0,
+      errors: [],
+    });
     await renderWithOnePatientSelected();
 
     fireEvent.click(screen.getByRole("button", { name: "Enable access only" }));
@@ -115,6 +127,10 @@ describe("PortalMigration invitations", () => {
       ["p1"],
       expect.objectContaining({ sendInvitations: false }),
     );
+    const summary = await screen.findByText(/portal access enabled for 1 of 1 patient/i);
+    expect(summary).toHaveTextContent(/for 0 of them/i);
+    expect(summary).toHaveTextContent(/saved on this device only/i);
+    expect(summary).not.toHaveTextContent(/undefined/);
   });
 
   it("does not block invitations while the sign-in check has not finished", async () => {
