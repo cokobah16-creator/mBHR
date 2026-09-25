@@ -124,11 +124,14 @@ export const CLINICAL_PATH_RULES = [
   {
     // How recorded values, statuses and codes are presented to other
     // systems (zero and missing values, status mapping, LOINC / SNOMED
-    // codes). See docs/interoperability/resource-mapping.md.
+    // codes), and which rows are published at all (the resource modules
+    // filter out unreviewed, withheld or removed records).
+    // See docs/interoperability/resource-mapping.md.
     area: "FHIR export: how clinical data is represented to other systems",
     paths: [
       "src/interoperability/fhir/mappers/**",
       "src/interoperability/fhir/terminology/**",
+      "src/interoperability/fhir/resources/**",
     ],
   },
   {

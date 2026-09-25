@@ -471,6 +471,87 @@ and write the decision next to it.
 - [ ] Which staff roles should open the patient list, individual patient records, the queue and inventory? The interim follows the permission matrix. Registration, vitals, consultation and dispensing staff, plus anyone with the queue or inventory permission, keep access. The auditor role loses these pages in the app, although the dashboard still shows it the live queue summary. Should auditors have read-only record access for audits?
 - [ ] Please confirm 10 minutes as the idle lock time for clinical areas, or name a different value per area (for example shorter at registration, longer in consultation). It is a single named constant (STAFF_IDLE_LOCK_MS).
 
+### 2.7 FHIR R4 Phase 2: questions for clinical review
+
+Phase 2 adds allergies, medicines, laboratory orders, results and reports,
+documents, consents, staff, sites, provenance and access history to the
+FHIR gateway. The gateway is still off (`FHIR_ENABLED` unset), and nothing
+changes for staff or patients in mBHR. These rules decide what another
+system would read once it is switched on, so each needs a clinician's
+decision first. The status maps are in
+`src/interoperability/fhir/terminology/status/`, and the full rules in
+`docs/interoperability/resource-mapping.md`. Nothing unknown is published
+as a definite status, and no code is invented (a test enforces both).
+
+Allergies
+
+- [ ] **An empty allergy list never means "no known allergies".** mBHR
+      cannot record NKA, so every allergy search says so. Text such as
+      "None" or "NKDA" typed as an allergen is published as written, as an
+      allergy. Should such rows be cleaned first?
+- [ ] **"Mark inactive" is published as `inactive`** ("no longer at
+      risk"), although mBHR stores no reason and the same action is used for
+      wrong-patient or duplicate entries. The app hides inactive allergies.
+      Publish them as inactive, or leave them out?
+- [ ] **Severity.** Life-threatening becomes criticality `high` and
+      reaction severity `severe` (the top of the FHIR scale). Severe and
+      moderate become the same reaction severity; `mild` is left out because
+      the form pre-selects it. Should `severe` also be criticality `high`?
+- [ ] **No verification status is published.** mBHR does not record
+      whether an allergy was confirmed (the old export said "confirmed").
+
+Medicines
+
+- [ ] **A dispense is never published as `completed` and carries no
+      hand-over time.** mBHR does not record a hand-over; the only
+      `completed` values were set by a migration for every older row.
+      Should a recorded dispense count as a hand-over (then `completed`,
+      with the dispense time)?
+- [ ] **Prescription status.** Open is `active` (mBHR sets no expiry, so an
+      old open prescription stays active), dispensed is `completed` (every
+      line given, not the course finished), partial is `unknown`, void is
+      `cancelled`. Confirm.
+- [ ] **Medicines are text only.** No medicine code is published, doses are
+      free text, and a quantity's unit is today's catalogue unit (past
+      quantities follow a later change of unit).
+
+Laboratory
+
+- [ ] **A result is `preliminary` until a clinician reviews it**, then
+      `final`. A result with no value is never final. Normal, abnormal and
+      critical become N, A and AA; H and L are never inferred, and an
+      unreviewed "normal" is left out (older rows may carry the form's old
+      default). Confirm.
+- [ ] **A report is `final` only when every current result is reviewed.** A
+      patient's own report is at most `partial`, because the patient's view
+      cannot prove that no other result on the order is still unreviewed or
+      withheld. Confirm, or decide that patients may see `final` (this would
+      tell them a hidden result exists).
+- [ ] **Values are published as recorded.** A number becomes a quantity only
+      when it is a plain decimal with a unit; UCUM codes are used for 13
+      exact unit strings. Reference ranges stay text. Confirm the unit list.
+
+Documents
+
+- [ ] **Patients may download only files they uploaded.** Clinic documents
+      have no release step, so patients see that they exist but not their
+      content. The clinic description (a staff note) is never published.
+- [ ] **Document type is the uploader's own label.** A file labelled "Test
+      result" or "Prescription" never becomes a lab result or medicine
+      record. Documents from before the uploader was recorded are labelled
+      as clinic documents, which includes early patient uploads. Is that
+      wording acceptable, and should insurance documents be included?
+
+Consents, staff and sites
+
+- [ ] **Consents are published exactly as recorded.** A withdrawn consent is
+      `inactive` and kept. An unverified one is marked unverified. One with
+      no policy, or with a rule the register cannot express exactly, is not
+      published at all rather than shown broader than the patient agreed.
+- [ ] **Staff are published by name and mBHR access role only** (the role is
+      not a qualification). Confirm "Administrator" and "Lead clinician" as
+      the role names.
+
 ## 3. Owner decisions (decided)
 
 These are decided by the owner and are not open questions. The code
@@ -543,6 +624,7 @@ clinician must sign off, or write "None" and say why.
 
 | Date | Pull request | What changed | Files | Checklist item (section 2) | Clinician sign-off |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-25 | FHIR R4 interoperability Phase 2 | None for staff or patients: the `/fhir/R4` gateway stays off (`FHIR_ENABLED` unset). When switched on it would also publish allergies, medicines, laboratory orders, results and reports, documents, consents, staff, sites, provenance and access history. How each status, value and code is represented (an empty allergy list is not NKA, a dispense is never shown as handed over, a result is preliminary until reviewed, a patient's report is never final, no invented codes) is listed for review in 2.7. No threshold, range, dose or matching rule is created. | `src/interoperability/fhir/mappers/*`, `src/interoperability/fhir/terminology/**`, `src/interoperability/fhir/resources/*` | 2.7 (all items) | Pending |
 | 2026-09-25 | Audit follow-up: portal note and registration wording | The patient portal note shown beside an unrated blood pressure said none of the readings were rated, although temperature is rated at every age; it now says only blood pressure is not rated for children or without a date of birth. Row 44 now describes the registration form as shipped (the box starts unticked, typing never ticks it, locked off for under-18s). No threshold, range, dose or rule changed. | `i18n/locales/*.json (portal.vital.notRated)`, this file | 2.2 rows 39 and 44 | Pending |
 | 2026-09-25 | Audit follow-up: clinical safety and shared-tablet privacy | Vitals: optional measurements, visible save failures, confirm before discarding; height and weight no longer rated against the heart-rate range; adult heart-rate, blood-pressure and BMI flags not applied to under-18s (fever, low temperature and low SpO2 still flagged at every age); a failed allergy read is never shown as none. Pharmacy: every allergy type screened; allergens the app cannot screen need a check by hand; an older consultation is dated and marked as not today's. Labs: patients identified by MBHR ID, sex and age; no collection or result entry for patients not on the device; every open order loaded; blank values refused. Registration and portal: infants and estimated birth dates; siblings not called the same person; no duplicate visits or consultations from a double tap; portal consent can be unticked; portal badges use the staff categories. Also (no clinical rule): idle screen lock, route guards by permission, no automatic erasing of device records, server answers kept out of browser caches, prompt-style app updates, sync conflicts decided on server timestamps. No threshold, range, dose or matching rule was created. | `src/utils/vitals.ts`, `src/components/VitalsForm.tsx`, `src/components/EnhancedVitalsInput.tsx`, `src/components/patient/PatientContextHeader.tsx`, `src/utils/allergyMatch.ts`, `src/features/pharmacy/*`, `src/components/DispenseForm.tsx`, `src/pages/Pharmacy.tsx`, `src/features/labs/*`, `src/services/labs.ts`, `src/features/patient-portal/*`, `src/components/SimplePatientForm.tsx`, `src/components/PatientForm.tsx`, `src/components/SoapForm.tsx`, `src/utils/dedupeMatch.ts`, `src/services/visits.ts`, `scripts/check-clinical-logic-change.mjs` | 2.2 rows 23 to 44; 2.6 | Pending |
 | 2026-09-25 | FHIR R4 interoperability foundation | None for staff or patients: the new `/fhir/R4` gateway is off (`FHIR_ENABLED` unset) and only publishes existing records in FHIR format when switched on. How readings, statuses and codes are represented (a 0 reading is not published, no interpretation or range is attached, diagnosis status is kept exactly, codes stay local unless verified) is listed for review in 2.5. The mappers and terminology files are added to the clinical logic gate, so later changes to them must be recorded here. | `src/interoperability/fhir/mappers/*`, `src/interoperability/fhir/terminology/codeSystems.ts`, `scripts/check-clinical-logic-change.mjs` | 2.5 (all items) | Pending |
