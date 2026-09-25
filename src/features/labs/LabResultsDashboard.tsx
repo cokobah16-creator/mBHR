@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
 import { tabId, panelId } from "@/components/ui/tabIds";
 import { formatNigerianDateTime } from "@/utils/dateFormat";
+import { formatPatientId } from "@/utils/patient";
 import {
   addLabResult,
   getLabSessionUser,
@@ -31,6 +32,7 @@ import {
   withholdLabResult,
   LabServiceError,
   LAB_WORKLIST_CLOSED_LIMIT,
+  LAB_WORKLIST_MAX_ROWS,
   type LabOrderWithResults,
   type LabResult,
   type LabSessionUser,
@@ -44,19 +46,23 @@ import {
   interpretationMeta,
   isInterpretation,
   isLabFilter,
+  labPatientIdentity,
   matchesFilter,
   matchesSearch,
   releaseStateOf,
   resultsToRelease,
   resultsWithholdable,
+  worklistGapMessage,
   worstInterpretation,
   worstUnreviewed,
   INTERPRETATION_META,
   LAB_FILTERS,
+  PATIENT_NOT_LOCAL_BLOCK,
   PRIORITY_LABEL,
   RELEASE_META,
   STAGE_META,
   type LabFilter,
+  type WorklistGaps,
   type WorklistSortable,
 } from "./labWorklist";
 import {
@@ -78,9 +84,15 @@ interface LabResultsDashboardProps {
 
 interface WorklistRow extends WorklistSortable {
   order: LabOrderWithResults;
-  /** Local patient record, when this device has it (enables the link). */
+  /**
+   * Local patient record, when this device has it (enables the link).
+   * Without it the patient cannot be identified, so specimen collection and
+   * result entry are refused for the row.
+   */
   patient?: Patient;
   patientLabel: string;
+  /** MBHR ID, sex and age (MBHR ID only when the record is not here). */
+  patientIdentity: string;
   orderedByName: string;
 }
 
@@ -123,8 +135,6 @@ const blankToUndefined = (value?: string) => {
 
 const timeOfDay = (d: Date) =>
   d.toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" });
-
-const shortId = (id: string) => (id.length > 8 ? `…${id.slice(-6)}` : id);
 
 function staffName(staff: Map<string, User>, id?: string | null): string {
   if (!id) return STAFF_NOT_LOCAL;
@@ -182,6 +192,7 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
 
   const [orders, setOrders] = useState<LabOrderWithResults[] | null>(null);
   const [truncated, setTruncated] = useState(false);
+  const [gaps, setGaps] = useState<WorklistGaps | null>(null);
   const [loadState, setLoadState] = useState<LoadState>(() =>
     isSupabaseEnabled && navigator.onLine ? "loading" : "idle",
   );
@@ -241,6 +252,11 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
       if (request !== requestRef.current) return;
       setOrders(worklist.orders);
       setTruncated(worklist.truncated);
+      setGaps({
+        openTruncated: worklist.openTruncated,
+        unreviewedTruncated: worklist.unreviewedTruncated,
+        criticalTruncated: worklist.criticalTruncated,
+      });
       setSessionUser(session);
       setPatients(local.patients);
       setLocalStaff(local.staff);
@@ -262,30 +278,30 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
     if (available) void load();
   }, [available, load]);
 
-  const rows = useMemo<WorklistRow[]>(
-    () =>
-      (orders ?? []).map((order) => {
-        const stage = deriveLabStage(order, order.results);
-        const patient = patients.get(order.patientId);
-        return {
-          order,
-          stage,
-          severity:
-            stage === "awaiting_review"
-              ? worstUnreviewed(order.results)
-              : worstInterpretation(order.results),
-          priority: order.priority,
-          orderedAt: order.orderedAt,
-          resultAt: order.results[0]?.resultDate,
-          patient,
-          patientLabel: patient
-            ? `${patient.givenName} ${patient.familyName}`
-            : PATIENT_NOT_LOCAL,
-          orderedByName: staffName(staff, order.orderedBy),
-        };
-      }),
-    [orders, patients, staff],
-  );
+  const rows = useMemo<WorklistRow[]>(() => {
+    const now = new Date();
+    return (orders ?? []).map((order) => {
+      const stage = deriveLabStage(order, order.results);
+      const patient = patients.get(order.patientId);
+      return {
+        order,
+        stage,
+        severity:
+          stage === "awaiting_review"
+            ? worstUnreviewed(order.results)
+            : worstInterpretation(order.results),
+        priority: order.priority,
+        orderedAt: order.orderedAt,
+        resultAt: order.results[0]?.resultDate,
+        patient,
+        patientLabel: patient
+          ? `${patient.givenName} ${patient.familyName}`
+          : PATIENT_NOT_LOCAL,
+        patientIdentity: labPatientIdentity(order.patientId, patient, now),
+        orderedByName: staffName(staff, order.orderedBy),
+      };
+    });
+  }, [orders, patients, staff]);
 
   const counts = useMemo(() => countByFilter(rows.map((r) => r.stage)), [rows]);
 
@@ -298,6 +314,7 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
             [
               r.patient ? r.patientLabel : null,
               r.order.patientId,
+              formatPatientId(r.order.patientId),
               r.order.testName,
               r.order.testCode,
               r.orderedByName === STAFF_NOT_LOCAL ? null : r.orderedByName,
@@ -318,6 +335,9 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
   const waitingUnknown = rows.filter(
     (r) => r.stage === "awaiting_review" && r.severity === "unknown",
   ).length;
+  // Never silent: says when open orders or results waiting for review were
+  // left out because there were more than the queue reads.
+  const gapMessage = gaps ? worklistGapMessage(gaps, LAB_WORKLIST_MAX_ROWS) : null;
 
   // ---- Actions: permission and connection are checked before every write.
 
@@ -349,8 +369,19 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
     }
   };
 
+  /**
+   * Specimen collection and result entry need a patient this device can
+   * identify (name, sex and age), so nothing is matched to the wrong person.
+   */
+  const patientIdentified = (row: WorklistRow): boolean => {
+    if (row.patient) return true;
+    push({ id: generateId(), tone: "warning", title: "Not saved", body: PATIENT_NOT_LOCAL_BLOCK });
+    return false;
+  };
+
   const advance = async (row: WorklistRow, next: "collected" | "processing") => {
     if (!allowWrite("vitals", "Your role cannot update lab orders.")) return;
+    if (next === "collected" && !patientIdentified(row)) return;
     const { order } = row;
     setBusyId(order.id);
     try {
@@ -573,6 +604,7 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
 
   const openEntry = (row: WorklistRow) => {
     if (!allowWrite("vitals", "Your role cannot record lab results.")) return;
+    if (!patientIdentified(row)) return;
     setEntryError(null);
     setEntryOrder(row);
   };
@@ -589,6 +621,10 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
     const blocked = writeBlockedReason("vitals", "Your role cannot record lab results.");
     if (blocked) {
       setEntryError(blocked);
+      return;
+    }
+    if (!row.patient) {
+      setEntryError(`Nothing was saved. ${PATIENT_NOT_LOCAL_BLOCK}`);
       return;
     }
     // The interpretation must be a deliberate choice. An empty or unknown
@@ -770,6 +806,13 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
             lab orders to staff signed in with their email and password, so
             this list may be empty or incomplete.
           </span>
+        </div>
+      )}
+
+      {gapMessage && (
+        <div className="banner banner-warning" role="status">
+          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <span>{gapMessage}</span>
         </div>
       )}
 
@@ -959,7 +1002,14 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
             <p>
               Lists every open order, every result waiting for review, and the{" "}
               {LAB_WORKLIST_CLOSED_LIMIT} most recent completed or cancelled
-              orders.{truncated ? " Some older orders are not listed." : ""}
+              orders.
+              {truncated ? " Older completed or cancelled orders are not listed." : ""}
+            </p>
+            <p>
+              A saved result cannot be corrected or withdrawn in the app yet.
+              If a result was entered wrongly, tell a clinician who reviews lab
+              results straight away. A doctor, lead clinician or admin can
+              withhold it from the patient portal.
             </p>
             <p>
               Patients see a result in their portal only after it is reviewed
@@ -986,6 +1036,7 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
         <LabResultEntryDialog
           testName={entryOrder.order.testName}
           patientLabel={entryOrder.patientLabel}
+          patientIdentity={entryOrder.patientIdentity}
           saving={entrySaving}
           error={entryError}
           onCancel={closeEntry}
@@ -998,6 +1049,7 @@ export function LabResultsDashboard(_props: LabResultsDashboardProps) {
           mode={releaseTarget.mode}
           testName={releaseTarget.row.order.testName}
           patientLabel={releaseTarget.row.patientLabel}
+          patientIdentity={releaseTarget.row.patientIdentity}
           resultCount={releaseTarget.resultIds.length}
           withheldCount={releaseTarget.withheldCount}
           saving={releaseSaving}
@@ -1031,9 +1083,7 @@ function PatientCell({ row }: { row: WorklistRow }) {
       ) : (
         <span className="text-ink-secondary">{row.patientLabel}</span>
       )}
-      <span className="block text-caption text-ink-muted">
-        ID {shortId(row.order.patientId)}
-      </span>
+      <span className="block text-caption text-ink-muted">{row.patientIdentity}</span>
     </div>
   );
 }
@@ -1206,7 +1256,19 @@ function RowAction({
 }: RowActionProps) {
   const { stage, order } = row;
   const width = block ? "w-full" : "whitespace-nowrap";
-  const context = `${order.testName}, ${row.patientLabel}`;
+  const context = `${order.testName}, ${row.patientLabel}, ${formatPatientId(order.patientId)}`;
+
+  // Collecting a specimen and entering a result both attach something to a
+  // person: refused while this device cannot identify the patient.
+  const needsIdentity =
+    stage === "ordered" || stage === "processing" || stage === "no_result";
+  if (needsIdentity && canRecord && !row.patient) {
+    return (
+      <p className={`text-caption text-warning-fg ${block ? "" : "ml-auto max-w-xs text-left"}`}>
+        {PATIENT_NOT_LOCAL_BLOCK}
+      </p>
+    );
+  }
 
   if ((stage === "ordered" || stage === "collected") && canRecord) {
     const label = stage === "ordered" ? "Mark collected" : "Start processing";

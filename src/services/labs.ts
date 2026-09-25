@@ -95,14 +95,45 @@ export interface LabOrderWithResults extends LabOrder {
 
 export interface LabWorklist {
   orders: LabOrderWithResults[];
-  /** True when a query hit its row limit, so older orders are not listed. */
+  /** True when older completed or cancelled orders exist beyond those listed. */
   truncated: boolean;
+  /**
+   * True when there were more open orders than the queue reads
+   * (LAB_WORKLIST_MAX_ROWS): the oldest open orders are not listed.
+   */
+  openTruncated: boolean;
+  /**
+   * True when there were more unreviewed results than the queue reads. The
+   * unreviewed critical results are then read on their own, so every one of
+   * them is still listed unless criticalTruncated is also set.
+   */
+  unreviewedTruncated: boolean;
+  /** True when even the unreviewed critical results could not all be read. */
+  criticalTruncated: boolean;
 }
 
 /** How many completed/cancelled orders the work queue fetches (newest first). */
 export const LAB_WORKLIST_CLOSED_LIMIT = 200;
-const WORKLIST_OPEN_LIMIT = 500;
-const WORKLIST_UNREVIEWED_LIMIT = 500;
+/**
+ * Most open orders, and separately most unreviewed results, the work queue
+ * reads. Far more than a clinic keeps open; past it the page says what is
+ * not listed.
+ */
+export const LAB_WORKLIST_MAX_ROWS = 5000;
+/** Rows per request when paging; below the server's max_rows (1000). */
+const WORKLIST_PAGE_SIZE = 500;
+
+const OPEN_STATUSES: LabOrder["status"][] = ["ordered", "collected", "processing"];
+
+/**
+ * priority is stored as text, so the database would sort it alphabetically
+ * (routine before stat); this is the clinical order.
+ */
+const PRIORITY_RANK: Record<LabOrder["priority"], number> = {
+  stat: 0,
+  urgent: 1,
+  routine: 2,
+};
 
 /**
  * Thrown by every lab call that fails. It carries only the operation name
@@ -234,6 +265,11 @@ interface LabResultRowWithOrder extends LabResultRow {
 const toDate = (value: string | null | undefined): Date | undefined =>
   value ? new Date(value) : undefined;
 
+const blankToNull = (value?: string | null): string | null => {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed ? trimmed : null;
+};
+
 function mapOrderRow(o: LabOrderRow): LabOrder {
   return {
     id: o.id,
@@ -327,16 +363,23 @@ export async function addLabResult(result: LabResult): Promise<string> {
   if (!isLabInterpretation(result.interpretation)) {
     logAndThrow({ code: "INVALID_INTERPRETATION" }, "addLabResult");
   }
+  // Only surrounding spaces are removed. The value is stored as typed and
+  // is not checked against the range: the interpretation above is the
+  // recorder's decision. A blank value is refused before anything is written.
+  const resultValue = blankToNull(result.resultValue);
+  if (!resultValue) {
+    logAndThrow({ code: "EMPTY_VALUE" }, "addLabResult");
+  }
   const { data, error } = await client()
     .from("lab_results")
     .insert({
       order_id: result.orderId,
-      result_value: result.resultValue,
-      result_unit: result.resultUnit,
-      reference_range: result.referenceRange,
+      result_value: resultValue,
+      result_unit: blankToNull(result.resultUnit),
+      reference_range: blankToNull(result.referenceRange),
       interpretation: result.interpretation,
       result_date: result.resultDate.toISOString(),
-      notes: result.notes,
+      notes: blankToNull(result.notes),
     })
     .select()
     .single();
@@ -397,11 +440,6 @@ export function parseLabReleaseResult(
     ),
   };
 }
-
-const blankToNull = (value?: string | null): string | null => {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
-};
 
 /**
  * Marks a result reviewed (server RPC lab_review_result). The server
@@ -553,17 +591,21 @@ export async function getLabResultsForOrders(orderIds: readonly string[]): Promi
   return ((data ?? []) as unknown as LabResultRow[]).map(mapResultRow);
 }
 
+/** Open orders: STAT first, then urgent, then routine; oldest first within each. */
 export async function getPendingLabOrders(): Promise<LabOrder[]> {
   const { data, error } = await client()
     .from("lab_orders")
     .select("*")
-    .in("status", ["ordered", "collected", "processing"])
-    .order("priority", { ascending: true })
+    .in("status", OPEN_STATUSES)
     .order("ordered_at", { ascending: true });
 
   if (error) logAndThrow(error, "getPendingLabOrders");
 
-  return ((data ?? []) as unknown as LabOrderRow[]).map(mapOrderRow);
+  const rank = (o: LabOrder) => PRIORITY_RANK[o.priority] ?? PRIORITY_RANK.routine;
+  // Array.prototype.sort is stable, so the date order holds within a priority.
+  return ((data ?? []) as unknown as LabOrderRow[])
+    .map(mapOrderRow)
+    .sort((a, b) => rank(a) - rank(b));
 }
 
 export async function getCriticalResults(): Promise<
@@ -593,46 +635,100 @@ export async function getCriticalResults(): Promise<
   }));
 }
 
+type PageResponse = PromiseLike<{
+  data: unknown;
+  error: unknown;
+  count?: number | null;
+}>;
+
 /**
- * Everything a lab/clinician work queue needs, in three reads:
- * - every open order (ordered, collected, processing);
+ * Reads a query page by page (count: "exact" gives the total) until every
+ * row is read or LAB_WORKLIST_MAX_ROWS is reached. `complete` is false when
+ * rows were left unread. A server that returns fewer rows per request than
+ * asked for does not end the read early.
+ */
+async function readAllPages<T>(
+  context: string,
+  page: (from: number, to: number) => PageResponse,
+): Promise<{ rows: T[]; complete: boolean }> {
+  const rows: T[] = [];
+  while (rows.length < LAB_WORKLIST_MAX_ROWS) {
+    const from = rows.length;
+    const { data, error, count } = await page(from, from + WORKLIST_PAGE_SIZE - 1);
+    if (error) logAndThrow(error, context);
+    const batch = (data ?? []) as T[];
+    rows.push(...batch);
+    const total = typeof count === "number" ? count : null;
+    if (batch.length === 0) {
+      // Nothing more came back. If the total says rows are missing (they
+      // changed while paging), report the read as incomplete, not complete.
+      return { rows, complete: total === null || rows.length >= total };
+    }
+    if (total !== null ? rows.length >= total : batch.length < WORKLIST_PAGE_SIZE) {
+      return { rows, complete: true };
+    }
+  }
+  return { rows, complete: false };
+}
+
+/**
+ * Everything a lab/clinician work queue needs:
+ * - every open order (ordered, collected, processing), newest first and
+ *   page by page, so a new STAT order is never cut off by older ones;
  * - the most recent completed or cancelled orders;
  * - every result not yet reviewed, whatever the age of its order, so an
- *   old critical result can never drop out of the queue.
- * Orders come back once each, with their results newest first.
+ *   old critical result can never drop out of the queue. When there are
+ *   more than the queue reads, the unreviewed critical results are read on
+ *   their own so none of them is left out.
+ * Orders come back once each, with their results newest first. The
+ * *Truncated flags say which part, if any, is not complete.
  */
 export async function getLabWorklist(): Promise<LabWorklist> {
   const db = client();
+  const readUnreviewed = (criticalOnly: boolean) =>
+    readAllPages<LabResultRowWithOrder>(
+      criticalOnly ? "getLabWorklist:critical" : "getLabWorklist:unreviewed",
+      (from, to) => {
+        let query = db
+          .from("lab_results")
+          .select("*, lab_orders!inner(*)", { count: "exact" })
+          .is("reviewed_at", null);
+        if (criticalOnly) query = query.eq("interpretation", "critical");
+        return query
+          .order("result_date", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
+      },
+    );
+
   const [open, closed, unreviewed] = await Promise.all([
-    db
-      .from("lab_orders")
-      .select("*, lab_results(*)")
-      .in("status", ["ordered", "collected", "processing"])
-      .order("ordered_at", { ascending: true })
-      .limit(WORKLIST_OPEN_LIMIT),
+    readAllPages<LabOrderRowWithResults>("getLabWorklist:open", (from, to) =>
+      db
+        .from("lab_orders")
+        .select("*, lab_results(*)", { count: "exact" })
+        .in("status", OPEN_STATUSES)
+        .order("ordered_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     db
       .from("lab_orders")
       .select("*, lab_results(*)")
       .in("status", ["completed", "cancelled"])
       .order("ordered_at", { ascending: false })
       .limit(LAB_WORKLIST_CLOSED_LIMIT),
-    db
-      .from("lab_results")
-      .select("*, lab_orders!inner(*)")
-      .is("reviewed_at", null)
-      .order("result_date", { ascending: true })
-      .limit(WORKLIST_UNREVIEWED_LIMIT),
+    readUnreviewed(false),
   ]);
 
-  if (open.error) logAndThrow(open.error, "getLabWorklist:open");
   if (closed.error) logAndThrow(closed.error, "getLabWorklist:closed");
-  if (unreviewed.error)
-    logAndThrow(unreviewed.error, "getLabWorklist:unreviewed");
 
-  const openRows = (open.data ?? []) as unknown as LabOrderRowWithResults[];
+  // Too many unreviewed results to read them all: make sure every critical
+  // one is there, wherever it falls in the full list.
+  const critical = unreviewed.complete ? null : await readUnreviewed(true);
+
+  const openRows = open.rows;
   const closedRows = (closed.data ?? []) as unknown as LabOrderRowWithResults[];
-  const unreviewedRows = (unreviewed.data ??
-    []) as unknown as LabResultRowWithOrder[];
+  const unreviewedRows = [...unreviewed.rows, ...(critical ? critical.rows : [])];
 
   const byId = new Map<string, LabOrderWithResults>();
   for (const row of [...openRows, ...closedRows]) {
@@ -668,10 +764,10 @@ export async function getLabWorklist(): Promise<LabWorklist> {
 
   return {
     orders,
-    truncated:
-      openRows.length >= WORKLIST_OPEN_LIMIT ||
-      closedRows.length >= LAB_WORKLIST_CLOSED_LIMIT ||
-      unreviewedRows.length >= WORKLIST_UNREVIEWED_LIMIT,
+    truncated: closedRows.length >= LAB_WORKLIST_CLOSED_LIMIT,
+    openTruncated: !open.complete,
+    unreviewedTruncated: !unreviewed.complete,
+    criticalTruncated: critical !== null && !critical.complete,
   };
 }
 
