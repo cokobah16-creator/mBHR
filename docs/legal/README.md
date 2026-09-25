@@ -107,9 +107,12 @@ false. The notification worker (`src/services/notificationWorker.ts`)
 checks the setting on the device again right before each send: a queued
 device reminder for a patient who opted out is cancelled, and a server
 reminder is skipped and stays pending on the server, because the device
-may not change its status. A setting that cannot be read holds the
-reminder. One-time codes and televisit links are never held back. The
-portal's own "Text message reminders" switch
+may not change its status. The SMS reminders list says such a server
+reminder is skipped, and each send run looks through up to 500 due
+reminders, so skipped ones do not hold back other patients' reminders. A
+setting that cannot be read holds the reminder. One-time codes and
+televisit links are never held back. The portal's own "Text message
+reminders" switch
 (`src/features/patient-portal/ManageAccount.tsx`) is saved, but no sender
 reads it yet.
 
