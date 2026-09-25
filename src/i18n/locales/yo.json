@@ -347,6 +347,8 @@
   "legal.links.label": "Ìwé òfin",
   "legal.links.privacyNotice": "Àkíyèsí ìpamọ́",
   "legal.links.termsOfUse": "Àwọn òfin ìlò",
+  "legal.links.portalLinks": "Àwọn ìjápọ̀ Pópó Aláìsàn",
+  "legal.links.portalHome": "Ojú-ìwé àkọ́kọ́ Pópó Aláìsàn",
   "portal.error.offline": "[EN] You are offline. Connect to the internet to see your health record.",
   "portal.error.partial": "[EN] Some of your records could not be loaded, so parts of this page may be missing.",
   "portal.error.retry": "[EN] Try again",

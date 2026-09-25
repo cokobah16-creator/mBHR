@@ -375,6 +375,8 @@
   "legal.links.label": "Legal",
   "legal.links.privacyNotice": "Privacy notice",
   "legal.links.termsOfUse": "Terms of use",
+  "legal.links.portalLinks": "Portal links",
+  "legal.links.portalHome": "Portal home",
   "portal.error.offline": "You are offline. Connect to the internet to see your health record.",
   "portal.error.partial": "Some of your records could not be loaded, so parts of this page may be missing.",
   "portal.error.retry": "Try again",
