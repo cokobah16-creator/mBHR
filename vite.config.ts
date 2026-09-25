@@ -131,6 +131,9 @@ export default defineConfig(({ command, mode }) => {
         registerType: "autoUpdate",
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,mp3}"],
+          // The FHIR interface and server functions are not app pages: a
+          // browser opening them must reach the server, not the cached app.
+          navigateFallbackDenylist: [/^\/fhir\//, /^\/api\//],
           maximumFileSizeToCacheInBytes: 3000000,
           // Runtime caching tuned per host. See docs/architecture/CACHING_STRATEGY.md.
           runtimeCaching: [
@@ -183,8 +186,11 @@ export default defineConfig(({ command, mode }) => {
           description: "Offline-first medical outreach platform",
           theme_color: "#0A7A3B",
           // Relative on purpose: a manifest may only point at its own
-          // address. The installed app is tied to mbhr.app because the other
-          // production hostnames redirect there (vercel.json).
+          // address. New installs are tied to mbhr.app because page
+          // addresses on the other production hostnames redirect there
+          // (vercel.json). Apps installed earlier on m-bhr.vercel.app stay
+          // on that address: its service worker and app files are not
+          // redirected, so they keep updating and show the move warning.
           id: "/",
           start_url: "/",
           scope: "/",

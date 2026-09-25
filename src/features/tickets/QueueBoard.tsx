@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, generateId, type Patient, type QueueItem, type User } from "@/db";
+import { readQueueForToday } from "./queueReads";
 import {
   queueManagement,
   QueuePermissionError,
@@ -88,7 +89,8 @@ export default function QueueBoard() {
 
   // One live query drives every number on the board so counts never drift
   // from the lists.
-  const allQueue = useLiveQuery(() => db.queue.toArray(), []);
+  // Active rows and today's changes only, not the finished history.
+  const allQueue = useLiveQuery(() => readQueueForToday(), []);
   const counts = useMemo(() => countByStage(allQueue ?? [], now), [allQueue, now]);
   // Urgent tickets still waiting, per stage. Priority is carried from stage
   // to stage, so urgent status stays visible after vitals and consultation.

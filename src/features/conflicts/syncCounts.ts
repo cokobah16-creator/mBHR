@@ -5,7 +5,7 @@
 
 import { db } from "@/db";
 
-/** Keep in step with the dirty-flag tables in services/enhancedSync. */
+/** The only tables services/enhancedSync uploads (it derives its list from this). */
 export const ENHANCED_ONLY_TABLES = [
   "gameSessions",
   "gamificationWallets",

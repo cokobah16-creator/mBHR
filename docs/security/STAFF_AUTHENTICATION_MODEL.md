@@ -8,7 +8,7 @@ is still open.
 | # | Model requirement | Status | Where |
 |---|---|---|---|
 | 1 | Individual accounts; server authoritative for identity, role, active status | Done | `public.app_users`; `src/sync/staffRoster.ts`; `readServerStaffAccount` in `src/stores/auth.ts` |
-| 2A | Online sign-in: Supabase email and password, server staff record, role, sync allowed | Done (no magic link or MFA yet) | `loginOnline` in `src/stores/auth.ts` |
+| 2A | Online sign-in: Supabase email and password, server staff record, role, sync allowed | Done (no magic link or MFA yet). An online account without a server staff record with a staff role gets no session, no local record and no PIN; a same-id record on the device loses offline access. Offline sign-in, PIN enrolment and the staff workspace also require a staff role (`isStaffRole`) | `loginOnline` in `src/stores/auth.ts`; `src/db/devicePin.ts`; `src/db/offlineAccess.ts`; `ProtectedRoute` in `src/App.tsx` |
 | 2B | Offline sign-in: choose staff, 6-digit PIN checked only against that account, cached permissions, sync blocked | Done | `login` in `src/stores/auth.ts`; `src/pages/Login.tsx` |
 | 3 | PIN is a device credential: salted PBKDF2, device database only, never synced or logged | Done. The signed-in user kept in localStorage no longer carries the hash or salt (`sessionUser`) | `src/utils/pin.ts`, `src/db/devicePin.ts`, `mapToDB` in `src/sync/adapter.ts` |
 | 4 | New device needs an online sign-in; no local admin in production | Done | `src/db/offlineAccess.ts`; `/setup` only when online sign-in is not built in |

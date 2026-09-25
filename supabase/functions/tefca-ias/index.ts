@@ -22,6 +22,12 @@ import {
   resolveAuth,
   scopeAllowsResource,
 } from "../_shared/fhir/bearer-auth.ts";
+import {
+  gatePatientBoundRequest,
+  identifierValue,
+  isWriteMethod,
+  patientSearchRefusal,
+} from "../_shared/fhir/access.ts";
 import { createCapabilityStatement } from "./capability.ts";
 import { validateResponseClone } from "./validation.ts";
 import {
@@ -452,20 +458,32 @@ async function handlePatientSearch(
   context: TEFCAContext,
   startTime: number,
 ): Promise<Response> {
-  const nameSearch = url.searchParams.get("name");
-  const birthdateSearch = url.searchParams.get("birthdate");
-  const identifierSearch = url.searchParams.get("identifier");
+  // Search must name someone; open-ended discovery goes through $match.
+  const refusal = patientSearchRefusal(url.searchParams);
+  if (refusal) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      ["Patient"],
+      0,
+      false,
+      "Patient search without identifying parameters",
+      Date.now() - startTime,
+    );
+    return errorResponse("error", "required", refusal, 400);
+  }
+
+  const nameSearch = url.searchParams.get("name")?.trim();
+  const birthdateSearch = url.searchParams.get("birthdate")?.trim();
+  const idSearch =
+    identifierValue(url.searchParams.get("identifier"))?.trim() ||
+    url.searchParams.get("_id")?.trim();
 
   let query = supabase.from("patients").select("*").limit(50);
 
   if (nameSearch) query = query.ilike("name", `%${nameSearch}%`);
   if (birthdateSearch) query = query.eq("dob", birthdateSearch);
-  if (identifierSearch) {
-    const idValue = identifierSearch.includes("|")
-      ? identifierSearch.split("|")[1]
-      : identifierSearch;
-    query = query.eq("id", idValue);
-  }
+  if (idSearch) query = query.eq("id", idSearch);
 
   const { data: patients, error } = await query;
   if (error) {
@@ -481,18 +499,41 @@ async function handlePatientSearch(
     return errorResponse("error", "exception", error.message, 500);
   }
 
-  const fhirPatients = (patients || []).map((p) =>
-    mapPatientToFHIR(p as Record<string, unknown>),
-  );
-  await logTEFCAAccess(
-    supabase,
-    context,
-    ["Patient"],
-    fhirPatients.length,
-    true,
-    undefined,
-    Date.now() - startTime,
-  );
+  // Return only patients whose consent covers this exchange purpose, and
+  // audit each one returned.
+  const allowed: Record<string, unknown>[] = [];
+  for (const p of (patients || []) as Record<string, unknown>[]) {
+    const pid = String(p.id ?? "");
+    if (!pid) continue;
+    if (await verifyPatientConsent(supabase, pid, context.exchangePurpose)) {
+      allowed.push(p);
+    }
+  }
+
+  const fhirPatients = allowed.map((p) => mapPatientToFHIR(p));
+  if (allowed.length === 0) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      ["Patient"],
+      0,
+      true,
+      undefined,
+      Date.now() - startTime,
+    );
+  }
+  for (const p of allowed) {
+    await logTEFCAAccess(
+      supabase,
+      context,
+      ["Patient"],
+      1,
+      true,
+      undefined,
+      Date.now() - startTime,
+      String(p.id),
+    );
+  }
   return fhirJsonResponse(createBundle(fhirPatients, `${baseUrl}/Patient`));
 }
 
@@ -816,7 +857,17 @@ async function handlePatientMatch(
     );
   }
 
-  const match = await matchPatientIdentity(supabase, identifiers);
+  const found = await matchPatientIdentity(supabase, identifiers);
+  // A match the patient hasn't consented to share is reported as no match.
+  const match =
+    found &&
+    (await verifyPatientConsent(
+      supabase,
+      found.patientId,
+      context.exchangePurpose,
+    ))
+      ? found
+      : null;
 
   if (!match) {
     await logTEFCAAccess(
@@ -1173,10 +1224,6 @@ Deno.serve(async (req: Request) => {
   const { context } = auth;
   const exchangePurpose = context.exchangePurpose;
 
-  // Apply Deprecation / Sunset headers for any response when the caller is
-  // still using the legacy X-QHIN-ID auth path.
-  const deprecationHeaders = auth.deprecationHeaders;
-
   if (auth.unauthorized) {
     await logTEFCAAccess(
       supabase,
@@ -1227,6 +1274,26 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  if (auth.purposeRefused) {
+    const reason =
+      auth.patientId !== null
+        ? "Patient access tokens may only be used for individual-access"
+        : "individual-access needs a patient access token; send a treatment, payment or operations purpose";
+    await logTEFCAAccess(
+      supabase,
+      context,
+      [],
+      0,
+      false,
+      "exchange purpose not allowed for this token",
+      Date.now() - startTime,
+    );
+    return new Response(
+      JSON.stringify(createOperationOutcome("error", "forbidden", reason)),
+      { status: 403, headers: fhirJsonHeaders },
+    );
+  }
+
   const dispatchResp: Response = await (async (): Promise<Response> => {
     try {
       // /metadata - CapabilityStatement
@@ -1246,18 +1313,10 @@ Deno.serve(async (req: Request) => {
       const resourceType = fhirPath[0];
       const resourceId = fhirPath[1];
 
-      // SMART scope enforcement for bearer-authed callers. Legacy X-QHIN-ID
-      // callers retain unrestricted access during the deprecation window
-      // (see bearer-auth.ts:legacySunsetDate). TODO Phase C-1.1: emit
-      // Deprecation/Sunset/Warning headers on every response from a legacy
-      // caller — currently only this comment carries the contract.
-      const writeVerbs = new Set(["POST", "PUT", "DELETE", "PATCH"]);
-      const isWrite = writeVerbs.has(req.method);
+      // SMART scope enforcement: every caller holds a bearer token.
+      const isWrite = isWriteMethod(req.method);
       const requiredVerb: "read" | "write" = isWrite ? "write" : "read";
-      if (
-        !auth.isLegacy &&
-        !scopeAllowsResource(auth.scopes, resourceType, requiredVerb)
-      ) {
+      if (!scopeAllowsResource(auth.scopes, resourceType, requiredVerb)) {
         await logTEFCAAccess(
           supabase,
           context,
@@ -1283,6 +1342,26 @@ Deno.serve(async (req: Request) => {
             },
           },
         );
+      }
+
+      // A patient access token reaches only its own patient's record.
+      const patientGate = gatePatientBoundRequest(
+        auth.patientId,
+        req.method,
+        fhirPath,
+        url.searchParams,
+      );
+      if (!patientGate.allow) {
+        await logTEFCAAccess(
+          supabase,
+          context,
+          [resourceType],
+          0,
+          false,
+          patientGate.reason,
+          Date.now() - startTime,
+        );
+        return errorResponse("error", "forbidden", patientGate.reason, 403);
       }
 
       // Phase H: write paths (POST / PUT / DELETE) land in the
@@ -1321,10 +1400,17 @@ Deno.serve(async (req: Request) => {
         );
       }
       if (req.method === "DELETE" && resourceId) {
+        const writeCaller = {
+          clientId: context.requestingOrganization,
+          qhinId: context.qhinId,
+          scopes: auth.scopes,
+        };
         return await handleDelete(
           supabase,
+          req,
           resourceType,
           resourceId,
+          writeCaller,
           context,
           startTime,
         );
@@ -1510,12 +1596,6 @@ Deno.serve(async (req: Request) => {
       );
     }
   })();
-
-  if (deprecationHeaders) {
-    for (const [k, v] of Object.entries(deprecationHeaders)) {
-      dispatchResp.headers.set(k, v);
-    }
-  }
 
   // Phase D-1: SOFT-WARNING US Core 7.0 validation. We never replace the
   // response body — even on validation failures we serve the original — but

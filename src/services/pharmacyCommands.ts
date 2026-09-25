@@ -357,14 +357,20 @@ export async function confirmDispenseNow(commandId: string, waitMs = 8000): Prom
     sendAndWait().catch(() => undefined),
     new Promise((resolve) => setTimeout(resolve, waitMs)),
   ]);
-  const answer = await readAnswer(commandId);
-  if (answer.status === "pending") {
-    const command = await mbhrDb.rx_commands.get(commandId);
-    if (command && command.args?.p_offline !== true) {
-      await mbhrDb.rx_commands.update(commandId, { args: { ...command.args, p_offline: true } });
+  // Read the answer and mark it handed over in one step, so a refusal that
+  // lands meanwhile is either reported here (not handed over) or, once
+  // marked, handled as handed over (pharmacySync keeps the record).
+  return mbhrDb.transaction("rw", mbhrDb.rx_commands, async () => {
+    const answer = await readAnswer(commandId);
+    // The screen now reports it saved, so the medicine may be handed over.
+    if (answer.status === "pending" || answer.status === "waiting_permission") {
+      const command = await mbhrDb.rx_commands.get(commandId);
+      if (command && command.args?.p_offline !== true) {
+        await mbhrDb.rx_commands.update(commandId, { args: { ...command.args, p_offline: true } });
+      }
     }
-  }
-  return answer;
+    return answer;
+  });
 }
 
 // ---------------------------------------------------------------------------

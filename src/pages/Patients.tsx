@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PatientListSkeleton } from "@/components/ui/Skeleton";
 import { formatPatientId, patientAge } from "@/utils/patient";
+import { patientMatchesQuery } from "@/utils/patientSearch";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
   MagnifyingGlassIcon,
@@ -18,19 +19,6 @@ import {
 const PAGE_SIZE = 50;
 
 const SEX_SHORT: Record<string, string> = { male: "M", female: "F", other: "O" };
-
-function matches(p: Patient, q: string): boolean {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  const digits = needle.replace(/\D/g, "");
-  const name = `${p.givenName} ${p.familyName}`.toLowerCase();
-  return (
-    name.includes(needle) ||
-    `${p.familyName} ${p.givenName}`.toLowerCase().includes(needle) ||
-    formatPatientId(p.id).toLowerCase().includes(needle) ||
-    (digits.length >= 3 && (p.phone ?? "").replace(/\D/g, "").includes(digits))
-  );
-}
 
 export function Patients() {
   const role = useAuthStore((s) => s.currentUser?.role);
@@ -56,7 +44,7 @@ export function Patients() {
   useEffect(() => setLimit(PAGE_SIZE), [searchQuery]);
 
   const filtered = useMemo(
-    () => (patients ?? []).filter((p) => matches(p, searchQuery)),
+    () => (patients ?? []).filter((p) => patientMatchesQuery(p, searchQuery)),
     [patients, searchQuery],
   );
   const visible = filtered.slice(0, limit);

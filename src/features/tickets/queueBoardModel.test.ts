@@ -99,6 +99,15 @@ describe("countByStage / splitStage", () => {
     expect(inService.map((i) => i.id)).toEqual(["4", "3"]);
   });
 
+  it("puts an urgent ticket first even when its synced position is stale", () => {
+    const rows = [
+      { id: "n1", stage: "vitals", status: "waiting", position: 1, priority: "normal", updatedAt: at(5) },
+      { id: "u", stage: "vitals", status: "waiting", position: 3, priority: "urgent", updatedAt: at(5) },
+      { id: "n2", stage: "vitals", status: "waiting", position: 2, priority: "low", updatedAt: at(5) },
+    ];
+    expect(splitStage(rows, "vitals").waiting.map((i) => i.id)).toEqual(["u", "n1", "n2"]);
+  });
+
   it("measures the longest wait from when the ticket was queued", () => {
     const { waiting } = splitStage(items, "vitals");
     expect(longestWaitMinutes(waiting, NOW)).toBe(40);

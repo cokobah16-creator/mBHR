@@ -72,6 +72,27 @@ export function insertionPosition(
 }
 
 /**
+ * Order of a stage's waiting line as shown and called: urgent tickets
+ * first, then queue position, then time queued. Positions are renumbered by
+ * each device and can arrive out of date from another station; ranking
+ * urgent first keeps an urgent patient ahead of non-urgent ones whatever the
+ * synced positions say. Among non-urgent tickets (normal and low) position
+ * decides, as insertionPosition places them.
+ */
+export function compareWaiting(
+  a: WaitingRow & { queuedAt?: Date | string },
+  b: WaitingRow & { queuedAt?: Date | string },
+): number {
+  const ua = normalisePriority(a.priority) === "urgent" ? 0 : 1;
+  const ub = normalisePriority(b.priority) === "urgent" ? 0 : 1;
+  if (ua !== ub) return ua - ub;
+  if (a.position !== b.position) return a.position - b.position;
+  const ta = a.queuedAt ? new Date(a.queuedAt).getTime() : 0;
+  const tb = b.queuedAt ? new Date(b.queuedAt).getTime() : 0;
+  return (Number.isNaN(ta) ? 0 : ta) - (Number.isNaN(tb) ? 0 : tb);
+}
+
+/**
  * Final order of a stage's waiting line after inserting `newId` at
  * `position` (1-based). Existing rows keep their relative order.
  */

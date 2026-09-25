@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { epochDay, normPhone, nameKeyOf } from "./index";
+import {
+  epochDay,
+  normPhone,
+  nameKeyOf,
+  patientSearchKeys,
+  patientKeyChanges,
+} from "./index";
 
 describe("Database Helper Functions", () => {
   describe("epochDay", () => {
@@ -226,5 +232,82 @@ describe("Daily Count Aggregation", () => {
     const day2 = epochDay(startOfNextDay);
 
     expect(day2 - day1).toBe(1);
+  });
+});
+
+describe("Patient duplicate-check keys", () => {
+  const registered = {
+    id: "p1",
+    givenName: "Ngozi",
+    familyName: "Eze",
+    dob: "1990-04-12",
+    phone: "+2348031234567",
+    createdAt: new Date("2026-01-10T09:00:00Z"),
+    updatedAt: new Date("2026-01-10T09:00:00Z"),
+  };
+
+  it("stores the same keys the duplicate lookups query with", () => {
+    // What createPatientDraft and findDuplicates compute for a new entry.
+    const lookup = {
+      dobDay: epochDay(new Date("1990-04-12")),
+      phoneN: normPhone("+2348031234567"),
+      nameKey: nameKeyOf("Ngozi", "Eze"),
+    };
+    const keys = patientSearchKeys(registered);
+    expect(keys.dobDay).toBe(lookup.dobDay);
+    expect(keys.phoneN).toBe(lookup.phoneN);
+    expect(keys.nameKey).toBe(lookup.nameKey);
+    expect(keys.createdDay).toBe(epochDay(registered.createdAt));
+    expect(keys.updatedDay).toBe(epochDay(registered.updatedAt));
+  });
+
+  it("fills in keys missing from an older record", () => {
+    const changes = patientKeyChanges({}, registered);
+    expect(changes).toMatchObject({
+      phoneN: "2348031234567",
+      nameKey: nameKeyOf("Ngozi", "Eze"),
+      dobDay: epochDay(new Date("1990-04-12")),
+    });
+  });
+
+  it("returns nothing when the keys are already right", () => {
+    const withKeys = { ...registered, ...patientSearchKeys(registered) };
+    expect(patientKeyChanges({}, withKeys)).toEqual({});
+  });
+
+  it("recomputes keys when an edit changes name, phone or date of birth", () => {
+    const withKeys = { ...registered, ...patientSearchKeys(registered) };
+    const changes = patientKeyChanges(
+      { familyName: "Okafor", phone: "+2348099999999", dob: "1991-04-12" },
+      withKeys,
+    );
+    expect(changes.nameKey).toBe(nameKeyOf("Ngozi", "Okafor"));
+    expect(changes.phoneN).toBe("2348099999999");
+    expect(changes.dobDay).toBe(epochDay(new Date("1991-04-12")));
+  });
+
+  it("restores keys a whole-row download would drop", () => {
+    const withKeys = { ...registered, ...patientSearchKeys(registered) };
+    const changes = patientKeyChanges(
+      { phoneN: undefined, nameKey: undefined, dobDay: undefined },
+      withKeys,
+    );
+    expect(changes.phoneN).toBe("2348031234567");
+    expect(changes.nameKey).toBe(nameKeyOf("Ngozi", "Eze"));
+    expect(changes.dobDay).toBe(epochDay(new Date("1990-04-12")));
+  });
+
+  it("gives no name or phone key for values that are not plain text", () => {
+    const keys = patientSearchKeys({
+      ...registered,
+      givenName: { ct: "x", iv: "y" },
+      phone: { ct: "x", iv: "y" },
+    });
+    expect(keys.nameKey).toBeUndefined();
+    expect(keys.phoneN).toBeUndefined();
+  });
+
+  it("uses an empty phone key when there is no phone", () => {
+    expect(patientSearchKeys({ ...registered, phone: null }).phoneN).toBe("");
   });
 });

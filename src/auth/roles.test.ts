@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   can,
   getRoleDisplayName,
+  isStaffRole,
   portalInviteRefusal,
   rolePermissionMatrix,
   rolesWithPermission,
@@ -126,5 +127,19 @@ describe("confirmed role policy", () => {
 
   it("guest holds nothing", () => {
     expect(rolePermissionMatrix().roles.guest).toEqual([]);
+  });
+});
+
+describe("isStaffRole", () => {
+  it("accepts every known role except guest", () => {
+    for (const role of Object.keys(rolePermissionMatrix().roles)) {
+      expect(isStaffRole(role)).toBe(role !== "guest");
+    }
+  });
+
+  it("refuses unknown values", () => {
+    for (const value of ["chw", "", "constructor", "__proto__", null, undefined, 1]) {
+      expect(isStaffRole(value)).toBe(false);
+    }
   });
 });

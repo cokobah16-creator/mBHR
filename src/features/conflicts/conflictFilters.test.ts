@@ -67,4 +67,9 @@ describe("localTableFor", () => {
     expect(localTableFor("inventory", tables)).toBeNull();
     expect(localTableFor("gameSessions", tables)).toBeNull();
   });
+  it("accepts only server table names, not bare local table names", () => {
+    expect(localTableFor("users", tables)).toBeNull();
+    expect(localTableFor("patientAllergies", tables)).toBeNull();
+    expect(localTableFor("constructor", tables)).toBeNull();
+  });
 });

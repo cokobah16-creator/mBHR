@@ -56,17 +56,32 @@ function activeLockout(): number | null {
 
 /** Why an online sign-in with the right password was still refused. */
 function refusalError(reason: SignInRefusal): LoginError {
-  return reason === "deactivated_on_device"
-    ? {
+  switch (reason) {
+    case "deactivated_on_device":
+      return {
         title: "This account is switched off on this device",
         detail:
           "An administrator deactivated it here. Signing in online does not switch it back on: ask an administrator to review it under Users.",
-      }
-    : {
+      };
+    case "not_staff":
+      return {
+        title: "This is not a staff account",
+        detail:
+          "The email and password are right, but your organisation has no staff record with a staff role for this account, so it cannot open the staff app. Patients sign in through the patient portal. Ask an administrator if you think this is wrong.",
+      };
+    case "staff_check_failed":
+      return {
+        title: "Your staff record could not be checked",
+        detail:
+          "This device could not confirm your staff account with the server. Check the connection and try again.",
+      };
+    default:
+      return {
         title: "This account has been deactivated",
         detail:
           "Your organisation has switched off this staff account, so it cannot sign in on this device. Ask an administrator if you think this is wrong.",
       };
+  }
 }
 
 // Spelled out rather than Intl: "en-GB" gives "Sept" in newer ICU data.

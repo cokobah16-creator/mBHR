@@ -36,7 +36,9 @@
    - **Name:** `mBHR Production` (or your preferred name)
    - **Database Password:** Generate a strong password (save it securely!)
    - **Region:** Choose closest to your deployment location
-   - **Pricing Plan:** Start with Free tier
+   - **Pricing Plan:** Free tier is enough to try the app. For production
+     with patient data, use a plan with point-in-time recovery (Pro or
+     higher); see 6.3 Backup Strategy
 4. Click "Create new project"
 5. Wait 2-3 minutes for project provisioning
 
@@ -259,6 +261,24 @@ vercel --prod
 1. Go to Project Settings → Domains
 2. Add your domain
 3. Configure DNS records as shown
+
+**Moving from an old hostname (m-bhr.vercel.app to mbhr.app):**
+
+Records saved in the browser (patients, the staff list, device PINs and
+unsent changes) belong to one web address. `vercel.json` redirects page
+addresses on `m-bhr.vercel.app` to `https://mbhr.app`, but does not redirect
+paths with a file extension there (`/sw.js`, `/workbox-*.js`,
+`/manifest.webmanifest`, `/index.html`, `/assets/*`, icons). An app installed
+on the old address keeps updating to the current build, which shows the
+"wrong address" warning. Do not widen that redirect to every path: a service
+worker update check does not follow redirects, so installed apps would stay
+on their old build. For each device still on the old address:
+
+1. Sign in online there and run Sync until nothing is waiting to upload.
+2. Then open `https://mbhr.app`, sign in online and set a device PIN there.
+
+The app does not yet stop anyone moving while changes are unsent, so staff
+must sync first.
 
 ### 2.5 Enable HTTPS
 
@@ -495,14 +515,22 @@ Sentry.init({
 ### 6.3 Backup Strategy
 
 **Database Backups:**
-- Supabase automatically backs up daily
-- Point-in-time recovery available on paid plans
-- Manual backup: SQL Editor → Export schema/data
+- The nightly GitHub Actions job (`.github/workflows/backup.yml`) writes a
+  schema dump, a data dump (app tables), an `auth`/`storage` data dump and
+  a roles dump to the private `backups` bucket. Restore steps:
+  `docs/deployment/RESTORE_RUNBOOK.md`.
+- That bucket is in the production project itself: keep a copy of the
+  dumps outside the project too (recommended), or a lost project takes its
+  backups with it.
+- Supabase's own daily backups and point-in-time recovery depend on the
+  plan (point-in-time recovery needs Pro or higher). Confirm in the
+  dashboard what the production project has.
 
-**Photo Backups:**
-- Supabase Storage included in database backups
-- Consider separate S3 backup for photos
-- Export bucket via Supabase CLI
+**Photo and document backups:**
+- Files in Storage buckets (patient photos, portal documents) are **not**
+  in any database dump; the dumps hold only the storage object list.
+- Copy the buckets separately (for example `supabase storage cp -r` to a
+  store outside the project) on a schedule.
 
 ---
 

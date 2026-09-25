@@ -315,6 +315,23 @@ describe("Login explains refusals and replaces a forgotten PIN", () => {
     expect(await screen.findByText("This account has been deactivated")).toBeInTheDocument();
   });
 
+  it("says an account without a staff record is not a staff account, and asks for no PIN", async () => {
+    authState.loginOnline.mockImplementation(async () => {
+      authState.signInRefusal = "not_staff";
+      return false;
+    });
+    renderLogin();
+    await screen.findByText("Who's signing in?");
+    fireEvent.click(screen.getByRole("button", { name: "Online" }));
+    signInOnline();
+
+    expect(await screen.findByText("This is not a staff account")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Choose a PIN for this device" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.setDevicePin).not.toHaveBeenCalled();
+  });
+
   it("Forgot PIN: signs in online, then asks for a new PIN even though one exists", async () => {
     authState.loginOnline.mockImplementation(async () => {
       authState.currentUser = ada;

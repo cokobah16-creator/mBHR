@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Patient, type QueueItem } from "@/db";
+import { ACTIVE_QUEUE_STATUSES } from "@/features/tickets/queueReads";
 import { useAuthStore } from "@/stores/auth";
 import {
   canManageQueue,
@@ -16,7 +17,7 @@ import {
   QueuePermissionError,
   QueueValidationError,
 } from "@/services/queueManagement";
-import { normalisePriority } from "@/services/queuePriority";
+import { compareWaiting, normalisePriority } from "@/services/queuePriority";
 import { patientStatusFromQueue } from "@/services/patientStatus";
 import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -86,7 +87,11 @@ export function EnhancedQueueBoard() {
   const [actionError, setActionError] = useState("");
   const [announcement, setAnnouncement] = useState("");
 
-  const queueItems = useLiveQuery(() => db.queue.orderBy("position").toArray(), []);
+  // Rows still waiting or being served only (indexed), in queue order.
+  const queueItems = useLiveQuery(
+    () => db.queue.where("status").anyOf(ACTIVE_QUEUE_STATUSES).sortBy("position"),
+    [],
+  );
 
   const activeItems = useMemo(
     () => (queueItems ?? []).filter((item) => item.status !== "done"),
@@ -165,7 +170,7 @@ export function EnhancedQueueBoard() {
     }
     const nextItem = activeItems
       .filter((item) => item.stage === stage && item.status === "waiting")
-      .sort((a, b) => a.position - b.position)[0];
+      .sort(compareWaiting)[0];
     if (!nextItem) return;
     void run(`${patientName(nextItem)} called to ${FLOW_STAGE_LABELS[stage].toLowerCase()}.`, async () => {
       await queueManagement.startService(
@@ -230,7 +235,7 @@ export function EnhancedQueueBoard() {
   );
   const waitingPatients = activeItems
     .filter((item) => item.stage === selectedStage && item.status === "waiting")
-    .sort((a, b) => a.position - b.position);
+    .sort(compareWaiting);
   const allowed = canActOn(selectedStage);
   const stageName = FLOW_STAGE_LABELS[selectedStage];
 

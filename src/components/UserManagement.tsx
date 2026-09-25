@@ -212,6 +212,7 @@ export function UserManagement() {
           ...pinFields,
           adminAccess: form.adminAccess,
           adminPermanent: form.adminPermanent,
+          _staffEditBy: currentUser?.id,
           updatedAt: new Date(),
         });
       } else {
@@ -226,6 +227,7 @@ export function UserManagement() {
           ...pinFields,
           adminAccess: form.adminAccess,
           adminPermanent: form.adminPermanent,
+          _staffEditBy: currentUser?.id,
           isActive: 1,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -397,7 +399,7 @@ export function UserManagement() {
 
       setPendingDeleteUser(null);
       const otherDevices =
-        " Other devices keep their own copy of the account until it is deleted there too.";
+        " Other devices switch the account off the next time someone signs in online there; until then it may still unlock them with its PIN.";
       if (serverResult === "not_removed") {
         pushToast({
           id: generateId(),

@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useId, useRef } from 'react'
 import { usePatientsStore } from '@/stores/patients'
 import { Patient } from '@/db'
+import { formatPatientId, patientAge } from '@/utils/patient'
+import { formatNigerianDate } from '@/utils/dateFormat'
 import { MagnifyingGlassIcon, UserIcon } from '@heroicons/react/24/outline'
+
+/** Rows shown at once; the rest are counted so staff know to narrow the search. */
+const MAX_ROWS = 5
+
+const SEX_LABEL: Record<string, string> = { male: 'Male', female: 'Female', other: 'Other' }
 
 interface PatientSearchProps {
   onPatientSelect: (patient: Patient) => void
@@ -22,6 +29,7 @@ export function PatientSearch({
 }: PatientSearchProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Patient[]>([])
+  const [totalMatches, setTotalMatches] = useState(0)
   const [showResults, setShowResults] = useState(false)
   const [searchFailed, setSearchFailed] = useState(false)
   const [hasOuterLabel, setHasOuterLabel] = useState(false)
@@ -40,16 +48,19 @@ export function PatientSearch({
       if (query.trim()) {
         try {
           const patients = await searchPatients(query)
-          setResults(patients.slice(0, 5)) // Limit to 5 results
+          setResults(patients.slice(0, MAX_ROWS))
+          setTotalMatches(patients.length)
           setSearchFailed(false)
         } catch (error) {
           console.error('Patient search failed:', error instanceof Error ? error.name : error)
           setResults([])
+          setTotalMatches(0)
           setSearchFailed(true)
         }
         setShowResults(true)
       } else {
         setResults([])
+        setTotalMatches(0)
         setShowResults(false)
         setSearchFailed(false)
       }
@@ -76,20 +87,8 @@ export function PatientSearch({
     }
   }
 
-  const getPatientAge = (dob: string) => {
-    const birthDate = new Date(dob)
-    const today = new Date()
-    let age = today.getFullYear() - birthDate.getFullYear()
-    const monthDiff = today.getMonth() - birthDate.getMonth()
-
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--
-    }
-
-    return age
-  }
-
   const open = showResults && query.trim().length > 0
+  const moreMatches = Math.max(0, totalMatches - results.length)
 
   return (
     // data-local-escape tells enclosing dialogs (useDialogFocus) that Escape
@@ -121,7 +120,7 @@ export function PatientSearch({
         {open
           ? searchFailed
             ? 'Search failed'
-            : `${results.length} patient${results.length === 1 ? '' : 's'} found`
+            : `${totalMatches} patient${totalMatches === 1 ? '' : 's'} found`
           : ''}
       </p>
 
@@ -132,7 +131,10 @@ export function PatientSearch({
           onKeyDown={handleListKeyDown}
           className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto rounded-md border border-line bg-surface shadow-lg"
         >
-          {results.map((patient) => (
+          {results.map((patient) => {
+            const age = patientAge(patient.dob)
+            const dob = formatNigerianDate(patient.dob)
+            return (
             <li key={patient.id} className="border-b border-line last:border-b-0">
               <button
                 type="button"
@@ -157,18 +159,28 @@ export function PatientSearch({
                     </p>
                     <p className="truncate text-caption text-ink-muted">
                       {[
-                        `Age ${getPatientAge(patient.dob)}`,
-                        patient.phone,
-                        patient.state,
+                        formatPatientId(patient.id),
+                        SEX_LABEL[patient.sex],
+                        dob ? `Born ${dob}${age !== null ? ` (${age})` : ''}` : null,
                       ]
                         .filter(Boolean)
                         .join(' · ')}
+                    </p>
+                    <p className="truncate text-caption text-ink-muted">
+                      {[patient.phone, patient.state].filter(Boolean).join(' · ')}
                     </p>
                   </div>
                 </div>
               </button>
             </li>
-          ))}
+            )
+          })}
+          {moreMatches > 0 && (
+            <li className="px-4 py-2 text-caption text-ink-muted">
+              {moreMatches} more match{moreMatches === 1 ? '' : 'es'}. Type more of the
+              name, phone number or MBHR ID to narrow the list.
+            </li>
+          )}
         </ul>
       )}
 
@@ -176,7 +188,7 @@ export function PatientSearch({
         <div className="absolute z-10 mt-1 w-full rounded-md border border-line bg-surface p-4 text-center text-body text-ink-muted shadow-lg">
           {searchFailed
             ? 'Search could not run on this device. Try again.'
-            : 'No patients found on this device'}
+            : 'No patients found on this device. Check the spelling, or try the phone number or MBHR ID.'}
         </div>
       )}
     </div>

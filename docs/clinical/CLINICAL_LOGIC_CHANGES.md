@@ -143,6 +143,74 @@ queue priority change that follows the owner decision in section 3.3.
 - [ ] Row 16: Knowledge Blitz insulin storage question corrected.
 - [ ] Row 17: Triage priority is carried to the next stage; only a
       clinician can lower it.
+- [x] Row 18: Dispensing checks allergies across merged records.
+      Decision received 2026-09-25: **approve**. The check follows the
+      whole merge chain; the kept record stays the one shown to staff; an
+      allergy recorded on more than one record is shown once (done: see
+      section 4, "Clinician sign-off follow-up").
+- [x] Row 19: A refused dispense never erases medicine already handed over.
+      Decision received 2026-09-25: **approve with changes**. A handed-over
+      dispense stays recorded (medicine, strength, quantity, directions,
+      patient, dispenser, actual time, device and outreach site, sync status,
+      refusal reason, later reconciliation outcome) and remains auditable
+      after the discrepancy is resolved. A failed sync never reopens the
+      prescription. Stock discrepancies go to the pharmacist-in-charge or
+      outreach pharmacy lead; a refusal that may be clinical (wrong patient,
+      invalid or void prescription, another medication-safety problem) is
+      also escalated to the prescriber. Open: the refused dispense is kept
+      only on the device today; recording it, its reconciliation outcome and
+      the escalation on the server needs a database change.
+- [x] Row 20: Dispensing needs an identified patient.
+      Decision received 2026-09-25: **approve with changes**. Routine
+      dispensing is blocked without the patient's record, and an empty
+      allergy check never means "no allergies". Before handover the
+      pharmacist confirms the name and a second identifier (date of birth or
+      MBHR ID; the outreach ticket number when a date of birth can't
+      reliably be given), said by the patient or caregiver, not read off the
+      screen (done: see section 4). No ordinary senior-clinician override.
+      Open: an emergency break-glass pathway (emergency reason, two
+      identifiers checked by hand, manual allergy confirmation, authorising
+      clinician, person dispensing, time, full audit, mandatory
+      reconciliation afterwards) is not built; it must not become a
+      workaround for sync problems.
+- [x] Row 21: A merged-away patient record is screened and treated on the
+      kept record.
+      Decision received 2026-09-25: **approve with changes**. Merged-away
+      records are not selectable for clinical actions; the kept record is
+      the single active chart. The merged-away page is read-only, points to
+      the kept record and shows the merge provenance: old MBHR ID, kept MBHR
+      ID, when, by whom and, where recorded, why (done: see section 4).
+      All clinically relevant history from the merged record must be
+      reachable from the kept record: to be verified in the staging
+      workflow test.
+- [x] Row 22: Unreviewed critical lab results are shown without opening
+      /labs.
+      Decision received 2026-09-25: **approve with changes**. The alert
+      goes to the ordering clinician, the clinician responsible for the
+      patient, authorised nurses caring for the patient and a designated
+      clinical escalation role, not to a generic administrator (the banner
+      no longer shows for admins: see section 4). The alert should appear
+      as soon as a result becomes critical, with the one-minute refresh as a
+      fallback. A critical result stays outstanding until an authorised
+      clinical user acknowledges it; viewing is not acknowledging; record
+      who, when, which result and any initial action or escalation.
+      Unacknowledged results escalate, by SMS where useful, with no result
+      or patient details in the text. Clinical leadership sets the
+      acknowledgement and escalation times per type of result. Notification,
+      acknowledgement and escalation are audited. Open: acknowledgement,
+      immediate alerts, per-patient audience, escalation and SMS need
+      database and server work.
+
+      These decisions approve the workflow and patient-safety changes only.
+      They do not approve any allergy-matching rule, laboratory reference
+      range, medication dose, treatment recommendation or triage threshold.
+      Signed off: Emeke Okobah, Director (no professional registration
+      given), 2026-09-25. Signature: KCO.
+      Decision: row 18 accept; rows 19 to 22 change as described above.
+      Rows 18 to 22 are ticked on this sign-off by the owner's decision
+      (Emeke Okobah, 2026-09-25): the Director's sign-off is accepted for
+      these rows without a clinician's professional registration. The open
+      items listed under rows 19, 20 and 22 are still to be built.
 
 | # | Change | Why | Where | Revert by |
 | --- | --- | --- | --- | --- |
@@ -163,6 +231,11 @@ queue priority change that follows the owner decision in section 3.3.
 | 15 | A lab result is never saved without a chosen interpretation | Follows row 10. The dashboard refuses to send a result whose interpretation is empty or unknown, because the `lab_results.interpretation` column defaulted to `normal` on the server (until `20260925100500` dropped the default), so an omitted value would be filed as normal. A stored result with a missing or unknown interpretation is shown as "Interpretation missing, check result" (warning), never as normal. Sorting keeps the worst interpretation; a later normal result never hides an abnormal or critical one. | `features/labs/LabResultsDashboard.tsx` `saveResult`, `ResultCell`; `features/labs/labWorklist.ts` `isInterpretation` | Not recommended. The column default was dropped in `20260925100500` (see "Lab result interpretation default in the database" in 2.3) |
 | 16 | Knowledge Blitz insulin storage question corrected | Q2 taught that insulin (with paracetamol and cough syrup) is stored "in a cool, dry place". It now asks how **unopened** insulin is stored: refrigerated at 2–8 °C and never frozen; an in-use vial or pen may be kept at room temperature (below about 30 °C) for the limited period on the product label. No option teaches a generic "cool, dry place" rule. Q3 (handwashing) was reworded to ask for the minimum scrub time, since "30 seconds" also satisfied "at least 20 seconds". Training content only; nothing in patient care reads it. | `features/gamification/KnowledgeBlitz.tsx` | — |
 | 17 | Triage priority is carried to the next stage; only a clinician can lower it | Owner decision 3.3. `moveToNextStage` re-queued every patient at the next stage as `normal`, so an urgent patient lost urgent status after vitals or consultation. The patient's priority is now carried to each next stage. Lowering it needs the `consult` permission (doctor, lead clinician, admin), the clinician signed in on the device and a reason (up to 500 characters); it is recorded as a `priority_downgrade` audit row (who, when, from, to, why), and the server applies it only through that audited transition. Raising to urgent is open to queue staff and is audited as `priority_escalate`. An urgent ticket joins its stage line ahead of every waiting non-urgent ticket, behind urgent ones already waiting; Moving a ticket forward (`skipQueue`) and the long-wait escalation (`checkStaleQueues`) move it only within its priority. Who is urgent is still decided by staff: no triage rule changed. | `services/queuePriority.ts` `insertionPosition`, `mayDowngradePriority`; `services/queueManagement.ts` `moveToNextStage`, `downgradePriority`, `escalatePriority`, `skipQueue`, `checkStaleQueues`; server: `tg_queue_transition_apply` in `20260925100200` | Not recommended (owner decision) |
+| 18 | Dispensing checks allergies across merged records | A prescription can name a patient record that was later merged into another on the device. `/rx/dispense` looked up allergies only under the prescription's own record id, so after a merge (which moves allergies to the kept record) it found none and did not warn. It now follows the merge to the kept record and checks the allergies of every record in the chain. The matching rule (row 5) and the acknowledgement (row 6) are unchanged. | `features/pharmacy/dispensePatient.ts` `resolveDispensePatient`; `features/pharmacy/Dispense.tsx` | Not recommended |
+| 19 | A refused dispense never erases medicine already handed over | When the server refused a dispense, the device deleted its dispense record and reopened the prescription, even when the screen had already said "saved on this device" (offline, or after the 8-second confirm wait) and the medicine may have been handed over. Now, when the medicine was reported handed over: a refusal for lack of server stock is sent again as handed over, so the server records it with a stock discrepancy; any other refusal keeps the dispense on the device, does not reopen the prescription, and lists it under "Dispensed on this device" as refused, for a stock count and reconciliation. A refusal the pharmacist saw before handing over still undoes the dispense. | `sync/pharmacySync.ts` `rx_dispense` `onRejected`; `sync/pharmacySyncModel.ts` `refusedDispenseAction`, `prescriptionFromServer`; `services/pharmacyCommands.ts` `confirmDispenseNow`; `features/pharmacy/Dispense.tsx` | Not recommended |
+| 20 | Dispensing needs an identified patient | `/rx/dispense` showed only the patient's name, and a prescription whose patient record was not on the device read "Unknown patient" yet could be dispensed with an empty allergy check. Each prescription now shows the MBHR ID, sex and age; the dispense panel shows the patient header (ID, sex, age, ticket, recorded allergies) of the record the patient lives on after any merge. Dispensing is blocked, with a message, when the patient has no record on the device or was merged into a record that is not on the device. Before dispensing, the pharmacist confirms that the patient or caregiver gave the name and a second identifier (date of birth, MBHR ID, or the ticket number when a date of birth can't be given) matching the record; which identifier was used is audited, not its value. | `features/pharmacy/Dispense.tsx`; `features/pharmacy/dispensePatient.ts` `resolveDispensePatient`, `dispensePatientBlock`, `identityLine` | Not recommended |
+| 21 | A merged-away patient record is screened and treated on the kept record | After a merge, the merged-away record keeps its name, date of birth and phone, but its allergies and history move to the kept record, so an allergy check on the merged-away id found nothing. Patient search no longer offers merged-away records. Choosing one at `/pharmacy` or `/rx/new` continues on the kept record. `/rx/new` and `/rx/dispense` check allergies recorded on both the chosen id and the kept record. The patient header shows "Merged record: check allergies on the kept record" (linking to it) instead of "No known allergies recorded", and the merged-away record's page offers no actions, only a link to the kept record and the merge details held on the device (old and kept MBHR ID, when, by whom, reason). No allergy matching rule changed. | `services/activePatient.ts`; `features/pharmacy/RxForm.tsx`; `features/pharmacy/Dispense.tsx`; `components/patient/PatientContextHeader.tsx`; `stores/patients.ts`; `pages/Pharmacy.tsx`; `pages/PatientDetail.tsx` | Not recommended |
+| 22 | Unreviewed critical lab results are shown without opening /labs | A result saved as critical alerted no one until someone opened or refreshed `/labs`, and the consultation Labs tab showed the order as a green "Completed". The app shell now reads unreviewed critical results when it opens, every minute while online and when the tab becomes visible, and shows the count on the Labs menu item and as a banner on every other page, for doctors and nurses (not administrators, per the clinician's decision). The consultation Labs tab shows the most severe current result with its value and whether it awaits review (for example "Critical: 4.8 g/dL · not reviewed"). No interpretation, range or review rule changed; nothing is sent to anyone outside the app, and no acknowledgement is recorded. | `hooks/useCriticalLabCount.ts`; `components/Layout.tsx`; `features/labs/LabOrderForm.tsx`; `features/labs/labWorklist.ts` `orderOutcomeMeta`; `services/labs.ts` `getLabResultsForOrders` | Not recommended |
 
 ### 2.3 Flagged, not changed
 
@@ -282,6 +355,44 @@ only when a clinician has decided it, and write the decision next to it.
       otherwise the merged-away record keeps its own and they are not
       combined field by field. Decide whether that is acceptable.
 
+### 2.5 FHIR R4 export: questions for clinical review
+
+The FHIR R4 gateway (`src/interoperability/fhir`, off by default behind
+`FHIR_ENABLED`) publishes existing records in a standard format. It changes
+nothing staff or patients see in mBHR, and no threshold, range or
+decision-support rule. These representation rules decide what another
+system would read, so each needs a clinician's decision before the gateway
+is switched on anywhere real data exists. Full rules:
+`docs/interoperability/resource-mapping.md`.
+
+- [ ] **A stored vital sign of 0 is not published.** A pulse, blood
+      pressure, temperature, SpO₂, weight, height or BMI of 0 (or below)
+      is left out of the export rather than sent as a reading, because
+      "pulse 0" would tell another system the patient had no pulse. Missing
+      values are never sent as 0. Confirm, or say whether such rows should
+      be sent with a "data absent" marker instead.
+- [ ] **mBHR's vitals flags and ranges are not exported.** No
+      interpretation (high/low) and no reference range is attached to a
+      reading, because those are local rules still awaiting sign-off in
+      2.2. Confirm.
+- [ ] **Every saved vitals reading is "final".** mBHR has no preliminary
+      or entered-in-error state for vitals. Confirm that a saved reading is
+      a completed measurement.
+- [ ] **Pulse is published as LOINC "Heart rate" (8867-4) and SpO₂ as
+      arterial oxygen saturation by pulse oximetry (2708-6 and 59408-5)**,
+      the codes the FHIR vital signs profile requires, with mBHR's own
+      column name kept alongside. Confirm these match how outreach readings
+      are taken.
+- [ ] **Diagnosis status is carried over exactly.** A provisional or
+      differential diagnosis stays provisional or differential; only
+      diagnoses in the `conditions` table are exported. Provisional
+      diagnoses typed on the consultation (`provisional_dx`) are not
+      exported yet. Confirm that leaving them out is safer than exporting
+      them without a stable identity.
+- [ ] **Diagnosis codes stay local unless a person has verified a
+      mapping.** An ICD-10 or SNOMED CT code is added only from a reviewed
+      entry in `interop.terminology_map`. Decide who may verify a mapping.
+
 ## 3. Owner decisions (decided)
 
 These are decided by the owner and are not open questions. The code
@@ -354,6 +465,15 @@ clinician must sign off, or write "None" and say why.
 
 | Date | Pull request | What changed | Files | Checklist item (section 2) | Clinician sign-off |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-25 | FHIR R4 interoperability foundation | None for staff or patients: the new `/fhir/R4` gateway is off (`FHIR_ENABLED` unset) and only publishes existing records in FHIR format when switched on. How readings, statuses and codes are represented (a 0 reading is not published, no interpretation or range is attached, diagnosis status is kept exactly, codes stay local unless verified) is listed for review in 2.5. The mappers and terminology files are added to the clinical logic gate, so later changes to them must be recorded here. | `src/interoperability/fhir/mappers/*`, `src/interoperability/fhir/terminology/codeSystems.ts`, `scripts/check-clinical-logic-change.mjs` | 2.5 (all items) | Pending |
+| 2026-09-25 | Clinician sign-off follow-up (rows 18 to 22) | Records the clinician's decisions on rows 18 to 22 and makes the app-only changes they asked for. Dispensing now needs the pharmacist to confirm that the patient or caregiver gave the patient's name and a second identifier (date of birth, MBHR ID, or the ticket number when a date of birth can't be given) matching the record. The same allergy recorded on several records of a merge chain, or with different case or spacing, shows as one warning. A merged-away record's page shows its old and kept MBHR ID, when and by whom it was merged, and why. The critical lab banner is shown to doctors and nurses, no longer to administrators. No allergy matching rule, range, dose or threshold changed. | `src/features/pharmacy/Dispense.tsx`, `src/features/pharmacy/dispensePatient.ts`, `src/components/patient/MergeProvenance.tsx`, `src/pages/PatientDetail.tsx`, `src/components/Layout.tsx` | 2.2 rows 18, 20, 21, 22 | Emeke Okobah, Director, 2026-09-25 (no professional registration; accepted by owner decision) |
+| 2026-09-25 | Critical lab result alert (in app) | Doctors, nurses and admins see the number of unreviewed critical lab results on the Labs menu item and in a banner on every other page, refreshed every minute while online, without opening `/labs`. The consultation Labs tab shows each order's most severe result with its value and review state instead of a plain "Completed". No interpretation, range or review rule changed. | `src/hooks/useCriticalLabCount.ts`, `src/components/Layout.tsx`, `src/features/labs/LabOrderForm.tsx`, `src/features/labs/labWorklist.ts`, `src/services/labs.ts` | 2.2 row 22 | Pending |
+| 2026-09-25 | Queue: urgent first in every waiting line | The staff queue screens (queue board "Call next", the Queue page and the ticket board) now order each waiting line urgent first, then by queue position, then by time queued. Positions are renumbered on each device and can arrive out of date from another station; an urgent patient could then sit behind non-urgent ones. This is the order row 17 already intends (`insertionPosition`), so nothing changes while positions agree. Who is urgent, and how priority is carried or lowered, are unchanged. | `src/services/queuePriority.ts` `compareWaiting`; `src/components/EnhancedQueueBoard.tsx`; `src/pages/Queue.tsx`; `src/features/tickets/queueBoardModel.ts` `splitStage` | 2.2 row 17 (same ordering rule) | Pending |
+| 2026-09-25 | Dispense: patient identity | The dispense list shows MBHR ID, sex and age for each prescription, the dispense panel shows the patient header, and dispensing is blocked when the prescription's patient cannot be resolved to a record on the device (missing, or merged into a missing record). | `src/features/pharmacy/Dispense.tsx`, `src/features/pharmacy/dispensePatient.ts` | 2.2 row 20 | Pending |
+| 2026-09-25 | Dispense: refusals after hand-over | A dispense the screen reported as saved (offline, or after the confirm wait) is no longer deleted or reopened when the server refuses it. A stock refusal is resent as handed over; other refusals keep the record on the device and list it for reconciliation. | `src/sync/pharmacySync.ts`, `src/sync/pharmacySyncModel.ts`, `src/services/pharmacyCommands.ts`, `src/features/pharmacy/Dispense.tsx`, `src/db/mbhr.ts` | 2.2 row 19 | Pending |
+| 2026-09-25 | Dispense: allergies after a merge | The dispense screen follows a merged patient record to the record it was merged into and checks medication allergies recorded on every record in that chain, so a merge on the device no longer hides an allergy from the dispense check. | `src/features/pharmacy/Dispense.tsx`, `src/features/pharmacy/dispensePatient.ts` | 2.2 row 18 | Pending |
+| 2026-09-25 | Queue: send-on status | Sending a patient to the next stage now records the finished ticket's own status (`done`) in the `send_on` transition, so the server closes that ticket. Before, it recorded the next stage's `waiting`, which the server applied to the finished ticket, leaving the patient listed at two stations. No priority, triage or ordering rule changed. | `src/services/queueManagement.ts` `moveToNextStage` | None: queue bookkeeping only, no clinical rule changed | Not needed |
+| 2026-09-25 | Patient identity: merged records | Merged-away patient records are left out of patient search. Prescribing and pharmacy continue on the kept record, and allergy checks at `/rx/new` and `/rx/dispense` include allergies recorded on the kept record. The patient header warns that a merged record's allergies are on the kept record instead of showing "No known allergies recorded". No allergy matching rule, threshold or dosing rule changed. | `src/features/pharmacy/RxForm.tsx`, `src/features/pharmacy/Dispense.tsx`, `src/components/patient/PatientContextHeader.tsx`, `src/services/activePatient.ts`, `src/stores/patients.ts`, `src/pages/Pharmacy.tsx`, `src/pages/PatientDetail.tsx` | 2.2 row 21 | Pending |
 | 2026-09-24 | Wave B: registration lead role | New staff role `registration_lead`: register, queue, portal_manage and portal_invite (sending portal invitations). It has **no clinical permission**: no `vitals` (owner decision: registration-focused, not clinical; vitals stay with staff explicitly assigned to that workflow), no `consult`, `lab_review`, `lab_release` or prescribing. No existing role gained a clinical permission. | `src/auth/roles.ts`, `src/utils/permissions.ts`, `supabase/migrations/20260925100600_registration_lead_portal_invite.sql` | None: no clinical permission is granted | Not needed |
 | 2026-09-24 | Wave B: lab result release | Reviewed results are no longer shown to patients automatically. A result reaches the portal only after review **and** a deliberate release by a `lab_release` holder (doctor, lead clinician, admin), one result at a time; results already reviewed when the migration is applied stay unreleased. No reference range, threshold or interpretation rule changed: the interpretation is still chosen by the person who records the result. The dropped `'normal'` database default is covered by the 2.3 and 2.4 items. | `supabase/migrations/20260925100500_lab_results_release.sql` | 3.1 (decided); 2.4 "Releasing a withheld result", "Old results with no recorded interpretation", "No database default of 'normal'" | Pending |
 | 2026-09-24 | Wave B: remove SmartMedication | `src/services/smartMedication.ts` was deleted. It was unreachable decision support (no import, route, test or training path used it) that reported a generic "potential interaction" for any pair not in its list. Nothing replaces it; no screen or patient sees a change. Any future interaction checking needs a new, clinician-reviewed design. | `src/services/smartMedication.ts` (deleted) | 2.3 "SmartMedication interactions" (resolved by removal) | Not needed (no behaviour change for users) |

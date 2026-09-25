@@ -22,6 +22,30 @@ const tableMap: Record<string, string> = {
   patient_preferences: "patientPreferences",
 };
 
+/** Server tables whose rows carry row_version (as in the adapter). */
+const VERSIONED_TYPES: ReadonlySet<string> = new Set(["patients", "queue"]);
+
+/** A server row_version as a number, or undefined when it has none. */
+function serverVersionOf(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const version = Number(value);
+  return Number.isFinite(version) ? version : undefined;
+}
+
+/**
+ * For patients and queue: the server version the decision was made
+ * against, so the next upload of this device's copy is not held back as
+ * the same conflict again. Empty when the server copy was not available.
+ */
+function versionMarker(
+  entityType: string,
+  remoteData: Record<string, unknown> | undefined,
+): { _serverVersion?: number } {
+  if (!VERSIONED_TYPES.has(entityType) || !remoteData) return {};
+  const version = serverVersionOf(remoteData.row_version);
+  return version === undefined ? {} : { _serverVersion: version };
+}
+
 export async function resolveConflict(
   conflict: ConflictData,
   strategy: ResolutionStrategy,
@@ -42,6 +66,7 @@ export async function resolveConflict(
       _dirty: 1,
       updatedAt: new Date(),
       _syncedAt: null,
+      ...versionMarker(conflict.entityType, remoteData),
     });
   } else if (strategy === "keep-remote") {
     if (!remoteData) {
@@ -90,6 +115,7 @@ export async function resolveConflict(
       _dirty: 1,
       updatedAt: new Date(),
       _syncedAt: null,
+      ...versionMarker(conflict.entityType, remoteData),
     });
     // update() writes nothing when the record is not on this device; say so
     // instead of reporting the choice as applied.
@@ -113,6 +139,7 @@ function mapRemoteToLocal(
       family_id: "familyId",
       created_at: "createdAt",
       updated_at: "updatedAt",
+      row_version: "_serverVersion",
     },
     vitals: {
       patient_id: "patientId",
@@ -159,6 +186,7 @@ function mapRemoteToLocal(
     queue: {
       patient_id: "patientId",
       updated_at: "updatedAt",
+      row_version: "_serverVersion",
     },
     app_users: {
       full_name: "fullName",
@@ -203,6 +231,11 @@ function mapRemoteToLocal(
   }
   if (mapped.updatedAt && typeof mapped.updatedAt === "string") {
     mapped.updatedAt = new Date(mapped.updatedAt);
+  }
+  if ("_serverVersion" in mapped) {
+    const version = serverVersionOf(mapped._serverVersion);
+    if (version === undefined) delete mapped._serverVersion;
+    else mapped._serverVersion = version;
   }
 
   return mapped;

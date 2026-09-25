@@ -225,10 +225,12 @@ export async function handleRegister(
     body.token_endpoint_auth_method ??
     (clientType === "backend-services" ? "private_key_jwt" : "none");
 
+  // Scopes must be named: a client never gets access nobody asked for.
+  if (!body.scope || parseScopes(body.scope).length === 0) {
+    return oauthError("invalid_request", "scope is required");
+  }
   const clientId = generateClientId();
-  const allowedScopes = body.scope
-    ? parseScopes(body.scope)
-    : ["system/*.read"];
+  const allowedScopes = parseScopes(body.scope);
 
   const insertRow = {
     client_id: clientId,

@@ -9,6 +9,7 @@ import Login from "@/pages/Login";
 import FirstRunSetup from "@/pages/FirstRunSetup";
 import { useAuthStore } from "@/stores/auth";
 import { hasDevicePin } from "@/db/offlineAccess";
+import { isStaffRole } from "@/auth/roles";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { Home } from "@/pages/Home";
 import {
@@ -293,9 +294,16 @@ const DoctorDashboard = lazy(() =>
 );
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, currentUser } = useAuthStore();
+  const { isAuthenticated, currentUser, logout } = useAuthStore();
+  // A session for an account without a staff role (for example one kept
+  // from an older version of the app) never opens the staff workspace.
+  const notStaff = isAuthenticated && !!currentUser && !isStaffRole(currentUser.role);
 
-  if (!isAuthenticated) {
+  useEffect(() => {
+    if (notStaff) void logout();
+  }, [notStaff, logout]);
+
+  if (!isAuthenticated || notStaff) {
     return <Navigate to="/" replace />;
   }
 

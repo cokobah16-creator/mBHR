@@ -10,6 +10,7 @@ import {
   isLabFilter,
   matchesFilter,
   matchesSearch,
+  orderOutcomeMeta,
   releaseStateOf,
   resultsAwaitingRelease,
   resultsToRelease,
@@ -413,5 +414,61 @@ describe("describeLabError for review and release", () => {
       reason: "something_new",
     });
     expect(describeLabError(err, "Not saved.")).toMatch(/^Not saved\. The cloud refused/);
+  });
+});
+
+describe("orderOutcomeMeta", () => {
+  interface Outcome {
+    resultValue: string;
+    resultUnit?: string;
+    interpretation?: unknown;
+    reviewedAt?: Date;
+    supersededBy?: string;
+  }
+  const result = (over: Partial<Outcome> = {}): Outcome => ({
+    resultValue: "4.8",
+    resultUnit: "g/dL",
+    interpretation: "critical",
+    ...over,
+  });
+
+  it("shows a critical result, not a plain Completed", () => {
+    const meta = orderOutcomeMeta({ status: "completed" }, [result()]);
+    expect(meta.tone).toBe("critical");
+    expect(meta.label).toBe("Critical: 4.8 g/dL · not reviewed");
+  });
+
+  it("shows the most severe current result", () => {
+    const meta = orderOutcomeMeta({ status: "completed" }, [
+      result({ interpretation: "normal", resultValue: "12" }),
+      result({ reviewedAt: new Date() }),
+    ]);
+    expect(meta.label).toBe("Critical: 4.8 g/dL · not reviewed");
+    const reviewed = orderOutcomeMeta({ status: "completed" }, [
+      result({ reviewedAt: new Date() }),
+    ]);
+    expect(reviewed.label).toBe("Critical: 4.8 g/dL");
+  });
+
+  it("ignores a superseded result when a newer one exists", () => {
+    const meta = orderOutcomeMeta({ status: "completed" }, [
+      result({ supersededBy: "r2" }),
+      result({ interpretation: "normal", resultValue: "11.9", reviewedAt: new Date() }),
+    ]);
+    expect(meta).toEqual({ label: "Normal: 11.9 g/dL", tone: "success" });
+  });
+
+  it("never shows a missing interpretation as normal", () => {
+    const meta = orderOutcomeMeta({ status: "completed" }, [
+      result({ interpretation: undefined }),
+    ]);
+    expect(meta.tone).toBe("warning");
+  });
+
+  it("falls back to the order status without results", () => {
+    expect(orderOutcomeMeta({ status: "processing" }, [])).toEqual({
+      label: "Processing",
+      tone: "info",
+    });
   });
 });

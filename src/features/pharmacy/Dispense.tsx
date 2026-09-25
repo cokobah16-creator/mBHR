@@ -7,7 +7,7 @@ import {
   type PharmacyItem,
   type Prescription,
 } from "@/db/mbhr";
-import { db } from "@/db";
+import { db, type Patient } from "@/db";
 import { can } from "@/auth/roles";
 import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
@@ -28,6 +28,16 @@ import { PharmacySkeleton } from "@/components/ui/Skeleton";
 import { DocumentTextIcon } from "@heroicons/react/24/outline";
 import { ExclamationTriangleIcon, InformationCircleIcon } from "@heroicons/react/20/solid";
 import { isAllergyActive } from "@/utils/allergyActive";
+import {
+  dispensePatientBlock,
+  identityLine,
+  resolveDispensePatient,
+  secondIdentifierOptions,
+  uniqueAllergens,
+  type DispensePatient,
+  type SecondIdentifierKind,
+} from "./dispensePatient";
+import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 
 type Line = Prescription["lines"][number];
 
@@ -45,6 +55,8 @@ interface DispenseData {
   batches: PharmacyBatch[];
   items: PharmacyItem[];
   names: Record<string, string>;
+  /** Patient records on this device, by id, to tell same-name patients apart. */
+  patients: Record<string, Patient>;
   openDiscrepancies: number;
   error?: string;
 }
@@ -66,19 +78,28 @@ async function loadDispenseData(): Promise<DispenseData> {
       mbhrDb.prescriptions.where("status").equals("open").toArray(),
       mbhrDb.pharmacy_batches.toArray(),
       mbhrDb.pharmacy_items.toArray(),
-      mbhrDb.prescriptions.filter((r) => !!r.pendingCommandId || (r.uncoveredQty ?? 0) > 0).toArray(),
+      mbhrDb.prescriptions
+        .filter((r) => !!r.pendingCommandId || (r.uncoveredQty ?? 0) > 0 || r.handoverRefused === 1)
+        .toArray(),
       mbhrDb.rx_commands.where("status").anyOf(["pending", "waiting_permission"]).toArray(),
       mbhrDb.stock_discrepancies.where("status").equals("open").count(),
     ]);
     const since = new Date(Date.now() - DAY_MS).toISOString();
     const recent = pendingRx
-      .filter((r) => !!r.pendingCommandId || (r.dispensedAt ?? "") >= since)
+      // A handed-over dispense the server refused stays listed so it can be
+      // reconciled.
+      .filter((r) => !!r.pendingCommandId || r.handoverRefused === 1 || (r.dispensedAt ?? "") >= since)
       .sort((a, b) => (b.dispensedAt ?? "").localeCompare(a.dispensedAt ?? ""));
     // Resolve people so the pharmacist sees names, not record ids.
     const ids = [...new Set([...rxData, ...recent].flatMap((r) => [r.patientId, r.prescriberId]))];
     const [patients, users] = await Promise.all([db.patients.bulkGet(ids), db.users.bulkGet(ids)]);
     const names: Record<string, string> = {};
-    patients.forEach((p) => p && (names[p.id] = `${p.givenName} ${p.familyName}`));
+    const patientById: Record<string, Patient> = {};
+    patients.forEach((p) => {
+      if (!p) return;
+      names[p.id] = `${p.givenName} ${p.familyName}`;
+      patientById[p.id] = p;
+    });
     users.forEach((u) => u && (names[u.id] = u.fullName));
     const commandStatus: Record<string, string> = {};
     commands.forEach((c) => (commandStatus[c.id] = c.status));
@@ -89,6 +110,7 @@ async function loadDispenseData(): Promise<DispenseData> {
       batches,
       items,
       names,
+      patients: patientById,
       openDiscrepancies,
     };
   } catch (err) {
@@ -100,6 +122,7 @@ async function loadDispenseData(): Promise<DispenseData> {
       batches: [],
       items: [],
       names: {},
+      patients: {},
       openDiscrepancies: 0,
       error: "Prescriptions could not be read on this device. Reload the page; nothing has been dispensed.",
     };
@@ -139,6 +162,12 @@ export default function Dispense() {
   const [loading, setLoading] = useState<"" | "saving" | "confirming">("");
   const [error, setError] = useState("");
   const [allergyAck, setAllergyAck] = useState(false);
+  const [resolved, setResolved] = useState<DispensePatient | undefined>(undefined);
+  // Second patient identifier, confirmed with the patient or caregiver
+  // before the medicine is handed over (clinical change log row 20).
+  const [ticket, setTicket] = useState<string | undefined>(undefined);
+  const [idKind, setIdKind] = useState<SecondIdentifierKind | "">("");
+  const [idConfirmed, setIdConfirmed] = useState(false);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -154,6 +183,7 @@ export default function Dispense() {
   const items = useMemo(() => data?.items ?? [], [data]);
   const batches = useMemo(() => data?.batches ?? [], [data]);
   const names = data?.names ?? {};
+  const people = data?.patients ?? {};
   const chosen = rx?.find((r) => r.id === selected);
 
   // Keyed on the selection, not the loaded object: a prescription leaves
@@ -163,22 +193,37 @@ export default function Dispense() {
     setAllergyAck(false);
     setError("");
     setAllergens([]);
+    setResolved(undefined);
+    setTicket(undefined);
+    setIdKind("");
+    setIdConfirmed(false);
     if (!selectedPatientId) {
       setAllergyStatus("ready");
       return;
     }
     // Dispensing stays blocked until this patient's allergies are known;
     // a failed lookup must never read as "no allergies".
+    // The prescription may name a record merged into another on this
+    // device: check the allergies of every record in the merge chain.
     setAllergyStatus("loading");
     let stale = false;
-    db.patientAllergies
-      .where("patientId")
-      .equals(selectedPatientId)
-      .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
-      .toArray()
-      .then((as) => {
+    resolveDispensePatient({ get: (id) => db.patients.get(id) }, selectedPatientId)
+      .then(async (who) => {
+        const as = await db.patientAllergies
+          .where("patientId")
+          .anyOf(who.chain)
+          .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
+          .toArray();
+        const queue = who.ok
+          ? await db.queue.where("patientId").equals(who.patient.id).toArray()
+          : [];
         if (stale) return;
-        setAllergens(as.map((a) => a.allergen));
+        const active = queue
+          .filter((q) => q.status !== "done")
+          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+        setResolved(who);
+        setTicket(active?.ticketNumber != null ? String(active.ticketNumber) : undefined);
+        setAllergens(uniqueAllergens(as.map((a) => a.allergen)));
         setAllergyStatus("ready");
       })
       .catch(() => {
@@ -215,15 +260,23 @@ export default function Dispense() {
   const mode = chosen ? dispenseMode(chosen.lines, items) : "missing";
   const mayDispense = !!currentUser && can(currentUser.role, "dispense");
   const shortLines = plans.filter((p) => p.fefo.shortfall > 0 || !p.item);
+  // Only to a patient identified on this device (following merges to the
+  // record kept), so the allergy check is about the right person.
+  const patientBlock = dispensePatientBlock(resolved);
+  const idOptions = resolved?.ok ? secondIdentifierOptions(resolved.patient, ticket) : [];
+  const idChoice = idOptions.find((o) => o.kind === idKind);
   const canDispense =
     !!chosen &&
     mayDispense &&
+    !!resolved?.ok &&
     plans.length > 0 &&
     shortLines.length === 0 &&
     mode !== "mixed" &&
     mode !== "missing" &&
     allergyStatus === "ready" &&
     (allergyHits.length === 0 || allergyAck) &&
+    !!idChoice &&
+    idConfirmed &&
     !loading;
 
   function itemName(itemId: string) {
@@ -244,7 +297,9 @@ export default function Dispense() {
       setError("Your account cannot dispense medicines. Nothing was dispensed.");
       return;
     }
-    const patientName = names[chosen.patientId] ?? "Patient";
+    const patientName = resolved?.ok
+      ? `${resolved.patient.givenName} ${resolved.patient.familyName}`
+      : (names[chosen.patientId] ?? "Patient");
     const count = `${plans.length} item${plans.length === 1 ? "" : "s"}`;
     setLoading("saving");
     setError("");
@@ -258,6 +313,18 @@ export default function Dispense() {
         },
         { id: currentUser.id, role: currentUser.role },
       );
+
+      // Which identifier was confirmed, never its value.
+      await db.auditLogs
+        .add({
+          id: ulid(),
+          actorRole: currentUser.role ?? "unknown",
+          action: `dispense_identity_confirmed_${idKind}`,
+          entity: "prescription",
+          entityId: chosen.id,
+          at: new Date(),
+        })
+        .catch(() => undefined);
 
       if (allergyHits.length > 0) {
         await db.auditLogs
@@ -417,6 +484,9 @@ export default function Dispense() {
                         <span className="block font-medium text-ink">
                           {names[r.patientId] ?? "Unknown patient"}
                         </span>
+                        <span className="block text-caption font-mono text-ink-secondary">
+                          {identityLine(people[r.patientId])}
+                        </span>
                         <span className="block text-caption text-ink-secondary">
                           {first ? `${first.medName} ${first.strength}` : "Unknown item"}
                           {r.lines.length > 1 ? ` + ${r.lines.length - 1} more` : ""}
@@ -454,7 +524,18 @@ export default function Dispense() {
                   return (
                     <li key={r.id} className="space-y-1 px-4 py-3">
                       <span className="block font-medium text-ink">{names[r.patientId] ?? "Unknown patient"}</span>
-                      {r.pendingCommandId ? (
+                      <span className="block text-caption font-mono text-ink-secondary">
+                        {identityLine(people[r.patientId])}
+                      </span>
+                      {r.handoverRefused === 1 ? (
+                        <>
+                          <StatusBadge tone="danger">Handed over, but refused by the server</StatusBadge>
+                          <span className="block text-caption text-ink-secondary">
+                            {rejectReasonText(r.lastRejectReason)} The dispense is kept on this device. Count
+                            the stock and reconcile this record with the pharmacy lead.
+                          </span>
+                        </>
+                      ) : r.pendingCommandId ? (
                         <StatusBadge tone="warning">
                           {status === "waiting_permission"
                             ? "Waiting for an authorised person to sync"
@@ -476,7 +557,7 @@ export default function Dispense() {
         <section className="panel" aria-labelledby="dispense-title">
           <div className="panel-header">
             <h2 id="dispense-title" className="panel-title">
-              {chosen ? (names[chosen.patientId] ?? "Unknown patient") : "Dispense"}
+              {chosen ? "Dispense prescription" : "Dispense"}
             </h2>
             {chosen && (
               <span className="text-caption text-ink-muted">
@@ -491,6 +572,21 @@ export default function Dispense() {
             </p>
           ) : (
             <div className="panel-body space-y-4">
+              {resolved?.ok && (
+                <PatientContextHeader
+                  patientId={resolved.patient.id}
+                  patient={resolved.patient}
+                  showFlow={false}
+                />
+              )}
+
+              {patientBlock && (
+                <div className="banner banner-danger" role="alert">
+                  <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <span>{patientBlock}</span>
+                </div>
+              )}
+
               {error && (
                 <div className="banner banner-danger" role="alert">
                   <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
@@ -578,6 +674,56 @@ export default function Dispense() {
                     <span>I have checked this with the prescriber and will dispense anyway.</span>
                   </label>
                 </div>
+              )}
+
+              {resolved?.ok && (
+                <fieldset className="rounded-md border border-line p-4">
+                  <legend className="px-1 text-label text-ink">Confirm who you are handing to</legend>
+                  <p className="text-body text-ink-secondary">
+                    Ask the patient or caregiver to tell you the patient's full name and one more identifier. Do not
+                    read them out. Compare what they say with this record.
+                  </p>
+                  <p className="mt-2 text-body text-ink">
+                    Name: <strong>{`${resolved.patient.givenName} ${resolved.patient.familyName}`}</strong>
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {idOptions.map((o) => (
+                      <label key={o.kind} className="flex min-h-touch-target items-center gap-2 text-body text-ink">
+                        <input
+                          type="radio"
+                          name="second-identifier"
+                          checked={idKind === o.kind}
+                          onChange={() => {
+                            setIdKind(o.kind);
+                            setIdConfirmed(false);
+                          }}
+                          className="h-4 w-4"
+                        />
+                        <span>
+                          {o.label}: <strong>{o.value}</strong>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <label className="mt-3 flex min-h-touch-target items-start gap-2 text-body text-ink">
+                    <input
+                      type="checkbox"
+                      checked={idConfirmed}
+                      disabled={!idChoice}
+                      onChange={(e) => setIdConfirmed(e.target.checked)}
+                      className="mt-1 h-4 w-4"
+                    />
+                    <span>
+                      The patient or caregiver told me the name and {idChoice ? idChoice.spoken : "the identifier chosen above"}, and both match this record.
+                    </span>
+                  </label>
+                  {!idConfirmed && (
+                    <p className="mt-1 text-caption text-ink-muted">
+                      Dispensing stays blocked until both identifiers are confirmed. If they do not match, do not hand
+                      over the medicine.
+                    </p>
+                  )}
+                </fieldset>
               )}
 
               {plans.map(({ line, item, fefo }, idx) => (

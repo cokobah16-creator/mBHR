@@ -8,6 +8,7 @@ import {
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
 import { countUnsyncedRecords, isOnlineSyncEnabled } from "@/sync/adapter";
+import { countPharmacyUnsynced } from "@/sync/pharmacySync";
 import { useCloudSession } from "@/lib/cloudSession";
 
 function changes(n: number): string {
@@ -20,8 +21,9 @@ function changes(n: number): string {
  * pending count live in the header's sync status control, so this banner
  * does not flash on every background sync.
  *
- * The pending count is the same one the header shows (unsynced local rows
- * plus queued operations), read only while offline. useSyncStore's
+ * The pending count is the same one the header shows (unsynced local rows,
+ * pharmacy changes waiting in their own outbox, plus queued operations),
+ * read only while offline. useSyncStore's
  * pendingCount is not used: nothing updates it.
  */
 export function OfflineBanner() {
@@ -36,7 +38,10 @@ export function OfflineBanner() {
 
   const unsynced =
     useLiveQuery(
-      () => (!isOnline && syncEnabled ? countUnsyncedRecords() : 0),
+      async () =>
+        !isOnline && syncEnabled
+          ? (await countUnsyncedRecords()) + (await countPharmacyUnsynced())
+          : 0,
       [isOnline, syncEnabled],
       0,
     ) ?? 0;

@@ -5,6 +5,7 @@ import {
   canResolveConflict,
   decisionNeedsApproval,
   permissionForSensitivity,
+  recordWritePermission,
   resolveDeniedMessage,
   roleCanApprove,
   rolesWhoCanResolve,
@@ -38,6 +39,19 @@ describe("canResolveConflict", () => {
     expect(canResolveConflict("nurse", { phiSensitivity: "none", entityType: "inventory" })).toBe(false);
     expect(canResolveConflict("admin", { phiSensitivity: "none", entityType: "inventory" })).toBe(true);
     expect(canResolveConflict("lead_clinician", { phiSensitivity: "none", entityType: "app_users" })).toBe(false);
+  });
+
+  it("needs the same permission whichever name the record type uses", () => {
+    for (const role of ["nurse", "doctor", "lead_clinician", "auditor"] as const) {
+      expect(canResolveConflict(role, { phiSensitivity: "none", entityType: "users" })).toBe(false);
+      expect(canResolveConflict(role, { phiSensitivity: "none", entityType: "app_users" })).toBe(false);
+    }
+    expect(canResolveConflict("admin", { phiSensitivity: "none", entityType: "users" })).toBe(true);
+    expect(recordWritePermission("users")).toBe("users");
+    expect(recordWritePermission("app_users")).toBe("users");
+    expect(recordWritePermission("inventory")).toBe("inventory");
+    expect(recordWritePermission("vitals")).toBeNull();
+    expect(recordWritePermission("constructor")).toBeNull();
   });
 
   it("refuses when there is no signed-in role", () => {

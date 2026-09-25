@@ -465,7 +465,10 @@ export class QueueManagement {
           fromStage: currentItem.stage,
           toStage: next ?? "done",
           fromStatus: currentItem.status,
-          toStatus: next ? "waiting" : "done",
+          // toStatus describes queueItemId (the row just finished), which
+          // the server applies. The next stage's row travels as its own
+          // queue upload, referenced by toQueueItemId.
+          toStatus: "done",
           fromPriority: carried,
           toPriority: carried,
         },

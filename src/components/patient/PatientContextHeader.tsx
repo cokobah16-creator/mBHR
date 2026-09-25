@@ -160,10 +160,23 @@ export function PatientContextHeader({
           </p>
 
           <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Clinical alerts">
-            {allergies.length === 0 ? (
+            {patient.mergeInto && (
               <li>
-                <StatusBadge tone="neutral">No known allergies recorded</StatusBadge>
+                {/* Its allergies and history were moved to the kept record,
+                    so an empty list here does not mean no allergies. */}
+                <Link to={`/patients/${patient.mergeInto}`} className="hover:underline">
+                  <StatusBadge tone="danger">
+                    Merged record: check allergies on the kept record
+                  </StatusBadge>
+                </Link>
               </li>
+            )}
+            {allergies.length === 0 ? (
+              !patient.mergeInto && (
+                <li>
+                  <StatusBadge tone="neutral">No known allergies recorded</StatusBadge>
+                </li>
+              )
             ) : (
               allergies.map((a) => (
                 <li key={a.id}>

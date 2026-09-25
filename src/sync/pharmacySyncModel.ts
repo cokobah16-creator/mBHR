@@ -89,12 +89,15 @@ export function prescriptionFromServer(
   const id = str(raw.id);
   if (!id) return null;
   const serverStatus = str(raw.status) as PrescriptionStatus | undefined;
-  const status: PrescriptionStatus =
-    local?.pendingCommandId
+  const fromServer: PrescriptionStatus =
+    serverStatus && RX_STATUSES.includes(serverStatus) ? serverStatus : (local?.status ?? "open");
+  const status: PrescriptionStatus = local?.pendingCommandId
+    ? local.status
+    : // Handed over but refused by the server: never reopen it for a
+      // second dispense.
+      local?.handoverRefused === 1 && fromServer === "open"
       ? local.status
-      : serverStatus && RX_STATUSES.includes(serverStatus)
-        ? serverStatus
-        : (local?.status ?? "open");
+      : fromServer;
   const lines = Array.isArray(raw.lines) ? (raw.lines as Prescription["lines"]) : (local?.lines ?? []);
   return {
     ...(local ?? {}),
@@ -111,6 +114,28 @@ export function prescriptionFromServer(
     _syncedAt: syncedAt,
     localOnly: 0,
   };
+}
+
+/**
+ * What to do when the server refuses a dispense.
+ * - undo: the pharmacist was told not to hand it over; put stock back and
+ *   reopen the prescription.
+ * - resend_offline: the medicine was handed over and the server only lacked
+ *   stock; send it again as handed over (a new command, since a refusal is
+ *   stored per command), so the server records it with a discrepancy.
+ * - keep_handed_over: the medicine was handed over and the server refused
+ *   for another reason; keep the dispense on this device for reconciliation.
+ */
+export type RefusedDispenseAction = "undo" | "resend_offline" | "keep_handed_over";
+
+export function refusedDispenseAction(reason: string, handedOver: boolean): RefusedDispenseAction {
+  if (!handedOver) return "undo";
+  return reason === "insufficient_stock" ? "resend_offline" : "keep_handed_over";
+}
+
+/** Prescription status after a refused dispense whose medicine was handed over. */
+export function handedOverRefusalStatus(reason: string): PrescriptionStatus {
+  return reason === "prescription_void" ? "void" : "dispensed";
 }
 
 export function dispenseFromServer(raw: Raw): Dispense | null {

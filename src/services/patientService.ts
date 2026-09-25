@@ -490,25 +490,40 @@ export async function addVisit(
   };
 }
 
+/** Rows per request; matches the server's max_rows (supabase/config.toml). */
+const ALL_PATIENTS_PAGE_SIZE = 1000;
+/** Upper bound on requests for one list (50,000 patients). */
+const ALL_PATIENTS_MAX_PAGES = 50;
+
 export async function getAllPatients(): Promise<
   ServiceResult<PatientProfile[]>
 > {
   if (!supabase) return { data: null, error: "Supabase not configured" };
 
-  const { data, error } = await supabase
-    .from("patients")
-    .select(
-      "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at",
-    )
-    .order("created_at", { ascending: false });
+  // The server returns at most one page of rows per request, so read page
+  // by page until a short page comes back.
+  const rows: Record<string, unknown>[] = [];
+  for (let page = 0; page < ALL_PATIENTS_MAX_PAGES; page++) {
+    const from = page * ALL_PATIENTS_PAGE_SIZE;
+    const { data, error } = await supabase
+      .from("patients")
+      .select(
+        "id, auth_uid, given_name, family_name, email, phone, dob, sex, created_at",
+      )
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + ALL_PATIENTS_PAGE_SIZE - 1);
 
-  if (error) {
-    logger.error("[patientService] getAllPatients:", error.message);
-    return { data: null, error: error.message };
+    if (error) {
+      logger.error("[patientService] getAllPatients:", error.message);
+      return { data: null, error: error.message };
+    }
+    rows.push(...(data || []));
+    if (!data || data.length < ALL_PATIENTS_PAGE_SIZE) break;
   }
 
   return {
-    data: (data || []).map((row) => rowToProfile(row)),
+    data: rows.map((row) => rowToProfile(row)),
     error: null,
   };
 }

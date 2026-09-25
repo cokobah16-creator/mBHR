@@ -21,6 +21,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PatientDetailSkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
+import { MergeProvenance } from "@/components/patient/MergeProvenance";
 import {
   derivePatientFlow,
   currentFlowStage,
@@ -300,7 +301,7 @@ export function PatientDetail() {
           : "Patient record deleted",
         body: cloudFailed
           ? `${patient.givenName} ${patient.familyName} was removed from this device, but the cloud copy could not be deleted. Check the connection and ask an administrator to remove it.`
-          : `${patient.givenName} ${patient.familyName} has been removed.`,
+          : `${patient.givenName} ${patient.familyName} has been removed from this device and the cloud. Other devices keep their copy until it is removed there.`,
       });
       navigate("/patients");
     } catch (error) {
@@ -382,6 +383,26 @@ export function PatientDetail() {
             </Link>
           }
         />
+      </div>
+    );
+  }
+
+  if (patient.mergeInto) {
+    // Its allergies and history now live on the kept record; new care must
+    // be recorded there, so this record offers no actions.
+    return (
+      <div className="panel">
+        <EmptyState
+          icon={UserIcon}
+          title={`${patient.givenName} ${patient.familyName}: merged record`}
+          description="This record was merged into another record for the same patient. Allergies, history and new care are on the kept record."
+          action={
+            <Link to={`/patients/${patient.mergeInto}`} className="btn-primary">
+              Open the kept record
+            </Link>
+          }
+        />
+        <MergeProvenance patient={patient} />
       </div>
     );
   }
@@ -958,6 +979,10 @@ export function PatientDetail() {
                 <li>{consultations.length} consultation{consultations.length === 1 ? "" : "s"}</li>
                 <li>{dispenses.length} dispensing record{dispenses.length === 1 ? "" : "s"}</li>
               </ul>
+              <p>
+                Other devices that already have this patient keep their copy
+                until it is removed there.
+              </p>
               <p className="font-medium text-danger-fg">This cannot be undone.</p>
             </div>
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

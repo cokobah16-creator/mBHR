@@ -6,6 +6,7 @@ import { migration0002 } from "./0002-vitals-ranges";
 import { migration0003 } from "./0003-retire-demo-users";
 import { migration0004 } from "./0004-portal-access-backfill";
 import { migration0005 } from "./0005-merge-backfill";
+import { migration0006 } from "./0006-patient-search-keys";
 
 const migrations: Migration[] = [
   migration0001,
@@ -13,16 +14,19 @@ const migrations: Migration[] = [
   migration0003,
   migration0004,
   migration0005,
+  migration0006,
 ];
 
 /**
- * Backfills queue work for the server. If one fails, the app still starts:
+ * Backfills that can wait (queued server work, local search keys). If one
+ * fails, the app still starts:
  * it is not marked done, later migrations wait, and it runs again on the
  * next start.
  */
 const RETRY_ON_NEXT_START: ReadonlySet<number> = new Set([
   migration0004.version,
   migration0005.version,
+  migration0006.version,
 ]);
 
 export async function runMigrations(): Promise<void> {

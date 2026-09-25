@@ -236,6 +236,18 @@ export function can(role: Role, permission: Permission): boolean {
 }
 
 /**
+ * A staff role: one this app knows, other than "guest" (the no-access role
+ * for an account without a server staff record).
+ */
+export function isStaffRole(role: unknown): boolean {
+  return (
+    typeof role === "string" &&
+    role !== "guest" &&
+    Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, role)
+  );
+}
+
+/**
  * Every role with the permissions it holds (and, under `all`, every
  * permission the app knows). Used to check this matrix against the database
  * copy (src/auth/roleMatrixParity.test.ts).

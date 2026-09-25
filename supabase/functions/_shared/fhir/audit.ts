@@ -44,16 +44,18 @@ export async function verifyPatientConsent(
     return true;
   }
 
-  const { data: consent } = await supabase
+  // The patient's latest unrevoked data-sharing decision counts; a later
+  // "no" overrides an earlier "yes".
+  const { data: consent, error } = await supabase
     .from("patient_consent_records")
-    .select("*")
+    .select("consent_given")
     .eq("patient_id", patientId)
     .eq("consent_type", "data_sharing")
-    .eq("consented", true)
     .is("revoked_at", null)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  return !!consent;
+  if (error) return false;
+  return (consent as { consent_given?: boolean } | null)?.consent_given === true;
 }
