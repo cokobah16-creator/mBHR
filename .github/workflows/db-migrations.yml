@@ -156,8 +156,13 @@ jobs:
       - name: Load production's schema into the local stack
         if: inputs.action == 'rehearse'
         run: |
-          # Roles that already exist locally only produce "already exists" errors.
-          psql "$LOCAL_DB" -q -f "$RUNNER_TEMP/roles.sql" || true
+          # Skip the roles Supabase manages itself (the local stack already has
+          # them, and supabase_admin can only be changed by a superuser); load
+          # any roles production added. Errors here are not fatal, the schema
+          # load below is.
+          grep -vE '"?(postgres|supabase_[a-z_]+|authenticator|anon|authenticated|service_role|pgbouncer|dashboard_user|pgsodium_[a-z_]+)"?( |;|$)' \
+            "$RUNNER_TEMP/roles.sql" > "$RUNNER_TEMP/roles-custom.sql" || true
+          psql "$LOCAL_DB" -q -f "$RUNNER_TEMP/roles-custom.sql" || true
           psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/schema.sql"
 
       - name: Mark the migrations production has as applied locally
