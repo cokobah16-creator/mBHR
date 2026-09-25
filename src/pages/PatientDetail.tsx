@@ -300,7 +300,7 @@ export function PatientDetail() {
           : "Patient record deleted",
         body: cloudFailed
           ? `${patient.givenName} ${patient.familyName} was removed from this device, but the cloud copy could not be deleted. Check the connection and ask an administrator to remove it.`
-          : `${patient.givenName} ${patient.familyName} has been removed.`,
+          : `${patient.givenName} ${patient.familyName} has been removed from this device and the cloud. Other devices keep their copy until it is removed there.`,
       });
       navigate("/patients");
     } catch (error) {
@@ -977,6 +977,10 @@ export function PatientDetail() {
                 <li>{consultations.length} consultation{consultations.length === 1 ? "" : "s"}</li>
                 <li>{dispenses.length} dispensing record{dispenses.length === 1 ? "" : "s"}</li>
               </ul>
+              <p>
+                Other devices that already have this patient keep their copy
+                until it is removed there.
+              </p>
               <p className="font-medium text-danger-fg">This cannot be undone.</p>
             </div>
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

@@ -544,6 +544,27 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       expect(remote.upsert).not.toHaveBeenCalled();
     });
 
+    it("does not create again a patient deleted on the server", async () => {
+      const { db } = await import("@/db");
+      const patients = fakeTable([
+        // Seen on the server before (holds a server version), now gone there.
+        { id: "p1", givenName: "Ada", _dirty: 1, _serverVersion: 3 },
+        // Registered on this device, never uploaded.
+        { id: "p2", givenName: "Bayo", _dirty: 1 },
+      ]);
+      Object.assign(db, { patients });
+      const remote = remoteTable({ remote: null, version: 1 });
+      mockFrom.mockImplementation((t: string) => (t === "patients" ? remote : remoteTable({})));
+      const { pushChanges } = await import("./adapter");
+
+      const result = await pushChanges();
+
+      expect(remote.upsert).toHaveBeenCalledTimes(1);
+      expect(remote.upsert.mock.calls[0][0]).toMatchObject({ id: "p2" });
+      expect(result.failed).toBe(1);
+      expect(patients.store.get("p1")).toMatchObject({ _dirty: 1 });
+    });
+
     describe("after a conflict is resolved on this device", () => {
       const conflict = {
         entityType: "patients",

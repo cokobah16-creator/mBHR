@@ -722,6 +722,8 @@ async function setCursor(table: Tbl, ts: string) {
 // Detect conflicts by comparing local and remote versions
 type ConflictDetectionResult = {
   hasConflict: boolean;
+  /** The server answered and has no row with this id. */
+  remoteMissing?: boolean;
   conflicts?: ConflictField[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   localData?: any;
@@ -744,7 +746,8 @@ async function detectConflict(
       .eq("id", id)
       .maybeSingle();
 
-    if (error || !remoteData) return { hasConflict: false };
+    if (error) return { hasConflict: false };
+    if (!remoteData) return { hasConflict: false, remoteMissing: true };
 
     const remoteVersion = Number(remoteData.row_version);
     const localVersion = localData._serverVersion;
@@ -889,8 +892,8 @@ export async function pushChanges(): Promise<PushSummary> {
       }
 
       // Check for conflicts before pushing (append-only rows cannot conflict)
-      const conflictCheck = APPEND_ONLY.has(t)
-        ? { hasConflict: false as const }
+      const conflictCheck: ConflictDetectionResult = APPEND_ONLY.has(t)
+        ? { hasConflict: false }
         : await detectConflict(t, record.id, record);
 
       if (conflictCheck.hasConflict && conflictCheck.conflicts) {
@@ -902,6 +905,19 @@ export async function pushChanges(): Promise<PushSummary> {
           conflicts: conflictCheck.conflicts,
         });
         continue; // Skip this record, needs manual resolution
+      }
+
+      // A patient this device has seen on the server (it holds a server
+      // version) is no longer there: it was deleted on the server. Do not
+      // create it again from this device's copy; it stays here, unsent.
+      if (
+        t === "patients" &&
+        conflictCheck.remoteMissing === true &&
+        typeof record._serverVersion === "number"
+      ) {
+        console.warn("[sync] a patient deleted on the server was not uploaded again");
+        summary.failed += 1;
+        continue;
       }
 
       // No conflict, proceed with push. Append-only rows: insert if absent,
