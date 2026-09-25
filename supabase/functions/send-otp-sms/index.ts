@@ -28,7 +28,8 @@ import {
 // Sends a portal verification code by SMS.
 //
 // Who calls this: only staff. No app screen calls it now: portal invitations
-// go by email only (sendPortalInvitation in src/services/portalEnrollment.ts).
+// go through send-otp-email (email) and send-sms-reminder (SMS) with purpose
+// "portal_invitation" (sendPortalInvitation in src/services/portalEnrollment.ts).
 // Patient self-service OTP (requestOTP in src/services/patientPortalAuth.ts)
 // is disabled and does not call it. So the same rules as send-sms-reminder
 // apply: a signed-in staff member with an SMS role (see SMS_SENDER_ROLES),

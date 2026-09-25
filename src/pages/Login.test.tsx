@@ -131,7 +131,7 @@ describe("Login on a device that has never been set up", () => {
   it("links to the privacy notice and the terms of use", async () => {
     renderLogin();
 
-    expect(await screen.findByText(FRESH_DEVICE_NOTICE)).toBeInTheDocument();
+    expect(await screen.findByText(NOT_SET_UP)).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Privacy notice" }),
     ).toHaveAttribute("href", "/privacy");
