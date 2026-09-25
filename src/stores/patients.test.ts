@@ -185,6 +185,35 @@ describe("usePatientsStore", () => {
 
       expect(results).toHaveLength(0);
     });
+
+    it("finds a stored international number from the local format", async () => {
+      mockPatients.set("p4", {
+        id: "p4",
+        givenName: "Ngozi",
+        familyName: "Eze",
+        phone: "+2348031234567",
+      });
+
+      const results = await usePatientsStore
+        .getState()
+        .searchPatients("08031234567");
+
+      expect(results.map((p) => p.id)).toEqual(["p4"]);
+    });
+
+    it("finds a patient by full name in either order", async () => {
+      mockPatients.set("p4", {
+        id: "p4",
+        givenName: "Ngozi",
+        familyName: "Eze",
+        phone: "+2348031234567",
+      });
+
+      for (const q of [" Ngozi Eze", "Eze Ngozi", "ngozi  eze "]) {
+        const results = await usePatientsStore.getState().searchPatients(q);
+        expect(results.map((p) => p.id)).toEqual(["p4"]);
+      }
+    });
   });
 
   describe("setCurrentPatient", () => {

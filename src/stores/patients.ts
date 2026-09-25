@@ -10,6 +10,7 @@ import {
   bumpDailyCount,
 } from "@/db";
 import { queueManagement } from "@/services/queueManagement";
+import { patientMatchesQuery } from "@/utils/patientSearch";
 
 interface PatientsState {
   patients: Patient[];
@@ -60,12 +61,7 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
 
     try {
       const results = await db.patients
-        .filter(
-          (patient) =>
-            patient.givenName.toLowerCase().includes(query.toLowerCase()) ||
-            patient.familyName.toLowerCase().includes(query.toLowerCase()) ||
-            (patient.phone ?? "").includes(query),
-        )
+        .filter((patient) => patientMatchesQuery(patient, query))
         .toArray();
 
       return results;
