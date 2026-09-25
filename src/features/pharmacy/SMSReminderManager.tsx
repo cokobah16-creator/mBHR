@@ -35,6 +35,8 @@ import {
   startNotificationWorker,
   stopNotificationWorker,
 } from "@/services/notificationWorker";
+import { getPatientPreference } from "@/services/preferences";
+import { isReminderOptedOut } from "@/services/reminderEligibility";
 import { SendingReadiness } from "@/features/notifications/OutboxBadges";
 import { OutboxDetail } from "@/features/notifications/OutboxDetail";
 import { OutboxList } from "@/features/notifications/OutboxList";
@@ -47,6 +49,7 @@ import {
 import {
   DELIVERY_STATE_META,
   FILTERABLE_STATES,
+  SERVER_REMINDER_KIND,
   STAFF_FAILURE_PREFIX,
   STAFF_SENT_NOTE,
   countByState,
@@ -266,10 +269,40 @@ export function SMSReminderManager({ patientId, dispenseId }: SMSReminderManager
     return () => clearInterval(id);
   }, [autoSending, loadServer]);
 
+  // Patients with server reminders who turned medication reminders off on
+  // this device. Send runs skip their reminders and leave them pending on
+  // the server, so the list says so instead of "Due". Read with the same
+  // lookup and rule as the sender; a setting that cannot be read is not
+  // flagged.
+  const serverPatientIds = useMemo(
+    () => Array.from(new Set(serverReminders.map((r) => r.patientId).filter(Boolean))),
+    [serverReminders],
+  );
+  const serverPatientIdsKey = serverPatientIds.join("|");
+  // serverPatientIdsKey changes exactly when the id list does.
+  const optedOutIds = useLiveQuery(async () => {
+    const ids = new Set<string>();
+    await Promise.all(
+      serverPatientIds.map(async (id) => {
+        try {
+          if (isReminderOptedOut(SERVER_REMINDER_KIND, await getPatientPreference(id))) {
+            ids.add(id);
+          }
+        } catch {
+          // Unreadable here: not flagged (the sender does not send it either).
+        }
+      }),
+    );
+    return ids;
+  }, [serverPatientIdsKey]);
+
   const items = useMemo(() => {
     if (deviceItems === undefined) return undefined;
-    return sortOutbox([...deviceItems, ...serverReminders.map(fromServerReminder)]);
-  }, [deviceItems, serverReminders]);
+    return sortOutbox([
+      ...deviceItems,
+      ...serverReminders.map((r) => fromServerReminder(r, !!optedOutIds?.has(r.patientId))),
+    ]);
+  }, [deviceItems, serverReminders, optedOutIds]);
 
   const counts = useMemo(() => countByState(items ?? []), [items]);
 

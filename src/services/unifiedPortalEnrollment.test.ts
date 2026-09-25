@@ -41,9 +41,16 @@ vi.mock("@/db", () => ({
 
 import {
   bulkEnrollPatients,
+  canEnrollInPortal,
   enrollPatientInPortal,
   sendPortalInvitation,
 } from "./unifiedPortalEnrollment";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
+
+/** 1 January, ten years ago: someone under 18 whatever today's date is. */
+function childDob(): string {
+  return `${new Date().getFullYear() - 10}-01-01`;
+}
 
 describe("bulkEnrollPatients", () => {
   beforeEach(() => {
@@ -202,6 +209,48 @@ describe("bulkEnrollPatients", () => {
       { patientId: "id2", error: expect.stringMatching(/server's setting was kept/) },
     ]);
   });
+
+  it("lists a patient under 18 as failed with the reason and makes no account for them", async () => {
+    const insert = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({ data: { id: "portal-u" }, error: null }),
+      }),
+    });
+    mockFrom.mockImplementation((table: string) =>
+      table === "patients"
+        ? {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: "adult", given_name: "Ada", family_name: "Obi", dob: "1990-01-01", email: "a@t.com" },
+                  { id: "child", given_name: "Chidi", family_name: "Obi", dob: childDob(), email: "c@t.com" },
+                ],
+                error: null,
+              }),
+            }),
+          }
+        : {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }),
+              ilike: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }),
+            }),
+            insert,
+          },
+    );
+
+    const result = await bulkEnrollPatients(["adult", "child"]);
+
+    expect(result.success).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.errors).toEqual([{ patientId: "child", error: MINOR_PORTAL_ACCESS_MESSAGE }]);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ patient_id: "adult" }));
+    expect(mockRequestChange).toHaveBeenCalledTimes(1);
+    expect(mockRequestChange).toHaveBeenCalledWith("adult", true, {
+      reason: "registration",
+      serverRecord: true,
+    });
+  });
 });
 
 describe("enrollPatientInPortal", () => {
@@ -223,6 +272,20 @@ describe("enrollPatientInPortal", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/role cannot/);
+    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockRequestChange).not.toHaveBeenCalled();
+  });
+
+  it("refuses a patient under 18 without contacting the server", async () => {
+    const result = await enrollPatientInPortal({
+      patientId: "child-1",
+      givenName: "Chidi",
+      familyName: "Obi",
+      dob: childDob(),
+      email: "parent@t.com",
+    });
+
+    expect(result).toEqual({ success: false, error: MINOR_PORTAL_ACCESS_MESSAGE });
     expect(mockFrom).not.toHaveBeenCalled();
     expect(mockRequestChange).not.toHaveBeenCalled();
   });
@@ -315,5 +378,48 @@ describe("sendPortalInvitation (portal_invite)", () => {
 
     expect(mockFrom).toHaveBeenCalledWith("patients");
     expect(result).toMatchObject({ success: false, error: "Patient not found" });
+  });
+});
+
+describe("under-18 records on the server", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.currentUser = { id: "rl-1", role: "registration_lead" };
+  });
+
+  function serverPatient(row: Record<string, unknown>) {
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: row, error: null }),
+        }),
+      }),
+    });
+  }
+
+  it("canEnrollInPortal refuses a child's record and allows an adult's", async () => {
+    serverPatient({ email: "c@t.com", phone: null, portal_enabled: false, dob: childDob() });
+    expect(await canEnrollInPortal("child")).toEqual({
+      canEnroll: false,
+      reason: MINOR_PORTAL_ACCESS_MESSAGE,
+    });
+
+    serverPatient({ email: "a@t.com", phone: null, portal_enabled: false, dob: "1990-01-01" });
+    expect(await canEnrollInPortal("adult")).toEqual({ canEnroll: true });
+
+    // No date of birth: not refused for age.
+    serverPatient({ email: "a@t.com", phone: null, portal_enabled: false, dob: null });
+    expect(await canEnrollInPortal("unknown-age")).toEqual({ canEnroll: true });
+  });
+
+  it("sendPortalInvitation refuses a child's record before recording anything", async () => {
+    serverPatient({ id: "child", email: "c@t.com", phone: null, dob: childDob() });
+
+    const result = await sendPortalInvitation("child");
+
+    expect(result).toEqual({ success: false, error: MINOR_PORTAL_ACCESS_MESSAGE });
+    // Only the patient lookup: no portal account and no invitation time.
+    expect(mockFrom).toHaveBeenCalledTimes(1);
+    expect(mockFrom).toHaveBeenCalledWith("patients");
   });
 });

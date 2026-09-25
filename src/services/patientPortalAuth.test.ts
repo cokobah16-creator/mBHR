@@ -19,6 +19,9 @@ type LocalUser = {
   sessionToken?: string;
   sessionExpiresAt?: string;
   createdAt: string;
+  termsAcceptedVersion?: string;
+  privacyAcceptedVersion?: string;
+  acceptedAt?: string;
 };
 
 vi.mock("@/db", () => ({
@@ -61,9 +64,62 @@ vi.stubGlobal("localStorage", {
 // Lazy import so mocks are in place first
 const { registerPatientPortalAccount, loginPatientPortal, logout } =
   await import("./patientPortalAuth");
+const { MINOR_RECORD_LINK_MESSAGE, UNDER_18_SIGN_UP_MESSAGE } = await import(
+  "@/pages/legal/policyMeta"
+);
+
+// What PatientRegister passes once all three sign-up boxes are ticked.
+const ACCEPTED = {
+  termsVersion: "2026-09-22",
+  privacyVersion: "2026-09-24",
+  acceptedAt: "2026-09-24T10:00:00.000Z",
+};
 
 function seedStore(user: LocalUser) {
   store["mbhr_portal_users"] = JSON.stringify([user]);
+}
+
+/** 1 January, ten years ago: someone under 18 whatever today's date is. */
+function childDob(): string {
+  return `${new Date().getFullYear() - 10}-01-01`;
+}
+
+/** A staff-registered patient on this device with portal access on. */
+function clinicRecord(dob: string) {
+  return {
+    id: "clinic-1",
+    givenName: "Kemi",
+    familyName: "Obi",
+    email: "obi.family@test.com",
+    phone: "",
+    dob,
+    portalEnabled: 1,
+  };
+}
+
+/** Make the registration lookup (email, or phone) find these records. */
+function registrationFinds(records: unknown[]) {
+  mockPatients.where.mockReturnValue({
+    equalsIgnoreCase: vi.fn().mockReturnValue({
+      or: vi.fn().mockReturnValue({
+        equals: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue(records),
+        }),
+      }),
+    }),
+  });
+}
+
+/** Make the login fallback's email lookup find these records. */
+function loginFinds(records: unknown[]) {
+  mockPatients.where.mockReturnValue({
+    equalsIgnoreCase: vi.fn().mockReturnValue({
+      toArray: vi.fn().mockResolvedValue(records),
+    }),
+    equals: vi.fn().mockReturnValue({
+      toArray: vi.fn().mockResolvedValue([]),
+    }),
+  });
 }
 
 describe("patientPortalAuth", () => {
@@ -98,6 +154,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "123456",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/phone number or email/i);
@@ -111,6 +168,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "123456",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/date of birth/i);
@@ -124,6 +182,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "123",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/6-digit PIN/i);
@@ -137,6 +196,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "abc123",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/6-digit PIN/i);
@@ -157,6 +217,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "654321",
+        ACCEPTED,
       );
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/already exists/i);
@@ -170,6 +231,7 @@ describe("patientPortalAuth", () => {
         "Chidi",
         "Eze",
         "112233",
+        ACCEPTED,
       );
       expect(r.success).toBe(true);
       expect(r.sessionToken).toBeTruthy();
@@ -180,6 +242,112 @@ describe("patientPortalAuth", () => {
       expect(saved[0].email).toBe("new@test.com");
       // PIN should be hashed, not stored in plaintext
       expect(saved[0].pin).not.toBe("112233");
+    });
+
+    it("stores the accepted versions and time with the account", async () => {
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "new@test.com",
+        "1995-05-10",
+        "Chidi",
+        "Eze",
+        "112233",
+        ACCEPTED,
+      );
+      expect(r.success).toBe(true);
+
+      const saved = JSON.parse(store["mbhr_portal_users"] ?? "[]");
+      expect(saved[0].termsAcceptedVersion).toBe("2026-09-22");
+      expect(saved[0].privacyAcceptedVersion).toBe("2026-09-24");
+      expect(saved[0].acceptedAt).toBe("2026-09-24T10:00:00.000Z");
+
+      expect(r.portalUser?.consentGiven).toBe(true);
+      expect(r.portalUser?.termsAcceptedVersion).toBe("2026-09-22");
+      expect(r.portalUser?.privacyAcceptedVersion).toBe("2026-09-24");
+      expect(r.portalUser?.consentGivenAt?.toISOString()).toBe(
+        "2026-09-24T10:00:00.000Z",
+      );
+    });
+
+    it("refuses to create an account without a complete acceptance", async () => {
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "new@test.com",
+        "1995-05-10",
+        "Chidi",
+        "Eze",
+        "112233",
+        { ...ACCEPTED, privacyVersion: "" },
+      );
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/tick all three boxes/i);
+      expect(store["mbhr_portal_users"]).toBeUndefined();
+      expect(mockPatients.add).not.toHaveBeenCalled();
+    });
+
+    it("refuses to create an account for someone under 18", async () => {
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "kid@test.com",
+        childDob(),
+        "Kemi",
+        "Obi",
+        "112233",
+        ACCEPTED,
+      );
+      expect(r.success).toBe(false);
+      expect(r.error).toBe(UNDER_18_SIGN_UP_MESSAGE);
+      expect(store["mbhr_portal_users"]).toBeUndefined();
+      expect(mockPatients.add).not.toHaveBeenCalled();
+    });
+
+    it("refuses a date of birth in the future", async () => {
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "new@test.com",
+        `${new Date().getFullYear() + 1}-01-01`,
+        "Chidi",
+        "Eze",
+        "112233",
+        ACCEPTED,
+      );
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/real date of birth/i);
+      expect(mockPatients.add).not.toHaveBeenCalled();
+    });
+
+    it("refuses to link an account to a child's clinic record", async () => {
+      // A parent registering with the email that is on their child's record.
+      registrationFinds([clinicRecord(childDob())]);
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "obi.family@test.com",
+        "1985-03-03",
+        "Ngozi",
+        "Obi",
+        "112233",
+        ACCEPTED,
+      );
+      expect(r.success).toBe(false);
+      expect(r.error).toBe(MINOR_RECORD_LINK_MESSAGE);
+      expect(store["mbhr_portal_users"]).toBeUndefined();
+      expect(mockPatients.add).not.toHaveBeenCalled();
+    });
+
+    it("still links an account to an adult's clinic record", async () => {
+      registrationFinds([clinicRecord("1985-03-03")]);
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "obi.family@test.com",
+        "1985-03-03",
+        "Ngozi",
+        "Obi",
+        "112233",
+        ACCEPTED,
+      );
+      expect(r.success).toBe(true);
+      expect(r.portalUser?.patientId).toBe("clinic-1");
+      expect(mockPatients.add).not.toHaveBeenCalled();
     });
   });
 
@@ -208,6 +376,55 @@ describe("patientPortalAuth", () => {
       });
       const r = await loginPatientPortal("ada@test.com", "999999", "pin");
       expect(r.success).toBe(false);
+    });
+
+    it("reports no consent for an account that never accepted", async () => {
+      seedStore({
+        id: "u1",
+        email: "ada@test.com",
+        dob: "1990-01-01",
+        createdAt: new Date().toISOString(),
+      });
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+      expect(r.success).toBe(true);
+      expect(r.portalUser?.consentGiven).toBe(false);
+      expect(r.portalUser?.termsAcceptedVersion).toBeUndefined();
+    });
+
+    it("reports the stored acceptance when logging back in", async () => {
+      seedStore({
+        id: "u1",
+        email: "ada@test.com",
+        dob: "1990-01-01",
+        createdAt: new Date().toISOString(),
+        termsAcceptedVersion: ACCEPTED.termsVersion,
+        privacyAcceptedVersion: ACCEPTED.privacyVersion,
+        acceptedAt: ACCEPTED.acceptedAt,
+      });
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+      expect(r.success).toBe(true);
+      expect(r.portalUser?.consentGiven).toBe(true);
+      expect(r.portalUser?.privacyAcceptedVersion).toBe("2026-09-24");
+    });
+
+    it("does not open a child's clinic record with contact and date of birth", async () => {
+      const dob = childDob();
+      loginFinds([clinicRecord(dob)]);
+      const r = await loginPatientPortal("obi.family@test.com", dob, "dob");
+      expect(r.success).toBe(false);
+      expect(r.error).toBe(MINOR_RECORD_LINK_MESSAGE);
+      expect(store["mbhr_portal_users"]).toBeUndefined();
+    });
+
+    it("still opens an adult's clinic record with contact and date of birth", async () => {
+      loginFinds([clinicRecord("1985-03-03")]);
+      const r = await loginPatientPortal(
+        "obi.family@test.com",
+        "1985-03-03",
+        "dob",
+      );
+      expect(r.success).toBe(true);
+      expect(r.portalUser?.patientId).toBe("clinic-1");
     });
 
     it("returns error for expired session", async () => {
@@ -331,6 +548,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "123456",
+        ACCEPTED,
       );
 
       expect(r.success).toBe(false);

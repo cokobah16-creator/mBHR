@@ -13,6 +13,7 @@ import {
   LOCAL_PORTAL_CACHE_MAX_AGE_MS,
   type PortalCommandLike,
 } from "./portalAccessRules";
+import { MINOR_RECORD_LINK_MESSAGE } from "@/pages/legal/policyMeta";
 
 const NOW = Date.parse("2026-09-23T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -243,6 +244,19 @@ describe("portalLinkOutcome", () => {
       expect(outcome.message && outcome.message.length).toBeGreaterThan(10);
     }
     expect(portalLinkOutcome("portal_not_enabled").message).toMatch(/not turned on portal access/);
+  });
+
+  it("sends a child's record or an under-18 sign-up to clinic staff, without blaming the date of birth", () => {
+    // portal_link_patient_record answers needs_staff_verification for a
+    // child's record and for an under-18 date of birth, as well as for a
+    // date of birth that does not match.
+    expect(portalLinkOutcome("needs_staff_verification")).toEqual({
+      linked: false,
+      message: MINOR_RECORD_LINK_MESSAGE,
+    });
+    expect(portalLinkOutcome("needs_staff_verification").message).not.toMatch(
+      /does not match/,
+    );
   });
 });
 

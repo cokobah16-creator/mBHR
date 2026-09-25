@@ -1,251 +1,205 @@
 # Portal Enrollment Quick Start Guide
 
+What staff and administrators can do to give a patient portal access, and
+what the patient does next. Portal accounts are for adults only: the app
+refuses portal access, invitations and sign-up for anyone under 18 by their
+date of birth.
+
+Portal access is decided by the clinic server. When you turn it on or off,
+the change is saved on this device, shown as "waiting for the server", and
+queued. It is sent to the server (`set_patient_portal_access`) only while
+you are signed in online on this device (a PIN unlock is not enough). The
+server confirms it or refuses it, and the patient's record shows the answer.
+On a device with no server connection, the change stays on that device.
+
+## Who can do what
+
+- **Turn portal access on or off** (`portal_manage`): registration
+  volunteer, nurse, doctor, registration lead, lead clinician and
+  administrator.
+- **Send portal invitations** (`portal_invite`): registration lead, lead
+  clinician and administrator. The server checks this again.
+
 ## For Clinical Staff
 
-### Enrolling a Patient During Registration
+### During registration
 
-1. **Fill in Patient Information**
-   - Enter patient's basic details (name, DOB, address, etc.)
-   - Add either email address OR phone number (required for portal access)
+1. Fill in the patient's details. Add an email address or a phone number.
+2. Tick "Enable patient portal access" only if the patient agrees. It is
+   never ticked for you, and you cannot tick it for a patient under 18.
+3. Tick "I have explained portal access terms to the patient and they
+   agree".
+4. Save. Portal access is asked for:
+   - Online, mBHR first makes a portal account on the server
+     (`patient_portal_users`), then queues the access request. On a server
+     built from `supabase/migrations`, that insert fails (it sends columns
+     the table does not have), and the message says portal enrolment
+     failed; turn access on from the patient's record instead.
+   - Offline, it only queues the access request.
+   - With no server connection, access is turned on for this device only.
 
-2. **Enable Portal Access**
-   - Portal enrollment section appears automatically when contact info is added
-   - Check the box: ☑️ "Enable patient portal access"
-   - Confirm you explained portal benefits to patient
+   If the form stops to ask about a possible duplicate and you create a new
+   patient, it does not ask for portal access.
 
-3. **Send Invitation (Optional)**
-   - Check ☑️ "Send invitation now" to immediately send OTP link
-   - OR leave unchecked to send invitation later from patient details
+The form sends no invitation and has no box for one. Send it from the
+patient's record once the server has confirmed access.
 
-4. **Complete Registration**
-   - Click "Register Patient"
-   - Patient record saved with portal enabled
-   - Invitation queued/sent based on your selection
+### On the patient's record
 
-### Managing Portal Access for Existing Patient
+The "Patient portal" card shows whether access is on, where the decision
+stands (waiting for the server, confirmed by the server, refused by the
+server, or kept on this device only), the contact method, the last portal
+sign-in and the invitation count.
 
-1. **Open Patient Details**
-   - Navigate to patient record
-   - Find "Portal Access" card
+- **Portal access switch.** Turning access on opens a dialog: tick
+  "*Name* has agreed to use the patient portal." before "Turn on access"
+  can be pressed. The tick is not stored on the server: the request
+  carries only the reason code `staff_choice`. Turning access off asks you
+  to confirm. If you are not signed in online, the card says the change is
+  queued and sent to the server when you sign in online. For a patient
+  under 18 the switch can only turn access off.
+- **Send portal invitation.** Shown when access is on and your role may
+  send invitations; it can be pressed once the server has confirmed
+  access. The server looks up the
+  stored contact and sends by email if the patient has an email address,
+  otherwise by SMS. It builds the text and link itself and records who
+  sent it. It sends only for staff signed in online. When no message goes
+  out (not signed in online, the email or SMS service is not set up or
+  fails), the card shows the registration link for you to share.
+- **Create registration link.** Shown instead when the device is offline or
+  has no server connection. Share the link yourself: read it out, show it
+  on screen, or send it by WhatsApp or SMS.
+- After a send, you can send again after 60 seconds. The server also limits
+  how many invitations one account and one patient can get.
+- A patient under 18 gets no invitation and no registration link.
 
-2. **Portal Status Card Shows:**
-   - Current status (Enabled/Disabled/Verified/Pending)
-   - Contact method (email/SMS)
-   - Last login time
-   - Invitation history
+## What the Patient Does
 
-3. **Available Actions:**
-   - **Toggle**: Enable/Disable portal access
-   - **Send/Resend**: Send portal invitation (60-second cooldown applies)
-   - View countdown timer if recently sent
+1. Open the registration link, or go to `/patient/login` and choose
+   "Register here". The link fills in the email or phone number.
+2. Enter a full name, an email address, a date of birth and a password,
+   and tick the three consent boxes. A phone number is optional. An email
+   address is always required. On a device with no server connection, a
+   6-digit PIN replaces the password. People under 18 cannot register.
+3. If asked, confirm the email address with the link sent to it.
+4. Sign in at `/patient/login` with their email and password (or email and
+   PIN on a device with no server connection).
+
+Linking to the clinic record (online):
+
+- The server (`portal_link_patient_record`) links the new account to the
+  clinic record whose email address is the account's confirmed email, when
+  portal access is on for that record and the date of birth matches. A
+  phone number typed at registration is not used to find the record, so
+  for a patient the clinic has only a phone number for, add their email to
+  their record before they register. The SMS invitation says to use the
+  phone number and date of birth; the patient still needs that email.
+- If no clinic record matches, the server makes a new record for the
+  account. It is not the clinic's record.
+- A child's record is never linked, and no record is made for an under-18
+  date of birth. The patient is told to ask clinic staff.
+- The patient can use the online portal only while portal access is on for
+  that record on the server.
+
+On a device with no server connection, registration looks for a record on
+that device with the same email or phone number. It links to it only if
+portal access is on for it and the date of birth matches, and refuses
+otherwise. It never links a child's record. With no match it makes a new
+record.
 
 ## For Administrators
 
-### Viewing Portal Analytics
+Only an administrator can use these pages.
 
-1. **Navigate to Portal Dashboard**
-   - URL: `/admin/portal-dashboard`
-   - View statistics:
-     - Total patients vs Portal enabled
-     - Verified users count
-     - Pending verifications
-     - Active users (last 30 days)
-     - Total invitations sent
+- **Patient portal overview** (`/admin/portal-dashboard`). Counts and a
+  searchable list from the patient records on this device: portal enabled,
+  verified, pending verification, active in the last 30 days, and invited.
+- **Enable portal access** (`/admin/portal-migration`). Asks the server to
+  turn access on for patients stored on this device. Filter by
+  registration date, state and contact method; patients under 18 are left
+  out. "Enable access only" queues the requests. "Enable and send
+  invitations" sends the queued requests once, then invites only the
+  patients whose access the server confirmed; it needs you signed in
+  online. The result follows the server's answers. You can download a CSV
+  report of the run.
+- **Create portal accounts on the server**
+  (`/admin/bulk-portal-migration`). Works on the server's patient records,
+  online only. Lists up to 100 of the newest patients with an email or
+  phone number and no portal access; patients under 18 are left out before
+  the limit. It makes a portal account on the server for each one and asks
+  for access, like the registration form, so it can fail the same way; the
+  result lists why and follows the server's answers. No invitation is
+  sent: tell patients to register as described above.
 
-2. **Manage Patients**
-   - Search patients by name
-   - Filter by status (all/enabled/disabled/verified/pending)
-   - Click patient name to view details
-   - See invitation counts and activity
+Only use these pages for patients who agreed to use the portal. The pages
+do not ask them, and no record of their agreement is stored.
 
-### Bulk Migration of Existing Patients
+## Troubleshooting
 
-1. **Navigate to Migration Tool**
-   - URL: `/admin/portal-migration`
-
-2. **Filter Patients**
-   - **Date Range**: Registration date (From/To)
-   - **State**: Filter by patient's state
-   - **Contact Method**: Email only, Phone only, or Any
-
-3. **Select Patients**
-   - Review filtered list
-   - Check "Select All" or individual patients
-   - Preview total selected
-
-4. **Enable Portal Access**
-   - Click "Enable Portal Access for Selected"
-   - Optional: Check "Send invitations immediately"
-   - Monitor progress bar
-
-5. **Review Results**
-   - See success/failure counts
-   - View detailed error messages
-   - Export results to CSV
+- **The portal box is greyed out on the registration form.** The date of
+  birth entered makes the patient under 18.
+- **"Waiting for the server" does not go away.** The change is sent only
+  while the person who made it is signed in online and the device syncs.
+  If the server has not answered, it is sent again at each sync.
+- **"The server refused the last change".** The card shows the server's
+  reason and its current setting.
+- **"Invitations can be sent once the server confirms portal access."**
+  Wait for the server's answer.
+- **"No email or SMS was sent".** Share the link shown. Check that you are
+  signed in online and that email (`RESEND_API_KEY`) or SMS is set up on
+  the server.
+- **"Resend available in …".** Wait for the 60-second countdown.
+- **The patient registered but sees none of their records.** Check that
+  portal access is on for their record on the server, that the record has
+  their email address, and that they confirmed it.
+- **The patient is under 18.** Sign-up refuses them, and a child's record
+  cannot be linked to an account. The messages send a parent or guardian to
+  clinic staff.
 
 ## Technical Details
 
-### Rate Limiting
-
-- 60-second cooldown between invitation resends per patient
-- Countdown timer displayed in UI
-- Configurable via `VITE_INVITE_RATE_MS` environment variable
-
-### Background Sync
-
-- Automatically starts when app loads
-- Processes invitation queue every 30 seconds
-- Syncs portal activity from Supabase
-- Works offline - queues operations for later
-
-### Contact Requirements
-
-- Portal requires at least one contact method:
-  - Email address (preferred)
-  - OR Phone number (SMS)
-- Terms acceptance required before enabling
-
-### Invitation Flow
-
-**Immediate Send:**
-
-- Staff checks "Send invitation now" during registration
-- Invitation queued immediately
-- Background worker sends within 30 seconds
-- Patient receives OTP link via email/SMS
-
-**Deferred Send:**
-
-- Portal enabled without immediate invitation
-- Staff can send later from patient details
-- Click "Send Invitation" button
-- Same background processing applies
-
-### Patient Experience
-
-1. Patient receives invitation via email/SMS
-2. Clicks link to portal login page
-3. Enters email/phone and requests OTP
-4. Receives 6-digit OTP code
-5. Logs in with OTP
-6. First login verifies contact and activates account
-7. Portal access granted
-
-### Troubleshooting
-
-**Portal section doesn't appear in registration form:**
-
-- Ensure email OR phone is filled in
-- Check browser console for errors
-
-**Can't resend invitation:**
-
-- Check rate limit countdown timer
-- Wait 60 seconds since last send
-- Verify patient has contact info
-
-**Invitation not received:**
-
-- Check dev mode logs (console shows OTP)
-- Verify email/phone number is correct
-- Check spam folder (email)
-- Verify SMS service configured (production)
-
-**Patient can't login:**
-
-- Verify portal is enabled for patient
-- Check contact information is correct
-- Ensure OTP service is configured
-- Check Supabase auth logs
+- Portal access: `requestPortalAccessChange` (`src/services/portalAccess.ts`)
+  queues `set_patient_portal_access`
+  (`supabase/migrations/20260925100100_portal_access_authoritative.sql`)
+  in the command outbox (`src/sync/commandOutbox.ts`). A guard trigger
+  puts back `patients.portal_enabled` when an API write tries to change it
+  directly. Auto-enrolment on insert is off
+  (`20260926120000_consent_defaults_off.sql` sets `auto_enrollment_enabled`
+  to false).
+- Invitations: `sendPortalInvitation` (`src/services/portalEnrollment.ts`)
+  calls `send-otp-email` or `send-sms-reminder` with purpose
+  `portal_invitation` and the patient id. The server checks the role and the
+  patient with `portal_invitation_begin()` and records the outcome with
+  `portal_invitation_finish()`
+  (`20260925100600_registration_lead_portal_invite.sql`). Nothing queues or
+  retries them.
+- Children are refused in the app (`isMinor` in `src/utils/patient.ts`) and
+  by `portal_link_patient_record`
+  (`20260926120100_portal_link_adults_only.sql`).
+  `set_patient_portal_access` and `portal_invitation_begin` do not check age
+  yet.
+- `send-otp-email` needs `RESEND_API_KEY` (and optionally `SENDER_EMAIL`) on
+  the server. Without it, it sends nothing and the card shows the link.
+- The portal sync worker (`src/services/portalSyncWorker.ts`) runs every 30
+  seconds while the app is open and online. It copies portal activity (a
+  linked account, a verified contact, the last portal activity) from the
+  server for patients with access on. It sends no invitations.
 
 ### Configuration
 
-**Environment Variables:**
-
 ```bash
-# Rate limit for invitation resends (milliseconds)
+# Wait between invitations to the same patient (milliseconds)
 VITE_INVITE_RATE_MS=60000  # Default: 60 seconds
 
-# Supabase configuration (already set)
+# Server connection. Leave empty for a device with no server.
 VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_anon_key
 ```
 
-**Sync Worker Customization:**
-
-```typescript
-// In App.tsx, change sync interval
-startPortalSyncWorker(60); // Sync every 60 seconds instead of 30
-```
-
-## Best Practices
-
-### For Staff
-
-1. ✅ Always explain portal benefits to patients before enabling
-2. ✅ Verify contact information is accurate
-3. ✅ Use immediate send for tech-savvy patients
-4. ✅ Use deferred send if patient needs help setting up
-5. ✅ Check portal status before calling patients about access issues
-
-### For Administrators
-
-1. ✅ Use bulk migration during low-activity periods
-2. ✅ Filter by contact method to ensure successful delivery
-3. ✅ Export results for record-keeping
-4. ✅ Monitor dashboard weekly for adoption metrics
-5. ✅ Follow up with patients who haven't verified within 1 week
-
-### Security
-
-1. 🔒 Never share OTP codes over insecure channels
-2. 🔒 Verify patient identity before enabling portal
-3. 🔒 Terms acceptance required for all enrollments
-4. 🔒 Admin tools protected by role-based access
-5. 🔒 All data synced securely to Supabase
-
-## Support
-
-**For technical issues:**
-
-- Check browser console for errors
-- Review background sync worker logs
-- Verify Supabase connection status
-
-**For user issues:**
-
-- Verify contact information
-- Check rate limit timers
-- Review invitation history in patient details
-
-**For bulk operations:**
-
-- Start with small test batch (10-20 patients)
-- Monitor progress closely
-- Export and review results
-- Address failures before proceeding
-
----
-
-## Quick Reference Commands
-
-```bash
-# Run development server
-npm run dev
-
-# Run tests
-npm run test:run
-
-# Build for production
-npm run build
-
-# Check types
-npm run typecheck
-```
-
 ## URLs
 
-- **Portal Dashboard**: `/admin/portal-dashboard`
-- **Bulk Migration**: `/admin/portal-migration`
-- **Patient Login**: `/patient/login`
-- **Patient Registration**: `/patient/register`
+- **Patient portal overview**: `/admin/portal-dashboard`
+- **Enable portal access**: `/admin/portal-migration`
+- **Create portal accounts on the server**: `/admin/bulk-portal-migration`
+- **Patient login**: `/patient/login`
+- **Patient registration**: `/patient/register`

@@ -22,6 +22,7 @@ import { setDevicePin } from "@/db/devicePin";
 import { getRoleDisplayName, type Role } from "@/auth/roles";
 import { CANONICAL_ORIGIN, isOffCanonicalOrigin } from "@/config/canonicalOrigin";
 import type { User } from "@/db";
+import { LegalLinks } from "@/pages/legal/LegalLinks";
 
 /** Mirrors MAX_FAILED_ATTEMPTS in stores/auth.ts; used for display only. */
 const MAX_ATTEMPTS = 5;
@@ -802,6 +803,8 @@ function LoginShell({
         )}
 
         {children}
+
+        <LegalLinks className="mt-6" />
       </div>
     </div>
   );

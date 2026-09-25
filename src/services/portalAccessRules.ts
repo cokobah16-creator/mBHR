@@ -3,6 +3,8 @@
 // (set_patient_portal_access, supabase/migrations/20260925100100_*); these
 // helpers read its answers and describe the device's copy honestly.
 
+import { MINOR_RECORD_LINK_MESSAGE } from "@/pages/legal/policyMeta";
+
 /** Why a portal access change was made (the RPC's p_source). */
 export type PortalAccessSource = "staff" | "auto_enrollment" | "merge";
 
@@ -259,11 +261,12 @@ export function portalLinkOutcome(status: unknown): PortalLinkOutcome {
           "Your account is created, but your clinic has not turned on portal access for you yet. Ask clinic staff to turn it on, then sign in.",
       };
     case "needs_staff_verification":
-      return {
-        linked: false,
-        message:
-          "Your account is created, but your date of birth does not match your clinic record. Please ask clinic staff to check it.",
-      };
+      // Returned when the date of birth does not match the clinic record,
+      // when the matching record belongs to someone under 18, and when no
+      // record matches and the date of birth is under 18
+      // (20260926120100_portal_link_adults_only.sql). One message that is
+      // true for all three: ask clinic staff.
+      return { linked: false, message: MINOR_RECORD_LINK_MESSAGE };
     case "contact_not_verified":
       return {
         linked: false,

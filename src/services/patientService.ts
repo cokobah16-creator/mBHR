@@ -7,6 +7,8 @@
  */
 import { supabase } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
+import { isMinor } from "@/utils/patient";
+import { MINOR_RECORD_LINK_MESSAGE } from "@/pages/legal/policyMeta";
 
 export interface PatientProfile {
   id: string;
@@ -102,9 +104,14 @@ export async function getPatientProfile(
 }
 
 /**
- * Fetch a patient by email (RLS allows access when auth.email() matches).
- * Used as a fallback when auth_uid is not yet set on the patient row.
- * If found, links the row to the auth account by setting auth_uid.
+ * Fetch a patient by email. Used as a fallback when auth_uid is not yet set
+ * on the patient row. Under RLS (patients_select) a portal account reads
+ * only records already linked to it (by auth_uid or through its
+ * patient_portal_users row) that have portal access on, so no other record
+ * is found here. If the row found has no auth_uid, this tries to set it
+ * (best-effort). A row not yet linked that belongs to someone under 18 is
+ * neither linked nor returned: it is often a parent's email on their
+ * child's record.
  */
 export async function getPatientProfileByEmail(
   authUid: string,
@@ -124,6 +131,10 @@ export async function getPatientProfileByEmail(
   }
   if (!data)
     return { data: null, error: "No patient profile found for this email." };
+
+  if (!data.auth_uid && isMinor(data.dob as string | null) === true) {
+    return { data: null, error: MINOR_RECORD_LINK_MESSAGE };
+  }
 
   // Link auth_uid for future lookups (best-effort, ignore failure)
   if (!data.auth_uid) {

@@ -6,11 +6,35 @@ This checklist takes a common list of 20 things an app should do so it doesn't g
 
 The findings were produced by reading the code, then checked a second time by opening every cited file. Line numbers are correct as of the commit above and will drift as the code changes.
 
+## Progress
+
+*Updated 25 September 2026.* The fixes that needed no decision by the Foundation are in the code on branch `claude/list-creation-implementation-izwdi5`. That branch was then merged with `mainone` at `68e6da0`. `mainone` had meanwhile made portal access a server decision, built portal invitations on the server and sent SMS with the staff member's token. Where the two overlapped, `mainone`'s design was kept and this branch's rules were put back on top of it; the last row of the table says where. Each item the table names (Fix these first and items 1, 2, 6, 9, 17 and 18) has a **Done in the code** paragraph that says which steps are done and which remain.
+
+| Change | Items | Where |
+|---|---|---|
+| Resend key removed from the repository, and `send-otp-email` limited to signed-in staff | Fix these first | Lane mB, merge `433177f`. `mainone` removed the key too (`c7576ac`) and rebuilt `send-otp-email` around server-built invitations (`57ae804`) |
+| Reminder opt-outs checked right before every send, and a pulled `false` counts | 18, 9 | Lane mC, merge `37eb105` |
+| Auto-enrolment switched off, treatment sharing off by default, and staff tick that the patient agreed before turning portal access on | 9, 6 | Lane mA, merge `ef67701`. After the merge the trigger is kept (`mainone` made it insert-only) and its setting turns it off; the tick is not stored |
+| Three separate sign-up boxes, with the accepted versions kept | 6, 2 | Lane mA, merge `ef67701` |
+| Portal sign-up and linking for adults only, in the app and on the server | 17 | Lane mA, merge `ef67701`; `441eac3` |
+| Privacy notice names every processor, has a Children section, and is linked from staff sign-in and the portal | 1 | Lane mA, merge `ef67701`; `458b0b9` |
+| Children's records refused portal access, invitations and enrolment by staff and admin tools; one opt-out rule for reminder settings on every screen | 17, 9, 18 | `2bbc676` to `011da0d`. The "no SMS invitation" wording from this range was dropped in the merge: `mainone` sends SMS invitations |
+| Merged with `mainone`: portal access decided by the server through a queued `set_patient_portal_access` command (`20260925100100`, `64b0a20`), invitations checked and built by the server for `portal_invite` roles (`20260925100600`, `57ae804`), SMS sent with the staff member's token (`ccc25eb`). Re-applied on top: the admin-only code email, the staff attestation, the adults-only rules, the send-time opt-out check and consent defaults off | Fix these first, 6, 9, 17, 18 | Merge `66f7ae6`, then `73cfd83` to `85062c9` |
+
+Still to do by the Foundation:
+- Once this is merged into `mainone`, run Actions > Database migrations from `mainone` with action `apply` (confirm box: `apply to production`; the default `functions` value redeploys `send-sms-reminder` and `send-otp-email`). This applies `20260926120000_consent_defaults_off.sql` and `20260926120100_portal_link_adults_only.sql`. Until then, production keeps its current `auto_enrollment_enabled` setting (the migrations seed it `true`, so auto-enrolment is on unless someone turned it off) and shares treatment records by default (`allow_treatment_access` defaults to `true`), and runs the old `portal_link_patient_record` and whichever `send-otp-email` was last deployed.
+- Revoke the old Resend key. It was removed from the code on both lines of work, but it is still in git history.
+- Decide whether patients who were enrolled automatically keep portal access. Nothing was reversed.
+- The decisions under [Before you start](#before-you-start): the controller and contacts, retention periods, the "AI training" purpose, guardian verification, and two-way SMS.
+- Have a native speaker check the new Hausa, Yoruba, Igbo and Pidgin labels for the legal links (`legal.links.*` in `src/i18n/locales`).
+
+Unit tests, the type check and the build could not run where this work was done, because the npm registry was blocked. CI runs them on a pull request.
+
 ## Fix these first
 
 These two problems are not on the list of 20, but they carry more risk than most items on it.
 
-1. **A Resend API key is committed to the repository.** The same key, starting `re_YFFHp3`, appears 16 times in five files:
+1. **A Resend API key is committed to the repository.** The same key, starting `re_YFFH`, appeared 16 times in five files:
    - `scripts/set-resend-key.sh:8`
    - `docs/guides/QUICK_REFERENCE_CARD.md:22,44,51`
    - `docs/archive/development-history/EMAIL_NOW_WORKING.md:5,37,82`
@@ -19,10 +43,14 @@ These two problems are not on the list of 20, but they carry more risk than most
 
    The repository is on GitHub, so treat the key as exposed. Revoke it in the Resend dashboard, issue a new one, and store the new key only as the `RESEND_API_KEY` Edge Function secret. Replace every occurrence in these files with a placeholder such as `re_your_api_key`. Removing the key from git history is optional once it is revoked.
 
+   **Done in the code:** every copy is now the placeholder `re_your_api_key`, and `scripts/set-resend-key.sh` reads the key from `RESEND_API_KEY` or a hidden prompt and never prints it. `mainone` removed the key independently (`c7576ac`) and reviewed the history in `docs/security/CREDENTIAL_HISTORY_REVIEW.md`. The merge keeps this branch's script, which hands the key to the Supabase CLI in a temporary env-file only the user can read, never on the command line. **Still to do by the Foundation:** revoke the old key in the Resend dashboard and set a new one. It is still in git history.
+
 2. **`send-otp-email` will send any message to any address.** `supabase/functions/send-otp-email/index.ts` checks only an IP rate limit (`:18`). It then accepts `email`, `subject` and `message` from the caller (`:32`) and sends them through the Foundation's Resend account. Anyone holding the public anon key can use it to send mail in the Foundation's name. The message is inserted into the HTML without escaping (`:138`), and so is the code (`:120`). In demo mode it also logs the recipient and the code (`:66`). To fix it:
    1. Require a signed-in staff session for message mode, using `supabase/functions/_shared/security/staffAuth.ts`, which the SMS functions already use.
    2. Accept only a 4 to 8 digit `otp`, and HTML-escape every value placed in the email.
    3. Stop logging the address and the code.
+
+   **Done in the code:** after the merge, the function follows `mainone`'s design (`57ae804`). A portal invitation is a request with `purpose: "portal_invitation"` and a patient id, from a signed-in staff member whose role holds `portal_invite` (registration lead, lead clinician, administrator), checked in the database by `portal_invitation_begin()`. The server looks up the stored address and builds the subject, text and link, so the caller chooses neither the recipient nor the words. The old free-text mode is refused with `message_mode_removed`. On top of that design, this branch's rules are back: the verification code email is admin only (`requireStaff` with `OTP_SENDER_ROLES`, checked before the address or the code is looked at, in `supabase/functions/_shared/security/emailRequest.ts`) and accepts a 4 to 8 digit code; every value placed in HTML is escaped with `supabase/functions/_shared/security/html.ts`, which the invitation email now uses too; no log line holds an address (masked or not), a code, or the caller's user id or role; anything but POST gets 405 (the browser's CORS preflight, OPTIONS, gets an empty 200), and the rate limit answers with a JSON 429. The app sends the signed-in staff member's token. **Still to do by the Foundation:** deploy the function (the same `apply` run, see [Progress](#progress)).
 
 The migrations used to give anonymous users read and insert access to every row in `patients`. The row-level security rework in `supabase/migrations/20260924110100_rls_clinical_core.sql` removed that, and a read-only check of the live database on 24 September 2026 found no such policy. No action is needed.
 
@@ -48,7 +76,7 @@ The migrations used to give anonymous users read and insert access to every row 
 | 14 | [Fix your color contrast ratio](#14-fix-your-color-contrast-ratio) | Partial | P1 | L |
 | 15 | [Add keyboard navigation](#15-add-keyboard-navigation) | Partial | P2 | M |
 | 16 | [Add your business details](#16-add-your-business-details) | Partial | P1 | M |
-| 17 | [Get age consent if you collect kids' data](#17-get-age-consent-if-you-collect-kids-data) | Missing | P0 | L |
+| 17 | [Get age consent if you collect kids' data](#17-get-age-consent-if-you-collect-kids-data) | Partial | P0 | L |
 | 18 | [Add an unsubscribe link to your emails](#18-add-an-unsubscribe-link-to-your-emails) | Partial | P0 | L |
 | 19 | [License any fonts and images you use](#19-license-any-fonts-and-images-you-use) | Partial | P2 | M |
 | 20 | [Add a data deletion request option](#20-add-a-data-deletion-request-option) | Partial | P1 | L |
@@ -68,12 +96,27 @@ The migrations used to give anonymous users read and insert access to every row 
 4. Add a "Transfers outside Nigeria" section. Name the country for each provider and the NDPA safeguard relied on.
 5. Replace `:77-78` with the list of recipients, rendered from `SHARING_OPTIONS` (`src/features/patient-portal/account/sharingChanges.ts`). Say that sharing for treatment and with health apps stays on until the patient turns it off at `/patient/data-sharing`.
 6. Replace `:94-99` with the seeded periods (`20260125095109_...sql:233-240`): audit logs and portal access logs 3 years, TEFCA logs 6 years (as in `src/config/tefca.ts:54`). Add the agreed period for medical records.
-7. Create `supabase/migrations/20260926000300_limit_conflict_deltas.sql` (new, shared with item 7). Set `COMMENT ON TABLE conflict_change_deltas` to the real purpose. Then `UPDATE data_retention_policies` where `table_name` is `conflict_change_deltas`. Do not INSERT: `table_name` is UNIQUE (`:139`) and the row is already seeded. If the AI-training use stays, say so in the notice instead.
+7. Create `supabase/migrations/20260926120300_limit_conflict_deltas.sql` (new, shared with item 7). Set `COMMENT ON TABLE conflict_change_deltas` to the real purpose. Then `UPDATE data_retention_policies` where `table_name` is `conflict_change_deltas`. Do not INSERT: `table_name` is UNIQUE (`:139`) and the row is already seeded. If the AI-training use stays, say so in the notice instead.
 8. Add a "Children" section that matches the code. Staff registration has no guardian field (`src/components/PatientForm.tsx`). A portal user can add a child profile from a name and date of birth only (`src/features/patient-portal/CaregiverSetup.tsx:34,67`).
 9. At `:102-109`, add restriction, objection, portability (`/patient/export`), withdrawing consent, a response time and the right to complain to the NDPC. Change `:106` to say that staff stop reminders on request. Nothing reads the portal toggle (`src/features/patient-portal/ManageAccount.tsx:153`), and `src/services/messaging.ts:72-73` checks the staff-side preference instead.
 10. Create `src/pages/legal/LegalLinks.tsx` (new) from the Privacy and Terms links at `AuthShell.tsx:42-56`. Render it in `LoginShell` (`Login.tsx:455`), after the form in `FirstRunSetup.tsx`, and in the "More" sheet of `PatientPortalLayout.tsx`. Reuse it in `Home.tsx`, `Layout.tsx`, `LegalPage.tsx` and `AuthShell.tsx`.
 11. Add a `/privacy` link to the invitation email footer (`supabase/functions/send-otp-email/index.ts:129,157`).
 12. In the same commit, update `docs/legal/README.md`. Fix `:4-5`: it says every patient accepts the notice at sign-up, which is not true for accounts that staff enable. Send the result to a Nigerian lawyer.
+
+**Done in the code (lane mA).** Steps 3 and 8 are done, and so are parts of steps 1, 5, 10 and 12.
+- `src/pages/legal/policyMeta.ts` holds `PRIVACY_VERSION` and `TERMS_VERSION`, and the pages take their dates from it.
+- A "Service providers" section names:
+  - Twilio as the SMS fallback
+  - Vercel, including the contact detail an invitation link carries
+  - GitHub Actions for the backup
+  - jsDelivr or Statically for the map outline
+  - `meet.jit.si` (8x8) for televisits
+- A "Your sharing choices" section lists the starting choices. `PrivacyPolicy.test.tsx` checks them against `DEFAULT_SHARING_FLAGS`, which the portal's sharing page uses.
+- A "Children" section matches the age rules in item 17.
+- `LegalLinks` is on staff sign-in and the device-PIN step, first-run setup, portal sign-in and sign-up, and the signed-in portal menus. `Home.tsx`, `Layout.tsx` and `LegalPage.tsx` still have their own links.
+- `docs/legal/README.md` says which accounts have no recorded acceptance.
+
+Step 1's `PRIVACY_CONTACT` waits on the contact decision below, and the version is not yet written to `patient_consent_records.consent_version` (item 6). Step 10's reuse in `Home.tsx`, `Layout.tsx` and `LegalPage.tsx` is not done. Steps 2, 4, 6, 7, 9 and 11 are still open, and a lawyer has not reviewed the notice. Steps 2, 6 and 7 need the controller, retention and AI-training decisions. Since the merge with `mainone`, the invitation email is built on the server (`invitationEmail` in `supabase/functions/_shared/security/portalInvitation.ts`), so step 11's footer link belongs there.
 
 **How to check it.**
 - `src/pages/legal/PrivacyPolicy.test.tsx` (new): reuse the `import.meta.glob` scan from `src/test/startupChunks.test.ts:24`, and read `public/` with `node:fs`. Look for `api.twilio.com`, `api.ng.termii.com`, `api.resend.com`, `meet.jit.si`, `cdn.jsdelivr.net` and `@sentry/react`. Render the page in a `MemoryRouter`. Fail if a provider found in the code is not named.
@@ -101,12 +144,23 @@ The migrations used to give anonymous users read and insert access to every row 
 8. Stop auto-ticking `portalEnabled` (`PatientForm.tsx:53-60`). Pass `termsAccepted` from `PatientForm.tsx:102-111` into `enrollPatientInPortal`.
 9. In the insert at `unifiedPortalEnrollment.ts:116-128`, drop the undefined `given_name`, `family_name`, `dob` and `sex` columns. Write `consent_given`, `consent_given_at`, `terms_accepted_version` and `terms_accepted_at`.
 10. Replace the hard-coded `termsAccepted: true` at `PortalStatusCard.tsx:141` with an attestation checkbox. Make bulk enable (`portalEnrollment.ts:526-528`) send invitations only.
-11. Create `supabase/migrations/20260926000100_record_portal_consent.sql` (new, shared with item 6). Use the `captured_by` column from item 6, and add a unique index on `(patient_id, consent_type, consent_version) WHERE revoked_at IS NULL`. Add a `SECURITY INVOKER` trigger that sets `created_at` to `now()` and fills `captured_by` for staff. Add no policy and no definer RPC.
+11. Create `supabase/migrations/20260926120200_record_portal_consent.sql` (new, shared with item 6). Use the `captured_by` column from item 6, and add a unique index on `(patient_id, consent_type, consent_version) WHERE revoked_at IS NULL`. Add a `SECURITY INVOKER` trigger that sets `created_at` to `now()` and fills `captured_by` for staff. Add no policy and no definer RPC.
 12. Add `termsAcceptedVersion` and `termsAcceptedAt` to `User` (`src/db/index.ts:6-19`) without a new `db.version()`. Pulls keep fields that exist only on the device (`src/sync/adapter.ts:947-950`). Do not map these fields to `app_users`, because only the service role can change permanent-admin rows (`20260924110200_rls_staff_conflicts_messaging.sql:62-64`).
 13. Add a required terms checkbox before the submit button at `FirstRunSetup.tsx:211`. Store the version through `createFirstAdmin` (`src/db/firstRun.ts:65`) and leave `adminPermanent` untouched.
 14. Make `ProtectedRoute` (`App.tsx:290-298`) redirect staff to a new `/accept-terms` screen when their version is stale. Link `/terms` from `LoginShell` (`Login.tsx:455`).
 15. Change `consented` to `consent_given` at `src/services/fhir/tefcaAuth.ts:193,196` and `supabase/functions/_shared/fhir/audit.ts:52`.
 16. In the same commit, update `PrivacyPolicy.tsx` to say that the acceptance version and time are kept, and correct `docs/legal/README.md:3-5`.
+
+**Done in the code (lane mA).** Steps 1, 3, 6 and 16 are done, and so are parts of steps 4, 5, 8, 10 and 14.
+- `src/pages/legal/policyMeta.ts` holds `TERMS_VERSION` and `PRIVACY_VERSION`, and `TermsOfUse.tsx` and `PrivacyPolicy.tsx` take their `updated` date from them.
+- Portal sign-up has three separate boxes (see item 6). Online, `signUp` `options.data` carries `terms_version`, `privacy_version` and `accepted_at` (`src/hooks/useAuth.ts`), not step 4's `terms_accepted_at`. The patient can edit that metadata, so it is not evidence yet. Offline, `LocalPortalUser` stores `termsAcceptedVersion`, `privacyAcceptedVersion` and `acceptedAt`, the date-of-birth auto-create leaves them empty, and the hard-coded `consentGiven: true` is gone.
+- After the merge, `mainone` links the patient on the server through `portal_link_patient_record`. `recordConsent` does not exist yet, so nothing is written to `patient_consent_records`.
+- The staff form no longer ticks portal access by itself, but `termsAccepted` is not yet passed to `enrollPatientInPortal`.
+- `PortalStatusCard` asks staff to confirm the patient agreed instead of hard-coding `termsAccepted: true`. Bulk enable (`bulkEnablePortalAccess` in `src/services/portalEnrollment.ts`) still passes `termsAccepted: true`.
+- Staff sign-in and first-run setup link `/terms`, but staff are not asked to accept it.
+- The privacy notice says which versions a patient accepted and when are kept, and `docs/legal/README.md` is corrected.
+
+Steps 2, 7, 9, 11, 12, 13 and 15 are still open.
 
 **How to check it.**
 - `PatientRegister.test.tsx` (mocked offline at `:21-24`): `registerPatientPortalAccount` receives the versions. A new online test file that mocks `isSupabaseEnabled: true` asserts that `options.data` holds them.
@@ -238,7 +292,7 @@ The migrations used to give anonymous users read and insert access to every row 
 
 **How to add it.**
 1. Import `PRIVACY_VERSION` and `TERMS_VERSION` from `src/pages/legal/policyMeta.ts` (new, items 1 and 2). Use them for the `updated` prop at `PrivacyPolicy.tsx:11` and `TermsOfUse.tsx:7`.
-2. Create `supabase/migrations/20260926000100_record_portal_consent.sql` (new, shared with item 2). Add `capture_method`, `subject_role`, `relationship` and `captured_by` to `patient_consent_records`, and keep the `20260924110300` policies.
+2. Create `supabase/migrations/20260926120200_record_portal_consent.sql` (new, shared with item 2). Add `capture_method`, `subject_role`, `relationship` and `captured_by` to `patient_consent_records`, and keep the `20260924110300` policies.
 3. In that migration, add a `BEFORE UPDATE` trigger calling `public.app_guard_immutable_columns('', ...)` on every column except `revoked_at`.
 4. In that migration, drop `trigger_auto_enrollment` and set `auto_enrollment_enabled` to `false`.
 5. Add a `consents` table in a new `this.version(19)` in `src/db/index.ts` (the latest is `version(18)` at `:1505`).
@@ -252,6 +306,16 @@ The migrations used to give anonymous users read and insert access to every row 
 13. Gate `bulkEnablePortalAccess` (`portalEnrollment.ts:501`) and `bulkEnrollPatients` (`src/services/unifiedPortalEnrollment.ts:290`) on a consent row. Make the warnings at `src/pages/admin/PortalMigration.tsx:625` and `src/pages/admin/BulkPortalMigration.tsx:423` required boxes.
 14. In `CaregiverSetup.tsx:391-427`, add a required guardian attestation. Have `addManagedPatient` (`patientPortalAuth.ts:551`) record a consent with `consent_type = 'guardian_consent'` (see item 17).
 15. In the same commit, update "Your choices and rights" (`PrivacyPolicy.tsx:102`) and correct `docs/legal/README.md:3-5`.
+
+**Done in the code (lane mA).** Steps 1, 8 and 12 are done, and so are parts of steps 9, 10 and 15.
+- Portal sign-up has three unticked, separately labelled, required boxes: the terms, the privacy notice, and portal access to records.
+- Offline, the accepted versions and time are stored on the `LocalPortalUser`. The hard-coded `consentGiven: true` is gone.
+- Online, they go in `signUp` `options.data`. The patient can edit that user metadata, so it is not yet evidence of consent.
+- The staff form no longer ticks portal access by itself.
+- `PortalStatusCard` asks staff to tick that the patient agreed before turning access on ("Turn on access" stays disabled until then). After the merge with `mainone`, the change is queued as a `set_patient_portal_access` command and the server decides. The tick is not stored anywhere: the command carries only the reason code `staff_choice`.
+- `docs/legal/README.md` is corrected.
+
+Nothing is written to `patient_consent_records` yet. Steps 2 to 7 (migration `000100`, the Dexie `consents` table and `recordConsent`), 11, 13 and 14 are still open. Step 4 no longer needs to drop the trigger: see item 9.
 
 **How to check it.**
 - Extend `src/features/patient-portal/PatientRegister.test.tsx` (it clicks `#consent` at `:103`): submit fails until all three boxes are ticked, and `recordConsent` gets each kind and version.
@@ -267,20 +331,20 @@ The migrations used to give anonymous users read and insert access to every row 
 
 **Status:** partial · **Priority:** P1 · **Effort:** L
 
-**Where it stands.** Sentry sets `sendDefaultPii: false` and strips request data, exception values and messages (`src/main.tsx:43-86`), but replay still records 10% of sessions and every error session by default (`src/main.tsx:31-38`). The new `beforeSendTransaction` strips only the query and fragment of `event.request.url` (`src/main.tsx:60-63`), so transaction names keep ULID patient and visit IDs (`src/App.tsx:567`, `src/db/index.ts:1518`), and navigation breadcrumbs keep their query strings (`src/main.tsx:56-58`). Photos are taken with no consent step (`src/components/SimplePatientForm.tsx:140-173`, `src/components/PatientForm.tsx:209-245`) and sync as base64 through `photoUrl: "photo_url"` (`src/sync/adapter.ts:114`); `src/utils/photoStorage.ts` is dead code that calls `getPublicUrl` on a private bucket (`src/utils/photoStorage.ts:43-47`), and so is `src/services/supabaseSync.ts`. Address is required in `src/validation/schemas.ts:50` but optional in `src/components/SimplePatientForm.tsx:304-310`, and `conflict_change_deltas` keeps PHI old and new values "for AI training" (`supabase/migrations/20260125095109_add_conflict_delta_retention_and_archiving.sql:49`, `src/services/conflictQueue.ts:713-726`) while nothing reads `data_retention_policies`. Invitation links carry the patient's email or phone (`src/services/portalEnrollment.ts:207-212`), `supabase/functions/send-otp-email/index.ts:66` logs the email and OTP when `RESEND_API_KEY` is unset, and no per-field data inventory exists.
+**Where it stands.** Sentry sets `sendDefaultPii: false` and strips request data, exception values and messages (`src/main.tsx:43-86`), but replay still records 10% of sessions and every error session by default (`src/main.tsx:31-38`). The new `beforeSendTransaction` strips only the query and fragment of `event.request.url` (`src/main.tsx:60-63`), so transaction names keep ULID patient and visit IDs (`src/App.tsx:567`, `src/db/index.ts:1518`), and navigation breadcrumbs keep their query strings (`src/main.tsx:56-58`). Photos are taken with no consent step (`src/components/SimplePatientForm.tsx:140-173`, `src/components/PatientForm.tsx:209-245`) and sync as base64 through `photoUrl: "photo_url"` (`src/sync/adapter.ts:114`); `src/utils/photoStorage.ts` is dead code that calls `getPublicUrl` on a private bucket (`src/utils/photoStorage.ts:43-47`), and so is `src/services/supabaseSync.ts`. Address is required in `src/validation/schemas.ts:50` but optional in `src/components/SimplePatientForm.tsx:304-310`, and `conflict_change_deltas` keeps PHI old and new values "for AI training" (`supabase/migrations/20260125095109_add_conflict_delta_retention_and_archiving.sql:49`, `src/services/conflictQueue.ts:713-726`) while nothing reads `data_retention_policies`. Invitation links carry the patient's email or phone (`src/services/portalEnrollment.ts:207-212`), `send-otp-email` no longer logs any recipient address (masked or not), code, user id or role, even in demo mode (see [Fix these first](#fix-these-first), item 2), and no per-field data inventory exists.
 
 **How to add it.**
 1. Create `docs/legal/DATA_INVENTORY.md` (new) with one row per personal-data field: purpose, lawful basis, required or optional, retention, recipients. Cover `Patient` (`src/db/index.ts:48`), `patientSchema`, the portal sign-up fields and the Supabase-only columns (`sdoh_observations`, portal `device_fingerprint`, `ip_address`, `user_agent`). Link it from `docs/legal/README.md`.
 2. Move the Sentry options into `src/lib/sentryConfig.ts` (new), after item 5 removes tracing and replay. If the Foundation keeps replay, add it back only behind consent, as item 5 describes. Update `src/pages/legal/PrivacyPolicy.tsx:73-74` in the same commit.
 3. In the same file, in `beforeBreadcrumb`, strip query strings from navigation `data.from` and `data.to`, and replace ULIDs and UUIDs with `:id`. Item 5 deletes tracing and `beforeSendTransaction`, so transactions need no change.
 4. Send a bare `/patient/register` link from `src/services/portalEnrollment.ts:207-212`, and remove the prefill at `src/features/patient-portal/PatientRegister.tsx:83-84`.
-5. In `send-otp-email/index.ts:66-68`, log a masked recipient and never the OTP, as `send-otp-sms/index.ts:226` already does.
+5. Done: `send-otp-email` logs no address (masked or not), code, user id or role (see [Fix these first](#fix-these-first), item 2). Do not add a recipient log line.
 6. Apply the address decision. Either make `schemas.ts:50` optional and drop the asterisks at `PatientForm.tsx:434` and `PatientDetail.tsx:595`, or document the purpose and require it in `SimplePatientForm.tsx`.
 7. Add `photoConsentAt` and `photoPath` to `Patient`. Gate the camera in both forms behind a required "patient or guardian agreed to a photo for identification" checkbox. Fix the duplicate `simple.tapCameraToAddPhoto` key (`src/i18n/locales/en.json:118` and `:239`).
 8. Rewrite `src/utils/photoStorage.ts` to upload to the private `photos` bucket, return the object path, display through `createSignedUrl`, and throw instead of returning the data URL.
 9. Keep the base64 thumbnail in Dexie `photoUrl` for offline display. At `src/sync/adapter.ts:114`, map `photoPath` and `photoConsentAt` instead of `photoUrl`, and upload pending photos during the sync run.
 10. Add `src/db/migrations/0006-photo-upload-backfill.ts` (new), registered in `migration-runner.ts`, to queue existing data-URL photos for upload.
-11. Create `supabase/migrations/20260926000300_limit_conflict_deltas.sql` (shared with item 1). Drop "AI training" from the table comment. `UPDATE` the existing `data_retention_policies` row (line 235 of `20260125095109`; an insert is skipped) to `archive_strategy = 'delete'`. Add a `SECURITY DEFINER` purge function that logs to `retention_policy_executions`, scheduled like `20260503050000_add_bulk_export_cleanup_cron.sql:71-83`. Add `patients.photo_consent_at`.
+11. Create `supabase/migrations/20260926120300_limit_conflict_deltas.sql` (shared with item 1). Drop "AI training" from the table comment. `UPDATE` the existing `data_retention_policies` row (line 235 of `20260125095109`; an insert is skipped) to `archive_strategy = 'delete'`. Add a `SECURITY DEFINER` purge function that logs to `retention_policy_executions`, scheduled like `20260503050000_add_bulk_export_cleanup_cron.sql:71-83`. Add `patients.photo_consent_at`.
 12. In `src/services/conflictQueue.ts:713-726`, write `null` to `old_value` and `new_value` when `phi_field` is true.
 13. Extend `src/validation/schemas.test.ts` to pin exactly which `patientSchema` fields are required.
 
@@ -329,7 +393,7 @@ The browser Termii gateway has been deleted (`src/services/messaging.ts:23-28`).
 **How to check it.**
 - `npm run test:run` passes. Adding `fetch("https://new-vendor.io")` to any `src` file makes the new test fail.
 - Manual check on a Vercel preview: load the app once, go offline and reload. The map renders, DevTools shows no CDN request, and a test error reaches Sentry with no CSP violation.
-- `git grep -n re_YFFH` returns nothing, and the Resend dashboard shows the old key as revoked.
+- `git grep -n re_YFFH -- ':!docs/legal/LEGAL_READINESS_CHECKLIST.md'` returns nothing (this checklist names the prefix on purpose), and the Resend dashboard shows the old key as revoked.
 
 **Decision needed.** The Foundation must sign or accept a DPA with each of Supabase, Sentry, Resend, Termii, Twilio, Vercel and GitHub, and confirm where each one stores data. It must also decide whether to keep Twilio and Sentry replay (`docs/legal/README.md:25`), and whether to self-host Jitsi.
 
@@ -342,7 +406,7 @@ The browser Termii gateway has been deleted (`src/services/messaging.ts:23-28`).
 **Where it stands.** Portal sign-up starts unticked (`src/features/patient-portal/PatientRegister.tsx:96`), and no confirm-shaming or false urgency was found. `trigger_auto_enrollment` still turns the portal on for any patient with a phone or email (`supabase/migrations/20260115072241_add_portal_enhancements_v3.sql:540-589`), and the server grants portal reads on that flag (`supabase/migrations/20260925100000_sync_authority_foundation.sql:449`). The staff form ticks portal access by itself (`src/components/PatientForm.tsx:53-61`), treatment sharing is pre-ticked (`src/features/patient-portal/DataSharingPreferences.tsx:61`) and SMS is opt-out (`src/services/reminderEligibility.ts:35`). Staff "Turn off access" only edits Dexie (`src/services/portalEnrollment.ts:134-150`), the portal SMS opt-out is ignored (`src/features/patient-portal/ManageAccount.tsx:280-289`), and patients cannot close their account; `src/services/autoEnrollment.ts` is dead code.
 
 **How to add it.**
-1. Create `supabase/migrations/20260926000200_consent_defaults_off.sql` (new). Make it idempotent, with a Rollback header like `20260910164216_drop_legacy_appointment_write_policies.sql`. Drop `trigger_auto_enrollment` and `check_auto_enrollment()`. Set `auto_enrollment_enabled` and `send_welcome_notification` to `'false'::jsonb`.
+1. Create `supabase/migrations/20260926120000_consent_defaults_off.sql` (new). Make it idempotent, with a Rollback header like `20260910164216_drop_legacy_appointment_write_policies.sql`. Drop `trigger_auto_enrollment` and `check_auto_enrollment()`. Set `auto_enrollment_enabled` and `send_welcome_notification` to `'false'::jsonb`.
 2. In that file, set `portal_enabled` to false and stamp `portal_enabled_changed_at` wherever `auto_enrolled` is true and no unrevoked `portal_access` row exists in `patient_consent_records`. The stamp makes devices apply the change (`src/sync/adapter.ts:345-350`).
 3. In that file, default these columns to false: `patient_data_sharing_preferences.allow_treatment_access`, `patient_preferences.appointment_reminders` and `medication_reminders`, and the four alert columns of `patient_portal_preferences`.
 4. In that file, add `'closed'` to the `account_status` CHECK (`supabase/migrations/20251028000000_add_patient_portal.sql:97`). Add a `SECURITY DEFINER` function, `close_portal_account()`. It sets that status, sets `portal_opt_out`, clears `portal_enabled` and revokes consent rows. Patients cannot write `account_status` themselves (`supabase/migrations/20260924110300_rls_patient_portal.sql:76-86`).
@@ -361,10 +425,19 @@ The browser Termii gateway has been deleted (`src/services/messaging.ts:23-28`).
 17. Add the STOP line or preferences link from item 18 step 11 to every non-transactional message in `scripts/seed/data/messageTemplates.ts` and `src/services/messageTemplates.ts:16`. Shorten any message that would then go over 160 characters.
 18. In the same commit, update `src/pages/legal/PrivacyPolicy.tsx:77-78` and `:102-109`, and `docs/legal/README.md:5-6`.
 
+**Done in the code (lanes mA and mC).** Steps 1 and 6 are done, and so are parts of steps 3, 12, 15, 16 and 18.
+- Migration `000200` sets `auto_enrollment_enabled` and `send_welcome_notification` to `false`. It does not drop `trigger_auto_enrollment` or `check_auto_enrollment()`: `mainone`'s `20260925100100_portal_access_authoritative.sql` made the trigger run on insert only, never override a decision, an opt-out or an earlier disable, and enrol only while that setting is true, and `supabase/tests/portal_access.test.sql` expects it. With the setting off it enrols no one.
+- Step 7 is done by `mainone` (`64b0a20`): `enablePortalAccess` and `disablePortalAccess` queue `set_patient_portal_access` through `src/services/portalAccess.ts`, and a disable always applies on the server.
+- It defaults `allow_treatment_access` to false. `DataSharingPreferences` starts it unticked.
+- `reminderSkipReason` now treats a pulled `false` as an opt-out (lane mC).
+- `ScheduleReminderForm`, `PreferenceManager` and `src/services/preferences.ts` read reminder settings with that same rule (`isReminderOptedOut`). A setting pulled as `true` shows as On and is saved as 1. It is no longer read as Off, and saving no longer silently opts the patient out.
+
+Step 2 is not done, and deliberately so: whether patients who were enrolled automatically keep access is the Foundation's decision. Step 3's reminder and alert defaults, and steps 4, 5, 8 to 11, 13, 14 and 17, are still open. Step 16's three boxes and test updates are done, but nothing is written to `patient_consent_records` yet (item 6, steps 2 to 7 and 9). Step 8 in particular: the command carries a reason code, not the staff attestation, and the server does not refuse an enable without consent. With auto-enrolment off, a new patient's server access changes only through `set_patient_portal_access`, which staff queue, and `portal_link_patient_record` for a self-registered record.
+
 **How to check it.**
 - `npm run test:run -- src/services/reminderEligibility.test.ts src/services/portalEnrollment.test.ts src/features/patient-portal/PatientRegister.test.tsx` passes with three new tests: a missing record gives `no_consent`, `disablePortalAccess` queues one `p_enabled: false` command, and all three sign-up boxes start unticked.
 - `src/components/PatientForm.test.tsx` (new): typing a phone number leaves "Enable patient portal access" unticked.
-- SQL after `supabase db reset`: `pg_trigger` has no `trigger_auto_enrollment`. A patient inserted with a phone keeps `portal_enabled = false`. `information_schema.columns` shows `false` as the default for each column in step 3.
+- SQL after `supabase db reset`: `pg_trigger` has `trigger_auto_enrollment` as a `BEFORE INSERT` trigger only, and `auto_enrollment_enabled` is `false`. A patient inserted with a phone keeps `portal_enabled = false`. `information_schema.columns` shows `false` as the default for each column in step 3.
 - Manual: turn SMS off in the portal and sync a staff device. Go offline and confirm `/sms-reminders` refuses the reminder.
 
 **Decision needed.** The owner and a lawyer must decide whether patients who already have portal access keep it or must confirm again. This includes access switched on by the device backfill (`src/db/migrations/backfillPlans.ts:45-67`). They must also decide whether `allow_ias_access` (the patient's own access) stays on by default.
@@ -582,16 +655,16 @@ This change adds no data flow, so the privacy notice does not need to change.
 
 ### 17. Get age consent if you collect kids' data
 
-**Status:** missing · **Priority:** P0 · **Effort:** L
+**Status:** partial · **Priority:** P0 · **Effort:** L
 
 **Where it stands.** The app holds children's records: `src/services/smartMedication.ts:383` doses by `age < 18`, and `src/components/SimplePatientForm.tsx:226` accepts any age from 1. No code checks for a minor or stores a guardian, and `src/validation/schemas.ts:17-27` only requires a past DOB. A portal account can claim a child's record by email (`src/hooks/useAuth.ts:151-160`), by contact plus DOB (`src/services/patientPortalAuth.ts:193-225`, `319-345`), or through the new, not yet called `portal_link_patient_record` (`supabase/migrations/20260924110300_rls_patient_portal.sql:686`). The "add a child" dialog asks for no attestation (`src/features/patient-portal/CaregiverSetup.tsx:391-427`), and the notice says only "any caregiver you add" (`src/pages/legal/PrivacyPolicy.tsx:68`).
 
 **How to add it.**
 1. Add `isMinor(dob, now, threshold = 18): boolean | null` beside `patientAge` in `src/utils/patient.ts:9`. Treat `null` (no DOB) as "needs review".
-2. Create `supabase/migrations/20260926000400_add_patient_guardians.sql` (new) with `patient_guardians`: `patient_id` (FK, cascade), `guardian_name`, `guardian_phone`, `relationship` (`parent`, `legal_guardian`, `other_authorised`), `guardian_portal_user_id`, `verified_by_staff`, `verified_at`, `consent_record_id` (FK to `patient_consent_records`), timestamps and `revoked_at`.
+2. Create `supabase/migrations/20260926120400_add_patient_guardians.sql` (new) with `patient_guardians`: `patient_id` (FK, cascade), `guardian_name`, `guardian_phone`, `relationship` (`parent`, `legal_guardian`, `other_authorised`), `guardian_portal_user_id`, `verified_by_staff`, `verified_at`, `consent_record_id` (FK to `patient_consent_records`), timestamps and `revoked_at`.
 3. In it, enable RLS, revoke `anon`, and write policies with `app_is_staff()`, `app_has_permission('register')` and `app_portal_patient_ids()`. Write `CREATE POLICY` directly: `app_rls_policy` was dropped at `20260924110400_rls_verify_phi_lockdown.sql:101`.
-4. Do not recreate `check_auto_enrollment()` (`20260115072241_add_portal_enhancements_v3.sql:540-589`). Item 9 drops it and its trigger in `20260926000200_consent_defaults_off.sql`, so no patient, adult or minor, is enrolled automatically.
-5. In it, replace `portal_link_patient_record` so it returns `needs_staff_verification` for a minor's record and never self-creates one for a minor `p_dob`.
+4. Do not recreate `check_auto_enrollment()` (`20260115072241_add_portal_enhancements_v3.sql:540-589`). Item 9 keeps the insert-only trigger and switches it off with `auto_enrollment_enabled = false` in `20260926120000_consent_defaults_off.sql`, so no patient, adult or minor, is enrolled automatically.
+5. In it, replace `portal_link_patient_record` so it returns `needs_staff_verification` for a minor's record and never self-creates one for a minor `p_dob`. **Done early**, in its own migration, `20260926120100_portal_link_adults_only.sql`.
 6. Store the consent in the existing `patient_consent_records` as `consent_type = 'guardian_consent'`. Staff with `register` can already insert there (`20260924110300_rls_patient_portal.sql:330-332`).
 7. Add `patientGuardians` (`id, patientId, _dirty, _syncedAt`) to the Dexie `version(19)` that item 6 adds after `src/db/index.ts:1505`. Keep consent rows in item 6's `consents` table.
 8. Register both in `src/sync/adapter.ts` (`Tbl` 54, `mapToDB` 94, `tables` 394, `localTableMap` 410), with `patient_consent_records` in `APPEND_ONLY` (77).
@@ -609,6 +682,17 @@ This change adds no data flow, so the privacy notice does not need to change.
 20. Add a "Guardians" panel to `src/pages/PatientDetail.tsx` beside `PortalStatusCard` (930), not inside it, for staff verification.
 21. At portal login, on the device, ask a guardian-linked patient who has turned 18 for their own consent, then set `revoked_at` on the link.
 22. In the same commit, add a "Children and people who cannot consent for themselves" section to `src/pages/legal/PrivacyPolicy.tsx`, bump `updated` (line 11), add guardian wording to `src/pages/legal/TermsOfUse.tsx:28-35`, and update `docs/legal/README.md:18`.
+
+**Done in the code (lane mA).** Steps 1, 5, 14 and 15 are done, and part of step 22.
+- `isMinor` and `ADULT_AGE` are in `src/utils/patient.ts`. `patientAge` reads a date of birth as a calendar day.
+- Portal sign-up requires a date of birth, online and offline, and refuses anyone under 18.
+- After the merge with `mainone`, online sign-up is linked to a clinic record by the server (`portal_link_patient_record`, called through `src/services/portalSignIn.ts`). It refuses a child's record and never creates a record for an under-18 date of birth (migration `000210`), and the app shows its `needs_staff_verification` answer as "ask clinic staff". The email lookup, offline registration and the date-of-birth login refuse a child's record too.
+- Staff cannot turn on portal access, send an invitation or enrol a child's record (`enablePortalAccess`, `sendPortalInvitation`, `enrollPatientInPortal`, `canEnrollInPortal`). The record page offers no invitation or link for a child. The registration form and both admin pages leave children out, and the bulk server page filters them before its 100-row limit. Turning access off still works for a child. This covers step 12, except the guardian wording, and step 18, except `isEligibleForAutoEnrollment` in `src/services/autoEnrollment.ts`, which is dead code and unchanged.
+- These staff-side refusals are in the app only. `mainone`'s `set_patient_portal_access` and `portal_invitation_begin` do not check age on the server yet (step 19).
+- Step 4: the trigger is kept but off (item 9).
+- The privacy notice has a "Children" section.
+
+A record with no date of birth is not linked (the server, offline registration and the date-of-birth login link a record only when its date of birth matches; staff add the date of birth first), and existing links and existing access are unchanged. Everything to do with guardians waits on the guardian decision: steps 2 to 4, 6 to 11, 13, 16, 17 and 19 to 21, and the terms wording in step 22.
 
 **How to check it.**
 - `npm run test:run` with new cases: 17 years 364 days and exactly 18 (`src/utils/patient.test.ts`), a minor without a guardian (`src/validation/schemas.test.ts`), and a blocked minor (`src/services/autoEnrollment.test.ts`, `src/features/patient-portal/PatientRegister.test.tsx`).
@@ -628,7 +712,7 @@ This change adds no data flow, so the privacy notice does not need to change.
 
 **How to add it.**
 1. Create `supabase/functions/_shared/messaging/categories.ts` (new). It holds `MessageCategory` (`transactional`, `care_reminder`, `service`, `promotional`), a category for every template key and device key, and `reminderKindForTemplateKey`. Re-export it from `src/services/messageTemplates.ts` the way `src/services/fhir/types.ts:9` does.
-2. Create `supabase/migrations/20260926000500_message_categories_and_suppressions.sql` (new), using the header and rollback style of `20260910161049_add_televisits.sql`. Add `category` to `message_templates` and `medication_reminders`. Add `cancelled` and `suppressed` to the status CHECK at `20251024000000_add_advanced_features.sql:106`. Leave `outbound_messages` alone.
+2. Create `supabase/migrations/20260926120500_message_categories_and_suppressions.sql` (new), using the header and rollback style of `20260910161049_add_televisits.sql`. Add `category` to `message_templates` and `medication_reminders`. Add `cancelled` and `suppressed` to the status CHECK at `20251024000000_add_advanced_features.sql:106`. Leave `outbound_messages` alone.
 3. In the same migration, create `message_suppressions` (`channel`, `address`, `patient_id`, `scope`, `source`) with RLS. Only `service_role` writes; `public.app_is_staff()` reads.
 4. In the same migration, add `patient_id` to `patient_portal_preferences` with an owner policy on `public.app_portal_patient_ids()` (`20260924110000_rls_permission_helpers.sql:168`). The upstream RLS change (`20260924110300_rls_patient_portal.sql:138-144`) accepts the auth uid, but `ManageAccount.tsx:151` still writes it into a foreign key to `patient_portal_users(id)`. Add a trigger that copies `sms_reminders = false` into `patient_preferences` and `message_suppressions`.
 5. In `send-sms-reminder/index.ts`, accept `category`. Before `sendSms` (`:285`), refuse suppressed or opted-out non-transactional sends with `error: "suppressed"`. Send promotional traffic on Termii `generic`, not the `dnd` default (`_shared/sms/provider.ts:45`).
@@ -644,6 +728,8 @@ This change adds no data flow, so the privacy notice does not need to change.
 15. Create `src/pages/legal/Unsubscribe.tsx` (new) on `LegalPage`, and route it beside `/privacy` (`src/App.tsx:413`).
 16. In the same commit, add the Twilio fallback to `src/pages/legal/PrivacyPolicy.tsx:71` and describe STOP and the email link at `:106`. Document the new secrets in `docs/deployment/SMS_SETUP_TERMII.md` and `docs/deployment/EMAIL_SETUP_GUIDE.md`.
 17. Remove the disclaimer at `ManageAccount.tsx:284-287`, and hide "Email reminders".
+
+**Done in the code (first pass, no migration).** Step 6 is done except passing `category` in the `send-sms-reminder` body, which waits on step 5, and server reminders are skipped rather than written `cancelled` (see below). Step 7's 1/0 mapping was not done, but its goal is met: pulled `true`/`false` are stored as they arrive, and every reader goes through `isReminderOptedOut`, which treats `0` and `false` alike. Code that reads these settings must use it, not `=== 0`. `reminderSkipReason` now treats a pulled `false` as an opt-out, as it already did `0` (`src/services/reminderEligibility.ts`, `isReminderOptedOut`), and `ScheduleReminderForm` blocks it too. `notificationWorker.ts` reads the patient's setting on this device right before each of its four send paths. An opted-out reminder in the device outbox or queue ends `cancelled` and is never sent. After the merge with `mainone` (`ccc25eb`), the device no longer writes a server `medication_reminders` row: only the `send-sms-reminder` function records its outcome. So an opted-out server reminder is skipped on the device in each run and stays pending on the server; Send now refuses it and writes nothing. Each run reads due server reminders oldest first and pages past the ones it skips (up to 500 rows a run), so they do not hold back other patients' reminders; the run counts them as not sent, and the SMS reminders list says they are skipped instead of due. When the setting cannot be read, the reminder is held, not sent. `reminderKindForTemplateKey` and `TRANSACTIONAL_TEMPLATE_KEYS` live in `src/features/notifications/smsOutbox.ts`, so codes and televisit links are never suppressed. `mainone` did step 9: invitations go through `send-sms-reminder` with purpose `portal_invitation` (`57ae804`). Step 12 is done: `mainone` replaced the free-form mode with a purpose (`portal_invitation`), and this branch's rules keep the code email admin only, check the code with `validOtp` and escape every value (see [Fix these first](#fix-these-first)). The server side is still open: steps 1 to 5, 8, 10 and 11. So are the email headers, the unsubscribe page and STOP handling in steps 13 to 17, which wait on the decision below. `send-sms-reminder` does not check opt-outs itself yet (step 5).
 
 **How to check it.**
 - `src/services/notificationWorker.test.ts`: a reminder for an opted-out patient ends `cancelled` and `fetch` is never called. Cover a local opt-out and one pulled as `medication_reminders: false`.
@@ -703,7 +789,7 @@ This change adds no data flow, so the privacy notice does not need to change.
 Sync never deletes rows on pull and uploads with upsert (`src/sync/adapter.ts:930-966`, `:777`), so another device can re-create an erased record.
 
 **How to add it.**
-1. Create `supabase/migrations/20260926000600_add_data_subject_requests.sql` (new) with a `data_subject_requests` table: type, status, channel, `legal_hold`, and decision and completion fields. Write plain `CREATE POLICY` statements, because the `app_rls_policy` helper was dropped (`20260924110400_rls_verify_phi_lockdown.sql:101-102`). Portal rows use `app_portal_patient_ids()`. Staff reads use `app_is_staff()`. Updates use `app_has_permission('users')`.
+1. Create `supabase/migrations/20260926120600_add_data_subject_requests.sql` (new) with a `data_subject_requests` table: type, status, channel, `legal_hold`, and decision and completion fields. Write plain `CREATE POLICY` statements, because the `app_rls_policy` helper was dropped (`20260924110400_rls_verify_phi_lockdown.sql:101-102`). Portal rows use `app_portal_patient_ids()`. Staff reads use `app_is_staff()`. Updates use `app_has_permission('users')`.
 2. In the same file, add a `record_data_subject_request(p_command_id uuid, ...)` RPC built on `app_command_record` (`20260925100000_sync_authority_foundation.sql:236-293`).
 3. Add a "Record a deletion request" button next to Delete (`src/pages/PatientDetail.tsx:421-428`). Queue it with `enqueueCommand` (`src/sync/commandOutbox.ts:315`) so it works offline.
 4. Create `src/features/patient-portal/DeletionRequest.tsx` (new) using `account/ConfirmDialog.tsx`. Route it next to `/export` (`src/App.tsx:491-494`). Link it from `PortalHome.tsx:171-178` and from a new tab in `ManageAccount.tsx:29-33`. When offline, hold it with `messageQueue.ts`. Add its `t()` keys to all five `src/i18n/locales/*.json` files.
@@ -768,15 +854,16 @@ A lawyer should confirm who may request erasure for a child.
 
 ### New migrations named in this checklist
 
-The newest migration is `20260925100000_sync_authority_foundation.sql`, so every name below sorts after it.
+The newest migration from `mainone` is `20260926110000_interop_foundation.sql`, so every name below sorts after it. `db push` does not apply a pending migration older than the newest one production has, so a name written later must still sort after `mainone`'s newest at that time.
 
 | Migration (new) | Items |
 |---|---|
-| `20260926000100_record_portal_consent.sql` | 2, 6 |
-| `20260926000200_consent_defaults_off.sql` | 9 |
-| `20260926000300_limit_conflict_deltas.sql` | 1, 7 |
-| `20260926000400_add_patient_guardians.sql` | 17 |
-| `20260926000500_message_categories_and_suppressions.sql` | 18 |
-| `20260926000600_add_data_subject_requests.sql` | 20 |
+| `20260926120000_consent_defaults_off.sql` | 9 (**done**, first pass: the auto-enrolment setting and the sharing default) |
+| `20260926120100_portal_link_adults_only.sql` | 17 (**done**, step 5) |
+| `20260926120200_record_portal_consent.sql` | 2, 6 |
+| `20260926120300_limit_conflict_deltas.sql` | 1, 7 |
+| `20260926120400_add_patient_guardians.sql` | 17 |
+| `20260926120500_message_categories_and_suppressions.sql` | 18 |
+| `20260926120600_add_data_subject_requests.sql` | 20 |
 | `20260926000700_erase_patient.sql` | 20 |
 | `20260926000800_org_legal_identity.sql` | 16, only if needed |

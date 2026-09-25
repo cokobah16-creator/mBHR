@@ -228,9 +228,21 @@ describe("preferences service", () => {
       expect(await shouldSendAppointmentReminders("p1")).toBe(false);
     });
 
-    it("returns false when no preference", async () => {
+    it("returns true when no preference (nothing turned off)", async () => {
       mockWhere.mockReturnValue(makeChain(undefined));
-      expect(await shouldSendAppointmentReminders("p-none")).toBe(false);
+      expect(await shouldSendAppointmentReminders("p-none")).toBe(true);
+    });
+
+    it("reads a setting pulled from the server as true or false", async () => {
+      mockWhere.mockReturnValue(
+        makeChain({ ...EXISTING_PREF, appointmentReminders: true }),
+      );
+      expect(await shouldSendAppointmentReminders("p1")).toBe(true);
+
+      mockWhere.mockReturnValue(
+        makeChain({ ...EXISTING_PREF, appointmentReminders: false }),
+      );
+      expect(await shouldSendAppointmentReminders("p1")).toBe(false);
     });
   });
 
@@ -243,6 +255,13 @@ describe("preferences service", () => {
     it("returns true when medicationReminders=1", async () => {
       mockWhere.mockReturnValue(
         makeChain({ ...EXISTING_PREF, medicationReminders: 1 }),
+      );
+      expect(await shouldSendMedicationReminders("p1")).toBe(true);
+    });
+
+    it("returns true for a setting pulled from the server as true", async () => {
+      mockWhere.mockReturnValue(
+        makeChain({ ...EXISTING_PREF, medicationReminders: true }),
       );
       expect(await shouldSendMedicationReminders("p1")).toBe(true);
     });
@@ -273,6 +292,21 @@ describe("preferences service", () => {
       expect(summary.hasPreferences).toBe(true);
       expect(summary.language).toBe("Hausa");
       expect(summary.channel).toBe("sms");
+      expect(summary.reminders.appointments).toBe(true);
+      expect(summary.reminders.medications).toBe(false);
+    });
+
+    it("reads settings pulled from the server as true or false", async () => {
+      mockWhere.mockReturnValue(
+        makeChain({
+          ...EXISTING_PREF,
+          appointmentReminders: true,
+          medicationReminders: false,
+        }),
+      );
+
+      const summary = await getPreferenceSummary("p1");
+
       expect(summary.reminders.appointments).toBe(true);
       expect(summary.reminders.medications).toBe(false);
     });
@@ -321,6 +355,20 @@ describe("preferences service", () => {
       );
     });
 
+    it("turns off a setting pulled from the server as true", async () => {
+      mockWhere.mockReturnValue(
+        makeChain({ ...EXISTING_PREF, appointmentReminders: true }),
+      );
+      mockUpdate.mockResolvedValue(undefined);
+
+      await toggleAppointmentReminders("p1");
+
+      expect(mockUpdate).toHaveBeenCalledWith(
+        "pref-existing",
+        expect.objectContaining({ appointmentReminders: 0 }),
+      );
+    });
+
     it("creates preference with appointmentReminders=0 when none exists", async () => {
       mockWhere.mockReturnValue(makeChain(undefined, 0));
       mockAdd.mockResolvedValue(undefined);
@@ -337,6 +385,20 @@ describe("preferences service", () => {
   describe("toggleMedicationReminders", () => {
     it("flips 0 → 1 (EXISTING_PREF has medicationReminders=0)", async () => {
       mockWhere.mockReturnValue(makeChain(EXISTING_PREF));
+      mockUpdate.mockResolvedValue(undefined);
+
+      await toggleMedicationReminders("p1");
+
+      expect(mockUpdate).toHaveBeenCalledWith(
+        "pref-existing",
+        expect.objectContaining({ medicationReminders: 1 }),
+      );
+    });
+
+    it("turns on a setting pulled from the server as false", async () => {
+      mockWhere.mockReturnValue(
+        makeChain({ ...EXISTING_PREF, medicationReminders: false }),
+      );
       mockUpdate.mockResolvedValue(undefined);
 
       await toggleMedicationReminders("p1");

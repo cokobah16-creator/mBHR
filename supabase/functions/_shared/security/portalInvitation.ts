@@ -12,7 +12,10 @@
 // public.portal_invitation_finish() records what happened to it.
 //
 // The text is built here from the stored patient record: the caller cannot
-// choose the recipient or the words.
+// choose the recipient or the words. HTML is escaped with ./html.ts, the
+// one escaping rule the email functions share.
+
+import { escapeHtml } from "./html.ts";
 
 /** The purpose value the app sends for a portal invitation. */
 export const PORTAL_INVITATION_PURPOSE = "portal_invitation";
@@ -222,15 +225,6 @@ export function invitationSmsText(givenName: unknown, link: string): string {
     `${name ? `Hi ${name}` : "Hello"}, your mBHR patient portal is ready. ` +
     `Register at: ${link} — use your phone number and date of birth.`
   );
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /** The invitation email: subject, plain text and HTML (name escaped). */

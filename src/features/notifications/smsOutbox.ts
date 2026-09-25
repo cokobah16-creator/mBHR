@@ -14,6 +14,7 @@
  */
 import type { Tone } from "@/components/ui/StatusBadge";
 import type { SmsTemplateKey } from "@/services/messageTemplates";
+import { REMINDER_SKIP_MESSAGE, type ReminderKind } from "@/services/reminderEligibility";
 import { formatNigerianDateTime } from "@/utils/dateFormat";
 
 export type DeliveryState =
@@ -89,6 +90,70 @@ export const WORKER_TEMPLATE_KEYS = [
   "medication_reminder",
   "appointment.reminder",
 ];
+
+/**
+ * Transactional messages: one-time sign-in codes ("otp") and televisit links
+ * ("televisit_scheduled"). The patient needs them to finish something they
+ * asked for, so turning reminders off never holds them back. This is the one
+ * place mBHR marks a message as transactional; the send-time opt-out check
+ * in services/notificationWorker relies on it through
+ * reminderKindForTemplateKey.
+ */
+export const TRANSACTIONAL_TEMPLATE_KEYS: readonly string[] = [
+  "otp",
+  "televisit_scheduled",
+];
+
+export function isTransactionalTemplateKey(
+  templateKey: string | null | undefined,
+): boolean {
+  return !!templateKey && TRANSACTIONAL_TEMPLATE_KEYS.includes(templateKey);
+}
+
+/**
+ * Which reminder setting in the patient's preferences covers a message, from
+ * its template key. These are the keys services/messaging queues and
+ * outboxTemplateFor composes. Returns null for transactional messages, which
+ * are never suppressed, and for keys that are not a reminder type the
+ * patient can turn off (for example "custom" text).
+ */
+export function reminderKindForTemplateKey(
+  templateKey: string | null | undefined,
+): ReminderKind | null {
+  if (!templateKey || isTransactionalTemplateKey(templateKey)) return null;
+  switch (templateKey) {
+    case "followup.medication": // device outbox (services/messaging)
+    case "medication_reminder": // device queue (schedule form), SMS template
+      return "medication";
+    case "appointment.reminder": // device outbox (services/messaging)
+    case "follow_up_reminder": // SMS template used for appointment reminders
+      return "appointment";
+    default:
+      return null;
+  }
+}
+
+/** Every row of medication_reminders on the server is a medication reminder. */
+export const SERVER_REMINDER_KIND: ReminderKind = "medication";
+
+/**
+ * Whether a stored error says the message was not sent because the patient
+ * turned this type of reminder off (set by the notification worker).
+ */
+export function isOptOutSkip(error: string | undefined): boolean {
+  return (error || "")
+    .toLowerCase()
+    .includes(REMINDER_SKIP_MESSAGE.opted_out.toLowerCase());
+}
+
+/**
+ * Why an opt-out skip was not sent, in the past tense. Staff see it on the
+ * record for as long as it is kept, and the patient may turn reminders back
+ * on later, so it says what was true when the send was tried. The stored
+ * error keeps REMINDER_SKIP_MESSAGE.opted_out, which isOptOutSkip matches.
+ */
+const OPT_OUT_SKIP_REASON =
+  "When mBHR went to send it, the patient had turned off this type of SMS reminder";
 
 /**
  * Stored in error_message when staff record that a server reminder reached
@@ -170,6 +235,12 @@ export interface OutboxItem {
   deliveredAt?: Date;
   attempts: number;
   errorMessage?: string;
+  /**
+   * A due server reminder for a patient who turned medication reminders off
+   * on this device: every send run skips it, and it stays pending on the
+   * server (this device does not write its status).
+   */
+  optedOut?: boolean;
 }
 
 function toDate(value: DateLike): Date | undefined {
@@ -306,7 +377,15 @@ export function isProviderAccepted(errorMessage: string | undefined): boolean {
   return (errorMessage || "").trim().toLowerCase().startsWith(PROVIDER_ACCEPTED_MARKER);
 }
 
-export function fromServerReminder(r: StoredServerReminder): OutboxItem {
+/**
+ * `optedOut`: the patient has turned medication reminders off on this device
+ * (isReminderOptedOut with SERVER_REMINDER_KIND). Only kept on a reminder
+ * that is still waiting to be sent.
+ */
+export function fromServerReminder(
+  r: StoredServerReminder,
+  optedOut = false,
+): OutboxItem {
   const id = r.id ?? "";
   const state = stateFromServerStatus(r.status);
   return {
@@ -330,6 +409,7 @@ export function fromServerReminder(r: StoredServerReminder): OutboxItem {
     sentAt: toDate(r.sentAt),
     attempts: 0,
     errorMessage: r.errorMessage || undefined,
+    optedOut: state === "queued" && optedOut,
   };
 }
 
@@ -517,6 +597,9 @@ export function describeFailure(error: string | undefined): string {
     const reason = (error || "").slice(STAFF_FAILURE_PREFIX.length).trim();
     return reason ? `Marked as failed by staff: ${reason}` : "Marked as failed by staff.";
   }
+  if (isOptOutSkip(error)) return `${OPT_OUT_SKIP_REASON}, so it was not sent.`;
+  if (/preference_check_failed/.test(e))
+    return "The patient's reminder settings could not be read on this device, so it was not sent. Try again.";
   // Codes returned by the send-sms-reminder server function. Stored errors
   // start with the code ("not_permitted: ..."), so match those first.
   // "Invalid JWT" comes from the functions gateway when the online sign-in
@@ -579,7 +662,11 @@ export function explainState(item: OutboxItem, ctx: SendingContext): string {
 
   if (item.state === "failed") return describeFailure(item.errorMessage);
 
-  if (item.state === "cancelled") return "Cancelled. It will not be sent.";
+  if (item.state === "cancelled") {
+    return isOptOutSkip(item.errorMessage)
+      ? `Cancelled before sending. ${OPT_OUT_SKIP_REASON}.`
+      : "Cancelled. It will not be sent.";
+  }
 
   if (item.state === "sent") {
     const on = item.sentAt ? ` on ${formatWhen(item.sentAt)}` : "";
@@ -611,6 +698,9 @@ export function explainState(item: OutboxItem, ctx: SendingContext): string {
 
   if (item.store === "server") {
     if (!due) return `${retryNote}Stored on the server for ${formatWhen(item.scheduledFor)}.`;
+    if (item.optedOut) {
+      return `${retryNote}Not sent: the patient has turned off this type of SMS reminder. It stays pending on the server and is skipped on every send run. Mark it as failed, or turn this type of reminder back on if the patient wants it.`;
+    }
     return `${retryNote}Due. Sent when someone presses Send due messages now or while automatic sending is on.`;
   }
 

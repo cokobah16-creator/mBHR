@@ -3,12 +3,20 @@ import { isSignedInStaffAccount } from "@/lib/cloudSession";
 import { db, OutboundMessage } from "../db";
 import { outboxDb } from "../db/outbox";
 import { composeSms } from "./messageTemplates";
+import { getPatientPreference } from "./preferences";
+import {
+  REMINDER_SKIP_MESSAGE,
+  isReminderOptedOut,
+  type ReminderKind,
+} from "./reminderEligibility";
 import {
   MAX_SEND_ATTEMPTS,
   PROVIDER_ACCEPTED_AT_KEY,
   PROVIDER_MESSAGE_ID_KEY,
+  SERVER_REMINDER_KIND,
   isWorkerSendable,
   outboxTemplateFor,
+  reminderKindForTemplateKey,
   type SendingBlocker,
 } from "@/features/notifications/smsOutbox";
 
@@ -35,6 +43,18 @@ import {
  * the outcome with the service role (sent + provider-accepted marker only
  * after the provider accepted it) and refuses a reminder already marked sent
  * (409 already_sent), so a patient is never texted twice for one reminder.
+ *
+ * Opt-outs: right before each reminder is sent, the patient's reminder
+ * setting on this device is checked again (checkReminderOptOut). A reminder
+ * the patient has since turned off is not sent. Device messages (the send
+ * queue and the outbox) are marked "cancelled" with the opt-out reason.
+ * Server reminders are only skipped on this device, run by run: this device
+ * does not write their status (see above), so they stay pending on the
+ * server. They are counted as not sent, and each run pages past them (oldest
+ * first) so they do not hold back other patients' due reminders. A setting
+ * that cannot be read holds the message; it is not sent.
+ * One-time codes and televisit links are transactional and never held
+ * back (reminderKindForTemplateKey).
  */
 
 interface SMSResult {
@@ -79,7 +99,11 @@ export interface ProcessResult {
   reminders: number;
   /** Device messages the provider accepted. */
   messages: number;
-  /** Attempts that did not go through in this run. */
+  /**
+   * Messages not sent in this run: failed or held attempts, device reminders
+   * cancelled because the patient turned them off, and server reminders
+   * skipped for the same reason (they stay pending on the server).
+   */
   failed?: number;
   /** Why nothing was attempted, if so. */
   skipped?: SendingBlocker | "busy";
@@ -88,6 +112,14 @@ export interface ProcessResult {
 const MAX_RETRIES = MAX_SEND_ATTEMPTS;
 const RETRY_DELAYS = [60000, 300000, 900000];
 const BATCH_SIZE = 10;
+/** Due server reminders read per request. */
+const REMINDER_PAGE_SIZE = 50;
+/**
+ * Requests for due server reminders in one run. Rows this device skips
+ * (patient opted out, for example) are paged past, up to
+ * REMINDER_PAGE_SIZE * MAX_REMINDER_PAGES rows a run.
+ */
+const MAX_REMINDER_PAGES = 10;
 
 /** Stored error for a server running in SMS demo mode (logged, not sent). */
 export const SMS_DEMO_MODE_ERROR =
@@ -101,6 +133,11 @@ const TEMPLATE_ERROR = "message text could not be prepared";
 const SERVER_BUSY_RETRY_MS = 60_000;
 /** Wait for a sync when the patient is not on the server yet. */
 const NOT_SYNCED_RETRY_MS = 5 * 60_000;
+/** Stored on a device reminder that was not sent because the patient opted out. */
+const OPTED_OUT_ERROR = REMINDER_SKIP_MESSAGE.opted_out;
+/** Stored when the patient's reminder setting could not be read here. */
+export const PREFERENCE_CHECK_ERROR =
+  "preference_check_failed: the patient's reminder settings could not be read on this device";
 
 let isProcessing = false;
 /**
@@ -334,6 +371,44 @@ function heldUntil(hold: SendHold): Date | undefined {
 }
 
 /**
+ * Result of the send-time opt-out check:
+ * - "send": no opt-out, or the message is not a reminder the patient can
+ *   turn off,
+ * - "opted_out": the patient turned this type of reminder off; do not send,
+ * - "unknown": the setting could not be read; hold the message, do not send.
+ */
+type OptOutCheck = "send" | "opted_out" | "unknown";
+
+/**
+ * Checks the patient's reminder setting right before a send, so a patient
+ * who turned a reminder type off after it was queued does not get it. It
+ * reads the preference stored on this device (the same lookup as when the
+ * reminder was queued), so it works offline. It applies the opt-out rule of
+ * reminderSkipReason only: the server looks up the phone number, so a
+ * number missing on this device is no reason to hold a message back.
+ *
+ * `kind` null means the message is not a reminder. That covers
+ * transactional messages (one-time codes, televisit links), which are never
+ * suppressed; see reminderKindForTemplateKey.
+ */
+async function checkReminderOptOut(
+  kind: ReminderKind | null,
+  patientId: string | null | undefined,
+): Promise<OptOutCheck> {
+  if (!kind || !patientId) return "send";
+  try {
+    const preference = await getPatientPreference(patientId);
+    return isReminderOptedOut(kind, preference) ? "opted_out" : "send";
+  } catch (error) {
+    console.warn("Could not read the patient's reminder settings:", errorName(error));
+    return "unknown";
+  }
+}
+
+/** Not sent: the reminder setting could not be read. Try again shortly. */
+const PREFERENCE_HOLD: SendHold = { stopRun: true, retryAfterMs: SERVER_BUSY_RETRY_MS };
+
+/**
  * Payload of a device message the provider accepted. The acceptance time is
  * what lets the outbox say "sent to provider" (older records marked sent
  * without sending carry no such time).
@@ -365,6 +440,34 @@ interface StoreRun {
 }
 
 async function processOutboundMessage(msg: OutboundMessage): Promise<MessageRun> {
+  const optOut = await checkReminderOptOut(
+    reminderKindForTemplateKey(msg.templateKey),
+    msg.patientId,
+  );
+  if (optOut === "opted_out") {
+    // Never sent. The last attempt time claimed for this run is put back.
+    // A linked server reminder is not written from here: it is skipped by
+    // processMedicationReminders' own check.
+    await db.outboundMessages.update(msg.id, {
+      status: "cancelled",
+      lastAttemptAt: msg.lastAttemptAt,
+      errorMessage: OPTED_OUT_ERROR,
+      _dirty: 1,
+    });
+    return { sent: false };
+  }
+  if (optOut === "unknown") {
+    // Back to the queue, attempts kept, tried again shortly.
+    await db.outboundMessages.update(msg.id, {
+      status: "queued",
+      lastAttemptAt: msg.lastAttemptAt,
+      errorMessage: PREFERENCE_CHECK_ERROR,
+      scheduledFor: heldUntil(PREFERENCE_HOLD),
+      _dirty: 1,
+    });
+    return { sent: false, stopRun: PREFERENCE_HOLD.stopRun };
+  }
+
   // Older queue entries may point at a server reminder; sending with its id
   // lets the server record the outcome and refuse a second text.
   const reminderId =
@@ -427,51 +530,96 @@ async function processOutboundMessage(msg: OutboundMessage): Promise<MessageRun>
 }
 
 async function processMedicationReminders(): Promise<StoreRun> {
-  const { data: reminders, error } = await supabase
-    .from("medication_reminders")
-    .select("*")
-    .eq("status", "pending")
-    .lte("scheduled_at", new Date().toISOString())
-    .limit(BATCH_SIZE);
-
-  if (error || !reminders?.length) return { sent: 0, failed: 0 };
-
+  const nowIso = new Date().toISOString();
   let sent = 0;
   let failed = 0;
+  // Reminders handed to the server this run (at most BATCH_SIZE).
+  let attempts = 0;
+  // Last row read, for the next page (keyset paging on scheduled_at, id).
+  let cursor: { at: string; id: string } | null = null;
 
-  for (const reminder of reminders) {
-    if (acceptedUnrecorded.has(reminder.id)) continue;
-    // The server sends to the number stored on the reminder.
-    const result = outcome(
-      await sendSMS(
-        { reminderId: reminder.id, patientId: reminder.patient_id },
-        reminder.message,
-      ),
-    );
+  // Due reminders are read oldest first, a page at a time. Rows this device
+  // leaves pending (opted out, accepted but not recorded, held) keep their
+  // place at the front, so without paging past them they would fill every
+  // run's batch and hold back other patients' reminders.
+  for (
+    let page = 0;
+    page < MAX_REMINDER_PAGES && attempts < BATCH_SIZE;
+    page++
+  ) {
+    let query = supabase
+      .from("medication_reminders")
+      .select("*")
+      .eq("status", "pending")
+      .lte("scheduled_at", nowIso);
+    if (cursor) {
+      query = query.or(
+        `scheduled_at.gt."${cursor.at}",and(scheduled_at.eq."${cursor.at}",id.gt."${cursor.id}")`,
+      );
+    }
+    const { data: reminders, error } = await query
+      .order("scheduled_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(REMINDER_PAGE_SIZE);
 
-    if (result.hold) {
-      // Not attempted (signed out, not permitted or a send limit): the
-      // reminder stays pending on the server.
-      failed++;
-      if (result.hold.stopRun) return { sent, failed, blocker: result.hold.blocker };
-      continue;
+    if (error || !reminders?.length) break;
+
+    for (const reminder of reminders) {
+      if (attempts >= BATCH_SIZE) break;
+      if (acceptedUnrecorded.has(reminder.id)) continue;
+
+      // The patient may have turned medication reminders off since this was
+      // scheduled. RLS does not let this device change the reminder's
+      // status, so an opted-out reminder is only skipped here, in this run;
+      // it stays pending on the server and is checked again next run. It is
+      // counted as not sent, so the run summary does not say nothing was due.
+      const optOut = await checkReminderOptOut(SERVER_REMINDER_KIND, reminder.patient_id);
+      if (optOut === "opted_out") {
+        failed++;
+        continue;
+      }
+      if (optOut === "unknown") {
+        // Not attempted: the reminder stays pending on the server.
+        failed++;
+        return { sent, failed };
+      }
+      // The server sends to the number stored on the reminder.
+      attempts++;
+      const result = outcome(
+        await sendSMS(
+          { reminderId: reminder.id, patientId: reminder.patient_id },
+          reminder.message,
+        ),
+      );
+
+      if (result.hold) {
+        // Not attempted (signed out, not permitted or a send limit): the
+        // reminder stays pending on the server.
+        failed++;
+        if (result.hold.stopRun) return { sent, failed, blocker: result.hold.blocker };
+        continue;
+      }
+
+      // Another device or person sent it since the list was read; the server
+      // did not text the patient again.
+      if (result.alreadySent) continue;
+
+      // The server records the outcome on the reminder (sent with the
+      // provider-accepted marker, or failed); this device does not write it.
+      if (result.ok) {
+        if (result.reminderRecorded === false) acceptedUnrecorded.add(reminder.id);
+        sent++;
+      } else {
+        failed++;
+        // No SMS provider on the server: every other reminder would get the
+        // same answer. They stay pending (nothing was sent) for a later run.
+        if (result.error?.startsWith(NOT_CONFIGURED_ERROR)) return { sent, failed };
+      }
     }
 
-    // Another device or person sent it since the list was read; the server
-    // did not text the patient again.
-    if (result.alreadySent) continue;
-
-    // The server records the outcome on the reminder (sent with the
-    // provider-accepted marker, or failed); this device does not write it.
-    if (result.ok) {
-      if (result.reminderRecorded === false) acceptedUnrecorded.add(reminder.id);
-      sent++;
-    } else {
-      failed++;
-      // No SMS provider on the server: every other reminder would get the
-      // same answer. They stay pending (nothing was sent) for a later run.
-      if (result.error?.startsWith(NOT_CONFIGURED_ERROR)) break;
-    }
+    if (reminders.length < REMINDER_PAGE_SIZE) break;
+    const last = reminders[reminders.length - 1];
+    cursor = { at: last.scheduled_at, id: last.id };
   }
 
   return { sent, failed };
@@ -548,6 +696,35 @@ async function processDeviceOutbox(): Promise<StoreRun> {
       .and((m) => m.status === "queued")
       .modify({ status: "sending", lastAttemptAt: new Date().toISOString() });
     if (!claimed) continue;
+
+    const optOut = await checkReminderOptOut(
+      reminderKindForTemplateKey(msg.templateKey),
+      msg.patientId,
+    );
+    if (optOut === "opted_out") {
+      // Never sent. The last attempt time claimed for this run is put back.
+      await outboxDb.outboundMessages.update(msg.id, {
+        status: "cancelled",
+        lastAttemptAt: msg.lastAttemptAt,
+        errorMessage: OPTED_OUT_ERROR,
+        _dirty: 1,
+      });
+      failed++;
+      continue;
+    }
+    if (optOut === "unknown") {
+      // Back to the queue, attempts kept, tried again shortly.
+      const until = heldUntil(PREFERENCE_HOLD);
+      await outboxDb.outboundMessages.update(msg.id, {
+        status: "queued",
+        lastAttemptAt: msg.lastAttemptAt,
+        errorMessage: PREFERENCE_CHECK_ERROR,
+        scheduledFor: until ? until.toISOString() : msg.scheduledFor,
+        _dirty: 1,
+      });
+      failed++;
+      break;
+    }
 
     const text = await composeOutboxMessageText(msg).catch(() => null);
     const result: SendOutcome = text
@@ -761,6 +938,10 @@ export async function queueSMS(
  * the patient's registered number); `phoneNumber` is not sent. When the
  * server refuses without trying (signed out, role not allowed, send limit)
  * the reminder is left as it was, not marked failed.
+ *
+ * A patient who turned medication reminders off is not sent anything, and
+ * neither is one whose setting cannot be read here. The reminder is left as
+ * it was on the server (this device does not write its status).
  */
 export async function sendReminderNow(reminder: {
   id?: string;
@@ -791,6 +972,10 @@ export async function sendReminderNow(reminder: {
         error: "recipient_required: this reminder has no server record or patient to send to",
       };
     }
+
+    const optOut = await checkReminderOptOut(SERVER_REMINDER_KIND, reminder.patientId);
+    if (optOut === "unknown") return { ok: false, error: PREFERENCE_CHECK_ERROR };
+    if (optOut === "opted_out") return { ok: false, error: OPTED_OUT_ERROR };
 
     const result = outcome(
       await sendSMS(

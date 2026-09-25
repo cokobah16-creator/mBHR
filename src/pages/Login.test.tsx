@@ -55,6 +55,8 @@ vi.mock("@/db/devicePin", () => ({
   setDevicePin: (...args: unknown[]) => mocks.setDevicePin(...args),
 }));
 
+// The real translations, so the legal links show their English labels.
+import "@/i18n";
 import Login from "./Login";
 
 function renderLogin() {
@@ -124,6 +126,18 @@ describe("Login on a device that has never been set up", () => {
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Offline PIN" })).toBeDisabled();
     expect(screen.queryByRole("link", { name: "Set up this device" })).toBeNull();
+  });
+
+  it("links to the privacy notice and the terms of use", async () => {
+    renderLogin();
+
+    expect(await screen.findByText(NOT_SET_UP)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Privacy notice" }),
+    ).toHaveAttribute("href", "/privacy");
+    expect(
+      screen.getByRole("link", { name: "Terms of use" }),
+    ).toHaveAttribute("href", "/terms");
   });
 
   it("leaves only setup when online sign-in is not built in", async () => {

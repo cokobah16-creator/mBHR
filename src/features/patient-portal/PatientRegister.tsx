@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,7 +13,48 @@ import { useAuth } from "@/hooks/useAuth";
 import { registerPatientPortalAccount } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
+import {
+  ACCEPTANCE_REQUIRED_MESSAGE,
+  UNDER_18_SIGN_UP_MESSAGE,
+  currentPolicyAcceptance,
+  type PolicyAcceptance,
+} from "@/pages/legal/policyMeta";
+import { isMinor } from "@/utils/patient";
 import { AuthShell } from "./account/AuthShell";
+
+// Three separate, required boxes. Each starts unticked and is asked for on
+// its own, so agreeing to one is never taken as agreeing to the others.
+const mustTick = (message: string) =>
+  z.boolean().refine((v) => v === true, message);
+
+const consentFields = {
+  acceptTerms: mustTick("Tick this box to agree to the terms of use."),
+  acceptPrivacy: mustTick(
+    "Tick this box to confirm you have read the privacy notice.",
+  ),
+  consentRecordsAccess: mustTick(
+    "Tick this box to consent to seeing your health records in this portal.",
+  ),
+};
+
+type ConsentField = keyof typeof consentFields;
+
+const INVALID_DOB_MESSAGE =
+  "Please enter a real date of birth. It cannot be in the future.";
+
+// Required in both modes. People under 18 cannot create their own account:
+// a parent or guardian asks clinic staff instead.
+const dateOfBirthField = z.string().superRefine((value, ctx) => {
+  const fail = (message: string) =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+  if (!value) return fail("Date of birth is required");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return fail("Please enter your date of birth as YYYY-MM-DD");
+  }
+  const minor = isMinor(value);
+  if (minor === null) return fail(INVALID_DOB_MESSAGE);
+  if (minor) fail(UNDER_18_SIGN_UP_MESSAGE);
+});
 
 // Online: password-based auth via Supabase
 const onlineSchema = z
@@ -25,16 +66,10 @@ const onlineSchema = z
       .regex(/^\+?[\d\s-]{7,}$/, "Invalid phone number")
       .optional()
       .or(z.literal("")),
-    dateOfBirth: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
-      .optional()
-      .or(z.literal("")),
+    dateOfBirth: dateOfBirthField,
     password: z.string().min(8, "Password must be at least 8 characters"),
     confirmPassword: z.string(),
-    consentGiven: z
-      .boolean()
-      .refine((v) => v === true, "You must accept the terms to continue"),
+    ...consentFields,
   })
   .refine((d) => d.password === d.confirmPassword, {
     message: "Passwords do not match",
@@ -51,17 +86,10 @@ const offlineSchema = z
       .regex(/^\+?[\d\s-]{7,}$/, "Invalid phone number")
       .optional()
       .or(z.literal("")),
-    dateOfBirth: z
-      .string()
-      .regex(
-        /^\d{4}-\d{2}-\d{2}$/,
-        "Please enter your date of birth as YYYY-MM-DD",
-      ),
+    dateOfBirth: dateOfBirthField,
     pin: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
     confirmPin: z.string(),
-    consentGiven: z
-      .boolean()
-      .refine((v) => v === true, "You must accept the terms to continue"),
+    ...consentFields,
   })
   .refine((d) => d.pin === d.confirmPin, {
     message: "PINs do not match",
@@ -95,7 +123,9 @@ export function PatientRegister() {
           dateOfBirth: "",
           password: "",
           confirmPassword: "",
-          consentGiven: false,
+          acceptTerms: false,
+          acceptPrivacy: false,
+          consentRecordsAccess: false,
         }
       : {
           fullName: "",
@@ -104,11 +134,16 @@ export function PatientRegister() {
           dateOfBirth: "",
           pin: "",
           confirmPin: "",
-          consentGiven: false,
+          acceptTerms: false,
+          acceptPrivacy: false,
+          consentRecordsAccess: false,
         },
   });
 
-  const handleSupabaseRegister = async (data: RegistrationForm) => {
+  const handleSupabaseRegister = async (
+    data: RegistrationForm,
+    acceptance: PolicyAcceptance,
+  ) => {
     const parts = data.fullName.trim().split(/\s+/);
     const givenName = parts[0] ?? data.fullName;
     const familyName = parts.slice(1).join(" ") || "";
@@ -119,7 +154,8 @@ export function PatientRegister() {
       givenName,
       familyName,
       phone: data.phone || undefined,
-      dob: data.dateOfBirth || undefined,
+      dob: data.dateOfBirth,
+      acceptance,
     });
     if (authError) {
       // The account exists but needs its email confirmed first: this is
@@ -180,20 +216,24 @@ export function PatientRegister() {
     setTimeout(() => navigate("/patient/dashboard"), 1800);
   };
 
-  const handleOfflineRegister = async (data: RegistrationForm) => {
+  const handleOfflineRegister = async (
+    data: RegistrationForm,
+    acceptance: PolicyAcceptance,
+  ) => {
     const parts = data.fullName.trim().split(/\s+/);
     const givenName = parts[0] ?? data.fullName;
     const familyName = parts.slice(1).join(" ") || "";
 
-    // dateOfBirth and pin are required in offline mode (enforced by offlineSchema)
+    // pin is required in offline mode (enforced by offlineSchema)
     const offlineData = data as z.infer<typeof offlineSchema>;
     const result = await registerPatientPortalAccount(
       data.phone || undefined,
       data.email,
-      data.dateOfBirth!,
+      data.dateOfBirth,
       givenName,
       familyName,
       offlineData.pin,
+      acceptance,
     );
     if (result.success && result.sessionToken) {
       sessionStorage.setItem("patient_session_token", result.sessionToken);
@@ -209,13 +249,27 @@ export function PatientRegister() {
   };
 
   const handleSubmit = async (data: RegistrationForm) => {
+    // The schema already requires all three boxes. Check again here, because
+    // this is where the acceptance that gets saved with the account is made.
+    if (!data.acceptTerms || !data.acceptPrivacy || !data.consentRecordsAccess) {
+      setError(ACCEPTANCE_REQUIRED_MESSAGE);
+      return;
+    }
+    // The schema already refuses people under 18 and unusable dates. Check
+    // again here too, right before an account is made.
+    const minor = isMinor(data.dateOfBirth);
+    if (minor !== false) {
+      setError(minor ? UNDER_18_SIGN_UP_MESSAGE : INVALID_DOB_MESSAGE);
+      return;
+    }
+    const acceptance = currentPolicyAcceptance();
     setLoading(true);
     setError("");
     try {
       if (isSupabaseEnabled) {
-        await handleSupabaseRegister(data);
+        await handleSupabaseRegister(data, acceptance);
       } else {
-        await handleOfflineRegister(data);
+        await handleOfflineRegister(data, acceptance);
       }
     } catch {
       setError("An unexpected error occurred. Please try again.");
@@ -242,6 +296,35 @@ export function PatientRegister() {
     ) : null;
   };
   const invalid = (name: string) => (errorText(name) ? true : undefined);
+  const consentBox = (name: ConsentField, id: string, label: ReactNode) => (
+    <div>
+      <div className="flex items-start gap-3">
+        <input
+          {...form.register(name)}
+          type="checkbox"
+          id={id}
+          className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
+          disabled={loading}
+          aria-invalid={invalid(name)}
+          aria-describedby={describe(!!errorText(name) && `${name}-error`)}
+        />
+        <label htmlFor={id} className="text-body text-ink-secondary">
+          {label}
+        </label>
+      </div>
+      {fieldError(name)}
+    </div>
+  );
+  const policyLink = (href: string, text: string) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="font-medium text-primary-fg underline underline-offset-2"
+    >
+      {text}
+    </a>
+  );
 
   return (
     <AuthShell>
@@ -351,7 +434,7 @@ export function PatientRegister() {
               {isSupabaseEnabled && (
                 <div>
                   <label htmlFor="dateOfBirth" className="field-label">
-                    Date of Birth (optional)
+                    Date of Birth *
                   </label>
                   <input
                     {...form.register("dateOfBirth")}
@@ -359,11 +442,17 @@ export function PatientRegister() {
                     id="dateOfBirth"
                     className="input-field"
                     disabled={loading}
+                    autoComplete="bday"
+                    aria-required="true"
                     aria-invalid={invalid("dateOfBirth")}
                     aria-describedby={describe(
+                      "dateOfBirth-hint",
                       !!errorText("dateOfBirth") && "dateOfBirth-error",
                     )}
                   />
+                  <p id="dateOfBirth-hint" className="field-hint">
+                    You must be 18 or older to create your own account.
+                  </p>
                   {fieldError("dateOfBirth")}
                 </div>
               )}
@@ -391,7 +480,8 @@ export function PatientRegister() {
                     )}
                   />
                   <p id="dateOfBirth-hint" className="field-hint">
-                    Used to match you to your clinic record.
+                    Used to match you to your clinic record. You must be 18
+                    or older to create your own account.
                   </p>
                   {fieldError("dateOfBirth")}
                 </div>
@@ -496,44 +586,26 @@ export function PatientRegister() {
               </>
             )}
 
-            <div className="rounded-md border border-line bg-surface-sunken p-3">
-              <div className="flex items-start gap-3">
-                <input
-                  {...form.register("consentGiven")}
-                  type="checkbox"
-                  id="consent"
-                  className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
-                  disabled={loading}
-                  aria-invalid={invalid("consentGiven")}
-                  aria-describedby={describe(
-                    !!errorText("consentGiven") && "consentGiven-error",
-                  )}
-                />
-                <label htmlFor="consent" className="text-body text-ink-secondary">
-                  I agree to the{" "}
-                  <a
-                    href="/terms"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-primary-fg underline underline-offset-2"
-                  >
-                    Terms of Use
-                  </a>{" "}
-                  and{" "}
-                  <a
-                    href="/privacy"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-primary-fg underline underline-offset-2"
-                  >
-                    Privacy Notice
-                  </a>
-                  . I consent to access my medical records through this
-                  portal.
-                </label>
-              </div>
-              {fieldError("consentGiven")}
-            </div>
+            <fieldset className="space-y-3 rounded-md border border-line bg-surface-sunken p-3">
+              <legend className="px-1 text-label font-medium text-ink">
+                Tick all three boxes to create your account *
+              </legend>
+              {consentBox(
+                "acceptTerms",
+                "consent-terms",
+                <>I agree to the {policyLink("/terms", "Terms of use")}.</>,
+              )}
+              {consentBox(
+                "acceptPrivacy",
+                "consent-privacy",
+                <>I have read the {policyLink("/privacy", "Privacy notice")}.</>,
+              )}
+              {consentBox(
+                "consentRecordsAccess",
+                "consent-records",
+                <>I consent to seeing my health records in this portal.</>,
+              )}
+            </fieldset>
 
             <button
               type="submit"

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   REMINDER_SKIP_MESSAGE,
   ReminderSkippedError,
+  isReminderOptedOut,
   reminderSkipReason,
 } from "./reminderEligibility";
 
@@ -43,10 +44,54 @@ describe("reminderSkipReason", () => {
     expect(reminderSkipReason("medication", { phone: null })).toBe("no_phone");
   });
 
+  it("treats a setting pulled from the server as false like 0", () => {
+    expect(
+      reminderSkipReason("medication", withPhone, { medicationReminders: false }),
+    ).toBe("opted_out");
+    expect(
+      reminderSkipReason("appointment", withPhone, { appointmentReminders: false }),
+    ).toBe("opted_out");
+  });
+
+  it("treats a setting pulled from the server as true like 1", () => {
+    expect(
+      reminderSkipReason("medication", withPhone, { medicationReminders: true }),
+    ).toBeNull();
+    expect(
+      reminderSkipReason("appointment", withPhone, {
+        medicationReminders: false,
+        appointmentReminders: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not read an empty setting as an opt-out", () => {
+    expect(
+      reminderSkipReason("medication", withPhone, { medicationReminders: null }),
+    ).toBeNull();
+    expect(reminderSkipReason("appointment", withPhone, {})).toBeNull();
+  });
+
   it("reports an opt-out before a missing phone", () => {
     expect(
       reminderSkipReason("medication", { phone: "" }, { medicationReminders: 0 }),
     ).toBe("opted_out");
+  });
+});
+
+describe("isReminderOptedOut", () => {
+  it("reads 0 and false as off, and 1, true or nothing as on", () => {
+    expect(isReminderOptedOut("medication", { medicationReminders: 0 })).toBe(true);
+    expect(isReminderOptedOut("medication", { medicationReminders: false })).toBe(true);
+    expect(isReminderOptedOut("medication", { medicationReminders: 1 })).toBe(false);
+    expect(isReminderOptedOut("medication", { medicationReminders: true })).toBe(false);
+    expect(isReminderOptedOut("medication", { medicationReminders: null })).toBe(false);
+    expect(isReminderOptedOut("medication", undefined)).toBe(false);
+    expect(isReminderOptedOut("appointment", null)).toBe(false);
+  });
+
+  it("does not need a phone number", () => {
+    expect(isReminderOptedOut("appointment", { appointmentReminders: false })).toBe(true);
   });
 });
 

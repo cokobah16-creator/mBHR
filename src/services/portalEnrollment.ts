@@ -13,6 +13,14 @@
  * lead, lead clinician, admin); turning access on needs only portal_manage.
  * The server functions check the same rule, look up the patient's stored
  * email or phone, build the text and record who sent the invitation.
+ *
+ * Portal accounts are for adults. For a patient under 18 by date of birth
+ * (isMinor), turning access on, sending an invitation and listing them for
+ * bulk enrolment are refused here, on this device. Turning access off still
+ * works. A record with no date of birth, or one that cannot be read, is not
+ * refused. The server does not check age for these yet:
+ * set_patient_portal_access and portal_invitation_begin accept a child's
+ * record; only portal_link_patient_record refuses one.
  */
 
 import { db, type Patient, type PortalInvitation } from "@/db";
@@ -20,6 +28,8 @@ import { supabase } from "@/lib/supabase";
 import { appLinkOrigin } from "@/config/canonicalOrigin";
 import * as logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
+import { isMinor } from "@/utils/patient";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 import { safeErrorLabel } from "./logSafe";
 import {
   requestPortalAccessChange,
@@ -76,10 +86,13 @@ export interface PortalStatusInfo {
   contactMethod?: "email" | "phone";
   canResend: boolean;
   nextResendTime?: Date;
+  /** Under 18 by date of birth: access cannot be turned on or invited. */
+  minor?: boolean;
 }
 
 /**
  * Turn portal access on for a patient (waits for the server to confirm).
+ * Refused for a patient under 18 (see the header).
  */
 export async function enablePortalAccess(
   patientId: string,
@@ -89,6 +102,10 @@ export async function enablePortalAccess(
     const patient = await db.patients.get(patientId);
     if (!patient) {
       return { success: false, error: "Patient not found on this device" };
+    }
+
+    if (isMinor(patient.dob) === true) {
+      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
     }
 
     // Validate contact information
@@ -153,6 +170,8 @@ export async function enablePortalAccess(
 
 /**
  * Turn portal access off for a patient (waits for the server to confirm).
+ * Works for a patient under 18 too: a child's record can still have access
+ * on from before portal accounts were limited to adults.
  */
 export async function disablePortalAccess(
   patientId: string,
@@ -207,7 +226,7 @@ function canSendInvitations(): boolean {
 }
 
 /**
- * Send portal invitation to a patient
+ * Send portal invitation to a patient. Refused for a patient under 18.
  */
 export async function sendPortalInvitation(patientId: string): Promise<{
   success: boolean;
@@ -226,6 +245,11 @@ export async function sendPortalInvitation(patientId: string): Promise<{
     const patient = await db.patients.get(patientId);
     if (!patient) {
       return { success: false, error: "Patient not found" };
+    }
+
+    // A child's record can still have access on from before this rule.
+    if (isMinor(patient.dob) === true) {
+      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
     }
 
     if (!patient.portalEnabled) {
@@ -453,6 +477,7 @@ export async function getPortalStatus(
       nextResendTime: rateLimit.waitMs
         ? new Date(Date.now() + rateLimit.waitMs)
         : undefined,
+      minor: isMinor(patient.dob) === true,
     };
   } catch (error) {
     logger.error("Error getting portal status:", safeErrorLabel(error));
@@ -537,7 +562,8 @@ export async function linkAuthUserToPatient(
 
 /**
  * Find patients eligible for bulk portal enrollment
- * (have contact info, portal not enabled, no change waiting, not merged)
+ * (have contact info, portal not enabled, no change waiting, not merged).
+ * Patients under 18 are left out: enablePortalAccess refuses them.
  */
 export async function findEligiblePatients(
   filters: {
@@ -566,6 +592,8 @@ export async function findEligiblePatients(
       if (filters.contactMethod === "any" && !hasEmail && !hasPhone)
         return false;
       if (!hasEmail && !hasPhone) return false;
+
+      if (isMinor(p.dob) === true) return false;
 
       // Filter by date range
       if (filters.startDate && p.createdAt < filters.startDate) return false;
@@ -606,6 +634,8 @@ export interface BulkEnableResult {
  * sent to the server once, and invitations go only to patients whose access
  * the server confirmed. `sendInvitations` needs portal_invite: without it
  * nothing is changed and every patient is reported with the refusal.
+ * A patient under 18 is listed as failed with the reason: enablePortalAccess
+ * refuses them, so nothing is queued and no invitation is sent.
  */
 export async function bulkEnablePortalAccess(
   patientIds: string[],

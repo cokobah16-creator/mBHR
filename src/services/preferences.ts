@@ -1,4 +1,9 @@
 import { db, generateId, type PatientPreference } from '../db'
+import { isReminderOptedOut } from './reminderEligibility'
+
+// Reminder settings are written here as 0 (off) or 1 (on). A record pulled
+// from the server can hold false or true instead, so they are always read
+// with isReminderOptedOut, the rule the reminder senders use.
 
 export interface CreatePreferenceInput {
   patientId: string
@@ -114,14 +119,14 @@ export const shouldSendAppointmentReminders = async (
   patientId: string
 ): Promise<boolean> => {
   const preference = await getPatientPreference(patientId)
-  return preference?.appointmentReminders === 1
+  return !isReminderOptedOut('appointment', preference)
 }
 
 export const shouldSendMedicationReminders = async (
   patientId: string
 ): Promise<boolean> => {
   const preference = await getPatientPreference(patientId)
-  return preference?.medicationReminders === 1
+  return !isReminderOptedOut('medication', preference)
 }
 
 export const hasPreferences = async (patientId: string): Promise<boolean> => {
@@ -156,8 +161,8 @@ export const getPreferenceSummary = async (patientId: string) => {
     dietary: preference.dietaryRestrictions || null,
     cultural: preference.religiousCultural || null,
     reminders: {
-      appointments: preference.appointmentReminders === 1,
-      medications: preference.medicationReminders === 1
+      appointments: !isReminderOptedOut('appointment', preference),
+      medications: !isReminderOptedOut('medication', preference)
     }
   }
 }
@@ -174,7 +179,7 @@ export const toggleAppointmentReminders = async (patientId: string): Promise<voi
   }
 
   await db.patientPreferences.update(preference.id, {
-    appointmentReminders: preference.appointmentReminders === 1 ? 0 : 1,
+    appointmentReminders: isReminderOptedOut('appointment', preference) ? 1 : 0,
     updatedAt: new Date(),
     _dirty: 1
   })
@@ -192,7 +197,7 @@ export const toggleMedicationReminders = async (patientId: string): Promise<void
   }
 
   await db.patientPreferences.update(preference.id, {
-    medicationReminders: preference.medicationReminders === 1 ? 0 : 1,
+    medicationReminders: isReminderOptedOut('medication', preference) ? 1 : 0,
     updatedAt: new Date(),
     _dirty: 1
   })

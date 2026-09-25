@@ -8,6 +8,7 @@ import {
   type CreatePreferenceInput,
 } from "../services/preferences";
 import { createAuditLog, generateId, type PatientPreference } from "../db";
+import { isReminderOptedOut } from "../services/reminderEligibility";
 import { Cog6ToothIcon, PencilSquareIcon } from "@heroicons/react/24/outline";
 import { ExclamationCircleIcon } from "@heroicons/react/20/solid";
 import { useAuthStore } from "@/stores/auth";
@@ -52,6 +53,9 @@ function canEditPreferences(role: Role | undefined): boolean {
   );
 }
 
+// A record pulled from the server can hold true/false instead of 1/0, so
+// reminder settings are read with isReminderOptedOut, the rule the reminder
+// senders use. They are saved as 1 or 0.
 function toFormValues(data: PatientPreference): PreferenceFormData {
   return {
     preferredLanguage: data.preferredLanguage || undefined,
@@ -59,8 +63,8 @@ function toFormValues(data: PatientPreference): PreferenceFormData {
     bestContactTime: data.bestContactTime || undefined,
     dietaryRestrictions: data.dietaryRestrictions || undefined,
     religiousCultural: data.religiousCultural || undefined,
-    appointmentReminders: data.appointmentReminders === 1,
-    medicationReminders: data.medicationReminders === 1,
+    appointmentReminders: !isReminderOptedOut("appointment", data),
+    medicationReminders: !isReminderOptedOut("medication", data),
     notes: data.notes || undefined,
   };
 }
@@ -244,6 +248,8 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
   }
 
   if (!isEditing && preference) {
+    const appointmentRemindersOn = !isReminderOptedOut("appointment", preference);
+    const medicationRemindersOn = !isReminderOptedOut("medication", preference);
     const fields: { label: string; value?: string; wide?: boolean }[] = [
       { label: "Language", value: preference.preferredLanguage },
       {
@@ -293,16 +299,16 @@ export function PreferenceManager({ patientId }: PreferenceManagerProps) {
             <div className="flex items-center justify-between gap-2 sm:justify-start">
               <dt className="text-label text-ink-secondary">Appointment reminders</dt>
               <dd>
-                <StatusBadge tone={preference.appointmentReminders === 1 ? "success" : "neutral"}>
-                  {preference.appointmentReminders === 1 ? "On" : "Off"}
+                <StatusBadge tone={appointmentRemindersOn ? "success" : "neutral"}>
+                  {appointmentRemindersOn ? "On" : "Off"}
                 </StatusBadge>
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2 sm:justify-start">
               <dt className="text-label text-ink-secondary">Medication reminders</dt>
               <dd>
-                <StatusBadge tone={preference.medicationReminders === 1 ? "success" : "neutral"}>
-                  {preference.medicationReminders === 1 ? "On" : "Off"}
+                <StatusBadge tone={medicationRemindersOn ? "success" : "neutral"}>
+                  {medicationRemindersOn ? "On" : "Off"}
                 </StatusBadge>
               </dd>
             </div>
