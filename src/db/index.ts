@@ -6,11 +6,32 @@ import { metaphone } from "metaphone";
 export interface User {
   id: string;
   fullName: string;
-  role: "admin" | "doctor" | "nurse" | "pharmacist" | "volunteer" | "guest";
+  role:
+    | "admin"
+    | "doctor"
+    | "nurse"
+    | "pharmacist"
+    | "volunteer"
+    | "registration_lead"
+    | "guest";
   email?: string;
   phone?: string;
+  // Device-local offline credential (src/db/devicePin.ts). Never uploaded
+  // or downloaded by sync; empty when the person has no PIN on this device.
   pinHash: string;
   pinSalt: string;
+  pinEnrolledAt?: Date;
+  // Device-local, never uploaded: when this person last signed in online on
+  // this device (the server confirmed who they are and that they are
+  // active), and when their role on this device was last read from the
+  // server. Offline sign-in works from that cached role.
+  lastOnlineVerifiedAt?: Date;
+  permissionsCachedAt?: Date;
+  // Set when an administrator deactivates the account on this device. A
+  // download never reactivates it; if the server still lists the person as
+  // active, accessConflict is set for an administrator to resolve.
+  disabledLocallyAt?: Date;
+  accessConflict?: 0 | 1;
   adminAccess?: boolean;
   adminPermanent?: boolean;
   createdAt: Date;
@@ -18,12 +39,23 @@ export interface User {
   isActive: 0 | 1;
 }
 
+/**
+ * How a staff session was opened. "online": email and password checked by
+ * the server, which allows sync. "offline": a device PIN, which opens this
+ * device's records only and never allows sync.
+ */
+export type AuthMode = "online" | "offline";
+
 export interface Session {
   id: string;
   userId: string;
   createdAt: Date;
   deviceKey: string;
   lastSeenAt: Date;
+  /** Missing on sessions opened before this was recorded: treated as offline. */
+  authMode?: AuthMode;
+  /** This device's id (src/db/deviceIdentity.ts). */
+  deviceId?: string;
 }
 
 export interface Setting {
@@ -231,6 +263,17 @@ export interface QueueItem {
   serviceDate?: string;
   /** 1 while ticketNumber is a device-issued provisional label. */
   ticketProvisional?: 0 | 1;
+  // Device-only ticket markers (src/services/queueTickets.ts,
+  // src/sync/queueSync.ts). Never uploaded; a download never clears them.
+  /** 1 while the server has not confirmed this row's ticket yet. */
+  ticketPending?: 0 | 1;
+  /**
+   * 1 while a status change or priority downgrade made on this device has
+   * not reached the server's transition log yet.
+   */
+  transitionPending?: 0 | 1;
+  /** The number the patient was given before the server changed it. */
+  ticketRelabelledFrom?: string;
   updatedAt: Date;
   _dirty?: number;
   _syncedAt?: string;
@@ -304,7 +347,16 @@ export interface AuditLog {
   action: string;
   entity: string;
   entityId: string;
+  /** When the staff member did it, on this device's clock. */
   at: Date;
+  /**
+   * Who did it, on which device, and how they were signed in. Filled in
+   * automatically from the current sign-in (src/stores/auth.ts) when the
+   * writer does not set them. Missing on rows written before this existed.
+   */
+  userId?: string | null;
+  deviceId?: string | null;
+  sessionType?: AuthMode | "none";
 }
 
 export interface PatientMerge {
@@ -331,6 +383,23 @@ export interface PatientMerge {
   kind?: "merge" | "unmerge";
   source?: string;
   createdAt?: string;
+  /**
+   * Device-only undo data for a merge still waiting for the server; cleared
+   * (null) once the server answers. Never uploaded. Same shape as MergeUndo
+   * in src/services/patientMergeCore.ts.
+   */
+  localUndo?: {
+    /** Child table name -> ids moved from the merged record to the kept record. */
+    moved: Record<string, string[]>;
+    /** Child table name -> moved ids that were not uploaded yet. */
+    unsent?: Record<string, string[]>;
+    /** Kept record's values before the chosen values were applied. */
+    winnerBefore: Record<string, unknown>;
+    /** Values applied to the kept record. */
+    winnerApplied: Record<string, unknown>;
+    /** The kept record had unsent edits when the merge was asked for. */
+    winnerUnsent?: boolean;
+  } | null;
 }
 
 /**
@@ -1564,48 +1633,6 @@ export const createPatientDraft = async (p: {
     .toArray();
 
   return { rec, candidates };
-};
-
-/**
- * Merge patients on this device only (marks the loser, records the merge).
- * Child records are not moved and nothing is sent to the server.
- *
- * @deprecated Use requestMerge from services/patientMerge (patient-merge
- * package), which moves child records and sends the merge to the server as
- * a command. Kept until PatientDedupeModal has moved over.
- */
-export const mergePatients = async (
-  winnerId: string,
-  loserId: string,
-  mergedBy: string,
-) => {
-  await db.transaction("rw", db.patients, db.patientMerges, async () => {
-    const now = new Date();
-    const day = epochDay(now);
-
-    // Mark loser as merged
-    await db.patients.update(loserId, {
-      mergeInto: winnerId,
-      updatedAt: now,
-      _dirty: 1,
-    });
-
-    // Record merge
-    await db.patientMerges.add({
-      id: generateId(),
-      winnerId,
-      loserId,
-      mergedBy,
-      createdDay: day,
-      reason: "duplicate_resolution",
-    });
-
-    // Update winner's updatedAt
-    await db.patients.update(winnerId, {
-      updatedAt: now,
-      _dirty: 1,
-    });
-  });
 };
 
 // Daily count helpers

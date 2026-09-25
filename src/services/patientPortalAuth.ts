@@ -1,11 +1,15 @@
 /**
- * Patient Portal Authentication Service
+ * Patient Portal Authentication Service (local accounts)
  *
  * Offline-first patient portal auth backed by Dexie + localStorage.
  * Supports login via contact+DOB or contact+PIN (6-digit, SHA-256 hashed).
- * Accounts are for adults: registration refuses anyone under 18, and neither
- * registration nor the date-of-birth login fallback links an account to a
- * clinic record for someone under 18.
+ *
+ * These accounts exist on this device only: they are never sent to the
+ * server and cannot see server records. Portal access itself belongs to
+ * the server when one is set up (patients.portal_enabled): a local sign-in
+ * then trusts this device's copy only when it is on, confirmed and recent
+ * (see localPortalAccessDecision). Online portal accounts sign in with
+ * email and password (PatientLogin), which checks with the server.
  */
 
 import { db } from "@/db";
@@ -13,15 +17,12 @@ import { supabase } from "@/lib/supabase";
 import { normalizePhone } from "@/utils/phone";
 import * as logger from "@/lib/logger";
 import { derivePinHash, newSaltB64, verifyPin } from "@/utils/pin";
-import { isMinor } from "@/utils/patient";
+import { endPatientSession } from "@/utils/sessionManager";
 import type { PatientPortalAuthResponse } from "@/types/patientPortal";
 import {
-  ACCEPTANCE_REQUIRED_MESSAGE,
-  MINOR_RECORD_LINK_MESSAGE,
-  UNDER_18_SIGN_UP_MESSAGE,
-  isCompleteAcceptance,
-  type PolicyAcceptance,
-} from "@/pages/legal/policyMeta";
+  localPortalAccessDecision,
+  localPortalRefusalMessage,
+} from "./portalAccessRules";
 
 const PORTAL_USERS_KEY = "mbhr_portal_users";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -52,22 +53,16 @@ export interface LocalPortalUser {
   managedPatients?: ManagedPatient[];
   failedLoginAttempts?: number;
   lockedUntil?: string;
-  /**
-   * Set only when the patient registered here and ticked all three boxes:
-   * the terms of use, the privacy notice and portal access to their
-   * records. Accounts created any other way have none of these.
-   */
-  termsAcceptedVersion?: string;
-  privacyAcceptedVersion?: string;
-  /** ISO timestamp of that acceptance. */
-  acceptedAt?: string;
 }
 
 function getLocalPortalUsers(): LocalPortalUser[] {
   try {
     return JSON.parse(localStorage.getItem(PORTAL_USERS_KEY) || "[]");
   } catch (e) {
-    logger.warn("Failed to parse portal users from localStorage:", e);
+    logger.warn(
+      "Failed to parse portal users from localStorage:",
+      e instanceof Error ? e.name : "unknown",
+    );
     return [];
   }
 }
@@ -89,8 +84,6 @@ async function hashPINWithSalt(
 }
 
 function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
-  // Report consent only when this account stored an acceptance.
-  const acceptedAt = user.acceptedAt ? new Date(user.acceptedAt) : undefined;
   return {
     success: true,
     sessionToken: user.sessionToken,
@@ -103,11 +96,7 @@ function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
       emailVerified: !!user.email,
       accountStatus: "active",
       failedLoginAttempts: 0,
-      consentGiven: !!acceptedAt,
-      consentGivenAt: acceptedAt,
-      termsAcceptedVersion: user.termsAcceptedVersion,
-      termsAcceptedAt: acceptedAt,
-      privacyAcceptedVersion: user.privacyAcceptedVersion,
+      consentGiven: true,
       createdAt: new Date(user.createdAt),
       updatedAt: new Date(),
     },
@@ -121,14 +110,17 @@ function buildAuthResponse(user: LocalPortalUser): PatientPortalAuthResponse {
   };
 }
 
+/** Whether a server is set up on this device (portal access decided there). */
+function serverConfigured(): boolean {
+  return !!supabase;
+}
+
 /**
- * Register a new patient portal account.
- * Creates a Dexie patient record and a local portal user, and starts a session.
- * `acceptance` is what the patient ticked on the sign-up form (terms of use,
- * privacy notice and portal access to records). It is stored with the
- * account, and registration is refused without it.
- * Registration is also refused for anyone under 18, and when the matching
- * clinic record belongs to someone under 18.
+ * Register a new patient portal account on this device only.
+ * Links to a patient record already on this device (staff-registered, with
+ * portal access on), or creates a self-registered record here, then creates
+ * a local portal user and starts a session. Nothing is looked up on or sent
+ * to the server: online accounts register with email and password instead.
  */
 export async function registerPatientPortalAccount(
   phone: string | undefined,
@@ -137,7 +129,6 @@ export async function registerPatientPortalAccount(
   givenName: string,
   familyName: string,
   pin: string,
-  acceptance: PolicyAcceptance,
 ): Promise<PatientPortalAuthResponse> {
   try {
     if (!phone && !email) {
@@ -149,21 +140,8 @@ export async function registerPatientPortalAccount(
     if (!dob) {
       return { success: false, error: "Date of birth is required." };
     }
-    const registrantIsMinor = isMinor(dob);
-    if (registrantIsMinor === null) {
-      return { success: false, error: "Please enter a real date of birth." };
-    }
-    if (registrantIsMinor) {
-      return { success: false, error: UNDER_18_SIGN_UP_MESSAGE };
-    }
     if (!pin || !/^\d{6}$/.test(pin)) {
       return { success: false, error: "A 6-digit PIN is required." };
-    }
-    if (!isCompleteAcceptance(acceptance)) {
-      return {
-        success: false,
-        error: ACCEPTANCE_REQUIRED_MESSAGE,
-      };
     }
 
     const users = getLocalPortalUsers();
@@ -182,65 +160,12 @@ export async function registerPatientPortalAccount(
       };
     }
 
-    // --- Try to find existing patient record (staff-registered) before creating new ---
+    // --- Try to find existing patient record (staff-registered) on this device ---
     let patientId: string | null = null;
     let existingPatientName: { givenName: string; familyName: string } | null =
       null;
 
-    // 1. Check Supabase first (the source of truth for staff-registered patients)
-    if (supabase && (email || phone)) {
-      try {
-        const normPhone = normalizePhone(phone);
-        const orClauses: string[] = [];
-        if (email) orClauses.push(`email.eq.${email.toLowerCase().trim()}`);
-        if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
-        if (phone) orClauses.push(`phone.eq.${phone.trim()}`);
-
-        const { data: match } = await supabase
-          .from("patients")
-          .select("id, given_name, family_name, dob, portal_enabled")
-          .or(orClauses.join(","))
-          .maybeSingle();
-
-        if (match) {
-          // Checked first, so a parent whose contact is on their child's
-          // record is told why, instead of being asked to recheck a date.
-          if (isMinor(match.dob) === true) {
-            return { success: false, error: MINOR_RECORD_LINK_MESSAGE };
-          }
-          if (!match.portal_enabled) {
-            return {
-              success: false,
-              error:
-                "Your healthcare provider has not enabled portal access for you yet. Please ask them to enable it.",
-            };
-          }
-          if (match.dob !== dob) {
-            return {
-              success: false,
-              error:
-                "Date of birth does not match our records. Please check and try again.",
-            };
-          }
-          patientId = match.id;
-          existingPatientName = {
-            givenName: match.given_name,
-            familyName: match.family_name,
-          };
-          logger.info(
-            "Linked registration to existing Supabase patient:",
-            patientId,
-          );
-        }
-      } catch (sbError) {
-        logger.warn(
-          "Supabase patient lookup failed, falling back to local:",
-          sbError,
-        );
-      }
-    }
-
-    // 2. Check local Dexie if no Supabase match
+    // Check this device's patient records
     if (!patientId) {
       const localMatches = await db.patients
         .where("email")
@@ -256,15 +181,19 @@ export async function registerPatientPortalAccount(
       );
 
       if (localMatch) {
-        if (isMinor(localMatch.dob) === true) {
-          return { success: false, error: MINOR_RECORD_LINK_MESSAGE };
-        }
-        if (!localMatch.portalEnabled) {
+        if (localMatch.portalEnabled !== 1) {
           return {
             success: false,
             error:
               "Your healthcare provider has not enabled portal access for you yet. Please ask them to enable it.",
           };
+        }
+        const access = localPortalAccessDecision(localMatch, {
+          serverConfigured: serverConfigured(),
+          now: Date.now(),
+        });
+        if (access.allowed === false) {
+          return { success: false, error: localPortalRefusalMessage(access.reason) };
         }
         if (localMatch.dob !== dob) {
           return {
@@ -278,16 +207,15 @@ export async function registerPatientPortalAccount(
           givenName: localMatch.givenName,
           familyName: localMatch.familyName,
         };
-        logger.info(
-          "Linked registration to existing local patient:",
-          patientId,
-        );
+        logger.info("Linked a local portal registration to a patient record on this device");
       }
     }
 
     const now = new Date();
 
-    // 3. No existing record found — create a new self-registered patient
+    // No existing record found — create a new self-registered patient on
+    // this device (it is not a clinic record and is not portal-managed by
+    // staff).
     if (!patientId) {
       patientId = crypto.randomUUID();
       await db.patients.add({
@@ -326,9 +254,6 @@ export async function registerPatientPortalAccount(
       sessionExpiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
       createdAt: now.toISOString(),
       managedPatients: [],
-      termsAcceptedVersion: acceptance.termsVersion,
-      privacyAcceptedVersion: acceptance.privacyVersion,
-      acceptedAt: acceptance.acceptedAt,
     };
 
     users.push(portalUser);
@@ -336,7 +261,10 @@ export async function registerPatientPortalAccount(
 
     return buildAuthResponse(portalUser);
   } catch (error) {
-    logger.error("Error in registerPatientPortalAccount:", error);
+    logger.error(
+      "Error in registerPatientPortalAccount:",
+      error instanceof Error ? error.name : "unknown",
+    );
     return {
       success: false,
       error: "Could not create account. Please try again.",
@@ -411,6 +339,16 @@ export async function loginPatientPortal(
 
         const localPatient = validCandidates[0];
 
+        if (localPatient) {
+          const access = localPortalAccessDecision(localPatient, {
+            serverConfigured: serverConfigured(),
+            now: Date.now(),
+          });
+          if (access.allowed === false) {
+            return { success: false, error: localPortalRefusalMessage(access.reason) };
+          }
+        }
+
         // If candidates exist but none passed the filter, surface the right error.
         if (!localPatient && candidates.length > 0) {
           const anyEnabled = candidates.some((p) => p.portalEnabled === 1);
@@ -429,10 +367,6 @@ export async function loginPatientPortal(
         }
 
         if (localPatient) {
-          // Never create a portal account for a child's record at login.
-          if (isMinor(localPatient.dob) === true) {
-            return { success: false, error: MINOR_RECORD_LINK_MESSAGE };
-          }
           if (method === "pin") {
             return {
               success: false,
@@ -460,41 +394,14 @@ export async function loginPatientPortal(
 
           users.push(newPortalUser);
           saveLocalPortalUsers(users);
-          logger.info(
-            "Auto-created portal session for staff-registered patient:",
-            localPatient.id,
-          );
+          logger.info("Auto-created a local portal session for a staff-registered patient");
           return buildAuthResponse(newPortalUser);
         }
       } catch (dexieErr) {
-        logger.warn("Dexie patient lookup during login failed:", dexieErr);
-      }
-
-      // Supabase hint: give a more helpful error when the patient record exists online
-      if (supabase) {
-        try {
-          const normPhone = normalizePhone(contact);
-          const orClauses: string[] = [
-            `email.eq.${contact.toLowerCase().trim()}`,
-          ];
-          if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
-
-          const { data: match } = await supabase
-            .from("patients")
-            .select("id, portal_enabled")
-            .or(orClauses.join(","))
-            .maybeSingle();
-
-          if (match && match.portal_enabled) {
-            return {
-              success: false,
-              error:
-                "No portal account found. Please register first using the details your clinic has on file.",
-            };
-          }
-        } catch (e) {
-          logger.debug("Supabase portal hint lookup failed:", e);
-        }
+        logger.warn(
+          "Dexie patient lookup during login failed:",
+          dexieErr instanceof Error ? dexieErr.name : "unknown",
+        );
       }
 
       return {
@@ -560,6 +467,19 @@ export async function loginPatientPortal(
       };
     }
 
+    // Portal access can be turned off after the account was made: check
+    // the patient record on this device before opening a session.
+    const patient = await db.patients.get(user.patientId).catch(() => undefined);
+    const access = localPortalAccessDecision(patient, {
+      serverConfigured: serverConfigured(),
+      now: Date.now(),
+    });
+    if (access.allowed === false) {
+      user.failedLoginAttempts = 0;
+      saveLocalPortalUsers(users);
+      return { success: false, error: localPortalRefusalMessage(access.reason) };
+    }
+
     user.failedLoginAttempts = 0;
     user.lockedUntil = undefined;
     user.sessionToken = crypto.randomUUID();
@@ -568,7 +488,10 @@ export async function loginPatientPortal(
 
     return buildAuthResponse(user);
   } catch (error) {
-    logger.error("Error in loginPatientPortal:", error);
+    logger.error(
+      "Error in loginPatientPortal:",
+      error instanceof Error ? error.name : "unknown",
+    );
     return { success: false, error: "Could not log in. Please try again." };
   }
 }
@@ -592,6 +515,9 @@ export async function validateSession(
  * Log the patient out and clear the local session.
  */
 export async function logout(sessionToken: string): Promise<boolean> {
+  // A server-side portal session with this token (if any) ends too; best
+  // effort, the local session is cleared either way.
+  if (sessionToken) void endPatientSession(sessionToken).catch(() => false);
   const users = getLocalPortalUsers();
   const user = users.find((u) => u.sessionToken === sessionToken);
   if (user) {
@@ -651,7 +577,10 @@ export async function addManagedPatient(
 
     return { success: true, patientId };
   } catch (error) {
-    logger.error("Error in addManagedPatient:", error);
+    logger.error(
+      "Error in addManagedPatient:",
+      error instanceof Error ? error.name : "unknown",
+    );
     return {
       success: false,
       error: "Could not add patient. Please try again.",

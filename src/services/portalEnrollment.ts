@@ -1,187 +1,94 @@
 /**
  * Patient Portal Enrollment Service
  *
- * Handles portal account enrollment, invitation sending, and status management
- * Integrates with the existing Supabase patient portal authentication system
+ * Portal access, invitations and status for staff screens.
+ *
+ * Portal access is decided by the server (set_patient_portal_access). Turning
+ * it on or off here goes through services/portalAccess: the change shows on
+ * this device straight away as "waiting for the server" and is sent with
+ * the command outbox. Invitations wait until the server has confirmed that
+ * access is on.
+ *
+ * Sending an invitation needs the portal_invite permission (registration
+ * lead, lead clinician, admin); turning access on needs only portal_manage.
+ * The server functions check the same rule, look up the patient's stored
+ * email or phone, build the text and record who sent the invitation.
  */
 
 import { db, type Patient, type PortalInvitation } from "@/db";
 import { supabase } from "@/lib/supabase";
-import { normalizePhone } from "@/utils/phone";
-import { isMinor } from "@/utils/patient";
-import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
+import { appLinkOrigin } from "@/config/canonicalOrigin";
 import * as logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
 import { safeErrorLabel } from "./logSafe";
-import { staffAuthRefusal, type StaffAuthRefusal } from "./edgeFunctionErrors";
+import {
+  requestPortalAccessChange,
+  type PortalAccessReason,
+} from "./portalAccess";
+import { drainServerCommands } from "@/sync/adapter";
+import { can, portalInviteRefusal, type Role } from "@/auth/roles";
+import { useAuthStore } from "@/stores/auth";
 
 const RATE_LIMIT_MS = Number(import.meta.env.VITE_INVITE_RATE_MS || 60000); // Default 60 seconds
+
+/**
+ * failureReason codes recorded when no email or SMS went out and staff were
+ * given the registration link to share instead.
+ */
+export const INVITE_NOT_SENT_REASONS = {
+  noServer: "not_sent_no_server",
+  serviceFailed: "not_sent_service_failed",
+  demoMode: "not_sent_demo_mode",
+} as const;
 
 export interface PortalEnrollmentOptions {
   sendInviteNow?: boolean;
   termsAccepted?: boolean;
+  /** Why access is being turned on (stored with the request). */
+  reason?: PortalAccessReason;
+}
+
+export interface PortalAccessChangeOutcome {
+  success: boolean;
+  error?: string;
+  /** Saved on this device and waiting for the server to confirm it. */
+  pending?: boolean;
+  /** No server is set up on this device: the change stays here. */
+  deviceOnly?: boolean;
+  /** An invitation was asked for but not sent (see inviteError). */
+  inviteDeferred?: boolean;
+  inviteError?: string;
+  registrationUrl?: string;
+  demoOTP?: string;
 }
 
 export interface PortalStatusInfo {
   enabled: boolean;
+  /** A change made on this device is waiting for the server. */
+  pending: boolean;
   verified: boolean;
   lastLogin?: Date;
   lastInviteSent?: Date;
   inviteStatus?: "queued" | "sent" | "delivered" | "failed";
+  /** Short code for why the last invitation was not sent. */
+  inviteFailureReason?: string | null;
   inviteCount?: number;
   contactMethod?: "email" | "phone";
   canResend: boolean;
   nextResendTime?: Date;
-  /** Under 18 by date of birth: portal access cannot be turned on. */
-  minor?: boolean;
 }
 
 /**
- * What happened on the server when portal access was changed on this
- * device. The online portal checks patients.portal_enabled on the server.
- * - "updated": the server's patients.portal_enabled now has the new value.
- * - "no-server": no server is set up on this device.
- * - "offline": this device is offline, so nothing was sent.
- * - "not-signed-in": nobody is signed in online on this device (a PIN
- *   unlock opens the local workspace only), so nothing was sent.
- * - "not-updated": the server was asked but its row did not change. One
- *   reason is a record not uploaded yet; a sign-in that may not change the
- *   column, or a failed request, gets the same answer.
- */
-export type ServerPortalWrite =
-  | "updated"
-  | "no-server"
-  | "offline"
-  | "not-signed-in"
-  | "not-updated";
-
-export interface PortalAccessResult {
-  success: boolean;
-  error?: string;
-  /** Set once the change is saved on this device. */
-  server?: ServerPortalWrite;
-}
-
-function isMissingColumn(error: unknown): boolean {
-  const code =
-    error && typeof error === "object"
-      ? (error as { code?: unknown }).code
-      : undefined;
-  return code === "PGRST204" || code === "42703";
-}
-
-/**
- * The server adds one to row_version on every write. When this portal
- * write is the only change since this device last saw the row, keep the
- * new version, so the next upload of other edits made here is not reported
- * as a sync conflict (detectConflict in src/sync/adapter.ts).
- */
-async function adoptServerVersion(
-  patientId: string,
-  version: unknown,
-): Promise<void> {
-  const next = Number(version);
-  if (version === null || version === undefined || !Number.isFinite(next)) {
-    return;
-  }
-  try {
-    const current = await db.patients.get(patientId);
-    if (current && current._serverVersion === next - 1) {
-      await db.patients.update(patientId, { _serverVersion: next });
-    }
-  } catch (error) {
-    // Harmless: at worst the next upload asks staff to review the record.
-    logger.warn("Could not keep the server version:", safeErrorLabel(error));
-  }
-}
-
-/**
- * Write patients.portal_enabled on the server, as enrollPatientInPortal
- * does. Staff with the "register" permission may change this column
- * (app_guard_patient_identity). This is a stopgap until the
- * set_patient_portal_access command exists: nothing retries a failed
- * write, and portal_enabled_changed_at stays empty (only server code sets
- * it), so other staff devices keep their own value (transformPulled in
- * src/sync/adapter.ts).
- */
-async function writeServerPortalEnabled(
-  patientId: string,
-  enabled: boolean,
-): Promise<ServerPortalWrite> {
-  const client = supabase;
-  if (!client) return "no-server";
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return "offline";
-  }
-  try {
-    // The stored online sign-in, read without a network call, as
-    // checkCloudSession does. Without one, RLS would refuse the update and
-    // the answer would look like a record that is not uploaded yet.
-    const { data: sessionData } = await client.auth.getSession();
-    if (!sessionData.session) return "not-signed-in";
-
-    let result: { data: unknown; error: unknown } = await client
-      .from("patients")
-      .update({ portal_enabled: enabled })
-      .eq("id", patientId)
-      .select("id, portal_enabled, row_version");
-    if (result.error && isMissingColumn(result.error)) {
-      // A server without the sync foundation migration has no row_version.
-      result = await client
-        .from("patients")
-        .update({ portal_enabled: enabled })
-        .eq("id", patientId)
-        .select("id, portal_enabled");
-    }
-    const { data, error } = result;
-    if (error) {
-      logger.warn(
-        "Portal access not changed on the server:",
-        safeErrorLabel(error),
-      );
-      return "not-updated";
-    }
-    const row = (Array.isArray(data) ? data[0] : data) as
-      | { portal_enabled?: unknown; row_version?: unknown }
-      | null
-      | undefined;
-    if (!row || row.portal_enabled !== enabled) {
-      // No row came back (the record is not on the server yet, or this
-      // sign-in may not change it), or the server kept its old value.
-      logger.warn("Portal access not changed on the server: no row updated");
-      return "not-updated";
-    }
-    await adoptServerVersion(patientId, row.row_version);
-    return "updated";
-  } catch (error) {
-    logger.warn(
-      "Portal access not changed on the server:",
-      safeErrorLabel(error),
-    );
-    return "not-updated";
-  }
-}
-
-/**
- * Turn portal access on for a patient. Saved on this device first; then,
- * when this device is online, also on the server (see
- * writeServerPortalEnabled). `server` in the result says which.
- *
- * Refused for a patient under 18: portal accounts are for adults. A record
- * whose date of birth cannot be read is not refused here.
+ * Turn portal access on for a patient (waits for the server to confirm).
  */
 export async function enablePortalAccess(
   patientId: string,
   options: PortalEnrollmentOptions = {},
-): Promise<PortalAccessResult> {
+): Promise<PortalAccessChangeOutcome> {
   try {
     const patient = await db.patients.get(patientId);
     if (!patient) {
-      return { success: false, error: "Patient not found" };
-    }
-
-    if (isMinor(patient.dob) === true) {
-      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
+      return { success: false, error: "Patient not found on this device" };
     }
 
     // Validate contact information
@@ -197,75 +104,44 @@ export async function enablePortalAccess(
       return { success: false, error: "Terms and conditions must be accepted" };
     }
 
-    // Update patient record to enable portal
-    await db.patients.update(patientId, {
-      portalEnabled: 1,
-      updatedAt: new Date(),
-      _dirty: 1,
+    const change = await requestPortalAccessChange(patientId, true, {
+      reason: options.reason ?? "staff_choice",
     });
-
-    // The online portal checks the server's copy, which starts off.
-    const server = await writeServerPortalEnabled(patientId, true);
-
-    // Create patient portal user account in Supabase
-    try {
-      // Check if portal user already exists
-      const { data: existingPortalUser } = await supabase
-        .from("patient_portal_users")
-        .select("id")
-        .eq("patient_id", patientId)
-        .maybeSingle();
-
-      if (!existingPortalUser) {
-        // Create new portal user account
-        const { error: createError } = await supabase
-          .from("patient_portal_users")
-          .insert({
-            patient_id: patientId,
-            phone_number: normalizePhone(patient.phone) || "",
-            email: patient.email || null,
-            account_status: "active",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
-
-        if (createError) {
-          // The raw error can echo the email or phone that clashed.
-          logger.error(
-            "Error creating portal user:",
-            safeErrorLabel(createError),
-          );
-          // Don't fail the enrollment: portal access stays enabled on the
-          // patient record. No background job re-creates the server account,
-          // so say so.
-          logger.warn(
-            "Portal user not created on the server; nothing retries this automatically",
-          );
-        } else {
-          logger.info("Portal user account created on the server");
-        }
-      }
-    } catch (supabaseError) {
-      logger.warn(
-        "Failed to create portal user in Supabase (nothing retries this automatically):",
-        safeErrorLabel(supabaseError),
-      );
-      // Don't fail the operation: the local change stands
+    if (!change.ok) {
+      return { success: false, error: change.error };
     }
-
+    const outcome: PortalAccessChangeOutcome = {
+      success: true,
+      pending: change.state === "waiting_for_server",
+      deviceOnly: change.state === "device_only",
+    };
     logger.info(
-      server === "updated"
-        ? "Portal access enabled on this device and on the server"
-        : "Portal access enabled on this device only",
+      change.state === "device_only"
+        ? "Portal access turned on on this device (no server set up)"
+        : "Portal access change queued for the server",
     );
 
-    // Send invitation if requested
     if (options.sendInviteNow) {
-      return { ...(await sendPortalInvitation(patientId)), server };
+      // Access is saved either way; the invitation needs portal_invite.
+      if (!canSendInvitations()) {
+        return { ...outcome, inviteDeferred: true, inviteError: portalInviteRefusal() };
+      }
+      // The server must confirm access before an invitation goes out.
+      if (outcome.pending) await drainServerCommands().catch(() => null);
+      const invite = await sendPortalInvitation(patientId);
+      if (!invite.success) {
+        return { ...outcome, inviteDeferred: true, inviteError: invite.error };
+      }
+      const confirmed = await db.patients.get(patientId);
+      return {
+        ...outcome,
+        pending: confirmed?.portalPending === 1,
+        registrationUrl: invite.registrationUrl,
+        demoOTP: invite.demoOTP,
+      };
     }
 
-    return { success: true, server };
-
+    return outcome;
   } catch (error: unknown) {
     logger.error("Error enabling portal access:", safeErrorLabel(error));
     return {
@@ -276,30 +152,29 @@ export async function enablePortalAccess(
 }
 
 /**
- * Turn portal access off for a patient. Saved on this device first; then,
- * when this device is online, also on the server, so a switch that can
- * turn online access on can also turn it off. `server` says which. Works
- * for a patient under 18 too.
+ * Turn portal access off for a patient (waits for the server to confirm).
  */
 export async function disablePortalAccess(
   patientId: string,
-): Promise<PortalAccessResult> {
+  options: { reason?: PortalAccessReason } = {},
+): Promise<PortalAccessChangeOutcome> {
   try {
-    await db.patients.update(patientId, {
-      portalEnabled: 0,
-      updatedAt: new Date(),
-      _dirty: 1,
+    const change = await requestPortalAccessChange(patientId, false, {
+      reason: options.reason ?? "staff_choice",
     });
-
-    const server = await writeServerPortalEnabled(patientId, false);
-
+    if (!change.ok) {
+      return { success: false, error: change.error };
+    }
     logger.info(
-      server === "updated"
-        ? "Portal access disabled on this device and on the server"
-        : "Portal access disabled on this device only",
+      change.state === "device_only"
+        ? "Portal access turned off on this device (no server set up)"
+        : "Portal access change queued for the server",
     );
-    return { success: true, server };
-     
+    return {
+      success: true,
+      pending: change.state === "waiting_for_server",
+      deviceOnly: change.state === "device_only",
+    };
   } catch (error: unknown) {
     logger.error("Error disabling portal access:", safeErrorLabel(error));
     return {
@@ -309,54 +184,62 @@ export async function disablePortalAccess(
   }
 }
 
-/**
- * Why sendPortalInvitation sent no message, when it can say:
- * - "not_signed_in" / "not_permitted": the server refused to send the email
- *   (no online sign-in, HTTP 401; or it does not accept this staff account,
- *   HTTP 403).
- * - "sms_not_available": the patient has no email. Invitations cannot go by
- *   SMS yet: send-otp-sms sends only one-time codes.
- * - "email_not_configured": the email function answered in demo mode (no
- *   RESEND_API_KEY on the server), so it sent nothing.
- */
-export type InvitationNotSentReason =
-  | StaffAuthRefusal
-  | "sms_not_available"
-  | "email_not_configured";
+interface FunctionReply {
+  success?: unknown;
+  demo?: unknown;
+}
+
+/** Only a reply that says it was sent, and not in demo mode, counts. */
+function reallySent(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  const reply = data as FunctionReply;
+  return reply.success === true && !reply.demo;
+}
+
+function isDemoReply(data: unknown): boolean {
+  return !!data && typeof data === "object" && !!(data as FunctionReply).demo;
+}
+
+/** The signed-in person may send portal invitations (portal_invite). */
+function canSendInvitations(): boolean {
+  const role = useAuthStore.getState().currentUser?.role as Role | undefined;
+  return !!role && can(role, "portal_invite");
+}
 
 /**
- * Send portal invitation to a patient.
- *
- * Invitations go by email only. The email function accepts only a staff
- * member signed in online: supabase.functions.invoke sends that person's
- * access token, or the public anon key when nobody is signed in online
- * (after a PIN unlock), which the server refuses. When no message is sent,
- * including for a patient with no email, the registration link is returned
- * for staff to share by hand. Refused for a patient under 18.
+ * Send portal invitation to a patient
  */
 export async function sendPortalInvitation(patientId: string): Promise<{
   success: boolean;
   error?: string;
   demoOTP?: string;
   registrationUrl?: string;
-  /** Why no message was sent, when known. */
-  notSentReason?: InvitationNotSentReason;
 }> {
+  // Sending an invitation contacts the patient: portal_invite work (not
+  // portal_manage), checked here and not only in the screens. The server
+  // checks it again before anything is sent.
+  if (!canSendInvitations()) {
+    return { success: false, error: portalInviteRefusal() };
+  }
+
   try {
     const patient = await db.patients.get(patientId);
     if (!patient) {
       return { success: false, error: "Patient not found" };
     }
 
-    // A child's record can still have access on from before this rule.
-    if (isMinor(patient.dob) === true) {
-      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
-    }
-
     if (!patient.portalEnabled) {
       return {
         success: false,
         error: "Portal access is not enabled for this patient",
+      };
+    }
+
+    if (patient.portalPending === 1) {
+      return {
+        success: false,
+        error:
+          "Portal access is waiting for the server to confirm it. Send the invitation after this device syncs.",
       };
     }
 
@@ -389,45 +272,36 @@ export async function sendPortalInvitation(patientId: string): Promise<{
       _dirty: 1,
     });
 
-    // Build a pre-filled registration URL so patients land with their contact ready
+    // Build a pre-filled registration URL so patients land with their contact
+    // ready (shown to staff to share; the server builds the one it sends).
+    const origin = appLinkOrigin();
     const registrationUrl = patient.email
-      ? `${window.location.origin}/patient/register?email=${encodeURIComponent(patient.email)}`
+      ? `${origin}/patient/register?email=${encodeURIComponent(patient.email)}`
       : patient.phone
-        ? `${window.location.origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
-        : `${window.location.origin}/patient/register`;
-    const loginUrl = `${window.location.origin}/patient/login`;
+        ? `${origin}/patient/register?phone=${encodeURIComponent(patient.phone)}`
+        : `${origin}/patient/register`;
 
-    // Invitations go by email only, so a patient with no email gets the
-    // link to share instead of a message.
-    let notSentReason: InvitationNotSentReason | null = patient.email
-      ? null
-      : "sms_not_available";
+    let notSentReason: string = INVITE_NOT_SENT_REASONS.noServer;
 
-    // --- Send via Supabase edge function (email only) ---
+    // --- Send via Supabase edge function (email preferred, SMS fallback) ---
+    // The device sends only the patient id and the purpose: the server
+    // checks portal_invite and that access is on, looks up the stored email
+    // or phone, builds the text and link, and records who sent it.
     if (supabase) {
+      notSentReason = INVITE_NOT_SENT_REASONS.serviceFailed;
+      const request = {
+        purpose: "portal_invitation",
+        patientId,
+        appOrigin: origin,
+      };
       try {
         if (patient.email) {
           const { data, error: fnError } = await supabase.functions.invoke(
             "send-otp-email",
-            {
-              body: {
-                email: patient.email,
-                subject: "Your mBHR Patient Portal is Ready",
-                message:
-                  `Hi ${patient.givenName},\n\n` +
-                  `Your patient portal has been set up by your healthcare provider.\n\n` +
-                  `Click the link below to create your account — your email will be pre-filled:\n\n` +
-                  `${registrationUrl}\n\n` +
-                  `You will be asked to enter your date of birth to complete registration.\n\n` +
-                  `Already registered? Log in here: ${loginUrl}\n\n` +
-                  `Med Bridge Health Reach`,
-              },
-            },
+            { body: request },
           );
 
-          // In demo mode the function answers success but sends nothing.
-          const demo = (data as { demo?: unknown } | null)?.demo === true;
-          if (!fnError && !demo) {
+          if (!fnError && reallySent(data)) {
             await db.patients.update(patientId, {
               portalInvitation: { ...invitation, lastStatus: "sent" },
               _dirty: 1,
@@ -435,15 +309,34 @@ export async function sendPortalInvitation(patientId: string): Promise<{
             logger.info("Portal invitation email accepted by the server");
             return { success: true, registrationUrl };
           }
-          if (fnError) {
-            logger.warn("Edge function email failed:", safeErrorLabel(fnError));
-            notSentReason = staffAuthRefusal(fnError);
-          } else {
-            logger.warn(
-              "Email function is in demo mode (RESEND_API_KEY not set); no email was sent",
-            );
-            notSentReason = "email_not_configured";
+          if (!fnError && isDemoReply(data)) {
+            notSentReason = INVITE_NOT_SENT_REASONS.demoMode;
           }
+          logger.warn(
+            "Portal invitation email not sent:",
+            fnError ? safeErrorLabel(fnError) : isDemoReply(data) ? "demo mode" : "no confirmation",
+          );
+        } else if (patient.phone) {
+          const { data, error: fnError } = await supabase.functions.invoke(
+            "send-sms-reminder",
+            { body: request },
+          );
+
+          if (!fnError && reallySent(data)) {
+            await db.patients.update(patientId, {
+              portalInvitation: { ...invitation, lastStatus: "sent" },
+              _dirty: 1,
+            });
+            logger.info("Portal invitation SMS accepted by the SMS provider");
+            return { success: true, registrationUrl };
+          }
+          if (!fnError && isDemoReply(data)) {
+            notSentReason = INVITE_NOT_SENT_REASONS.demoMode;
+          }
+          logger.warn(
+            "Portal invitation SMS not sent:",
+            fnError ? safeErrorLabel(fnError) : isDemoReply(data) ? "demo mode" : "no confirmation",
+          );
         }
       } catch (edgeFnError) {
         logger.warn(
@@ -453,29 +346,27 @@ export async function sendPortalInvitation(patientId: string): Promise<{
       }
     }
 
-    // --- Fallback: no message was sent (offline, refused, email not set up
-    // on the server, or no email).
-    // Record it as "sent" (the screen labels this "Sent or link shared") and
-    // return the pre-filled registration link for staff to share.
+    // --- No email or SMS went out. Record it as not sent and return the
+    // pre-filled registration link for staff to share with the patient.
     await db.patients.update(patientId, {
-      portalInvitation: { ...invitation, lastStatus: "sent" },
+      portalInvitation: {
+        ...invitation,
+        lastStatus: "failed",
+        failureReason: notSentReason,
+      },
       _dirty: 1,
     });
 
     // No name, contact or link here: the link carries the email or phone.
     logger.info(
-      `[Portal Invitation] No message was sent${notSentReason ? ` (${notSentReason})` : ""}; registration link returned for staff to share (${contactMethod})`,
+      `[Portal Invitation] No email/SMS sent (${notSentReason}); registration link returned for staff to share (${contactMethod})`,
     );
 
     return {
       success: true,
       registrationUrl,
-      demoOTP: patient.email
-        ? `No email was sent. Share this registration link with the patient: ${registrationUrl}`
-        : `No message was sent: SMS invitations are not available yet. Share this registration link with the patient: ${registrationUrl}`,
-      ...(notSentReason ? { notSentReason } : {}),
+      demoOTP: `No email or SMS was sent. Share this registration link with the patient: ${registrationUrl}`,
     };
-     
   } catch (error: unknown) {
     logger.error("Error sending portal invitation:", safeErrorLabel(error));
 
@@ -486,7 +377,7 @@ export async function sendPortalInvitation(patientId: string): Promise<{
         portalInvitation: {
           ...patient.portalInvitation,
           lastStatus: "failed",
-          failureReason: getErrorMessage(error) || "Unknown error",
+          failureReason: INVITE_NOT_SENT_REASONS.serviceFailed,
         },
         _dirty: 1,
       });
@@ -542,9 +433,11 @@ export async function getPortalStatus(
       : patient.phone
         ? "phone"
         : undefined;
+    const pending = patient.portalPending === 1;
 
     return {
       enabled: patient.portalEnabled === 1,
+      pending,
       verified: patient.contactVerified === 1,
       lastLogin: patient.lastPortalActivity
         ? new Date(patient.lastPortalActivity)
@@ -553,13 +446,13 @@ export async function getPortalStatus(
         ? new Date(patient.portalInvitation.lastSentAt)
         : undefined,
       inviteStatus: patient.portalInvitation?.lastStatus,
+      inviteFailureReason: patient.portalInvitation?.failureReason ?? null,
       inviteCount: patient.portalInvitation?.count || 0,
       contactMethod,
-      canResend: rateLimit.allowed && patient.portalEnabled === 1,
+      canResend: rateLimit.allowed && patient.portalEnabled === 1 && !pending,
       nextResendTime: rateLimit.waitMs
         ? new Date(Date.now() + rateLimit.waitMs)
         : undefined,
-      minor: isMinor(patient.dob) === true,
     };
   } catch (error) {
     logger.error("Error getting portal status:", safeErrorLabel(error));
@@ -602,27 +495,34 @@ export async function linkAuthUserToPatient(
       _dirty: 1,
     });
 
-    // Sync to Supabase
-    try {
-      await supabase
-        .from("patients")
-        .update({
-          auth_uid: authUid,
-          contact_verified: true,
-          last_portal_activity: new Date().toISOString(),
-        })
-        .eq("id", patientId);
-    } catch (supabaseError) {
-      logger.warn(
-        "Failed to sync auth link to Supabase (will retry):",
-        safeErrorLabel(supabaseError),
-      );
-      // Don't fail the operation - the sync will happen later
+    // Also write it on the server now (best effort). A record already
+    // linked to another account is kept by the server.
+    if (supabase) {
+      try {
+        const { error: linkError } = await supabase
+          .from("patients")
+          .update({
+            auth_uid: authUid,
+            contact_verified: true,
+            last_portal_activity: new Date().toISOString(),
+          })
+          .eq("id", patientId);
+        if (linkError) {
+          logger.warn(
+            "Auth link not saved on the server now; the patient record uploads at the next sync:",
+            safeErrorLabel(linkError),
+          );
+        }
+      } catch (supabaseError) {
+        logger.warn(
+          "Auth link not saved on the server now; the patient record uploads at the next sync:",
+          safeErrorLabel(supabaseError),
+        );
+      }
     }
 
     logger.info("Auth user linked to a patient record on this device");
     return { success: true };
-     
   } catch (error: unknown) {
     logger.error(
       "Error linking auth user to patient:",
@@ -637,8 +537,7 @@ export async function linkAuthUserToPatient(
 
 /**
  * Find patients eligible for bulk portal enrollment
- * (have contact info but portal not enabled). Patients under 18 are left
- * out: portal accounts are for adults, and enablePortalAccess refuses them.
+ * (have contact info, portal not enabled, no change waiting, not merged)
  */
 export async function findEligiblePatients(
   filters: {
@@ -655,6 +554,9 @@ export async function findEligiblePatients(
 
     // Filter by contact method and other criteria
     return patients.filter((p) => {
+      // A change is already waiting for the server, or the record was merged.
+      if (p.portalPending === 1 || p.mergeInto) return false;
+
       // Must have contact info
       const hasEmail = p.email && p.email.trim() !== "";
       const hasPhone = p.phone && p.phone.trim() !== "";
@@ -664,8 +566,6 @@ export async function findEligiblePatients(
       if (filters.contactMethod === "any" && !hasEmail && !hasPhone)
         return false;
       if (!hasEmail && !hasPhone) return false;
-
-      if (isMinor(p.dob) === true) return false;
 
       // Filter by date range
       if (filters.startDate && p.createdAt < filters.startDate) return false;
@@ -682,9 +582,30 @@ export async function findEligiblePatients(
   }
 }
 
+export interface BulkEnableResult {
+  /** Patients whose change was saved (waiting for the server, or device-only). */
+  success: number;
+  failed: number;
+  errors: Array<{ patientId: string; error: string }>;
+  /** Of `success`: still waiting for the server when the run finished. */
+  pending: number;
+  /** Of `success`: saved on this device only (no server set up). */
+  deviceOnly: number;
+  /** Invitations, when asked for. */
+  invitations?: {
+    sent: number;
+    /** Not sent (link only, not confirmed yet, rate limited...). */
+    notSent: Array<{ patientId: string; error: string }>;
+  };
+}
+
 /**
- * Bulk enable portal access for multiple patients. A patient under 18 is
- * listed as failed with the reason (see enablePortalAccess).
+ * Bulk enable portal access for multiple patients.
+ *
+ * Every change is queued first; with `sendInvitations`, queued changes are
+ * sent to the server once, and invitations go only to patients whose access
+ * the server confirmed. `sendInvitations` needs portal_invite: without it
+ * nothing is changed and every patient is reported with the refusal.
  */
 export async function bulkEnablePortalAccess(
   patientIds: string[],
@@ -693,65 +614,92 @@ export async function bulkEnablePortalAccess(
     batchSize?: number;
     onProgress?: (completed: number, total: number) => void;
   } = {},
-): Promise<{
-  success: number;
-  failed: number;
-  /** Successes that were also saved on the server (server: "updated"). */
-  serverUpdated: number;
-  errors: Array<{ patientId: string; error: string }>;
-}> {
+): Promise<BulkEnableResult> {
   const batchSize = options.batchSize || 50;
-  const results = {
+  const results: BulkEnableResult = {
     success: 0,
     failed: 0,
-    serverUpdated: 0,
-    errors: [] as Array<{ patientId: string; error: string }>,
+    errors: [],
+    pending: 0,
+    deviceOnly: 0,
   };
+  const saved: string[] = [];
+
+  // "Enable and invite" needs portal_invite: refuse the whole run before
+  // changing anything, rather than enabling access and quietly inviting no one.
+  if (options.sendInvitations && !canSendInvitations()) {
+    const refusal = portalInviteRefusal();
+    return {
+      ...results,
+      failed: patientIds.length,
+      errors: patientIds.map((patientId) => ({ patientId, error: refusal })),
+    };
+  }
 
   for (let i = 0; i < patientIds.length; i += batchSize) {
     const batch = patientIds.slice(i, i + batchSize);
 
-    await Promise.all(
-      batch.map(async (patientId) => {
-        try {
-          const result = await enablePortalAccess(patientId, {
-            sendInviteNow: options.sendInvitations,
-            termsAccepted: true, // Bulk operations assume consent
-          });
+    // One at a time: each change is its own Dexie transaction and command.
+    for (const patientId of batch) {
+      try {
+        const result = await enablePortalAccess(patientId, {
+          termsAccepted: true, // Bulk operations assume consent
+          reason: "bulk_enable",
+        });
 
-          if (result.success) {
-            results.success++;
-            if (result.server === "updated") results.serverUpdated++;
-          } else {
-            results.failed++;
-            results.errors.push({
-              patientId,
-              error: result.error || "Unknown error",
-            });
-          }
-           
-        } catch (error: unknown) {
+        if (result.success) {
+          results.success++;
+          saved.push(patientId);
+          if (result.deviceOnly) results.deviceOnly++;
+        } else {
           results.failed++;
           results.errors.push({
             patientId,
-            error: getErrorMessage(error) || "Unknown error",
+            error: result.error || "Unknown error",
           });
         }
+      } catch (error: unknown) {
+        results.failed++;
+        results.errors.push({
+          patientId,
+          error: getErrorMessage(error) || "Unknown error",
+        });
+      }
 
-        if (options.onProgress) {
-          options.onProgress(
-            results.success + results.failed,
-            patientIds.length,
-          );
-        }
-      }),
-    );
-
-    // Rate limit between batches
-    if (i + batchSize < patientIds.length) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (options.onProgress) {
+        options.onProgress(results.success + results.failed, patientIds.length);
+      }
     }
   }
+
+  if (options.sendInvitations && saved.length > 0) {
+    // Send the queued changes now so confirmed patients can be invited.
+    await drainServerCommands().catch(() => null);
+    const invitations = { sent: 0, notSent: [] as Array<{ patientId: string; error: string }> };
+    for (let i = 0; i < saved.length; i++) {
+      const patientId = saved[i];
+      // Pause between batches so the email/SMS services' rate limits hold.
+      if (i > 0 && i % batchSize === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      const invite = await sendPortalInvitation(patientId);
+      if (invite.success && !invite.demoOTP) {
+        invitations.sent++;
+      } else {
+        invitations.notSent.push({
+          patientId,
+          error: invite.success
+            ? "No email or SMS was sent; share the registration link from the patient's record"
+            : invite.error || "Invitation not sent",
+        });
+      }
+    }
+    results.invitations = invitations;
+  }
+
+  // Count what is still waiting for the server after the run.
+  const after = await db.patients.bulkGet(saved).catch(() => []);
+  results.pending = after.filter((p) => p?.portalPending === 1).length;
 
   return results;
 }

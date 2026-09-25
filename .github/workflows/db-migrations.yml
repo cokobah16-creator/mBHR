@@ -1,0 +1,216 @@
+name: Database migrations
+
+# Manual only: Actions > Database migrations > Run workflow (from mainone).
+#
+#   status    Lists which migrations production has applied.
+#   rehearse  Copies production's schema (structure only, no rows, so no
+#             patient data) into a throwaway local Supabase stack, marks the
+#             migrations production already has as applied, applies the
+#             pending ones there, then runs the pgTAP tests in supabase/tests.
+#             Writes nothing to production.
+#   dry-run   Shows what `apply` would apply to production.
+#   apply     Applies the pending migrations to production, then redeploys the
+#             edge functions that depend on them. Needs the phrase
+#             "apply to production" in the confirm box.
+#
+# Why this exists: the migrate-prod job in build.yml only runs for pushes to
+# `main`, and production deploys from `mainone`, so production migrations are
+# applied here, deliberately and by hand, never as a side effect of a merge.
+#
+# The migration history cannot be replayed on an empty database (early
+# migrations disagree about column types, for example
+# 20251028000000_add_patient_portal.sql), so the rehearsal starts from a copy
+# of production's real schema instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "status, rehearse, dry-run or apply"
+        type: choice
+        options:
+          - status
+          - rehearse
+          - dry-run
+          - apply
+        default: status
+      confirm:
+        description: 'apply only: type "apply to production"'
+        type: string
+        default: ""
+      include_all:
+        description: "Also apply pending migrations older than the newest one production has (--include-all)"
+        type: boolean
+        default: false
+      functions:
+        description: "apply only: edge functions to redeploy afterwards (space-separated)"
+        type: string
+        default: "send-sms-reminder send-otp-email"
+
+concurrency:
+  group: db-migrations-production
+  cancel-in-progress: false
+
+jobs:
+  production:
+    name: Production (${{ inputs.action }})
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      INCLUDE_ALL: ${{ inputs.include_all && '--include-all' || '' }}
+      LOCAL_DB: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+    steps:
+      - name: Refuse apply without the confirmation phrase
+        if: inputs.action == 'apply' && inputs.confirm != 'apply to production'
+        run: |
+          echo "::error::To apply migrations to production, type exactly: apply to production"
+          exit 1
+
+      - name: Refuse to run from a branch other than mainone
+        if: github.ref != 'refs/heads/mainone'
+        run: |
+          echo "::error::Run this from mainone, the branch production is deployed from (got ${GITHUB_REF})."
+          exit 1
+
+      - name: Check the Supabase secrets are set
+        run: |
+          missing=""
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN"
+          [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD"
+          [ -n "$SUPABASE_PROJECT_REF" ] || missing="$missing SUPABASE_PROJECT_REF"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets in the production environment:$missing"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Migrations applied on production
+        run: |
+          supabase migration list --linked | tee "$RUNNER_TEMP/migrations.txt"
+          # Rows look like: " `local` | `remote` | `time` " (either side may be blank).
+          tr -d '` ' < "$RUNNER_TEMP/migrations.txt" \
+            | awk -F'|' '$1 ~ /^[0-9]+$/ || $2 ~ /^[0-9]+$/ { print $1 "|" $2 }' > "$RUNNER_TEMP/versions.txt"
+          awk -F'|' '$1 != "" && $2 != "" { print $1 }' "$RUNNER_TEMP/versions.txt" > "$RUNNER_TEMP/applied.txt"
+          awk -F'|' '$1 != "" && $2 == "" { print $1 }' "$RUNNER_TEMP/versions.txt" > "$RUNNER_TEMP/pending.txt"
+          awk -F'|' '$1 == "" && $2 != "" { print $2 }' "$RUNNER_TEMP/versions.txt" > "$RUNNER_TEMP/remote_only.txt"
+          awk -F'|' '$2 != "" { print $2 }' "$RUNNER_TEMP/versions.txt" > "$RUNNER_TEMP/remote_all.txt"
+          echo "In both: $(wc -l < "$RUNNER_TEMP/applied.txt")  Pending (repo only): $(wc -l < "$RUNNER_TEMP/pending.txt")  On production only: $(wc -l < "$RUNNER_TEMP/remote_only.txt")"
+          if [ -s "$RUNNER_TEMP/remote_only.txt" ]; then
+            echo "::warning::Production has migrations that are not in supabase/migrations: $(tr '\n' ' ' < "$RUNNER_TEMP/remote_only.txt")"
+          fi
+
+      - name: What the production-only migrations did (names and objects, no SQL)
+        if: inputs.action == 'status'
+        run: |
+          # supabase_migrations.schema_migrations holds each applied migration's
+          # version, name and SQL. This repo is public, so only names and the
+          # objects each one touches are printed, never the SQL.
+          supabase db dump --linked --data-only --schema supabase_migrations -f "$RUNNER_TEMP/migration-history.sql"
+          echo "== Production-only migrations =="
+          python3 .github/scripts/migration_history.py "$RUNNER_TEMP/migration-history.sql" "$RUNNER_TEMP/remote_only.txt"
+          echo
+          echo "== Every migration production has, by name =="
+          python3 .github/scripts/migration_history.py "$RUNNER_TEMP/migration-history.sql" "$RUNNER_TEMP/remote_all.txt" | grep -v '^    '
+
+      - name: Compare production with the repo (names and numbers, no SQL)
+        if: inputs.action == 'status'
+        run: |
+          # Schema only (no rows). Stays on the runner; only the report is printed.
+          supabase db dump --linked -f "$RUNNER_TEMP/prod-schema.sql"
+          python3 .github/scripts/reconcile_report.py \
+            --history "$RUNNER_TEMP/migration-history.sql" \
+            --schema "$RUNNER_TEMP/prod-schema.sql" \
+            --pending "$RUNNER_TEMP/pending.txt" \
+            --remote "$RUNNER_TEMP/remote_only.txt"
+
+      # ---- rehearse ---------------------------------------------------------
+
+      - name: Copy production's schema (no rows)
+        if: inputs.action == 'rehearse'
+        run: |
+          supabase db dump --linked --role-only -f "$RUNNER_TEMP/roles.sql"
+          supabase db dump --linked -f "$RUNNER_TEMP/schema.sql"
+
+      - name: Start an empty local Supabase stack
+        if: inputs.action == 'rehearse'
+        run: |
+          # Move the migrations aside so `supabase start` applies none of them.
+          mkdir -p "$RUNNER_TEMP/migrations"
+          mv supabase/migrations/*.sql "$RUNNER_TEMP/migrations/"
+          supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor,realtime,postgres-meta
+          mv "$RUNNER_TEMP/migrations/"*.sql supabase/migrations/
+
+      - name: Load production's schema into the local stack
+        if: inputs.action == 'rehearse'
+        run: |
+          # Skip the roles Supabase manages itself (the local stack already has
+          # them, and supabase_admin can only be changed by a superuser); load
+          # any roles production added. Errors here are not fatal, the schema
+          # load below is.
+          grep -vE '"?(postgres|supabase_[a-z_]+|authenticator|anon|authenticated|service_role|pgbouncer|dashboard_user|pgsodium_[a-z_]+)"?( |;|$)' \
+            "$RUNNER_TEMP/roles.sql" > "$RUNNER_TEMP/roles-custom.sql" || true
+          psql "$LOCAL_DB" -q -f "$RUNNER_TEMP/roles-custom.sql" || true
+          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/schema.sql"
+
+      - name: Mark the migrations production has as applied locally
+        if: inputs.action == 'rehearse'
+        run: |
+          # Only versions that exist both here and on production; production-only
+          # versions have no file to mark.
+          applied=$(cat "$RUNNER_TEMP/applied.txt")
+          if [ -z "$applied" ]; then
+            echo "::error::Could not read production's applied migrations from the list above."
+            exit 1
+          fi
+          supabase migration repair --local --status applied $applied --yes
+
+      - name: Apply the pending migrations locally
+        if: inputs.action == 'rehearse'
+        run: |
+          supabase migration list --local
+          supabase migration up --local $INCLUDE_ALL --yes
+          supabase migration list --local
+
+      - name: Run pgTAP tests locally
+        if: inputs.action == 'rehearse'
+        run: supabase test db
+
+      - name: Stop the local stack
+        if: always() && inputs.action == 'rehearse'
+        run: supabase stop --no-backup
+
+      # ---- dry-run / apply --------------------------------------------------
+
+      - name: What would be applied to production
+        if: inputs.action == 'dry-run' || inputs.action == 'apply'
+        run: supabase db push --linked --dry-run $INCLUDE_ALL
+
+      - name: Apply migrations to production
+        if: inputs.action == 'apply'
+        run: supabase db push --linked $INCLUDE_ALL --yes
+
+      - name: Redeploy edge functions
+        if: inputs.action == 'apply' && inputs.functions != ''
+        env:
+          FUNCTIONS: ${{ inputs.functions }}
+        run: |
+          for fn in $FUNCTIONS; do
+            supabase functions deploy "$fn" --project-ref "$SUPABASE_PROJECT_REF"
+          done
+
+      - name: Migrations applied on production afterwards
+        if: inputs.action == 'apply'
+        run: supabase migration list --linked

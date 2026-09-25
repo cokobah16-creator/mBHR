@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // --- hoisted mocks ---
-const { mockPatients } = vi.hoisted(() => ({
+const { mockPatients, serverState } = vi.hoisted(() => ({
   mockPatients: {
     where: vi.fn(),
     add: vi.fn(),
+    get: vi.fn(),
   },
+  serverState: { configured: false },
 }));
 
 type LocalUser = {
@@ -28,7 +30,13 @@ vi.mock("@/db", () => ({
   },
 }));
 
-vi.mock("@/lib/supabase", () => ({ supabase: null }));
+// No server by default; a test can switch one on (portal access then
+// belongs to the server and the device's copy must be recent).
+vi.mock("@/lib/supabase", () => ({
+  get supabase() {
+    return serverState.configured ? { rpc: vi.fn() } : null;
+  },
+}));
 vi.mock("@/lib/logger", () => ({
   info: vi.fn(),
   warn: vi.fn(),
@@ -132,6 +140,8 @@ describe("patientPortalAuth", () => {
       }),
     });
     mockPatients.add.mockResolvedValue("new-patient-id");
+    mockPatients.get.mockResolvedValue(undefined);
+    serverState.configured = false;
   });
 
   // --- registerPatientPortalAccount ---
@@ -431,6 +441,118 @@ describe("patientPortalAuth", () => {
       // This test confirms loginPatientPortal doesn't crash with expired token field
       const r = await loginPatientPortal("ada@test.com", "999999", "pin");
       expect(r.success).toBe(false);
+    });
+  });
+
+  // --- portal access checks ---
+  describe("portal access", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    function seedDobUser(patientId = "p1") {
+      store["mbhr_portal_users"] = JSON.stringify([
+        {
+          id: "u1",
+          patientId,
+          givenName: "Ada",
+          familyName: "Obi",
+          email: "ada@test.com",
+          dob: "1990-01-01",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    }
+
+    it("refuses a local sign-in when staff turned portal access off", async () => {
+      seedDobUser();
+      mockPatients.get.mockResolvedValue({ id: "p1", portalEnabled: 0 });
+
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/not turned on portal access/i);
+      expect(r.sessionToken).toBeUndefined();
+    });
+
+    it("allows a local sign-in without a server when access was never turned off", async () => {
+      seedDobUser();
+      mockPatients.get.mockResolvedValue({ id: "p1" });
+
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+
+      expect(r.success).toBe(true);
+      expect(r.sessionToken).toBeTruthy();
+    });
+
+    it("with a server, the offline copy expires", async () => {
+      serverState.configured = true;
+      seedDobUser();
+      mockPatients.get.mockResolvedValue({
+        id: "p1",
+        portalEnabled: 1,
+        _syncedAt: new Date(Date.now() - 30 * DAY).toISOString(),
+      });
+
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/could not confirm your portal access/i);
+    });
+
+    it("with a server, a recent confirmed copy is used", async () => {
+      serverState.configured = true;
+      seedDobUser();
+      mockPatients.get.mockResolvedValue({
+        id: "p1",
+        portalEnabled: 1,
+        portalEnabledChangedAt: new Date(Date.now() - DAY).toISOString(),
+      });
+
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+
+      expect(r.success).toBe(true);
+    });
+
+    it("with a server, a change still waiting for it is not trusted", async () => {
+      serverState.configured = true;
+      seedDobUser();
+      mockPatients.get.mockResolvedValue({
+        id: "p1",
+        portalEnabled: 1,
+        portalPending: 1,
+        _syncedAt: new Date().toISOString(),
+      });
+
+      const r = await loginPatientPortal("ada@test.com", "1990-01-01", "dob");
+
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/not confirmed it yet/i);
+    });
+
+    it("registration links only to a record with portal access on, without server lookups", async () => {
+      mockPatients.where.mockReturnValue({
+        equalsIgnoreCase: vi.fn().mockReturnValue({
+          or: vi.fn().mockReturnValue({
+            equals: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([
+                { id: "p1", email: "ada@test.com", dob: "1990-01-01", portalEnabled: 0 },
+              ]),
+            }),
+          }),
+        }),
+      });
+
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "ada@test.com",
+        "1990-01-01",
+        "Ada",
+        "Obi",
+        "123456",
+      );
+
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/not enabled portal access/i);
+      expect(mockPatients.add).not.toHaveBeenCalled();
     });
   });
 

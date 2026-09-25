@@ -7,7 +7,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { getPatientMedicalHistory } from "@/services/patientPortalData";
-import type { PatientMedicalRecord } from "@/types/patientPortal";
+import type { PatientMedicalRecord, PortalDataError } from "@/types/patientPortal";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
@@ -20,6 +20,21 @@ const PAGE_SIZE = 10;
 const PAGE_TITLE = "Your visits";
 const PAGE_DESCRIPTION =
   "Visits recorded by the outreach team. A visit shows here once it is finished and uploaded from the clinic's device.";
+
+const LOAD_FAILED = "We could not load your visits. Please try again.";
+
+/** Why the visits were not loaded, when the notice is not a failure. */
+type NotLoaded = Extract<PortalDataError, "offline" | "unavailable">;
+
+function NotConnectedNotice() {
+  return (
+    <PortalNotice tone="info" title="Visit history is not available here">
+      This portal is not connected to the clinic&apos;s online records, so
+      your full visit history cannot be shown. Your home page shows what
+      is saved on this device.
+    </PortalNotice>
+  );
+}
 
 function VitalsSummary({
   vitals,
@@ -57,12 +72,16 @@ export function MedicalHistory() {
   const [records, setRecords] = useState<PatientMedicalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Set when the last load did not reach the visits (offline, or no online
+  // records): the list shown is then "not loaded", never "no visits".
+  const [notLoaded, setNotLoaded] = useState<NotLoaded | null>(null);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
 
   const loadRecords = useCallback(async (pageToLoad: number) => {
     setLoading(true);
     setError("");
+    setNotLoaded(null);
 
     try {
       const portalUser = readPortalUser();
@@ -81,26 +100,30 @@ export function MedicalHistory() {
         PAGE_SIZE,
         (pageToLoad - 1) * PAGE_SIZE,
       );
-      if (result) {
-        // "Load more" adds the next page under the visits already shown.
-        setRecords((prev) =>
-          pageToLoad === 1
-            ? result.records
-            : appendUnique(prev, result.records, (r) => r.visitId),
-        );
-        setHasMore(result.total > pageToLoad * PAGE_SIZE);
-      } else {
-        setError("We could not load your visits. Please try again.");
+      if (result.error) {
+        // Nothing was loaded: keep the visits already shown.
+        if (result.error === "offline" || result.error === "unavailable") {
+          setNotLoaded(result.error);
+        } else {
+          setError(LOAD_FAILED);
+        }
+        return;
       }
+      // "Load more" adds the next page under the visits already shown.
+      setRecords((prev) =>
+        pageToLoad === 1
+          ? result.records
+          : appendUnique(prev, result.records, (r) => r.visitId),
+      );
+      setHasMore(result.total > pageToLoad * PAGE_SIZE);
     } catch (err) {
       logger.error(
         "Error loading medical history:",
         err instanceof Error ? err.name : "unknown",
       );
-      // Offline, the "You are offline" notice already explains it.
-      setError(
-        navigator.onLine ? "We could not load your visits. Please try again." : "",
-      );
+      // Offline, the "You are offline" notice explains it.
+      if (navigator.onLine) setError(LOAD_FAILED);
+      else setNotLoaded("offline");
     } finally {
       setLoading(false);
     }
@@ -124,11 +147,7 @@ export function MedicalHistory() {
   if (!isSupabaseEnabled) {
     return (
       <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
-        <PortalNotice tone="info" title="Visit history is not available here">
-          This portal is not connected to the clinic&apos;s online records, so
-          your full visit history cannot be shown. Your home page shows what
-          is saved on this device.
-        </PortalNotice>
+        <NotConnectedNotice />
         <Link to="/patient/dashboard" className="btn-secondary">
           Go to home
         </Link>
@@ -142,13 +161,31 @@ export function MedicalHistory() {
 
   return (
     <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
-      {!online && (
-        <PortalNotice tone="offline" title="You are offline">
+      {(!online || notLoaded === "offline") && (
+        <PortalNotice
+          tone="offline"
+          title="You are offline"
+          action={
+            online ? (
+              <button
+                type="button"
+                onClick={() => loadRecords(page)}
+                disabled={loading}
+                className="btn-secondary"
+              >
+                <ArrowPathIcon className="h-5 w-5" aria-hidden />
+                Try again
+              </button>
+            ) : undefined
+          }
+        >
           {records.length > 0
             ? "You are seeing the visits loaded when this phone was last online. They may be out of date. Connect to the internet to load more."
             : "Connect to the internet to see your visits."}
         </PortalNotice>
       )}
+
+      {notLoaded === "unavailable" && <NotConnectedNotice />}
 
       {error && (
         <PortalNotice
@@ -170,7 +207,7 @@ export function MedicalHistory() {
         </PortalNotice>
       )}
 
-      {records.length === 0 && !loading && !error && online ? (
+      {records.length === 0 && !loading && !error && !notLoaded && online ? (
         <div className="panel">
           <EmptyState
             icon={CalendarIcon}
@@ -249,7 +286,7 @@ export function MedicalHistory() {
         )
       )}
 
-      {hasMore && records.length > 0 && (
+      {hasMore && records.length > 0 && !error && !notLoaded && (
         <div className="text-center">
           <button
             type="button"

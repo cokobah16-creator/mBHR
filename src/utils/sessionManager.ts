@@ -250,8 +250,30 @@ export class SessionManager {
   }
 }
 
+interface PortalSessionRow {
+  session_id: string;
+  session_expires_at: string | null;
+  session_active: boolean;
+  session_last_activity_at: string | null;
+}
+
+function firstSessionRow(data: unknown): PortalSessionRow | null {
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== "object") return null;
+  return row as PortalSessionRow;
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : "request failed";
+}
+
 /**
- * Validate and refresh patient portal session
+ * Validate and refresh patient portal session.
+ *
+ * With a server, the session is checked with the portal_session_check RPC
+ * (the session token is the credential; sessions are not readable
+ * directly). It records activity, and extends a session that is close to
+ * expiry. Without a server, the session kept on this device is checked.
  */
 export async function validateAndRefreshPatientSession(
   sessionToken: string,
@@ -270,34 +292,32 @@ export async function validateAndRefreshPatientSession(
       };
     }
 
-    const { data: session, error } = await supabase
-      .from("patient_portal_sessions")
-      .select("id, expires_at, is_active, last_activity_at")
-      .eq("session_token", sessionToken)
-      .eq("is_active", true)
-      .maybeSingle();
+    // Check (and record activity). Unknown or ended sessions return no row;
+    // a session more than 5 minutes past expiry is ended by the server.
+    const { data, error } = await supabase.rpc("portal_session_check", {
+      p_session_token: sessionToken,
+      p_extend_until: null,
+    });
+    const session = firstSessionRow(data);
 
-    if (error || !session) {
+    if (error || !session || !session.session_active || !session.session_expires_at) {
+      if (error) {
+        logger.warn("[SessionManager] Patient session check failed:", errorName(error));
+      }
       return { valid: false, needsRefresh: false };
     }
 
-    const expiresAt = new Date(session.expires_at);
+    const expiresAt = new Date(session.session_expires_at);
     const now = new Date();
     const timeUntilExpiry = expiresAt.getTime() - now.getTime();
 
-    // Grace period: 5 minutes after expiry
+    // Grace period: 5 minutes after expiry (the server applies the same rule)
     const GRACE_PERIOD = 5 * 60 * 1000; // 5 minutes
 
     if (timeUntilExpiry < -GRACE_PERIOD) {
-      // Session truly expired (beyond grace period)
       logger.info(
         "[SessionManager] Patient session expired beyond grace period",
       );
-      await supabase
-        .from("patient_portal_sessions")
-        .update({ is_active: false })
-        .eq("id", session.id);
-
       return { valid: false, needsRefresh: false };
     }
 
@@ -305,19 +325,29 @@ export async function validateAndRefreshPatientSession(
     const needsRefresh = timeUntilExpiry < REFRESH_BEFORE_EXPIRY;
 
     if (needsRefresh || timeUntilExpiry < 0) {
-      // Extend session
-      const newExpiresAt = new Date(
+      const requested = new Date(
         now.getTime() + SESSION_CONFIGS.patient.duration * 60 * 60 * 1000,
       );
 
-      await supabase
-        .from("patient_portal_sessions")
-        .update({
-          expires_at: newExpiresAt.toISOString(),
-          last_activity_at: now.toISOString(),
-        })
-        .eq("id", session.id);
+      const { data: extended, error: extendError } = await supabase.rpc(
+        "portal_session_check",
+        {
+          p_session_token: sessionToken,
+          p_extend_until: requested.toISOString(),
+        },
+      );
+      const refreshed = firstSessionRow(extended);
 
+      if (extendError || !refreshed || !refreshed.session_active || !refreshed.session_expires_at) {
+        if (extendError) {
+          logger.warn("[SessionManager] Patient session not extended:", errorName(extendError));
+        }
+        // Still valid until its current expiry (and the grace period).
+        return { valid: timeUntilExpiry >= -GRACE_PERIOD, needsRefresh: true, expiresAt };
+      }
+
+      // The server caps the extension (24 hours at most).
+      const newExpiresAt = new Date(refreshed.session_expires_at);
       logger.info("[SessionManager] Patient session refreshed", {
         wasExpired: timeUntilExpiry < 0,
         newExpiresAt,
@@ -326,16 +356,32 @@ export async function validateAndRefreshPatientSession(
       return { valid: true, needsRefresh: true, expiresAt: newExpiresAt };
     }
 
-    // Update last activity
-    await supabase
-      .from("patient_portal_sessions")
-      .update({ last_activity_at: now.toISOString() })
-      .eq("id", session.id);
-
     return { valid: true, needsRefresh: false, expiresAt };
   } catch (error) {
-    logger.error("[SessionManager] Error validating patient session:", error);
+    logger.error("[SessionManager] Error validating patient session:", errorName(error));
     return { valid: false, needsRefresh: false };
+  }
+}
+
+/**
+ * End a patient portal session on the server (portal_session_end). True when
+ * the server ended an active session; false when there is no server, the
+ * session was unknown or already ended, or the request failed.
+ */
+export async function endPatientSession(sessionToken: string): Promise<boolean> {
+  if (!supabase || !sessionToken) return false;
+  try {
+    const { data, error } = await supabase.rpc("portal_session_end", {
+      p_session_token: sessionToken,
+    });
+    if (error) {
+      logger.warn("[SessionManager] Patient session not ended on the server:", errorName(error));
+      return false;
+    }
+    return data === true;
+  } catch (error) {
+    logger.warn("[SessionManager] Patient session not ended on the server:", errorName(error));
+    return false;
   }
 }
 

@@ -358,9 +358,12 @@ export function isStaffMarkedSent(errorMessage: string | undefined): boolean {
 }
 
 /**
- * Stored by the notification worker when the SMS provider accepted a server
- * reminder. Rows marked sent before this marker existed (demo mode, the old
- * "Mark sent" button) carry no evidence and are shown as not confirmed.
+ * Stored on a server reminder when the SMS provider accepted it. The
+ * send-sms-reminder server function writes it (with the service role) right
+ * after a provider send succeeds; the same text is repeated there
+ * (supabase/functions/send-sms-reminder/index.ts), so change both together.
+ * Rows marked sent before this marker existed (demo mode, the old "Mark
+ * sent" button) carry no evidence and are shown as not confirmed.
  */
 export const PROVIDER_ACCEPTED_MARKER = "accepted by sms provider";
 
@@ -494,7 +497,16 @@ export function sortOutbox(items: OutboxItem[]): OutboxItem[] {
 // Wording
 // ---------------------------------------------------------------------------
 
-export type SendingBlocker = "not_configured" | "offline";
+/**
+ * Why SMS cannot go out from this device right now.
+ * - "not_configured": no mBHR server connection in this build.
+ * - "offline": the device reports no network.
+ * - "signed_out": nobody is signed in online (a PIN unlock of an offline
+ *   workspace has no online session, and the server only sends for a
+ *   signed-in staff account).
+ * - "not_permitted": the server refused the signed-in account's role.
+ */
+export type SendingBlocker = "not_configured" | "offline" | "signed_out" | "not_permitted";
 
 export interface SendingContext {
   now: Date;
@@ -573,6 +585,34 @@ export function describeFailure(error: string | undefined): string {
   if (isOptOutSkip(error)) return `${OPT_OUT_SKIP_REASON}, so it was not sent.`;
   if (/preference_check_failed/.test(e))
     return "The patient's reminder settings could not be read on this device, so it was not sent. Try again.";
+  // Codes returned by the send-sms-reminder server function. Stored errors
+  // start with the code ("not_permitted: ..."), so match those first.
+  // "Invalid JWT" comes from the functions gateway when the online sign-in
+  // has expired.
+  if (/\bnot_authenticated\b|invalid jwt|jwt expired/.test(e))
+    return "Not sent: nobody is signed in online on this device. Sign in online with a staff account, then send again.";
+  if (/\bnot_permitted\b/.test(e))
+    return "Not sent: your role cannot send SMS to patients. Ask a pharmacist, nurse, doctor, lead clinician or administrator to send it.";
+  if (/\bpatient_not_found\b/.test(e))
+    return "Not sent: this patient is not on the server yet. Sync this device, then send again.";
+  if (/\bno_phone\b/.test(e))
+    return "Not sent: the patient's record has no phone number. Add the number to the patient's record, sync, then send again.";
+  if (/\binvalid_recipient\b/.test(e))
+    return "Not sent: the phone number on the patient's record is not a valid Nigerian mobile number. Correct it on the patient's record, sync, then send again.";
+  if (/\brate_limit_unavailable\b/.test(e))
+    return "Not sent: the server could not check the send limit, so it paused sending. Nothing went to the patient. Try again in a few minutes.";
+  if (/\bstaff_lookup_failed\b/.test(e))
+    return "Not sent: the server could not check your staff account. Nothing went to the patient. Try again in a few minutes.";
+  if (/\blookup_failed\b/.test(e))
+    return "Not sent: the server could not look up the patient or reminder. Nothing went to the patient. Try again in a few minutes.";
+  // Stored by this device's sender: accepted by the provider, but the server
+  // could not record it, so it is not sent again from this device.
+  if (/\baccepted_not_recorded\b/.test(e))
+    return "Not sent again: the SMS provider already accepted this reminder from this device, but the server could not record it, so it may still show as waiting. Do not send it again.";
+  if (/\balready_sent\b/.test(e))
+    return "Not sent again: the server already records this reminder as sent, so a second SMS was not sent.";
+  if (/\binvalid_message\b/.test(e))
+    return "Not sent: the message text is empty or too long. Schedule the reminder again with a shorter message.";
   if (/demo/.test(e))
     return "SMS demo mode is on. The server logged the message but did not send it to the patient.";
   if (/mock/.test(e))
@@ -649,6 +689,12 @@ export function explainState(item: OutboxItem, ctx: SendingContext): string {
   if (blocker === "not_configured") {
     return `${retryNote}Saved on this device only. This device is not connected to the mBHR server, so it will not be sent until that is set up.`;
   }
+  if (blocker === "signed_out") {
+    return `${retryNote}Saved on this device only. Sending needs a staff member signed in online (a PIN unlock is not enough), so it waits here until someone signs in online and sending runs.`;
+  }
+  if (blocker === "not_permitted") {
+    return `${retryNote}Saved on this device only. The signed-in account's role cannot send SMS, so it waits here until a pharmacist, nurse, doctor, lead clinician or administrator signs in online and sending runs.`;
+  }
   if (!due) {
     return `${retryNote}Scheduled. It will be tried from ${formatWhen(item.scheduledFor)} when this device is online and sending runs.`;
   }
@@ -675,8 +721,18 @@ export function describeRun(result: RunResult): string {
   if (result.skipped === "not_configured") {
     return "Nothing was sent: SMS sending is not set up on this device.";
   }
+  if (result.skipped === "signed_out") {
+    return "Nothing was sent: nobody is signed in online on this device. Sign in online with a staff account to send SMS. Queued reminders stay on this device.";
+  }
+  if (result.skipped === "not_permitted") {
+    return "Nothing was sent: the signed-in account's role cannot send SMS to patients. Queued reminders stay on this device.";
+  }
   if (result.skipped === "busy") {
     return "A send run was already in progress. Check the list again in a moment.";
+  }
+  if (result.skipped) {
+    // A blocker this summary does not know yet: never report "Nothing was due".
+    return "Nothing was sent: sending is not possible on this device right now. Queued reminders stay on this device.";
   }
   const accepted = result.reminders + result.messages;
   const failed = result.failed ?? 0;

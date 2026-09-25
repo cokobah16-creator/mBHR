@@ -1,42 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { REMINDER_SKIP_MESSAGE } from "./reminderEligibility";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockOutboundMessages: Map<string, any> = new Map();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const mockOutboxMessages: Map<string, any> = new Map();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockMedicationReminders: any[] = [];
-// Patient preference records on this device, by patient id.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const mockPreferences: Map<string, any> = new Map();
-const mockPreferenceLookup = { fails: false };
-// Updates written to medication_reminders on the server.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const mockReminderUpdates: { changes: any; id: unknown }[] = [];
-
-/** `.and(pred).modify(changes)` over a Map store, as Dexie does it. */
-function mockModify(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  store: Map<string, any>,
-  field: string,
-  value: unknown,
-) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return vi.fn((pred: (msg: any) => boolean) => ({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    modify: vi.fn((changes: any) => {
-      let count = 0;
-      for (const [id, msg] of store) {
-        if (msg[field] === value && pred(msg)) {
-          store.set(id, { ...msg, ...changes });
-          count++;
-        }
-      }
-      return Promise.resolve(count);
-    }),
-  }));
-}
 
 vi.mock("@/db", () => ({
   db: {
@@ -60,7 +27,6 @@ vi.mock("@/db", () => ({
               return Promise.resolve(results.length);
             }),
           })),
-          and: mockModify(mockOutboundMessages, field, value),
           count: vi.fn(() => {
             const count = Array.from(mockOutboundMessages.values()).filter(
               (msg) => msg[field] === value,
@@ -83,59 +49,29 @@ vi.mock("@/db", () => ({
         return Promise.resolve(1);
       }),
     },
-    patientPreferences: {
-      where: vi.fn(() => ({
-        equals: vi.fn((patientId: string) => ({
-          first: vi.fn(() =>
-            mockPreferenceLookup.fails
-              ? Promise.reject(new Error("DatabaseClosedError"))
-              : Promise.resolve(mockPreferences.get(patientId)),
-          ),
-        })),
-      })),
-    },
   },
 }));
 
-vi.mock("@/db/outbox", () => ({
-  outboxDb: {
-    outboundMessages: {
-      where: vi.fn((field: string) => ({
-        equals: vi.fn((value: string) => ({
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          filter: vi.fn((filterFn: (msg: any) => boolean) => ({
-            limit: vi.fn(() => ({
-              toArray: vi.fn(() =>
-                Promise.resolve(
-                  Array.from(mockOutboxMessages.values())
-                    .filter((msg) => msg[field] === value)
-                    .filter(filterFn),
-                ),
-              ),
-            })),
-          })),
-          and: mockModify(mockOutboxMessages, field, value),
-        })),
-      })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      update: vi.fn((id: string, updates: any) => {
-        const msg = mockOutboxMessages.get(id);
-        if (msg) mockOutboxMessages.set(id, { ...msg, ...updates });
-        return Promise.resolve(msg ? 1 : 0);
-      }),
-    },
-  },
+// Online session on this device (null: nobody signed in online).
+const mockSession: { current: { access_token: string; user?: { id: string } } | null } = {
+  current: null,
+};
+// The staff member signed in online in this session (src/lib/cloudSession.ts).
+const STAFF_CLOUD_ID = "staff-1";
+vi.mock("@/lib/cloudSession", () => ({
+  isSignedInStaffAccount: (id: string | null | undefined) => id === "staff-1",
 }));
+// Every update the worker tries on a server table.
+const mockTableUpdates: { table: string; values: unknown }[] = [];
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     auth: {
-      // A staff member signed in online, so the worker would really send.
       getSession: vi.fn(() =>
-        Promise.resolve({ data: { session: { access_token: "staff-token" } } }),
+        Promise.resolve({ data: { session: mockSession.current }, error: null }),
       ),
     },
-    from: vi.fn(() => ({
+    from: vi.fn((table: string) => ({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
           lte: vi.fn(() => ({
@@ -145,13 +81,10 @@ vi.mock("@/lib/supabase", () => ({
           })),
         })),
       })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      update: vi.fn((changes: any) => ({
-        eq: vi.fn((_column: string, id: unknown) => {
-          mockReminderUpdates.push({ changes, id });
-          return Promise.resolve({ error: null });
-        }),
-      })),
+      update: vi.fn((values: unknown) => {
+        mockTableUpdates.push({ table, values });
+        return { eq: vi.fn(() => Promise.resolve({ error: null })) };
+      }),
     })),
   },
 }));
@@ -167,11 +100,9 @@ describe("notificationWorker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockOutboundMessages.clear();
-    mockOutboxMessages.clear();
     mockMedicationReminders.length = 0;
-    mockPreferences.clear();
-    mockPreferenceLookup.fails = false;
-    mockReminderUpdates.length = 0;
+    mockTableUpdates.length = 0;
+    mockSession.current = null;
     vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "test-key");
   });
@@ -250,167 +181,179 @@ describe("notificationWorker", () => {
     });
   });
 
-  describe("reminder opt-out at send time", () => {
-    const PAST = new Date(Date.now() - 60_000);
+  describe("server reminders", () => {
+    const fetchMock = () => globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const reminder = {
+      id: "rem-1",
+      patient_id: "patient-123",
+      phone_number: "+2348012345678",
+      message: "Take your medicine",
+      status: "pending",
+    };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    function queueMessage(overrides: Record<string, any> = {}) {
-      const msg = {
-        id: "queue-1",
-        patientId: "patient-out",
-        channel: "sms",
-        to: "+2348012345678",
-        locale: "en",
-        templateKey: "medication_reminder",
-        payload: { medicationName: "Amoxicillin", message: "Take Amoxicillin 500 mg now." },
-        status: "queued",
-        createdAt: PAST,
-        scheduledFor: PAST,
-        attempts: 0,
-        ...overrides,
-      };
-      mockOutboundMessages.set(msg.id, msg);
-      return msg.id;
-    }
+    it("does not try to send when nobody is signed in online", async () => {
+      mockMedicationReminders.push(reminder);
+      const { processNow } = await import("./notificationWorker");
 
-    function providerAccepts() {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (global.fetch as any).mockResolvedValue({
+      const result = await processNow();
+
+      expect(result.skipped).toBe("signed_out");
+      expect(fetchMock()).not.toHaveBeenCalled();
+      expect(mockTableUpdates).toEqual([]);
+    });
+
+    it("does not send under another account's online sign-in left in this browser", async () => {
+      mockSession.current = { access_token: "portal-token", user: { id: "portal-patient-1" } };
+      mockMedicationReminders.push(reminder);
+      const { processNow } = await import("./notificationWorker");
+
+      const result = await processNow();
+
+      expect(result.skipped).toBe("signed_out");
+      expect(fetchMock()).not.toHaveBeenCalled();
+    });
+
+    it("sends with the staff token and leaves the status to the server", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      mockMedicationReminders.push(reminder);
+      fetchMock().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ success: true, messageId: "sms-1", provider: "termii" }),
+        json: () =>
+          Promise.resolve({ success: true, messageId: "m-1", reminderRecorded: true }),
       });
-    }
-
-    it("cancels a queued reminder for a patient who opted out and never calls the sender", async () => {
-      providerAccepts();
-      // Queued before the patient turned medication reminders off.
-      const id = queueMessage();
-      mockPreferences.set("patient-out", { patientId: "patient-out", medicationReminders: 0, appointmentReminders: 1 });
-
       const { processNow } = await import("./notificationWorker");
+
       const result = await processNow();
 
-      expect(global.fetch).not.toHaveBeenCalled();
-      const msg = mockOutboundMessages.get(id);
-      expect(msg.status).toBe("cancelled");
-      expect(msg.errorMessage).toBe(REMINDER_SKIP_MESSAGE.opted_out);
-      expect(msg.attempts).toBe(0);
-      expect(result.messages).toBe(0);
-      expect(result.failed).toBe(1);
+      expect(result.reminders).toBe(1);
+      const [url, init] = fetchMock().mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("https://test.supabase.co/functions/v1/send-sms-reminder");
+      expect(init.headers).toMatchObject({
+        Authorization: "Bearer staff-token",
+        apikey: "test-key",
+      });
+      const body = JSON.parse(String(init.body));
+      expect(body.reminderId).toBe("rem-1");
+      expect(body).not.toHaveProperty("to");
+      // medication_reminders is written by the server function, not here.
+      expect(mockTableUpdates.filter((u) => u.table === "medication_reminders")).toEqual([]);
     });
 
-    it("treats an opt-out pulled from the server as false the same way", async () => {
-      providerAccepts();
-      mockOutboxMessages.set("outbox-1", {
-        id: "outbox-1",
-        patientId: "patient-out",
-        channel: "sms",
-        to: "+2348012345678",
-        locale: "en",
-        templateKey: "followup.medication",
-        payload: { patientName: "Ada Obi", medicationName: "Amoxicillin", dosage: "500 mg" },
-        status: "queued",
-        createdAt: PAST.toISOString(),
-        attempts: 0,
+    it("does not count a reminder the server already records as sent", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      mockMedicationReminders.push(reminder);
+      fetchMock().mockResolvedValue({
+        ok: false,
+        status: 409,
+        headers: { get: () => null },
+        text: () =>
+          Promise.resolve(JSON.stringify({ success: false, error: "already_sent" })),
       });
-      mockPreferences.set("patient-out", { patientId: "patient-out", medicationReminders: false });
-
       const { processNow } = await import("./notificationWorker");
-      await processNow();
 
-      expect(global.fetch).not.toHaveBeenCalled();
-      const msg = mockOutboxMessages.get("outbox-1");
-      expect(msg.status).toBe("cancelled");
-      expect(msg.errorMessage).toBe(REMINDER_SKIP_MESSAGE.opted_out);
-    });
-
-    it("marks a due server reminder failed with the opt-out reason instead of sending it", async () => {
-      providerAccepts();
-      mockMedicationReminders.push({
-        id: "rem-1",
-        patient_id: "patient-out",
-        message: "Take Amoxicillin 500 mg now.",
-        status: "pending",
-      });
-      mockPreferences.set("patient-out", { patientId: "patient-out", medicationReminders: 0 });
-
-      const { processNow } = await import("./notificationWorker");
       const result = await processNow();
 
-      expect(global.fetch).not.toHaveBeenCalled();
-      expect(mockReminderUpdates).toEqual([
-        {
-          changes: { status: "failed", error_message: REMINDER_SKIP_MESSAGE.opted_out },
-          id: "rem-1",
-        },
-      ]);
       expect(result.reminders).toBe(0);
+      expect(result.failed).toBe(0);
+      expect(mockTableUpdates).toEqual([]);
     });
 
-    it("does not send now for a patient who opted out", async () => {
-      providerAccepts();
-      mockPreferences.set("patient-out", { patientId: "patient-out", medicationReminders: false });
-      const { markReminderFailed } = await import("@/services/sms");
-
-      const { sendReminderNow } = await import("./notificationWorker");
-      const result = await sendReminderNow({
-        id: "rem-2",
-        patientId: "patient-out",
-        phoneNumber: "+2348012345678",
-        message: "Take Amoxicillin 500 mg now.",
+    it("reports a role the server refuses instead of a failure", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      mockMedicationReminders.push(reminder);
+      fetchMock().mockResolvedValue({
+        ok: false,
+        status: 403,
+        headers: { get: () => null },
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              success: false,
+              error: "not_permitted",
+              message: "Your role cannot send SMS to patients.",
+            }),
+          ),
       });
-
-      expect(global.fetch).not.toHaveBeenCalled();
-      expect(result.ok).toBe(false);
-      expect(result.error).toBe(REMINDER_SKIP_MESSAGE.opted_out);
-      expect(markReminderFailed).toHaveBeenCalledWith("rem-2", REMINDER_SKIP_MESSAGE.opted_out);
-    });
-
-    it("still sends a reminder the patient kept on, including true pulled from the server", async () => {
-      providerAccepts();
-      const id = queueMessage({ patientId: "patient-in" });
-      mockPreferences.set("patient-in", { patientId: "patient-in", medicationReminders: true });
-
       const { processNow } = await import("./notificationWorker");
+
       const result = await processNow();
 
-      expect(global.fetch).toHaveBeenCalledTimes(1);
-      expect(mockOutboundMessages.get(id).status).toBe("sent");
-      expect(result.messages).toBe(1);
+      expect(result.skipped).toBe("not_permitted");
+      expect(mockTableUpdates).toEqual([]);
     });
 
-    it("never holds back a one-time code, even for a patient who opted out", async () => {
-      providerAccepts();
-      const id = queueMessage({
-        templateKey: "otp",
-        payload: { message: "Your mBHR verification code is 123456." },
+    it("Send now reports whether the server recorded the outcome", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      fetchMock().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ success: true, reminderRecorded: false }),
       });
-      mockPreferences.set("patient-out", {
-        patientId: "patient-out",
-        medicationReminders: 0,
-        appointmentReminders: 0,
+      const { sendReminderNow } = await import("./notificationWorker");
+
+      const result = await sendReminderNow({
+        id: "rem-1",
+        patientId: "patient-123",
+        phoneNumber: "+2348012345678",
+        message: "Take your medicine",
       });
 
-      const { processNow } = await import("./notificationWorker");
-      await processNow();
-
-      expect(global.fetch).toHaveBeenCalledTimes(1);
-      expect(mockOutboundMessages.get(id).status).toBe("sent");
+      expect(result).toMatchObject({ ok: true, recordUpdated: false });
+      expect(mockTableUpdates).toEqual([]);
     });
 
-    it("keeps a reminder queued, unsent, when the setting cannot be read", async () => {
-      providerAccepts();
-      const id = queueMessage();
-      mockPreferenceLookup.fails = true;
+    it("Send now keeps the server's record flag when it refuses the send", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      fetchMock().mockResolvedValue({
+        ok: false,
+        status: 422,
+        headers: { get: () => null },
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              success: false,
+              error: "no_phone",
+              message: "The patient has no phone number on the server.",
+              reminderRecorded: true,
+            }),
+          ),
+      });
+      const { sendReminderNow } = await import("./notificationWorker");
 
-      const { processNow, PREFERENCE_CHECK_ERROR } = await import("./notificationWorker");
-      await processNow();
+      const result = await sendReminderNow({
+        id: "rem-422",
+        patientId: "patient-123",
+        phoneNumber: "",
+        message: "Take your medicine",
+      });
 
-      expect(global.fetch).not.toHaveBeenCalled();
-      const msg = mockOutboundMessages.get(id);
-      expect(msg.status).toBe("queued");
-      expect(msg.attempts).toBe(0);
-      expect(msg.errorMessage).toBe(PREFERENCE_CHECK_ERROR);
+      expect(result).toMatchObject({ ok: false, recordUpdated: true });
+      expect(result.error).toMatch(/^no_phone/);
+    });
+
+    it("does not send again a reminder accepted but not recorded by the server", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      fetchMock().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ success: true, reminderRecorded: false }),
+      });
+      const { sendReminderNow, SMS_ACCEPTED_NOT_RECORDED_ERROR } = await import(
+        "./notificationWorker"
+      );
+      const reminderToSend = {
+        id: "rem-unrecorded",
+        patientId: "patient-123",
+        phoneNumber: "",
+        message: "Take your medicine",
+      };
+
+      await sendReminderNow(reminderToSend);
+      const again = await sendReminderNow(reminderToSend);
+
+      expect(again).toMatchObject({ ok: false, error: SMS_ACCEPTED_NOT_RECORDED_ERROR });
+      // The patient is not texted a second time.
+      expect(fetchMock()).toHaveBeenCalledTimes(1);
+      // Its own code: it must not read as "the server records it as sent".
+      expect(SMS_ACCEPTED_NOT_RECORDED_ERROR).not.toMatch(/already_sent/);
     });
   });
 

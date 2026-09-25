@@ -1,14 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
+  maskEmail,
   maskMsisdn,
   normalizeNigerianMsisdn,
   redactNumbers,
   toE164,
-  validEmailAddress,
+  validEmail,
   validId,
   validMessageText,
   validOtp,
-  MAX_EMAIL_CHARS,
   MAX_SMS_CHARS,
 } from "./recipient";
 
@@ -114,40 +114,37 @@ describe("input validation", () => {
   });
 });
 
-describe("validEmailAddress", () => {
-  it("accepts one plain address and trims it", () => {
-    expect(validEmailAddress("ada@example.com")).toBe("ada@example.com");
-    expect(validEmailAddress("  ada.obi+portal@mail.example.ng  ")).toBe(
-      "ada.obi+portal@mail.example.ng",
-    );
-    expect(validEmailAddress("o'neill@example.com")).toBe("o'neill@example.com");
+describe("validEmail", () => {
+  it("accepts ordinary addresses, trimmed", () => {
+    expect(validEmail(" ada.obi@example.org ")).toBe("ada.obi@example.org");
+    expect(validEmail("ada+portal@mail.example.com.ng")).toBe("ada+portal@mail.example.com.ng");
   });
 
-  it("rejects lists, display names and malformed addresses", () => {
+  it("rejects anything that could carry a second address or markup", () => {
     for (const raw of [
       "",
-      "   ",
       "ada",
       "ada@example",
-      "@example.com",
-      "ada@.com",
-      "ada@example.com,eve@example.com",
-      "ada@example.com; eve@example.com",
-      "Ada <ada@example.com>",
-      '"Ada"@example.com',
-      "ada @example.com",
-      "ada@exa mple.com",
-      "ada@example.com\nBcc: eve@example.com",
+      "ada@@example.org",
+      "ada@example.org, eve@example.org",
+      "Ada <ada@example.org>",
+      "ada @example.org",
+      "ada@example.org;eve@example.org",
+      undefined,
+      null,
+      42,
     ]) {
-      expect(validEmailAddress(raw)).toBeNull();
+      expect(validEmail(raw)).toBeNull();
     }
+    expect(validEmail(`${"a".repeat(250)}@example.org`)).toBeNull();
   });
+});
 
-  it("rejects non-text and over-long input", () => {
-    expect(validEmailAddress(undefined)).toBeNull();
-    expect(validEmailAddress(null)).toBeNull();
-    expect(validEmailAddress(42)).toBeNull();
-    const local = "a".repeat(MAX_EMAIL_CHARS);
-    expect(validEmailAddress(`${local}@example.com`)).toBeNull();
+describe("maskEmail", () => {
+  it("keeps the first letter and the domain only", () => {
+    expect(maskEmail("ada.obi@example.org")).toBe("a***@example.org");
+    expect(maskEmail("")).toBe("(none)");
+    expect(maskEmail(null)).toBe("(none)");
+    expect(maskEmail("no-at-sign")).toBe("***");
   });
 });

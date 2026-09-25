@@ -3,26 +3,27 @@
  *
  * - Filter patients who have a phone number or email by registration date,
  *   state and contact method
- * - Select patients, confirm, and enable access (optionally sending invitations
- *   by email; that needs an online sign-in, because the server sends email
- *   only for staff signed in online. Patients with no email get no message)
- * - Honest progress and a result summary with each failure's reason, and
- *   how many patients were also turned on on the server (the online portal
- *   checks the server; see enablePortalAccess)
+ * - Select patients, confirm, and enable access (optionally sending invitations)
+ * - Honest progress and a result summary with each failure's reason
  * - Download a CSV report of the run
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
   UserGroupIcon,
   DocumentArrowDownIcon,
 } from "@heroicons/react/24/outline";
-import { type Patient } from "@/db";
+import { db, type Patient } from "@/db";
 import {
   findEligiblePatients,
   bulkEnablePortalAccess,
+  type BulkEnableResult,
 } from "@/services/portalEnrollment";
+import { listPortalAccessCommandsFor } from "@/services/portalAccess";
+import { summarizeBulkAccess } from "@/services/portalAccessRules";
+import { can, portalInviteRefusal } from "@/auth/roles";
 import { NIGERIAN_STATES } from "@/utils/nigeria";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useAuthStore } from "@/stores/auth";
@@ -34,7 +35,6 @@ import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
 import { canManagePortalEnrollment } from "@/features/admin/adminSections";
 import { useServerStatus } from "@/features/admin/useServerStatus";
 import type { ServerState } from "@/features/admin/serverStatus";
-import { ONLINE_SIGN_IN_HINT, useCloudSession } from "@/lib/cloudSession";
 import {
   buildRunCsv,
   groupFailureReasons,
@@ -58,10 +58,11 @@ interface MigrationRun {
   serverAvailable: boolean;
   completed: number;
   successful: number;
-  /** Successful patients also turned on on the server. */
-  serverUpdated: number;
   failed: number;
   errors: BulkRunError[];
+  /** Patients whose change was saved (followed live for the server's answer). */
+  savedIds: string[];
+  invitations?: BulkEnableResult["invitations"];
   status: "running" | "done" | "error";
 }
 
@@ -93,12 +94,12 @@ function patientName(p: Pick<Patient, "givenName" | "familyName">) {
 
 export function PortalMigration() {
   const role = useAuthStore((s) => s.currentUser?.role);
-  const canRun = canManagePortalEnrollment(role);
+  // Page rule (administrators) and the portal_manage permission.
+  const canRun = canManagePortalEnrollment(role) && !!role && can(role, "portal_manage");
+  // "Enable and send invitations" also needs portal_invite (checked again by
+  // the service and by the server).
+  const canInvite = canRun && !!role && can(role, "portal_invite");
   const server = useServerStatus();
-  // After a PIN unlock there is no online sign-in. The server then refuses to
-  // send any email, so a bulk invitation run would send nothing.
-  const notSignedInOnline = useCloudSession() === "signed_out";
-  const canSendInvitations = server.available && !notSignedInOnline;
 
   const [filters, setFilters] = useState<MigrationFilters>({
     contactMethod: "any",
@@ -113,6 +114,33 @@ export function PortalMigration() {
   );
   const [run, setRun] = useState<MigrationRun | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+
+  // Follow the server's answers for the patients of the last run.
+  const savedIds = useMemo(() => run?.savedIds ?? [], [run?.savedIds]);
+  const followed = useLiveQuery(
+    async () => {
+      if (savedIds.length === 0) return null;
+      const [patients, commands] = await Promise.all([
+        db.patients.bulkGet(savedIds),
+        listPortalAccessCommandsFor(savedIds),
+      ]);
+      return { patients, commands };
+    },
+    [savedIds],
+    null,
+  );
+  const accessSummary = useMemo(
+    () =>
+      followed
+        ? summarizeBulkAccess(
+            savedIds,
+            followed.patients,
+            followed.commands,
+            server.state !== "not-configured",
+          )
+        : null,
+    [followed, savedIds, server.state],
+  );
 
   const loadEligiblePatients = useCallback(async () => {
     setLoading(true);
@@ -171,9 +199,7 @@ export function PortalMigration() {
 
   const handleStartMigration = async (sendInvitations: boolean) => {
     setConfirming(null);
-    if (!canRun) return;
-    // The note beside "Invitations" says why; the server would refuse.
-    if (sendInvitations && !canSendInvitations) return;
+    if (!canRun || (sendInvitations && !canInvite)) return;
     const targets: BulkRunTarget[] = eligiblePatients
       .filter((p) => selectedPatients.has(p.id))
       .map((p) => ({ id: p.id, name: patientName(p) }));
@@ -185,9 +211,9 @@ export function PortalMigration() {
       serverAvailable: server.available,
       completed: 0,
       successful: 0,
-      serverUpdated: 0,
       failed: 0,
       errors: [],
+      savedIds: [],
       status: "running",
     });
 
@@ -208,9 +234,12 @@ export function PortalMigration() {
               ...prev,
               completed: result.success + result.failed,
               successful: result.success,
-              serverUpdated: result.serverUpdated,
               failed: result.failed,
               errors: result.errors,
+              savedIds: targets
+                .map((t) => t.id)
+                .filter((id) => !result.errors.some((e) => e.patientId === id)),
+              invitations: result.invitations,
               status: "done",
             }
           : prev,
@@ -252,13 +281,13 @@ export function PortalMigration() {
       <PageHeader
         breadcrumbs={BREADCRUMBS}
         title="Enable portal access"
-        description="Turn on patient portal access for patients on this device who have a phone number or email."
+        description="Ask the clinic server to turn on patient portal access for patients on this device who have a phone number or email."
       />
 
       {!canRun && (
         <div className="banner banner-warning" role="status">
-          Only an administrator can enable portal access. You can view this
-          list but not change it.
+          Only an administrator can turn on portal access here. You can view
+          this list but not change it.
         </div>
       )}
 
@@ -268,8 +297,7 @@ export function PortalMigration() {
             Which patients
           </h2>
           <span className="text-caption text-ink-muted">
-            Patients without portal access who have a phone number or email.
-            Patients under 18 are not listed: portal accounts are for adults.
+            Patients without portal access who have a phone number or email
           </span>
         </div>
         <div className="panel-body grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -354,18 +382,12 @@ export function PortalMigration() {
         <StatusBadge tone={SERVER_TONE[server.state]} icon>
           {server.label}
         </StatusBadge>
-        <span
-          className={`text-caption ${
-            server.available && notSignedInOnline
-              ? "text-warning-fg"
-              : "text-ink-muted"
-          }`}
-        >
-          {!server.available
-            ? "Invitations need the server and an internet connection. You can still enable access now and send invitations later from each patient's record."
-            : notSignedInOnline
-              ? `You are not signed in online, so the server will not send invitations. You can still enable access now and share a registration link from each patient's record. To send invitations, sign in online. ${ONLINE_SIGN_IN_HINT}`
-              : "Invitations are sent by email. Patients with no email get no message: SMS invitations are not available yet, so share a registration link from their record. Sending needs an online sign-in: a PIN unlock is not enough."}
+        <span id="migration-invite-hint" className="text-caption text-ink-muted">
+          {canRun && !canInvite
+            ? portalInviteRefusal()
+            : server.available
+              ? "Invitations are sent by email, or by SMS when a patient has no email."
+              : "Invitations need the server and an internet connection. You can still ask for access now; it is sent at the next sync, and invitations can go out from each patient's record once the server confirms."}
         </span>
       </div>
 
@@ -400,8 +422,9 @@ export function PortalMigration() {
 
         {run && run.status === "error" && (
           <div className="banner banner-danger" role="alert">
-            The run stopped before it finished. Some patients may already have
-            portal access; check the list below and try the rest again.
+            The run stopped before it finished. Changes for some patients may
+            already be saved on this device and waiting for the server; check
+            the list below and try the rest again.
           </div>
         )}
 
@@ -425,31 +448,91 @@ export function PortalMigration() {
                 className={`banner ${run.failed === 0 ? "banner-success" : "banner-warning"}`}
               >
                 <p>
-                  {/* A success can include an invitation that fell back to
-                      "share a link" (no email sent, or the patient has no
-                      email), so the summary does not claim patients were
-                      invited. */}
-                  {`Portal access enabled for ${run.successful} of ${plural(total, "patient")}.`}
+                  {`Portal access asked for ${run.successful} of ${plural(total, "patient")}.`}
                   {run.failed > 0 && ` ${run.failed} failed.`}{" "}
                   {server.state === "not-configured"
                     ? "Saved on this device only: no server is connected."
-                    : run.successful > 0 &&
-                      `Also saved on the server, which the online portal checks, for ${run.serverUpdated} of them.${
-                        run.serverUpdated < run.successful
-                          ? " The rest are saved on this device only: the device was offline, you were not signed in online, or the server did not take the change, for example because the record is not uploaded yet."
-                          : ""
-                      } Other staff devices are not changed.`}
-                  {run.sendInvitations &&
-                    run.failed > 0 &&
-                    " A patient whose invitation failed may still have portal access turned on."}
+                    : "Saved on this device. The clinic server decides; its answers show below as they arrive."}
                 </p>
               </div>
+              {accessSummary && server.state !== "not-configured" && (
+                <ul className="grid gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-3" aria-live="polite">
+                  <li className="bg-surface-sunken px-3 py-2">
+                    <StatusBadge tone="success" icon>
+                      Confirmed by the server
+                    </StatusBadge>
+                    <p className="mt-1 text-label text-ink tabular-nums">
+                      {plural(accessSummary.confirmed, "patient")}
+                    </p>
+                  </li>
+                  <li className="bg-surface-sunken px-3 py-2">
+                    <StatusBadge tone="warning" icon>
+                      Waiting for the server
+                    </StatusBadge>
+                    <p className="mt-1 text-label text-ink tabular-nums">
+                      {plural(accessSummary.waiting, "patient")}
+                    </p>
+                    {accessSummary.waiting > 0 && (
+                      <p className="text-caption text-ink-muted">
+                        {server.available
+                          ? "Sent again at the next sync if no answer arrives."
+                          : "Sent when this device is online and syncs."}
+                      </p>
+                    )}
+                  </li>
+                  <li className="bg-surface-sunken px-3 py-2">
+                    <StatusBadge tone={accessSummary.refused.length > 0 ? "danger" : "neutral"} icon>
+                      Refused by the server
+                    </StatusBadge>
+                    <p className="mt-1 text-label text-ink tabular-nums">
+                      {plural(accessSummary.refused.length, "patient")}
+                    </p>
+                  </li>
+                </ul>
+              )}
+              {accessSummary && accessSummary.refused.length > 0 && (
+                <div>
+                  <h3 className="text-label text-ink">Why the server refused</h3>
+                  <ul className="mt-1 space-y-1 text-body text-ink-secondary">
+                    {groupFailureReasons(
+                      accessSummary.refused.map((r) => ({ patientId: r.patientId, error: r.message })),
+                    ).map((g) => (
+                      <li key={g.reason}>
+                        {g.count} × {g.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {run.sendInvitations && (
                 <p className="text-body text-ink-secondary">
-                  {run.serverAvailable
-                    ? "An email invitation was requested for each enabled patient who has an email. Patients with no email got no message. The server sends at most 10 a minute from one internet connection, and none if you are not signed in online. Where it did not send one, no message went out. Open that patient's record to send it again or share a registration link."
-                    : "The server could not be reached when this ran, so no email was sent. Send invitations from each patient's record when the device is online."}
+                  {!run.serverAvailable
+                    ? "The server could not be reached when this ran, so no email or SMS was sent. Send invitations from each patient's record once the server has confirmed their access."
+                    : run.invitations
+                      ? `${plural(run.invitations.sent, "invitation")} sent by email or SMS. ${
+                          run.invitations.notSent.length > 0
+                            ? `${plural(run.invitations.notSent.length, "patient")} not invited: invitations wait until the server confirms access, and no message went out where the email or SMS service did not confirm it. Send those from each patient's record.`
+                            : ""
+                        }`
+                      : "No invitations were sent."}
                 </p>
+              )}
+              {run.invitations && run.invitations.notSent.length > 0 && (
+                <details>
+                  <summary className="cursor-pointer text-label text-primary">
+                    Show patients not invited
+                  </summary>
+                  <ul className="mt-2 max-h-64 divide-y divide-line overflow-y-auto rounded-md border border-line">
+                    {run.invitations.notSent.map((e) => (
+                      <li key={e.patientId} className="px-3 py-2 text-caption">
+                        <span className="font-medium text-ink">
+                          {nameById.get(e.patientId) ?? e.patientId}
+                        </span>
+                        <span className="text-ink-muted"> · {e.error}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               )}
               {run.errors.length > 0 && (
                 <div>
@@ -513,11 +596,9 @@ export function PortalMigration() {
               type="button"
               onClick={() => setConfirming({ sendInvitations: true })}
               disabled={
-                !canRun ||
-                selectedCount === 0 ||
-                running ||
-                !canSendInvitations
+                !canInvite || selectedCount === 0 || running || !server.available
               }
+              aria-describedby="migration-invite-hint"
               className="btn-primary"
             >
               Enable and send invitations
@@ -544,7 +625,7 @@ export function PortalMigration() {
           <EmptyState
             icon={UserGroupIcon}
             title="No eligible patients"
-            description="Every patient matching these filters already has portal access, has no phone number or email, or is under 18. Change the filters or add contact details on a patient's record."
+            description="Every patient matching these filters already has portal access or has no phone number or email. Change the filters or add contact details on a patient's record."
           />
         ) : (
           <div className="overflow-x-auto">
@@ -641,23 +722,16 @@ export function PortalMigration() {
         onCancel={() => setConfirming(null)}
       >
         <p>
-          Portal access is turned on for {plural(selectedCount, "patient")} on
-          this device
+          Portal access is asked for {plural(selectedCount, "patient")}
           {server.state === "not-configured"
-            ? ". No server is connected, so it is saved on this device only."
-            : ". It is also sent to the server, which the online portal checks, when this device is online and you are signed in online. The server does not take it for a patient whose record is not uploaded yet. Other staff devices are not changed."}
+            ? " on this device. No server is connected, so nothing is uploaded and patients cannot use the online portal until one is."
+            : ". The change is saved on this device and sent to the clinic server, which confirms it (or refuses it, for example when access was turned off there more recently). Patients can use the portal once the server confirms."}
         </p>
         {confirming?.sendInvitations && (
           <p>
-            An invitation with a registration link is requested for each
-            patient who has an email, by email. Patients with no email get no
-            message: SMS invitations are not available yet, so share the link
-            from their record. The server sends at most 10 a minute from one
-            internet connection, so in a bigger run only about 10 are sent.
-            Where the server does not send one, no message goes out: open that
-            patient's record to send it again or share the link. Patients
-            invited very recently are not sent another and are listed as
-            failed.
+            Invitations go only to patients whose access the server has
+            confirmed: by email, or by SMS if they have no email. Patients
+            invited very recently are not sent another.
           </p>
         )}
         <p className="font-medium text-ink">

@@ -29,8 +29,12 @@ import type {
 } from "@/services/patientService";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 // Legacy offline dashboard
-import { getPatientDashboard } from "@/services/patientPortalData";
-import type { PatientDashboardData } from "@/types/patientPortal";
+import { loadPatientDashboard } from "@/services/patientPortalData";
+import type {
+  PatientDashboardData,
+  PatientDashboardSection,
+  PortalDataError,
+} from "@/types/patientPortal";
 import * as logger from "@/lib/logger";
 import {
   formatPortalDate,
@@ -70,6 +74,38 @@ const statusLabelKey: Record<VitalStatus, string> = {
 function errorName(err: unknown): string {
   return err instanceof Error ? err.name : "unknown";
 }
+
+/** Why the whole dashboard could not be shown, as a translation key. */
+function dashboardErrorKey(error: PortalDataError | undefined): string {
+  switch (error) {
+    case "offline":
+      return "portal.error.offline";
+    case "not_found":
+      return "portal.error.recordNotFound";
+    default:
+      return "portal.error.loadDashboard";
+  }
+}
+
+/**
+ * Sections of the legacy dashboard whose failure is named on the page (lab
+ * results are not shown here, so their failure is not either).
+ */
+type ShownSection = Exclude<PatientDashboardSection, "labResults">;
+
+const SHOWN_SECTIONS: ShownSection[] = [
+  "appointments",
+  "vitals",
+  "medications",
+  "messages",
+];
+
+const sectionErrorKey: Record<ShownSection, string> = {
+  appointments: "portal.error.section.appointments",
+  vitals: "portal.error.section.vitals",
+  medications: "portal.error.section.medications",
+  messages: "portal.error.section.messages",
+};
 
 function VitalCard({
   label,
@@ -186,7 +222,14 @@ interface MedicineView {
   givenAt: Date | string;
 }
 
-function MedicinesPanel({ medicines }: { medicines: MedicineView[] }) {
+function MedicinesPanel({
+  medicines,
+  failed = false,
+}: {
+  medicines: MedicineView[];
+  /** The list did not load: say so rather than "no medicines". */
+  failed?: boolean;
+}) {
   const { t } = useT();
   return (
     <section className="panel" aria-labelledby="home-medicines">
@@ -222,6 +265,16 @@ function MedicinesPanel({ medicines }: { medicines: MedicineView[] }) {
             </li>
           ))}
         </ul>
+      ) : failed ? (
+        <div className="panel-body">
+          <p className="flex items-start gap-2 text-body text-ink">
+            <ExclamationTriangleIcon
+              className="mt-0.5 h-5 w-5 shrink-0 text-warning"
+              aria-hidden
+            />
+            {t("portal.error.section.medications")}
+          </p>
+        </div>
       ) : (
         <div className="panel-body">
           <p className="text-body text-ink">{t("portal.noMedications")}</p>
@@ -243,6 +296,8 @@ interface SupabaseDashboardState {
   visits: Visit[];
   /** True when one of the record lists failed to load. */
   partial: boolean;
+  /** The medicines list failed to load (it is empty for that reason). */
+  medicationsFailed: boolean;
 }
 
 function SupabaseDashboard() {
@@ -255,6 +310,7 @@ function SupabaseDashboard() {
     medications: [],
     visits: [],
     partial: false,
+    medicationsFailed: false,
   });
   const [nextAppointment, setNextAppointment] = useState<
     NextAppointment | null | undefined
@@ -318,6 +374,7 @@ function SupabaseDashboard() {
           medsResult.error ||
           visitsResult.error
         ),
+        medicationsFailed: !!medsResult.error,
       });
     } catch (err) {
       logger.error("[PatientDashboard] load error:", errorName(err));
@@ -346,7 +403,8 @@ function SupabaseDashboard() {
     );
   }
 
-  const { profile, vitals, medications, visits, partial } = state;
+  const { profile, vitals, medications, visits, partial, medicationsFailed } =
+    state;
   if (!profile) return null;
 
   const latest = vitals[0] ?? null;
@@ -389,6 +447,7 @@ function SupabaseDashboard() {
           directions: m.directions,
           givenAt: m.dispensedAt,
         }))}
+        failed={medicationsFailed}
       />
 
       {visits.length > 0 && (
@@ -478,18 +537,15 @@ function OfflineDashboard() {
         readActiveProfile(),
       );
 
-      const dashboardData = await getPatientDashboard(
+      const result = await loadPatientDashboard(
         portalUser.id,
         activePatientId,
       );
-      if (dashboardData) {
-        setData(dashboardData);
+      if (result.data) {
+        setData(result.data);
       } else {
-        setErrorKey(
-          isSupabaseEnabled && !navigator.onLine
-            ? "portal.error.offline"
-            : "portal.error.loadDashboard",
-        );
+        // "not_found" and "offline" are told apart from a failure.
+        setErrorKey(dashboardErrorKey(result.error));
       }
     } catch (err) {
       logger.error("[PatientDashboard offline] load error:", errorName(err));
@@ -518,21 +574,27 @@ function OfflineDashboard() {
 
   const { patient, upcomingAppointments, recentVitals, activeMedications } =
     data;
+  // Sections that did not load: their lists are empty because they could
+  // not be read, never because there is nothing to show.
+  const failed = new Set(data.failedSections ?? []);
+  const failedShown = SHOWN_SECTIONS.filter((s) => failed.has(s));
 
   // Without the online portal the records come from this device, which does
   // not hold appointments: leave "next appointment" unknown, not "none".
+  // The same when the appointments could not be loaded.
   const next = pickNextAppointment(upcomingAppointments);
-  const nextAppointment: NextAppointment | null | undefined = isSupabaseEnabled
-    ? next
-      ? { scheduledAt: new Date(next.scheduledAt), type: next.appointmentType }
-      : null
-    : undefined;
+  const nextAppointment: NextAppointment | null | undefined =
+    isSupabaseEnabled && !failed.has("appointments")
+      ? next
+        ? { scheduledAt: new Date(next.scheduledAt), type: next.appointmentType }
+        : null
+      : undefined;
 
   return (
     <PortalHome
       name={patient.givenName}
       nextAppointment={nextAppointment}
-      unreadMessages={data.unreadMessages}
+      unreadMessages={failed.has("messages") ? undefined : data.unreadMessages}
     >
       {!isSupabaseEnabled ? (
         <div className="banner banner-info" role="status">
@@ -549,6 +611,31 @@ function OfflineDashboard() {
             <p>{t("portal.offline.stale")}</p>
           </div>
         )
+      )}
+
+      {failedShown.length > 0 && (
+        <div className="banner banner-warning" role="status">
+          <ExclamationTriangleIcon
+            className="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1">
+            <p>{t("portal.error.partial")}</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5">
+              {failedShown.map((section) => (
+                <li key={section}>{t(sectionErrorKey[section])}</li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={load}
+              className="btn-secondary mt-2"
+            >
+              <ArrowPathIcon className="h-5 w-5" aria-hidden />
+              {t("portal.error.retry")}
+            </button>
+          </div>
+        </div>
       )}
 
       {recentVitals && (
@@ -571,6 +658,7 @@ function OfflineDashboard() {
           directions: med.directions,
           givenAt: med.dispensedAt,
         }))}
+        failed={failed.has("medications")}
       />
     </PortalHome>
   );

@@ -5,10 +5,17 @@
  * Logging out ends the online sign-in. Unlocking with a PIN afterwards opens
  * the local workspace only: it must not recreate the online sign-in or start
  * a sync. Staff sign in online (email and password) to sync again.
+ *
+ * A stored online sign-in on its own is not enough: it counts only when it
+ * belongs to the staff member signed in here, and that session was opened
+ * online. Another account's sign-in in this browser (the patient portal
+ * shares the same storage, or a previous person's that outlived their
+ * session) never lets this session sync.
  */
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useSyncStore, type CloudSessionState } from "@/stores/syncStore";
+import { useAuthStore } from "@/stores/auth";
 
 /** Status label shown wherever sync is blocked for lack of an online sign-in. */
 export const NO_CLOUD_SESSION_LABEL = "Offline — sign in online to sync";
@@ -24,14 +31,31 @@ export const ONLINE_SIGN_IN_PATH = "/login";
 export const ONLINE_SIGN_IN_HINT =
   "On the sign-in screen, choose Online and use your email and password.";
 
+/**
+ * True when an online account id is the signed-in staff member's own, from
+ * an online sign-in in this session (never a PIN session).
+ */
+export function isSignedInStaffAccount(cloudUserId: string | null | undefined): boolean {
+  if (!cloudUserId) return false;
+  const { isAuthenticated, currentUser, authMode, cloudUserId: sessionCloudId } =
+    useAuthStore.getState();
+  return (
+    isAuthenticated &&
+    !!currentUser &&
+    authMode === "online" &&
+    sessionCloudId === cloudUserId
+  );
+}
+
 function publish(state: CloudSessionState): void {
   useSyncStore.getState().setCloudSession(state);
 }
 
 /**
  * Reads the stored online sign-in (no network call) and records the result.
- * Resolves false when cloud sync is not set up, there is no sign-in, or the
- * sign-in could not be read.
+ * Resolves false when cloud sync is not set up, there is no sign-in, the
+ * sign-in could not be read, or it is not the signed-in staff member's own
+ * online sign-in.
  */
 export async function checkCloudSession(): Promise<boolean> {
   if (!supabase) {
@@ -40,7 +64,7 @@ export async function checkCloudSession(): Promise<boolean> {
   }
   try {
     const { data } = await supabase.auth.getSession();
-    const signedIn = !!data.session;
+    const signedIn = isSignedInStaffAccount(data.session?.user?.id);
     publish(signedIn ? "signed_in" : "signed_out");
     return signedIn;
   } catch (error) {
@@ -67,7 +91,7 @@ export function watchCloudSession(): void {
   // Keep this callback synchronous: it must not call back into the auth
   // client.
   supabase.auth.onAuthStateChange((_event, session) => {
-    publish(session ? "signed_in" : "signed_out");
+    publish(isSignedInStaffAccount(session?.user?.id) ? "signed_in" : "signed_out");
   });
 }
 

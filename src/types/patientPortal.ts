@@ -242,9 +242,92 @@ export interface PatientDashboardData {
   }>;
   unreadMessages: number;
   unreadNotifications: number;
+  /**
+   * Up to five lab results the clinic has reviewed AND released to the
+   * portal (server RPC portal_my_lab_results), newest first. Empty unless
+   * recentLabResultsStatus is "ok": check that before saying "no results".
+   */
   recentLabResults: Array<{
     testName: string;
     resultDate: Date;
-    interpretation: "normal" | "abnormal" | "critical";
+    /** "unknown" when the stored value is missing or unexpected. */
+    interpretation: PortalLabInterpretation;
   }>;
+  /** Whether recentLabResults could be loaded (see PortalLabResultsStatus). */
+  recentLabResultsStatus?: PortalLabResultsStatus;
+  /**
+   * Dashboard sections whose query failed. Their lists above are empty
+   * because they could not be loaded, not because there is nothing to show.
+   */
+  failedSections?: PatientDashboardSection[];
+}
+
+export type PatientDashboardSection =
+  | "appointments"
+  | "vitals"
+  | "medications"
+  | "messages"
+  | "labResults";
+
+/**
+ * Why a portal read returned no data:
+ * - "unavailable": this portal is not connected to the clinic's online
+ *   records (no Supabase configured).
+ * - "offline": the device is offline, nothing was requested.
+ * - "not_signed_in": no online sign-in (for example the local PIN portal),
+ *   so the server cannot tell whose records these are.
+ * - "not_found": the record does not exist or is not this patient's.
+ * - "failed": the request was made and failed.
+ */
+export type PortalDataError =
+  | "unavailable"
+  | "offline"
+  | "not_signed_in"
+  | "not_found"
+  | "failed";
+
+// ─── Lab results released to the portal ──────────────────────────────────────
+
+/** Stored interpretation; "unknown" for a missing or unexpected value. */
+export type PortalLabInterpretation = "normal" | "abnormal" | "critical" | "unknown";
+
+/**
+ * One lab result as the patient sees it: reviewed by the clinic and
+ * released to the portal. Staff notes, clinical notes and staff ids are
+ * never included.
+ */
+export interface PortalLabResult {
+  resultId: string;
+  orderId: string;
+  patientId: string;
+  testName: string;
+  testCode?: string;
+  specimenType?: string;
+  orderedAt?: Date;
+  resultValue: string;
+  resultUnit?: string;
+  referenceRange?: string;
+  interpretation: PortalLabInterpretation;
+  resultDate?: Date;
+  /** When the clinic released the result to the portal. */
+  releasedAt?: Date;
+  /** Plain-language note the clinic wrote for the patient. */
+  patientNote?: string;
+}
+
+/**
+ * Outcome of loading released lab results:
+ * - "ok": results loaded (possibly none released yet);
+ * - "not_updated": the server does not have the lab release update yet;
+ * - the PortalDataError values otherwise.
+ */
+export type PortalLabResultsStatus =
+  | "ok"
+  | "not_updated"
+  | Exclude<PortalDataError, "not_found">;
+
+export interface PortalLabResultsLoad {
+  status: PortalLabResultsStatus;
+  /** Empty unless status is "ok". Held in memory only, never cached. */
+  results: PortalLabResult[];
 }

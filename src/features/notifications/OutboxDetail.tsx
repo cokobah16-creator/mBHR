@@ -183,6 +183,12 @@ export function OutboxDetail({
             ) : (
               <span className="text-ink-muted">No number stored</span>
             )}
+            {item.store !== "server" && (
+              <span className="block text-caption text-ink-muted">
+                Number recorded when it was queued. The server uses the number on the
+                patient&apos;s record at the time of sending.
+              </span>
+            )}
           </dd>
 
           <dt className="text-ink-muted">Stored</dt>
@@ -437,7 +443,11 @@ export function OutboxDetail({
                 <p id="outbox-send-blocked" className="w-full text-caption text-ink-muted">
                   {blocker === "offline"
                     ? "Sending needs an internet connection. This device is offline."
-                    : "Sending needs the mBHR server, which is not set up on this device."}
+                    : blocker === "signed_out"
+                      ? "Sending needs a staff member signed in online. A PIN unlock is not enough."
+                      : blocker === "not_permitted"
+                        ? "The account signed in online cannot send SMS. A pharmacist, nurse, doctor, lead clinician or administrator needs to sign in online."
+                        : "Sending needs the mBHR server, which is not set up on this device."}
                 </p>
               )}
             </>

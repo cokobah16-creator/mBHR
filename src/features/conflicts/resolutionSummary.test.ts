@@ -69,6 +69,106 @@ describe("summariseResolution", () => {
     expect(s.device[0]).toContain("Neither record is deleted.");
   });
 
+  it("says a merge is sent to the server, which applies it and may refuse it", () => {
+    const s = summariseResolution({
+      mode: "resolve",
+      conflict: { conflictType: "duplicate", entityType: "patients" },
+      strategy: "manual",
+      plan: {
+        kind: "merge_patients",
+        winnerId: "A",
+        loserId: "B",
+        copied: [
+          { field: "phone", label: "Phone", side: "remote", next: "08030000000", current: "08010000000", changesValue: true, changedSinceReport: false },
+          { field: "address", label: "Address", side: "remote", next: "2 Market Rd", current: "1 Market Rd", changesValue: true, changedSinceReport: false },
+          { field: "familyName", label: "Family name", side: "remote", next: "", current: "Obi", changesValue: true, changedSinceReport: false },
+          { field: "email", label: "Email", side: "remote", next: "a@b.ng", current: "a@b.ng", changesValue: false, changedSinceReport: false },
+        ],
+        alreadyMerged: false,
+      },
+      needsApproval: false,
+    });
+    expect(s.device).toEqual([
+      "Sends 2 chosen values from record B with the merge; the server applies them to record A.",
+      "Leaves out 1 chosen value a merge cannot copy (for example an empty name, sex or date of birth).",
+      "Moves the visits, vital signs, consultations, dispensing records, queue tickets, care tasks, triage records, appointments, clinical alerts and allergies of record B to record A, and marks record B as merged into record A. Neither record is deleted.",
+      "Moves the preferences of record B only if record A has none.",
+      "Sends the merge to the server at the next sync. The server moves the history and every device shows the merge after its next sync. If the server refuses it, the merge is undone on this device and listed for review.",
+      "Adds an entry to this device's audit log.",
+    ]);
+    expect(s.device.join(" ")).not.toContain("Copies");
+  });
+
+  it("shows a value the merge leaves out as no change, with no warning", () => {
+    const s = summariseResolution({
+      mode: "resolve",
+      conflict: { conflictType: "duplicate", entityType: "patients" },
+      strategy: "manual",
+      plan: {
+        kind: "merge_patients",
+        winnerId: "A",
+        loserId: "B",
+        copied: [
+          { field: "phone", label: "Phone", side: "remote", next: "08030000000", current: "08020000000", changesValue: true, changedSinceReport: true },
+          { field: "familyName", label: "Family name", side: "remote", next: "", current: "Obi", changesValue: true, changedSinceReport: true },
+        ],
+        alreadyMerged: false,
+      },
+      needsApproval: false,
+    });
+    expect(s.changes.map((c) => [c.field, c.changesValue])).toEqual([
+      ["phone", true],
+      ["familyName", false],
+    ]);
+    expect(s.warnings).toHaveLength(1);
+    expect(s.warnings[0]).toContain("Phone:");
+  });
+
+  it("uses singular wording for one chosen value", () => {
+    const s = summariseResolution({
+      mode: "resolve",
+      conflict: { conflictType: "duplicate", entityType: "patients" },
+      strategy: "merge",
+      plan: {
+        kind: "merge_patients",
+        winnerId: "A",
+        loserId: "B",
+        copied: [
+          { field: "phone", label: "Phone", side: "remote", next: "08030000000", current: "08010000000", changesValue: true, changedSinceReport: false },
+        ],
+        alreadyMerged: false,
+      },
+      needsApproval: false,
+    });
+    expect(s.device[0]).toBe(
+      "Sends 1 chosen value from record B with the merge; the server applies it to record A.",
+    );
+  });
+
+  it("keeps the ordinary-edit wording when the records are already merged here", () => {
+    const s = summariseResolution({
+      mode: "apply",
+      conflict: { conflictType: "duplicate", entityType: "patients" },
+      strategy: "manual",
+      plan: {
+        kind: "merge_patients",
+        winnerId: "A",
+        loserId: "B",
+        copied: [
+          { field: "phone", label: "Phone", side: "remote", next: "08030000000", current: "08010000000", changesValue: true, changedSinceReport: false },
+        ],
+        alreadyMerged: true,
+      },
+      needsApproval: false,
+    });
+    expect(s.device).toEqual([
+      "Copies 1 value from record B into record A.",
+      "Record B is already marked as merged into record A on this device.",
+      "Marks the changed records to upload at the next sync.",
+      "Adds an entry to this device's audit log.",
+    ]);
+  });
+
   it("blocks a merge when either record is already merged elsewhere", () => {
     const s = summariseResolution({
       mode: "approve",

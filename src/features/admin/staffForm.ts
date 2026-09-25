@@ -7,6 +7,7 @@ export type StaffRole = User["role"];
 /** Roles an administrator can give a staff account from this device. */
 export const ASSIGNABLE_ROLES: StaffRole[] = [
   "volunteer",
+  "registration_lead",
   "nurse",
   "doctor",
   "pharmacist",
@@ -81,6 +82,7 @@ const ACCESS_LABELS: [Permission, string][] = [
   ["resolve_conflicts", "resolve sync conflicts"],
   ["queue", "move patients through the queue"],
   ["portal_manage", "manage patient portal access"],
+  ["portal_invite", "send patient portal invitations"],
   ["merge_patients", "merge patient records"],
   ["lab_review", "mark lab results reviewed"],
   ["lab_release", "release lab results to patients"],

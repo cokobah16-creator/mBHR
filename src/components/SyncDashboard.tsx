@@ -4,6 +4,11 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { ArrowPathIcon, ExclamationTriangleIcon, LockClosedIcon, SignalSlashIcon } from "@heroicons/react/24/outline";
 import { enhancedSync } from "@/services/enhancedSync";
 import { countAwaitingAuthorisedSync, countUnsyncedRecords, syncNow } from "@/sync/adapter";
+import {
+  countPharmacyAwaitingAuthorised,
+  countPharmacyUnsynced,
+  syncPharmacyNow,
+} from "@/sync/pharmacySync";
 import { queueSyncConflicts } from "@/sync/queueConflicts";
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
@@ -97,8 +102,18 @@ export function SyncDashboard() {
   const cloudSession = useCloudSession();
   const noSession = configured && cloudSession === "signed_out";
 
-  const coreWaiting = useLiveQuery(() => countUnsyncedRecords(), []);
-  const awaitingAuthorised = useLiveQuery(() => countAwaitingAuthorisedSync(), [], 0) ?? 0;
+  // Pharmacy changes wait in their own outbox (queued stock commands and
+  // prescriptions not uploaded), which the main counts do not include.
+  const coreWaiting = useLiveQuery(
+    async () => (await countUnsyncedRecords()) + (await countPharmacyUnsynced()),
+    [],
+  );
+  const awaitingAuthorised =
+    useLiveQuery(
+      async () => (await countAwaitingAuthorisedSync()) + (await countPharmacyAwaitingAuthorised()),
+      [],
+      0,
+    ) ?? 0;
   const extraWaiting = useLiveQuery(() => countDirtyIn(ENHANCED_ONLY_TABLES), []);
   const queuedOps = operations.filter(
     (op) => op.status === "pending" || op.status === "processing",
@@ -160,9 +175,16 @@ export function SyncDashboard() {
       const core = await syncNow();
       if (core.conflicts.length > 0) await queueSyncConflicts(core.conflicts);
       const result = await enhancedSync.syncAll();
+      // Pharmacy records (prescriptions and stock commands) are sent by
+      // syncNow once its download has finished. If it stopped before that,
+      // send them here so the pharmacy outbox does not wait for the rest.
+      const pharmacy = core.success ? null : await syncPharmacyNow();
+      const pharmacyFailed =
+        (core.participantFailures ?? []).includes("pharmacy") ||
+        (pharmacy !== null && pharmacy.failedTables.length > 0);
       setRun({
         at: new Date(),
-        success: result.success && core.success,
+        success: result.success && core.success && !pharmacyFailed,
         pushed: result.pushed,
         pulled: result.pulled,
         failedUploads: result.failedUploads,
@@ -170,6 +192,7 @@ export function SyncDashboard() {
         failedTables: [
           ...(core.downloadFailedTables ?? []),
           ...(result.failedTables ?? []).map((f) => f.table),
+          ...(pharmacyFailed ? ["pharmacy records"] : []),
         ],
         error: result.error ?? core.error,
       });

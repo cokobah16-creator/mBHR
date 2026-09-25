@@ -71,3 +71,15 @@ export function allocateFEFO(
 
   return { allocations, shortfall: remaining, expired, usable };
 }
+
+// ---------------------------------------------------------------------------
+// Ledger overlay (server balance + pending movements): defined in
+// src/sync/stockOverlay.ts so the sync participant does not load this
+// chunk at app start; re-exported here with the FEFO rules.
+// ---------------------------------------------------------------------------
+export {
+  pendingDeltaByBatch,
+  pendingDeltaByItem,
+  shownQty,
+  type MovementLike,
+} from "@/sync/stockOverlay";

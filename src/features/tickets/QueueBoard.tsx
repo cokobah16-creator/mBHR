@@ -12,6 +12,7 @@ import { useToast, type ToastTone } from "@/stores/toast";
 import { recordStageEvent } from "@/services/stageEvents";
 import { patientStatusFromQueue } from "@/services/patientStatus";
 import { normalisePriority } from "@/services/queuePriority";
+import type { QueueRow } from "@/services/queueTickets";
 import {
   FLOW_STAGES,
   FLOW_STAGE_LABELS,
@@ -44,6 +45,7 @@ import {
   savedNote,
   splitStage,
   ticketLabel,
+  ticketStateBadge,
 } from "./queueBoardModel";
 import { STAGE_MARKER_CLASS } from "./stageStyles";
 import { useNow } from "./useNow";
@@ -59,6 +61,17 @@ function PriorityBadge({ priority }: { priority?: QueueItem["priority"] }) {
   if (p === "urgent") return <StatusBadge tone="danger">Urgent</StatusBadge>;
   if (p === "low") return <StatusBadge tone="neutral">Low priority</StatusBadge>;
   return null;
+}
+
+/** Temporary, unconfirmed or changed ticket number (text and icon). */
+function TicketState({ row }: { row: QueueRow }) {
+  const badge = ticketStateBadge(row, isSupabaseEnabled);
+  if (!badge) return null;
+  return (
+    <StatusBadge tone={badge.tone} icon>
+      {badge.label}
+    </StatusBadge>
+  );
 }
 
 export default function QueueBoard() {
@@ -393,6 +406,7 @@ export default function QueueBoard() {
                           </Link>
                           <span className={`badge ${status.classes}`}>{status.label}</span>
                           <PriorityBadge priority={item.priority} />
+                          <TicketState row={item} />
                         </span>
                         <span className="block text-caption text-ink-muted">
                           Being served for {formatWait(minutesSince(item.updatedAt, now))}
@@ -494,7 +508,12 @@ export default function QueueBoard() {
                     return (
                       <tr key={item.id}>
                         <td className="tabular-nums text-ink-muted">{index + 1}</td>
-                        <td className="font-mono">{ticketLabel(item)}</td>
+                        <td>
+                          <span className="font-mono">{ticketLabel(item)}</span>
+                          <span className="mt-1 block empty:hidden">
+                            <TicketState row={item} />
+                          </span>
+                        </td>
                         <td>
                           <Link
                             to={`/patients/${item.patientId}`}
@@ -549,6 +568,7 @@ export default function QueueBoard() {
                             <span>Waiting {formatWait(mins)}</span>
                           )}
                           <PriorityBadge priority={item.priority} />
+                          <TicketState row={item} />
                         </span>
                       </span>
                     </li>

@@ -16,7 +16,7 @@ import {
 
 /**
  * Roles that may send SMS to patients (medication/appointment reminders,
- * televisit notices and portal codes; portal invitations go by email only).
+ * televisit notices and portal codes).
  *
  * src/auth/roles.ts has no SMS permission; this set is the server-side
  * definition of "may send patient reminders" and maps to the app roles as:
@@ -24,7 +24,14 @@ import {
  *   doctor, nurse   - clinical follow-up reminders (roles.ts: vitals/consult)
  *   lead_clinician  - clinical lead                (roles.ts: consult)
  *   admin           - full access
- * volunteer, auditor and guest cannot send SMS.
+ * volunteer, registration_lead, auditor and guest cannot send these.
+ *
+ * Portal invitations are NOT decided by this list: they need the
+ * 'portal_invite' permission (registration_lead, lead_clinician, admin),
+ * checked in the database by public.portal_invitation_begin() (see
+ * ./portalInvitation.ts). A pharmacist can send a medication reminder but
+ * not an invitation; a registration lead can send an invitation but not a
+ * reminder.
  */
 export const SMS_SENDER_ROLES: readonly string[] = [
   "pharmacist",
@@ -87,6 +94,20 @@ export async function requireStaff(
   service: SupabaseClient,
   allowedRoles: readonly string[],
 ): Promise<StaffAuthResult> {
+  const auth = await authenticateStaff(req, service);
+  if (!auth.ok) return auth;
+  return allowedRoles.includes(auth.role) ? auth : NOT_PERMITTED;
+}
+
+/**
+ * Verifies the caller is a signed-in, active staff member (any role with an
+ * app_users row). What that role may do is checked afterwards by the caller,
+ * for example per request purpose.
+ */
+export async function authenticateStaff(
+  req: Request,
+  service: SupabaseClient,
+): Promise<StaffAuthResult> {
   const token = bearerToken(req);
   if (!token) return NOT_SIGNED_IN;
 
@@ -126,7 +147,7 @@ export async function requireStaff(
 
   const record = row as Record<string, unknown>;
   const role = typeof record.role === "string" ? record.role : "";
-  if (!allowedRoles.includes(role) || isDeactivated(record)) {
+  if (!role || isDeactivated(record)) {
     return NOT_PERMITTED;
   }
 

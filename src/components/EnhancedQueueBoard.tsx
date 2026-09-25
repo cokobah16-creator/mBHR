@@ -3,7 +3,13 @@ import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Patient, type QueueItem } from "@/db";
 import { useAuthStore } from "@/stores/auth";
-import { canManageQueue } from "@/features/tickets/queueBoardModel";
+import {
+  canManageQueue,
+  ticketLabel,
+  ticketStateBadge,
+} from "@/features/tickets/queueBoardModel";
+import type { QueueRow } from "@/services/queueTickets";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import { recordStageEvent } from "@/services/stageEvents";
 import {
   queueManagement,
@@ -55,6 +61,17 @@ function UrgentBadge({ priority }: { priority?: QueueItem["priority"] }) {
   return normalisePriority(priority) === "urgent" ? (
     <StatusBadge tone="danger">Urgent</StatusBadge>
   ) : null;
+}
+
+/** Temporary, unconfirmed or changed ticket number (text and icon). */
+function TicketState({ row }: { row: QueueRow }) {
+  const badge = ticketStateBadge(row, isSupabaseEnabled);
+  if (!badge) return null;
+  return (
+    <StatusBadge tone={badge.tone} icon>
+      {badge.label}
+    </StatusBadge>
+  );
 }
 
 function nextStageOf(stage: Stage): Stage | null {
@@ -291,7 +308,7 @@ export function EnhancedQueueBoard() {
           {currentPatient ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <span className="w-16 shrink-0 font-mono text-h3 text-ink">
-                {currentPatient.ticketNumber ?? `#${currentPatient.position}`}
+                {ticketLabel(currentPatient)}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -306,6 +323,7 @@ export function EnhancedQueueBoard() {
                     return <span className={`badge ${s.classes}`}>{s.label}</span>;
                   })()}
                   <UrgentBadge priority={currentPatient.priority} />
+                  <TicketState row={currentPatient} />
                 </div>
                 <p className="text-caption text-ink-muted">
                   Called at {formatTime(currentPatient.updatedAt)}
@@ -392,7 +410,7 @@ export function EnhancedQueueBoard() {
                 return (
                   <li key={item.id} className="flex items-center gap-3 px-4 py-3">
                     <span className="w-16 shrink-0 font-mono text-body text-ink">
-                      {item.ticketNumber ?? `#${item.position}`}
+                      {ticketLabel(item)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -404,6 +422,7 @@ export function EnhancedQueueBoard() {
                         </Link>
                         <span className={`badge ${s.classes}`}>{s.label}</span>
                         <UrgentBadge priority={item.priority} />
+                        <TicketState row={item} />
                       </div>
                       <p className="text-caption text-ink-muted">
                         Position {item.position} · queued at{" "}

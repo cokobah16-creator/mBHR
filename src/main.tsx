@@ -17,6 +17,15 @@ import { safeOpenDb } from "./db/safeOpen";
 import { log, error } from "@/lib/logger";
 import { runMigrations } from "@/db/migrations/migration-runner";
 
+// Register the server-command handlers and sync participants at start-up,
+// so background and reconnect syncs handle them before any page that uses
+// them is opened. None of these may import a manual-chunk feature folder
+// (src/test/startupChunks.test.ts).
+import "@/services/portalAccess"; // set_patient_portal_access answers
+import "@/sync/queueSync"; // queue tickets (also needed on a /display-only device)
+import "@/sync/pharmacySync"; // "pharmacy" participant and rx_* commands
+import "@/sync/staffRosterSync"; // staff directory on every sync
+
 // URLs can carry secrets: a query string (a sign-in code) or a fragment
 // (Supabase puts password-recovery access and refresh tokens in the hash).
 // Error reports keep only the path.

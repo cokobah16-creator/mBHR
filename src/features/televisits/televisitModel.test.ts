@@ -98,6 +98,152 @@ describe("describeSmsFailure", () => {
   });
 });
 
+// Strings notifyPatientTelevisitScheduled returns: its own checks, and the
+// send-sms-reminder server's "code: message" errors.
+describe("describeSmsFailure with server errors", () => {
+  it("asks for an online sign-in when nobody is signed in online", () => {
+    for (const error of [
+      "Sign in online to send SMS",
+      "not_authenticated: Sign in online with a staff account to send SMS.",
+      "not_authenticated",
+    ]) {
+      const f = describeSmsFailure(error);
+      expect(f.reason).toMatch(/^Sign in online with your staff account/);
+      expect(f.reason).toMatch(/Nothing was sent/);
+      expect(f.retryable).toBe(true);
+    }
+  });
+
+  it("asks for an online sign-in when the gateway refuses an expired token", () => {
+    for (const error of ["Invalid JWT", "JWT expired"]) {
+      const f = describeSmsFailure(error);
+      expect(f.reason).toMatch(/^Sign in online with your staff account/);
+      expect(f.retryable).toBe(true);
+    }
+  });
+
+  it("keeps a generic invalid number apart from the server's Nigerian check", () => {
+    const legacy = describeSmsFailure("Invalid phone number");
+    expect(legacy.reason).toMatch(/not a valid mobile number/);
+    expect(legacy.reason).not.toMatch(/Nigerian/);
+    expect(legacy.retryable).toBe(false);
+  });
+
+  it("says the role cannot send, without offering a retry", () => {
+    for (const error of [
+      "not_permitted: Your role cannot send SMS to patients.",
+      "not_permitted",
+    ]) {
+      const f = describeSmsFailure(error);
+      expect(f.reason).toMatch(/Your role cannot send SMS/);
+      expect(f.reason).toMatch(/share the link another way/i);
+      expect(f.retryable).toBe(false);
+    }
+  });
+
+  it("asks for a sync when the patient is not on the server", () => {
+    const f = describeSmsFailure(
+      "patient_not_found: This patient is not on the server yet. Sync, then try again.",
+    );
+    expect(f.reason).toBe(
+      "This patient is not on the server yet. Sync, then send again.",
+    );
+    expect(f.retryable).toBe(true);
+  });
+
+  it("explains an invalid stored number without echoing it", () => {
+    for (const error of [
+      "invalid_recipient: The stored phone number is not a valid Nigerian mobile number.",
+      "invalid_recipient",
+    ]) {
+      const f = describeSmsFailure(error);
+      expect(f.reason).toMatch(/not a valid Nigerian mobile number/);
+      expect(f.reason).toMatch(/Correct it in the patient record/);
+      expect(f.retryable).toBe(false);
+    }
+  });
+
+  it("does not send twice when the server already records it as sent", () => {
+    const f = describeSmsFailure(
+      "already_sent: This reminder is already recorded as sent. It was not sent again.",
+    );
+    expect(f.reason).toMatch(/already records this message as sent/);
+    expect(f.retryable).toBe(false);
+  });
+
+  it("does not call an unavailable send-limit check a send limit", () => {
+    const f = describeSmsFailure(
+      "rate_limit_unavailable: SMS sending is paused because the send limit could not be checked. Try again shortly.",
+    );
+    expect(f.reason).not.toMatch(/Too many/);
+    expect(f.reason).toMatch(/nothing was sent/);
+    expect(f.retryable).toBe(true);
+  });
+
+  it("treats server lookup failures as nothing sent, try again", () => {
+    for (const error of [
+      "staff_lookup_failed: Could not check your staff account. Try again shortly.",
+      "lookup_failed",
+    ]) {
+      const f = describeSmsFailure(error);
+      expect(f.reason).toMatch(/nothing was sent/);
+      expect(f.retryable).toBe(true);
+    }
+  });
+
+  it("still reports a real send limit as too many messages", () => {
+    expect(describeSmsFailure("Rate limited (HTTP 429)").reason).toMatch(
+      /^Too many messages/,
+    );
+  });
+
+  it("tells a server record with no phone number apart from a local one", () => {
+    const server = describeSmsFailure(
+      "no_phone: The patient has no phone number on the server.",
+    );
+    expect(server.reason).toMatch(/record on the server has no phone number/);
+    expect(server.retryable).toBe(true);
+    const local = describeSmsFailure("Patient has no phone number");
+    expect(local.reason).toMatch(/no phone number on record/);
+    expect(local.retryable).toBe(false);
+  });
+
+  it("does not offer a retry for a message the server refused as too long", () => {
+    const f = describeSmsFailure(
+      "invalid_message: The message is empty or too long.",
+    );
+    expect(f.reason).toMatch(/empty or too long/);
+    expect(f.retryable).toBe(false);
+  });
+
+  it("keeps missing SMS configuration on the server as not set up", () => {
+    const f = describeSmsFailure(
+      "sms_not_configured: No SMS provider configured. Set TERMII_API_KEY and TERMII_SENDER_ID (preferred), then redeploy.",
+    );
+    expect(f.reason).toMatch(/not set up/);
+    expect(f.retryable).toBe(false);
+  });
+
+  it("offers Sign in online as a retry and not-permitted as a fresh send", () => {
+    const at = new Date(2026, 8, 23, 10, 2);
+    const signedOut = linkDeliveryFrom(
+      { kind: "result", sent: false, error: "Sign in online to send SMS", to: "Ada" },
+      at,
+    );
+    expect(sendLinkLabel(signedOut)).toBe("Retry SMS");
+    const refused = linkDeliveryFrom(
+      {
+        kind: "result",
+        sent: false,
+        error: "not_permitted: Your role cannot send SMS to patients.",
+        to: "Ada",
+      },
+      at,
+    );
+    expect(sendLinkLabel(refused)).toBe("Send link by SMS");
+  });
+});
+
 describe("linkDeliveryFrom", () => {
   const at = new Date(2026, 8, 23, 10, 2);
 

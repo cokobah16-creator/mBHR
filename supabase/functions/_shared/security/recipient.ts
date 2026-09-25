@@ -80,30 +80,29 @@ export function validOtp(raw: unknown): string | null {
   return /^\d{4,8}$/.test(otp) ? otp : null;
 }
 
+// Local part, "@", domain with at least one dot; no spaces, quotes, angle
+// brackets or separators that could smuggle a second address.
+const EMAIL_PATTERN = /^[^\s@<>"',;:()[\]\\]+@[^\s@<>"',;:()[\]\\]+\.[^\s@<>"',;:()[\]\\]+$/;
+
+/** Trimmed email address, or null when it does not look like one. */
+export function validEmail(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const email = raw.trim();
+  if (!email || email.length > 254 || !EMAIL_PATTERN.test(email)) return null;
+  return email;
+}
+
+/** Masked form for logs: "ada.obi@example.org" -> "a***@example.org". */
+export function maskEmail(email: string | null | undefined): string {
+  const value = (email || "").trim();
+  const at = value.lastIndexOf("@");
+  if (at < 1) return value ? "***" : "(none)";
+  return `${value[0]}***${value.slice(at)}`;
+}
+
 /** Identifiers passed by the client (reminder / patient ids). */
 export function validId(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const id = raw.trim();
   return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
-}
-
-/** Upper bound on an email address (the SMTP path limit). */
-export const MAX_EMAIL_CHARS = 254;
-
-// Loose on purpose: it does not try to decide which addresses exist. It only
-// refuses text that names more than one recipient (commas, semicolons) or
-// carries display-name or header syntax (<, >, quotes, brackets, spaces).
-const EMAIL_ADDRESS =
-  /^[^\s@,;<>"()[\]\\]+@[^\s@,;<>"()[\]\\]+\.[^\s@,;<>"()[\]\\]+$/;
-
-/**
- * One plain email address such as "name@example.com", trimmed. Returns null
- * for anything else: not text, empty, too long, a list of addresses, or a
- * display name ("Name <name@example.com>").
- */
-export function validEmailAddress(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  const email = raw.trim();
-  if (!email || email.length > MAX_EMAIL_CHARS) return null;
-  return EMAIL_ADDRESS.test(email) ? email : null;
 }

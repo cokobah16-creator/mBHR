@@ -1,6 +1,14 @@
 import { db, Patient, epochDay, normPhone, nameKeyOf } from "@/db";
 import { metaphone } from "metaphone";
 import logger from "@/lib/logger";
+import {
+  listMerges,
+  requestMerge,
+  type MergeActor,
+  type MergeFieldChoices,
+  type MergeRequest,
+  type MergeRequestResult,
+} from "./patientMerge";
 
 interface DuplicateCandidate {
   patient: Patient;
@@ -328,130 +336,77 @@ export class PatientDeduplication {
     return reasons;
   }
 
+  /**
+   * Merge `loserId` into `winnerId` (see services/patientMerge): on this
+   * device now, and on the server at the next sync, which moves the history
+   * to the kept record for every device. Chosen field values go with the
+   * merge command instead of being edited separately. Throws an error named
+   * after the refusal (for example "PatientMergeRefused:cycle") when the
+   * merge is not allowed; nothing is changed then.
+   */
   async mergePatients(
     winnerId: string,
     loserId: string,
-    mergedBy: string,
-  ): Promise<void> {
-    await db.transaction(
-      "rw",
-      [
-        db.patients,
-        db.vitals,
-        db.consultations,
-        db.dispenses,
-        db.visits,
-        db.queue,
-        db.patientMerges,
-        db.patientAllergies,
-        db.patientPreferences,
-        db.careTasks,
-      ],
-      async () => {
-        const now = new Date();
-
-        // Mark loser as merged
-        await db.patients.update(loserId, {
-          mergeInto: winnerId,
-          updatedAt: now,
-          _dirty: 1,
-        });
-
-        // Reassign all related records to winner
-        await db.vitals
-          .where("patientId")
-          .equals(loserId)
-          .modify({ patientId: winnerId, _dirty: 1 });
-        await db.consultations
-          .where("patientId")
-          .equals(loserId)
-          .modify({ patientId: winnerId, _dirty: 1 });
-        await db.dispenses
-          .where("patientId")
-          .equals(loserId)
-          .modify({ patientId: winnerId, _dirty: 1 });
-        await db.visits
-          .where("patientId")
-          .equals(loserId)
-          .modify({ patientId: winnerId, _dirty: 1 });
-        await db.queue
-          .where("patientId")
-          .equals(loserId)
-          .modify({ patientId: winnerId, _dirty: 1 });
-        await db.careTasks
-          .where("patientId")
-          .equals(loserId)
-          .modify({ patientId: winnerId, _dirty: 1 });
-
-        // Merge allergies and preferences
-        const loserAllergies = await db.patientAllergies
-          .where("patientId")
-          .equals(loserId)
-          .toArray();
-        const loserPrefs = await db.patientPreferences
-          .where("patientId")
-          .equals(loserId)
-          .toArray();
-
-        for (const allergy of loserAllergies) {
-          await db.patientAllergies.update(allergy.id, {
-            patientId: winnerId,
-            _dirty: 1,
-          });
-        }
-
-        for (const pref of loserPrefs) {
-          await db.patientPreferences.update(pref.id, {
-            patientId: winnerId,
-            _dirty: 1,
-          });
-        }
-
-        // Record merge
-        await db.patientMerges.add({
-          id: crypto.randomUUID(),
-          winnerId,
-          loserId,
-          mergedBy,
-          createdDay: epochDay(now),
-          reason: "duplicate_resolution",
-        });
-
-        // Update winner's updatedAt
-        await db.patients.update(winnerId, {
-          updatedAt: now,
-          _dirty: 1,
-        });
-
-        logger.log(`Merged patient ${loserId} into ${winnerId}`);
-      },
-    );
+    actor: MergeActor,
+    options: {
+      fieldChoices?: MergeFieldChoices;
+      source?: MergeRequest["source"];
+    } = {},
+  ): Promise<Extract<MergeRequestResult, { ok: true }>> {
+    const result = await requestMerge({
+      winnerId,
+      loserId,
+      fieldChoices: options.fieldChoices,
+      source: options.source ?? "conflict_review",
+      actor,
+    });
+    if (result.ok === false) {
+      const error = new Error(result.message);
+      error.name = `PatientMergeRefused:${result.reason}`;
+      throw error;
+    }
+    logger.log("Patient merge saved on this device and queued for the server");
+    return result;
   }
 
+  /**
+   * Records merged into this patient, newest first: merges downloaded from
+   * the server (who, when, which field values were chosen) and merges made
+   * on this device that are waiting for the server or were refused.
+   */
   async getMergeHistory(patientId: string): Promise<
     Array<{
+      mergeId: string;
       mergedPatient: Patient | undefined;
       mergedBy: string;
       mergedAt: Date;
+      /** on_device: recorded before merges were sent to the server (no cloud sync). */
+      status: "pending" | "applied" | "rejected" | "on_device";
+      source?: string;
+      fieldChoices: Record<string, unknown>;
+      rejectReason?: string;
     }>
   > {
-    const merges = await db.patientMerges
-      .where("winnerId")
-      .equals(patientId)
-      .toArray();
-
-    const history = await Promise.all(
+    const merges = await listMerges(patientId);
+    return Promise.all(
       merges.map(async (merge) => {
-        const mergedPatient = await db.patients.get(merge.loserId);
+        const when = merge.createdAt ?? merge.requestedAt;
+        const parsed = when ? new Date(when) : null;
         return {
-          mergedPatient,
+          mergeId: merge.id,
+          mergedPatient: await db.patients.get(merge.loserId),
           mergedBy: merge.mergedBy,
-          mergedAt: new Date(merge.createdDay * 86400000),
+          mergedAt:
+            parsed && !Number.isNaN(parsed.getTime())
+              ? parsed
+              : new Date(merge.createdDay * 86400000),
+          status: merge.status ?? "on_device",
+          source: merge.source,
+          fieldChoices: merge.fieldChoices ?? {},
+          rejectReason: merge.rejectReason,
         };
       }),
     );
-
-    return history;
   }
 }
 

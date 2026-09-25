@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -10,8 +10,6 @@ import { AudioButton } from "@/components/AudioButton";
 import { PhotoCapture } from "@/components/PhotoCapture";
 import { NIGERIAN_STATES, LGAS_BY_STATE } from "@/utils/nigeria";
 import { normalizePhone } from "@/utils/phone";
-import { isMinor } from "@/utils/patient";
-import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 import { patientSchema, PatientFormData } from "@/validation/schemas";
 import { CameraIcon, UserIcon } from "@heroicons/react/24/outline";
 import { enrollPatientInPortal } from "@/services/unifiedPortalEnrollment";
@@ -24,6 +22,8 @@ interface PatientFormProps {
 }
 
 export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
+  // Sending an invitation is a separate permission from enabling access.
+  const canSendInvite = can(useAuthStore((st) => st.currentUser?.role), "portal_invite");
   const { t } = useTranslation();
   const { addPatient } = usePatientsStore();
   const [loading, setLoading] = useState(false);
@@ -52,16 +52,15 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const watchedState = watch("state");
   const availableLGAs = LGAS_BY_STATE[watchedState] || [];
 
-  // Portal access starts unticked. Staff tick it only when the patient
-  // agrees; typing a phone or email does not tick it.
-  const portalEnabledField = register("portalEnabled");
-
-  // Portal accounts are for adults. For a child the box is unticked and
-  // cannot be ticked.
-  const dobIsMinor = isMinor(watch("dob")) === true;
+  // Auto-enable portal when contact info is entered
   useEffect(() => {
-    if (dobIsMinor) setValue("portalEnabled", false);
-  }, [dobIsMinor, setValue]);
+    const { phone, email } = watch();
+    const hasContact = (phone && phone.trim()) || (email && email.trim());
+    if (hasContact && !watch("portalEnabled")) {
+      setValue("portalEnabled", true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watch("phone"), watch("email")]);
 
   const handlePhotoCapture = (photoDataUrl: string) => {
     setPhoto(photoDataUrl);
@@ -101,13 +100,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
       const patientId = await addPatient(patientData);
 
 
-      // Enrol in the portal only when staff ticked portal access, and never
-      // a child (enrollPatientInPortal refuses one too).
-      if (
-        (normalizedPhone || data.email) &&
-        data.portalEnabled === true &&
-        isMinor(data.dob) !== true
-      ) {
+      // Automatically enroll in portal if contact info provided
+      if ((normalizedPhone || data.email) && data.portalEnabled !== false) {
         const portalResult = await enrollPatientInPortal({
           patientId,
           givenName: data.givenName || "",
@@ -127,13 +121,31 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
             tone: "warning",
             body: `The patient is registered, but portal enrolment failed (${portalResult.error}). You can enable it later from their record.`,
           });
+        } else if (portalResult.deviceOnly) {
+          // No server on this device: nothing was confirmed anywhere else.
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Portal access on this device only",
+            tone: "info",
+            body: "Portal access is on for this device only: no server is connected.",
+          });
+        } else if (portalResult.pending) {
+          // Queued for the server, which decides at the next sync.
+          pushToast({
+            id: crypto.randomUUID(),
+            title: "Portal access requested",
+            tone: "info",
+            body:
+              portalResult.message ??
+              "Saved on this device. The patient can sign in once the clinic server confirms it.",
+          });
         } else {
           console.log("Portal account created");
           pushToast({
             id: crypto.randomUUID(),
             title: "Portal access enabled",
             tone: "success",
-            body: "A portal account was made on the server. No message was sent to the patient.",
+            body: "The patient can sign in to the patient portal with their phone or email.",
           });
         }
       }
@@ -587,14 +599,12 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
               <div className="space-y-4">
                 <div className="flex items-start">
                   <input
-                    {...portalEnabledField}
+                    {...register("portalEnabled")}
                     type="checkbox"
                     id="portalEnabled"
-                    disabled={dobIsMinor}
-                    className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary disabled:opacity-50"
+                    className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
                     onChange={(e) => {
-                      // Portal access needs a phone or email for the login
-                      // details. Without one, the box stays unticked.
+                      // Auto-check portalEnabled if email or phone exists
                       const hasContact = watch("email") || watch("phone");
                       if (!hasContact && e.target.checked) {
                         alert(
@@ -602,8 +612,6 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                         );
                         e.target.checked = false;
                       }
-                      // Pass the change on so the form records the tick.
-                      void portalEnabledField.onChange(e);
                     }}
                   />
                   <label
@@ -614,9 +622,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                       Enable patient portal access
                     </span>
                     <span className="text-ink-muted block mt-1">
-                      {dobIsMinor
-                        ? MINOR_PORTAL_ACCESS_MESSAGE
-                        : "When you save, mBHR tries to make a portal account on the server. This needs an internet connection and can fail, for example before the patient's record is uploaded. No message is sent to the patient. To turn on access later, send an invitation or share a registration link, use Patient portal on their record."}
+                      Patient will receive login instructions via{" "}
+                      {watch("email") ? "email" : "SMS"}
                     </span>
                   </label>
                 </div>
@@ -641,6 +648,35 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                     {errors.termsAccepted && (
                       <p className="field-error ml-6" role="alert">
                         {errors.termsAccepted.message}
+                      </p>
+                    )}
+
+                    {canSendInvite ? (
+                    <div className="flex items-start ml-6">
+                      <input
+                        {...register("sendInviteNow")}
+                        type="checkbox"
+                        id="sendInviteNow"
+                        className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
+                      />
+                      <label
+                        htmlFor="sendInviteNow"
+                        className="ml-2 text-body text-ink"
+                      >
+                        <span className="font-medium">
+                          Send portal invitation now
+                        </span>
+                        <span className="text-ink-muted block mt-1">
+                          Uncheck to send invitation later from patient details
+                          page
+                        </span>
+                      </label>
+                    </div>
+                    ) : (
+                      <p className="field-hint ml-6">
+                        A registration lead, lead clinician or administrator
+                        sends the portal invitation from the patient&apos;s
+                        record.
                       </p>
                     )}
                   </>

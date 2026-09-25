@@ -4,6 +4,16 @@
 **Date:** 2026-04-25
 **Scope:** Second deep audit performed by three parallel exploration agents covering React/hooks/memory, security/PWA/data integrity, and clinical logic/performance. This report supplements `SYSTEM_CHECK.md` with newly identified issues and documents the developer-actionable fixes that have been committed.
 
+> **Later change (2026-09-24): `src/services/smartMedication.ts` was deleted.**
+> PS1, PS2, PS3 and H12 below refer to it. After `SmartMedicationDashboard`
+> was removed (commit `6f3ffee`), nothing in the app, tests, scripts or
+> Supabase functions used it. Unused interaction and dosing rules could be
+> mistaken for authoritative ones, so it was removed. The app has no drug
+> interaction checker or dose calculator. Allergy warnings at prescribing and
+> dispensing come from `src/utils/allergyMatch.ts` and
+> `src/utils/allergyActive.ts`. This report is kept as a historical record
+> and is otherwise unchanged.
+
 ---
 
 ## Executive Summary

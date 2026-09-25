@@ -28,8 +28,21 @@ import {
   normalisePriority,
   normaliseReason,
   orderAfterInsert,
+  promotionPosition,
   type QueuePriority,
 } from "./queuePriority";
+import { findTodaysTicket, type QueueRow, type TicketAssignment } from "./queueTickets";
+import { canonicalPatientId } from "./patientMerge";
+import {
+  currentTicketContext,
+  issueTicketLocal,
+  prepareTicketNumbers,
+  type TicketContext,
+} from "./queueTicketStore";
+// Registers the queue-ticket sync participant (server-confirmed ticket
+// numbers, number blocks, transition-driven status) wherever the queue is
+// used.
+import "@/sync/queueSync";
 
 export type QueueStage = "registration" | "vitals" | "consult" | "pharmacy";
 export type QueueStatus = "waiting" | "in_progress" | "done";
@@ -50,45 +63,6 @@ export class QueueValidationError extends Error {
     super(message);
     this.name = "QueueValidationError";
   }
-}
-
-const TICKET_COUNTER_KEY_PREFIX = "queue:ticketSeq";
-
-/**
- * Returns the next daily ticket sequence number, persisted in db.settings.
- * Uses a simple read-modify-write — fine for a local-first app where each
- * device has its own monotonic clock. Runs inside the queue transaction.
- */
-async function nextTicketSequence(dateStr: string): Promise<number> {
-  const key = `${TICKET_COUNTER_KEY_PREFIX}:${dateStr}`;
-  const row = await db.settings.get(key);
-  const next = row ? parseInt(row.value, 10) + 1 : 1;
-  await db.settings.put({ key, value: String(next) });
-  return next;
-}
-
-function ticketNumberFromSeq(seq: number): string {
-  return `Q-${String(seq).padStart(3, "0")}`;
-}
-
-async function existingTicketNumberForPatient(
-  patientId: string,
-  todayDateStr: string,
-): Promise<string | undefined> {
-  const items = await db.queue.where("patientId").equals(patientId).toArray();
-  const sameDay = items.filter(
-    (q) =>
-      q.ticketNumber &&
-      q.queuedAt &&
-      new Date(q.queuedAt).toISOString().slice(0, 10) === todayDateStr,
-  );
-  // Newest wins — patient may have had a number issued earlier today.
-  sameDay.sort(
-    (a, b) =>
-      new Date(b.queuedAt ?? b.updatedAt).getTime() -
-      new Date(a.queuedAt ?? a.updatedAt).getTime(),
-  );
-  return sameDay[0]?.ticketNumber;
 }
 
 interface QueueStats {
@@ -145,7 +119,14 @@ export class QueueManagement {
   private tx<T>(fn: () => Promise<T>): Promise<T> {
     return db.transaction(
       "rw",
-      [db.queue, db.queueTransitions, db.settings, db.patients, db.visits],
+      [
+        db.queue,
+        db.queueTransitions,
+        db.settings,
+        db.patients,
+        db.visits,
+        db.ticketLeases,
+      ],
       fn,
     );
   }
@@ -204,17 +185,82 @@ export class QueueManagement {
   }
 
   /**
-   * Adds a waiting ticket at a stage. Must run inside tx(). Does not audit:
-   * the caller records the transition (enqueue, requeue or send_on).
+   * Site, Lagos service day and ticket numbers for a change that may add a
+   * ticket. Runs before the transaction: it reads the active site (not in
+   * the transaction's tables) and, online, may reserve a block of numbers.
    */
-  private async enqueue(
+  private async ticketContext(deviceId: string, now: Date): Promise<TicketContext> {
+    const ctx = await currentTicketContext(now);
+    await prepareTicketNumbers(ctx, deviceId);
+    return ctx;
+  }
+
+  /**
+   * The patient's ticket for this site and day, or a new one. Must run
+   * inside tx().
+   */
+  private async ticketFor(
     patientId: string,
-    stage: QueueStage,
-    priority: QueuePriority,
-    createdBy: string | undefined,
-    now: Date,
-  ): Promise<{ item: QueueItem; reusedTicket: boolean }> {
-    // Check if patient already in queue
+    ctx: TicketContext,
+    deviceId: string,
+  ): Promise<{ ticket: TicketAssignment; reused: boolean }> {
+    const rows = (await db.queue
+      .where("patientId")
+      .equals(patientId)
+      .toArray()) as QueueRow[];
+    const existing = findTodaysTicket(rows, patientId, ctx.siteKey, ctx.serviceDate);
+    if (existing) {
+      // Rows from older app versions have a number but no ticket id: give
+      // them one, keep the number the patient was given, and let the
+      // server confirm it.
+      const legacy = !existing.ticketId;
+      return {
+        reused: true,
+        ticket: {
+          ticketId: existing.ticketId ?? generateId(),
+          ticketNumber: existing.ticketNumber,
+          ticketProvisional: legacy && ctx.syncEnabled ? 1 : (existing.ticketProvisional ?? 0),
+          ticketPending: legacy ? (ctx.syncEnabled ? 1 : 0) : (existing.ticketPending ?? 0),
+          siteKey: ctx.siteKey,
+          serviceDate: ctx.serviceDate,
+        },
+      };
+    }
+    return { reused: false, ticket: await issueTicketLocal(ctx, deviceId) };
+  }
+
+  /**
+   * The record a new queue entry goes on. A record merged into another on
+   * this device is queued on the kept record (the server moves late queue
+   * rows there too). Falls back to the given id when the kept record is not
+   * on this device.
+   */
+  private async keptRecordId(patientId: string): Promise<string> {
+    const keptId = await canonicalPatientId(patientId);
+    if (keptId === patientId) return patientId;
+    return (await db.patients.get(keptId)) ? keptId : patientId;
+  }
+
+  /**
+   * The patient's open queue entry. After a merge on this device the entry
+   * is on the kept record, so the merged record's id still finds it. Must
+   * run inside tx().
+   */
+  private async openItemFor(patientId: string): Promise<QueueItem | undefined> {
+    const open = (id: string) =>
+      db.queue
+        .where("patientId")
+        .equals(id)
+        .and((item) => item.status !== "done")
+        .first();
+    const item = await open(patientId);
+    if (item) return item;
+    const keptId = await canonicalPatientId(patientId);
+    return keptId === patientId ? undefined : open(keptId);
+  }
+
+  /** Throws when the patient already has an open queue entry. Must run inside tx(). */
+  private async assertNotQueued(patientId: string): Promise<void> {
     const existing = await db.queue
       .where("patientId")
       .equals(patientId)
@@ -227,24 +273,35 @@ export class QueueManagement {
       );
       throw new Error(`Patient is already in queue at ${existing.stage} stage`);
     }
+  }
+
+  /**
+   * Adds a waiting ticket at a stage. Must run inside tx(). Does not audit:
+   * the caller records the transition (enqueue, requeue or send_on).
+   */
+  private async enqueue(
+    patientId: string,
+    stage: QueueStage,
+    priority: QueuePriority,
+    createdBy: string | undefined,
+    now: Date,
+    ctx: TicketContext,
+    deviceId: string,
+  ): Promise<{ item: QueueItem; reusedTicket: boolean }> {
+    // Check if patient already in queue
+    await this.assertNotQueued(patientId);
 
     // Urgent tickets go ahead of every non-urgent waiting ticket (after
     // urgent ones already ahead); others join the end of the line.
     const waiting = await this.waitingAt(stage);
     const position = insertionPosition(waiting, priority);
 
-    // Reuse the patient's ticket number if they already have one issued today
-    // (e.g. they're being moved from vitals to consult). Otherwise mint a new
-    // one so registration desks can still call patients by a short label.
-    const todayStr = now.toISOString().slice(0, 10);
-    let ticketNumber = await existingTicketNumberForPatient(patientId, todayStr);
-    const reusedTicket = !!ticketNumber;
-    if (!ticketNumber) {
-      const seq = await nextTicketSequence(todayStr);
-      ticketNumber = ticketNumberFromSeq(seq);
-    }
+    // Reuse the patient's ticket for this site and (Lagos) day, e.g. when
+    // they move from vitals to consult. Otherwise issue a new one so desks
+    // can call patients by a short label.
+    const { ticket, reused: reusedTicket } = await this.ticketFor(patientId, ctx, deviceId);
 
-    const queueItem: QueueItem = {
+    const queueItem: QueueRow = {
       id: generateId(),
       patientId,
       stage,
@@ -252,7 +309,12 @@ export class QueueManagement {
       status: "waiting",
       priority,
       createdBy,
-      ticketNumber,
+      ticketId: ticket.ticketId,
+      ticketNumber: ticket.ticketNumber,
+      ticketProvisional: ticket.ticketProvisional,
+      ticketPending: ticket.ticketPending,
+      siteKey: ticket.siteKey,
+      serviceDate: ticket.serviceDate,
       queuedAt: now,
       updatedAt: now,
       _dirty: 1,
@@ -282,25 +344,33 @@ export class QueueManagement {
     this.assertMayMove(who, stage);
     const deviceId = await getDeviceId();
     const now = new Date();
+    const ctx = await this.ticketContext(deviceId, now);
+    // Resolved just before the write: a merged record's patient is queued
+    // on the kept record, so they hold one ticket.
+    const queuedId = await this.keptRecordId(patientId);
 
     const queueItem = await this.tx(async () => {
       // Validate patient exists
-      const patient = await db.patients.get(patientId);
+      const patient = await db.patients.get(queuedId);
       if (!patient) {
-        throw new Error(`Patient ${patientId} not found`);
+        throw new Error(`Patient ${queuedId} not found`);
       }
+      // An entry not yet moved from the merged record still counts.
+      if (queuedId !== patientId) await this.assertNotQueued(patientId);
 
       const { item, reusedTicket } = await this.enqueue(
-        patientId,
+        queuedId,
         stage,
         priority,
         createdBy,
         now,
+        ctx,
+        deviceId,
       );
       await this.audit(
         {
           queueItemId: item.id,
-          patientId,
+          patientId: queuedId,
           kind: reusedTicket ? "requeue" : "enqueue",
           fromStage: null,
           toStage: stage,
@@ -319,7 +389,7 @@ export class QueueManagement {
     this.notifySubscribers(stage);
 
     logger.log(
-      `Added patient ${patientId} to ${stage} queue at position ${queueItem.position} with priority ${priority}`,
+      `Added patient ${queuedId} to ${stage} queue at position ${queueItem.position} with priority ${priority}`,
     );
     return queueItem;
   }
@@ -333,24 +403,26 @@ export class QueueManagement {
     const who = this.resolveActor(actor);
     const deviceId = await getDeviceId();
     const now = new Date();
+    const ctx = await this.ticketContext(deviceId, now);
 
     const { from, nextStage } = await this.tx(async () => {
-      const currentItem = await db.queue
-        .where("patientId")
-        .equals(patientId)
-        .and((item) => item.status !== "done")
-        .first();
+      const currentItem = await this.openItemFor(patientId);
 
       if (!currentItem) {
         throw new Error(`Patient ${patientId} not found in queue`);
       }
       this.assertMayMove(who, currentItem.stage);
+      // The next stage goes on the entry's own record, so the ticket
+      // follows it. That is the given record unless it was merged into
+      // another on this device.
+      const owner = currentItem.patientId || patientId;
 
       // Mark current stage as done
       await db.queue.update(currentItem.id, {
         status: "done",
         updatedAt: now,
         _dirty: 1,
+        transitionPending: 1,
       });
 
       const next = this.getNextStage(currentItem.stage);
@@ -358,20 +430,23 @@ export class QueueManagement {
       let nextItem: QueueItem | undefined;
 
       if (next) {
-        nextItem = (await this.enqueue(patientId, next, carried, undefined, now))
-          .item;
+        nextItem = (
+          await this.enqueue(owner, next, carried, undefined, now, ctx, deviceId)
+        ).item;
       } else {
         // Pharmacy was the last stage: the patient has left the flow, so
         // their open visit ends here. Without this, visits stayed open for
         // ever and a returning patient's new care was filed under an old visit.
         try {
-          const open = await db.visits
-            .where("patientId")
-            .equals(patientId)
-            .and((v) => v.status === "open")
-            .toArray();
-          for (const v of open) {
-            await db.visits.update(v.id, { status: "closed", _dirty: 1 });
+          for (const id of new Set([patientId, owner])) {
+            const open = await db.visits
+              .where("patientId")
+              .equals(id)
+              .and((v) => v.status === "open")
+              .toArray();
+            for (const v of open) {
+              await db.visits.update(v.id, { status: "closed", _dirty: 1 });
+            }
           }
         } catch (err) {
           logger.warn(
@@ -385,7 +460,7 @@ export class QueueManagement {
         {
           queueItemId: currentItem.id,
           toQueueItemId: nextItem?.id,
-          patientId,
+          patientId: owner,
           kind: "send_on",
           fromStage: currentItem.stage,
           toStage: next ?? "done",
@@ -446,6 +521,7 @@ export class QueueManagement {
         status: "in_progress",
         updatedAt: now,
         _dirty: 1,
+        transitionPending: 1,
         ...(assignee
           ? { assignedTo: assignee.id, assignedName: assignee.name }
           : {}),
@@ -490,6 +566,7 @@ export class QueueManagement {
         status: "done",
         updatedAt: now,
         _dirty: 1,
+        transitionPending: 1,
       });
       const priority = normalisePriority(item.priority);
       await this.audit(
@@ -516,17 +593,40 @@ export class QueueManagement {
     if (stage) this.notifySubscribers(stage);
   }
 
-  /** Moves a waiting ticket to the front of its stage's line. */
+  /**
+   * "Move to front": moves a waiting ticket ahead of every waiting ticket of
+   * the same or lower priority. It never passes a ticket with a higher
+   * priority, so a normal or low ticket always stays behind waiting urgent
+   * ones (see promotionPosition). Throws QueueValidationError when the
+   * ticket is already as far forward as its priority allows.
+   */
   async skipQueue(
     patientId: string,
     reason: string = "urgent",
     actor?: QueueActor,
   ): Promise<void> {
     const who = this.resolveActor(actor);
+    const stage = await this.promote(patientId, reason, who, false);
+    if (!stage) return;
+    this.notifySubscribers(stage);
+    logger.log(`Patient ${patientId} moved forward in the ${stage} queue`);
+  }
+
+  /**
+   * Moves the patient's waiting ticket forward within its priority and
+   * audits it. Resolves to the stage, or null when there was nothing to
+   * move and `quiet` is set (then nothing is written).
+   */
+  private async promote(
+    patientId: string,
+    reason: string,
+    who: QueueActor,
+    quiet: boolean,
+  ): Promise<QueueStage | null> {
     const deviceId = await getDeviceId();
     const now = new Date();
 
-    const stage = await this.tx(async () => {
+    return this.tx(async () => {
       const item = await db.queue
         .where("patientId")
         .equals(patientId)
@@ -534,24 +634,28 @@ export class QueueManagement {
         .first();
 
       if (!item) {
+        if (quiet) return null;
         throw new Error(`Patient ${patientId} not found in waiting queue`);
       }
       this.assertMayMove(who, item.stage);
 
-      // Move to position 1; everyone else keeps their order behind it.
-      await db.queue.update(item.id, {
-        position: 1,
-        updatedAt: now,
-        _dirty: 1,
-      });
       const waiting = await this.waitingAt(item.stage);
-      const others = waiting.filter((w) => w.id !== item.id);
-      await this.applyOrder(orderAfterInsert(others, item.id, 1), [
-        ...others,
-        { id: item.id, position: 1 },
-      ]);
-
+      const line = waiting.some((w) => w.id === item.id) ? waiting : [...waiting, item];
+      const target = promotionPosition(line, item.id);
       const priority = normalisePriority(item.priority);
+      if (target === null) {
+        if (quiet) return null;
+        throw new QueueValidationError(
+          priority === "urgent"
+            ? "This ticket is already at the front of the line."
+            : "This ticket is already as far forward as it can go. Waiting urgent tickets stay ahead of it.",
+        );
+      }
+
+      // Everyone else keeps their order around it.
+      const others = line.filter((w) => w.id !== item.id);
+      await this.applyOrder(orderAfterInsert(others, item.id, target), line);
+
       await this.audit(
         {
           queueItemId: item.id,
@@ -571,10 +675,6 @@ export class QueueManagement {
       );
       return item.stage;
     });
-
-    this.notifySubscribers(stage);
-
-    logger.log(`Patient ${patientId} moved to front of ${stage} queue`);
   }
 
   /**
@@ -702,10 +802,14 @@ export class QueueManagement {
         );
       }
 
+      // The server applies a downgrade only through its audited transition
+      // (an upload alone cannot lower an urgent priority), so keep the new
+      // priority on this device until that transition has been sent.
       await db.queue.update(item.id, {
         priority: to,
         updatedAt: now,
         _dirty: 1,
+        transitionPending: 1,
       });
       await this.audit(
         {
@@ -841,6 +945,7 @@ export class QueueManagement {
           status: "done",
           updatedAt: now,
           _dirty: 1,
+          transitionPending: 1,
         });
         const priority = normalisePriority(item.priority);
         await this.audit(
@@ -870,8 +975,11 @@ export class QueueManagement {
   }
 
   /**
-   * Moves tickets waiting longer than maxWaitTime to the front of their
-   * line. It only ever escalates; each move is audited with user "system".
+   * Moves tickets waiting longer than maxWaitTime forward in their line,
+   * within their priority: never ahead of a waiting ticket with a higher
+   * priority (a normal ticket stays behind urgent ones). It only ever moves
+   * tickets forward; each move is audited with user "system", and a ticket
+   * that cannot move is left alone (nothing written).
    */
   async checkStaleQueues(): Promise<void> {
     const now = Date.now();
@@ -891,12 +999,14 @@ export class QueueManagement {
         `Stale queue item detected: Patient ${item.patientId} waiting ${Math.floor((now - new Date(item.updatedAt).getTime()) / 60000)} minutes`,
       );
 
-      // Auto-escalate to front of queue
-      await this.skipQueue(
+      // Auto-escalate within the ticket's priority.
+      const stage = await this.promote(
         item.patientId,
         "auto-escalation due to long wait",
         SYSTEM_ACTOR,
+        true,
       );
+      if (stage) this.notifySubscribers(stage);
     }
   }
 

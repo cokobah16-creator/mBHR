@@ -20,7 +20,14 @@ import {
 import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
 import { useAuthStore } from "@/stores/auth";
 import { recordStageEvent } from "@/services/stageEvents";
-import { canManageQueue } from "@/features/tickets/queueBoardModel";
+import {
+  canManageQueue,
+  canMoveForward,
+  moveForwardDescription,
+  moveForwardLabel,
+  ticketStateBadge,
+} from "@/features/tickets/queueBoardModel";
+import type { QueueRow } from "@/services/queueTickets";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import { useToast } from "@/stores/toast";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -70,14 +77,25 @@ function isQueuePriority(value: string): value is QueuePriority {
 }
 
 /**
- * What a priority change toast may honestly say. The change is saved on this
- * device and its audit record joins the upload queue; the queue sync does
- * not carry priority yet, so other devices are not promised the change.
+ * What a priority change toast may honestly say. The change and its audit
+ * record are saved on this device and wait for the next sync; other devices
+ * show it after that sync (and after their own).
  */
 function priorityNote(syncEnabled: boolean): string {
   return syncEnabled
-    ? "Saved on this device. The audit record is waiting to sync; other devices may not show this change yet."
+    ? "Saved on this device. Waiting to sync; other devices show the change after it syncs."
     : "Saved on this device.";
+}
+
+/** Temporary, unconfirmed or changed ticket number (text and icon). */
+function TicketState({ row }: { row: QueueRow }) {
+  const badge = ticketStateBadge(row, isSupabaseEnabled);
+  if (!badge) return null;
+  return (
+    <StatusBadge tone={badge.tone} icon>
+      {badge.label}
+    </StatusBadge>
+  );
 }
 
 function ticketOf(item: Pick<QueueItem, "ticketNumber" | "position">) {
@@ -631,6 +649,7 @@ export function Queue() {
                       {normalisePriority(item.priority) === "urgent" && (
                         <StatusBadge tone="danger">Urgent</StatusBadge>
                       )}
+                      <TicketState row={item} />
                     </span>
                     <span className="text-caption text-ink-muted">
                       In service for{" "}
@@ -712,8 +731,13 @@ export function Queue() {
                     const mins = minutesSince(item.queuedAt ?? item.updatedAt, now);
                     return (
                       <tr key={item.id}>
-                        <td className="font-mono">
-                          {item.ticketNumber ?? `#${item.position}`}
+                        <td>
+                          <span className="font-mono">
+                            {item.ticketNumber ?? `#${item.position}`}
+                          </span>
+                          <span className="mt-1 block empty:hidden">
+                            <TicketState row={item} />
+                          </span>
                         </td>
                         <td>
                           <Link
@@ -754,16 +778,16 @@ export function Queue() {
                                 <PlayIcon className="h-4 w-4" aria-hidden />
                                 Call
                               </button>
-                            ) : item.id !== allWaiting[0]?.id ? (
+                            ) : canMoveForward(allWaiting, item.id) ? (
                               <button
                                 onClick={() => prioritise(item)}
                                 disabled={busyId !== null}
                                 className="btn-ghost"
-                                aria-label={`Move ${patientName(item)} to the front of the queue`}
-                                title="Move to front"
+                                aria-label={moveForwardDescription(patientName(item), item.priority)}
+                                title={moveForwardDescription(patientName(item), item.priority)}
                               >
                                 <ArrowUpIcon className="h-4 w-4" aria-hidden />
-                                Move to front
+                                {moveForwardLabel(item.priority)}
                               </button>
                             ) : null}
                             {priorityControls(item)}
@@ -802,6 +826,7 @@ export function Queue() {
                           {normalisePriority(item.priority) === "urgent" && (
                             <StatusBadge tone="danger">Urgent</StatusBadge>
                           )}
+                          <TicketState row={item} />
                         </span>
                       </span>
                       {item.id === allWaiting[0]?.id && inService.length === 0 ? (
@@ -812,12 +837,12 @@ export function Queue() {
                         >
                           Call
                         </button>
-                      ) : item.id !== allWaiting[0]?.id ? (
+                      ) : canMoveForward(allWaiting, item.id) ? (
                         <button
                           onClick={() => prioritise(item)}
                           disabled={busyId !== null}
                           className="btn-ghost px-2"
-                          aria-label={`Move ${patientName(item)} to the front of the queue`}
+                          aria-label={moveForwardDescription(patientName(item), item.priority)}
                         >
                           <ArrowUpIcon className="h-5 w-5" aria-hidden />
                         </button>

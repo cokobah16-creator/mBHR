@@ -84,11 +84,55 @@ export interface SmsFailure {
 /**
  * Turns the `error` returned by notifyPatientTelevisitScheduled into a
  * reason staff can act on. The patterns match the strings that service and
- * the send-sms-reminder edge function return. Raw provider text is never
- * shown: it can contain the phone number.
+ * the send-sms-reminder edge function return (server errors arrive as
+ * "code: message", e.g. "not_permitted: Your role cannot send SMS to
+ * patients."), so server codes are checked before the looser text patterns
+ * below them. Raw provider text is never shown: it can contain the phone
+ * number.
  */
 export function describeSmsFailure(error: string | undefined): SmsFailure {
   const text = (error ?? "").trim();
+  // No staff member signed in online on this device ("Sign in online to send
+  // SMS"), or the server did not accept the sign-in (not_authenticated, or
+  // the functions gateway refusing an expired or invalid token).
+  if (/\bnot_authenticated\b|sign in online|invalid jwt|jwt expired/i.test(text)) {
+    return {
+      reason:
+        "Sign in online with your staff account to send the link by SMS. A PIN unlock is not enough. Nothing was sent.",
+      retryable: true,
+    };
+  }
+  if (/\bnot_permitted\b|role cannot send/i.test(text)) {
+    return {
+      reason:
+        "Your role cannot send SMS to patients. Share the link another way, or ask a pharmacist, nurse, doctor, lead clinician or administrator to send it.",
+      retryable: false,
+    };
+  }
+  if (/\bpatient_not_found\b/i.test(text)) {
+    return {
+      reason:
+        "This patient is not on the server yet. Sync, then send again.",
+      retryable: true,
+    };
+  }
+  if (/\balready_sent\b/i.test(text)) {
+    return {
+      reason:
+        "The server already records this message as sent, so it was not sent again.",
+      retryable: false,
+    };
+  }
+  // The server sends to the number on its copy of the patient record. This
+  // device only calls it when its own copy has a number, so the server copy
+  // is probably not synced yet.
+  if (/\bno_phone\b/i.test(text)) {
+    return {
+      reason:
+        "The patient's record on the server has no phone number. Sync, then send again, or share the link another way.",
+      retryable: true,
+    };
+  }
   if (/no phone/i.test(text)) {
     return {
       reason:
@@ -96,10 +140,25 @@ export function describeSmsFailure(error: string | undefined): SmsFailure {
       retryable: false,
     };
   }
+  // The server checks the number on its copy of the patient record.
+  if (/\binvalid_recipient\b|not a valid nigerian/i.test(text)) {
+    return {
+      reason:
+        "The patient's phone number is not a valid Nigerian mobile number. Correct it in the patient record and sync, or share the link another way.",
+      retryable: false,
+    };
+  }
   if (/invalid phone/i.test(text)) {
     return {
       reason:
         "The patient's phone number is not a valid mobile number. Correct it in the patient record, or share the link another way.",
+      retryable: false,
+    };
+  }
+  if (/\binvalid_message\b/i.test(text)) {
+    return {
+      reason:
+        "The message text is empty or too long, so it was not sent. Share the link another way.",
       retryable: false,
     };
   }
@@ -121,6 +180,15 @@ export function describeSmsFailure(error: string | undefined): SmsFailure {
     return {
       reason:
         "This device is offline. Connect to the internet, then send again.",
+      retryable: true,
+    };
+  }
+  // The server could not check the send limit, the staff account or the
+  // patient record, so it sent nothing. Not a send limit being reached.
+  if (/\brate_limit_unavailable\b|lookup_failed\b/i.test(text)) {
+    return {
+      reason:
+        "The SMS service could not complete its checks, so nothing was sent. Try again in a few minutes.",
       retryable: true,
     };
   }
