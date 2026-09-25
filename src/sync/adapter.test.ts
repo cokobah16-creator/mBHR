@@ -291,6 +291,67 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       });
     });
 
+    it("does not move the saved cursor past this device's clock", async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      const consultations = db.consultations as unknown as { get: MockFn; put: MockFn };
+      consultations.get.mockResolvedValue(undefined);
+      const settingsPut = db.settings.put as unknown as MockFn;
+      settingsPut.mockClear();
+      const recent = new Date(Date.now() - 60_000).toISOString();
+      mockFrom.mockImplementation((table: string) =>
+        selectChain(
+          table === "consultations"
+            ? [
+                { id: "c1", patient_id: "p1", updated_at: recent },
+                { id: "c2", patient_id: "p1", updated_at: "2999-01-01T00:00:00+00:00" },
+              ]
+            : [],
+        ),
+      );
+
+      const { pullChanges } = await import("./adapter");
+      await pullChanges();
+
+      // Both rows are written; the cursor stops at the row with a real time.
+      expect(consultations.put).toHaveBeenCalledTimes(2);
+      expect(settingsPut).toHaveBeenCalledWith({
+        key: "sync_cursor:consultations",
+        value: recent,
+      });
+    });
+
+    it("downloads from the start when the saved cursor is in the future", async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      const settingsGet = db.settings.get as unknown as MockFn;
+      settingsGet.mockImplementation(async (key: string) =>
+        key === "sync_cursor:consultations"
+          ? { key, value: "2999-01-01T00:00:00.000Z" }
+          : undefined,
+      );
+      const chains: Record<string, { select: MockFn; gt?: MockFn }> = {};
+      mockFrom.mockImplementation((table: string) => {
+        const limit = vi.fn().mockResolvedValue({ data: [], error: null });
+        const order = vi.fn().mockReturnValue({ limit });
+        const gt = vi.fn().mockReturnValue({ order });
+        chains[table] = { select: vi.fn().mockReturnValue({ gt, order }), gt };
+        return chains[table];
+      });
+
+      try {
+        const { pullChanges } = await import("./adapter");
+        await pullChanges();
+
+        // No "updated_at >" filter: every row is read again.
+        expect(chains.consultations.gt).not.toHaveBeenCalled();
+      } finally {
+        settingsGet.mockImplementation(() => Promise.resolve(undefined));
+      }
+    });
+
     it("stores a downloaded clinical time as a Date", async () => {
       vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
       vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");

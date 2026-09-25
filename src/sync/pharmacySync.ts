@@ -37,6 +37,7 @@ import {
   type ServerCommand,
 } from "./commandOutbox";
 import { syncErrorCode } from "./errorCode";
+import { advanceCursor, isCursorAhead } from "./cursorGuard";
 import {
   batchFromServer,
   discrepancyFromServer,
@@ -467,7 +468,9 @@ function overlapFrom(cursor: string): string {
 async function pullTable(spec: PullSpec): Promise<boolean> {
   if (!supabase) return false;
   const cursorId = `pull:${spec.table}`;
-  const stored = (await mbhrDb.rx_cursors.get(cursorId))?.ts;
+  const saved = (await mbhrDb.rx_cursors.get(cursorId))?.ts;
+  // A cursor in the future may have skipped rows: download from the start.
+  const stored = saved && !isCursorAhead(saved) ? saved : undefined;
   // The stored cursor is always a server timestamp string, so the string
   // comparison below compares like with like.
   let since = stored ?? spec.initial?.() ?? "";
@@ -484,12 +487,13 @@ async function pullTable(spec: PullSpec): Promise<boolean> {
     const rows = (Array.isArray(data) ? data : []) as Raw[];
     if (rows.length === 0) break;
     await spec.apply(rows);
-    for (const row of rows) {
-      const ts = row[spec.cursorColumn];
-      if (typeof ts === "string" && ts > since) since = ts;
-    }
+    const now = Date.now();
+    // Not past this device's clock (see cursorGuard).
+    for (const row of rows) since = advanceCursor(since, row[spec.cursorColumn], now);
     await mbhrDb.rx_cursors.put({ id: cursorId, ts: since });
-    if (rows.length < PAGE) break;
+    // A full page that did not move the cursor (future-dated rows) would
+    // come back again unchanged: stop until the next run.
+    if (rows.length < PAGE || since === from) break;
     from = since;
   }
   return true;

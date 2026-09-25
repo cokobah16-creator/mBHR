@@ -8,6 +8,7 @@ import { toAllergyActiveFlag } from "@/utils/allergyActive";
 import { mergePulledRow } from "@/sync/pullMerge";
 import { markersAfterUpload } from "@/sync/uploadMarkers";
 import { syncErrorCode } from "@/sync/errorCode";
+import { advanceCursor, isCursorAhead } from "@/sync/cursorGuard";
 import { ENHANCED_ONLY_TABLES } from "@/features/conflicts/syncCounts";
 
 export interface TableSyncFailure {
@@ -119,7 +120,13 @@ export class EnhancedSync {
     if (inSession) return inSession;
     try {
       const saved = await db.settings.get(PULL_CURSOR_KEY(localTable));
-      if (saved && typeof saved.value === "string" && saved.value) {
+      // A cursor in the future may have skipped rows: start from the oldest.
+      if (
+        saved &&
+        typeof saved.value === "string" &&
+        saved.value &&
+        !isCursorAhead(saved.value)
+      ) {
         return saved.value;
       }
     } catch {
@@ -699,14 +706,14 @@ export class EnhancedSync {
         if (!remoteRecords || remoteRecords.length === 0) break;
 
         let newest = cursor;
+        const now = Date.now();
         // Read and write each row in one transaction so an edit saved on
         // this device in between cannot be overwritten.
         await db.transaction("rw", table, async () => {
           for (const remote of remoteRecords) {
-            // The cursor advances past every row, applied or kept local.
-            if (typeof remote.updated_at === "string" && remote.updated_at > newest) {
-              newest = remote.updated_at;
-            }
+            // The cursor advances past every row, applied or kept local,
+            // but not past this device's clock (see cursorGuard).
+            newest = advanceCursor(newest, remote.updated_at, now);
             const incoming = config.remoteToLocal(remote);
             const localRow = await table.get(incoming[key]);
             // Rows with unsent changes on this device are kept (their upload

@@ -18,6 +18,7 @@ import { keepLocalRevocation, staffFromServerRow } from "./staffRoster";
 import { markersAfterUpload } from "./uploadMarkers";
 import { namedSyncError, syncErrorCode } from "./errorCode";
 import { queueSyncConflicts } from "./queueConflicts";
+import { advanceCursor, isCursorAhead } from "./cursorGuard";
 import {
   countOpenCommands,
   countWaitingPermission,
@@ -707,7 +708,8 @@ async function getCursor(table: Tbl): Promise<string> {
 
   const row = await db.settings.get(CURSOR_KEY(table)).catch(() => undefined);
   const ts = row?.value?.ts ?? row?.ts ?? row?.value ?? undefined; // be liberal in what we accept
-  if (typeof ts === "string" && ts) return ts;
+  // A cursor in the future may have skipped rows: download from the start.
+  if (typeof ts === "string" && ts && !isCursorAhead(ts)) return ts;
   return DEFAULT_TS;
 }
 
@@ -1028,11 +1030,12 @@ export async function pullChanges(): Promise<PullSummary> {
 
     const rows = (data ?? []) as Row[];
     let maxTs = since;
+    const now = Date.now();
     if (rows.length > 0) {
       await applyPulledRows(t, table, rows, summary, (row) => {
-        // The cursor advances past every row, applied or kept local.
-        const ts = row.updated_at;
-        if (typeof ts === "string" && ts > maxTs) maxTs = ts;
+        // The cursor advances past every row, applied or kept local, but
+        // not past this device's clock (see cursorGuard).
+        maxTs = advanceCursor(maxTs, row.updated_at, now);
       });
     }
     await setCursor(t, maxTs);
