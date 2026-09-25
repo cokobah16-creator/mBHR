@@ -98,7 +98,32 @@ jobs:
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Migrations applied on production
-        run: supabase migration list --linked | tee "$RUNNER_TEMP/migrations.txt"
+        run: |
+          supabase migration list --linked | tee "$RUNNER_TEMP/migrations.txt"
+          # Rows look like: " `local` | `remote` | `time` " (either side may be blank).
+          tr -d '` ' < "$RUNNER_TEMP/migrations.txt" \
+            | awk -F'|' '$1 ~ /^[0-9]+$/ || $2 ~ /^[0-9]+$/ { print $1 "|" $2 }' > "$RUNNER_TEMP/versions.txt"
+          awk -F'|' '$1 != "" && $2 != "" { print $1 }' "$RUNNER_TEMP/versions.txt" > "$RUNNER_TEMP/applied.txt"
+          awk -F'|' '$1 != "" && $2 == "" { print $1 }' "$RUNNER_TEMP/versions.txt" > "$RUNNER_TEMP/pending.txt"
+          awk -F'|' '$1 == "" && $2 != "" { print $2 }' "$RUNNER_TEMP/versions.txt" > "$RUNNER_TEMP/remote_only.txt"
+          awk -F'|' '$2 != "" { print $2 }' "$RUNNER_TEMP/versions.txt" > "$RUNNER_TEMP/remote_all.txt"
+          echo "In both: $(wc -l < "$RUNNER_TEMP/applied.txt")  Pending (repo only): $(wc -l < "$RUNNER_TEMP/pending.txt")  On production only: $(wc -l < "$RUNNER_TEMP/remote_only.txt")"
+          if [ -s "$RUNNER_TEMP/remote_only.txt" ]; then
+            echo "::warning::Production has migrations that are not in supabase/migrations: $(tr '\n' ' ' < "$RUNNER_TEMP/remote_only.txt")"
+          fi
+
+      - name: What the production-only migrations did (names and objects, no SQL)
+        if: inputs.action == 'status'
+        run: |
+          # supabase_migrations.schema_migrations holds each applied migration's
+          # version, name and SQL. This repo is public, so only names and the
+          # objects each one touches are printed, never the SQL.
+          supabase db dump --linked --data-only --schema supabase_migrations -f "$RUNNER_TEMP/migration-history.sql"
+          echo "== Production-only migrations =="
+          python3 .github/scripts/migration_history.py "$RUNNER_TEMP/migration-history.sql" "$RUNNER_TEMP/remote_only.txt"
+          echo
+          echo "== Every migration production has, by name =="
+          python3 .github/scripts/migration_history.py "$RUNNER_TEMP/migration-history.sql" "$RUNNER_TEMP/remote_all.txt" | grep -v '^    '
 
       # ---- rehearse ---------------------------------------------------------
 
@@ -127,8 +152,9 @@ jobs:
       - name: Mark the migrations production has as applied locally
         if: inputs.action == 'rehearse'
         run: |
-          # Rows of `supabase migration list` look like: " local | remote | time".
-          applied=$(awk -F'|' '{ gsub(/ /, "", $2); if ($2 ~ /^[0-9]+$/) print $2 }' "$RUNNER_TEMP/migrations.txt")
+          # Only versions that exist both here and on production; production-only
+          # versions have no file to mark.
+          applied=$(cat "$RUNNER_TEMP/applied.txt")
           if [ -z "$applied" ]; then
             echo "::error::Could not read production's applied migrations from the list above."
             exit 1
