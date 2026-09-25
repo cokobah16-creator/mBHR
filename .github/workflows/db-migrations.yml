@@ -260,7 +260,7 @@ jobs:
 
       - name: Run pgTAP tests locally
         if: inputs.action == 'rehearse' && inputs.only == ''
-        run: supabase test db
+        run: supabase test db --local
 
       - name: Run the one migration's checks locally
         if: inputs.action == 'rehearse' && inputs.only != ''

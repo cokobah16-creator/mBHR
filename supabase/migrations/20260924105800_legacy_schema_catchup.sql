@@ -454,6 +454,9 @@ ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
 -- E. Every new table: RLS on, no policies, nothing for anon or PUBLIC.
+--    Production's default privileges also give authenticated TRUNCATE,
+--    REFERENCES and TRIGGER on new tables; TRUNCATE ignores row-level
+--    security, so those go too (Wave A's app_rls_reset revokes anon only).
 -- ----------------------------------------------------------------------------
 DO $$
 DECLARE t text;
@@ -465,5 +468,6 @@ BEGIN
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON TABLE public.%I FROM anon, PUBLIC', t);
+    EXECUTE format('REVOKE TRUNCATE, REFERENCES, TRIGGER ON TABLE public.%I FROM authenticated', t);
   END LOOP;
 END $$;

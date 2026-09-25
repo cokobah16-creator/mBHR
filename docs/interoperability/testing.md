@@ -73,9 +73,9 @@ bun test src/interoperability
 python3 scripts/ci/interop_db_base.py > /tmp/base.sql
 createdb interop_t
 psql -v ON_ERROR_STOP=1 -d interop_t -f /tmp/base.sql
-psql -v ON_ERROR_STOP=1 -d interop_t -f supabase/migrations/20260926110000_interop_foundation.sql
+psql -v ON_ERROR_STOP=1 -d interop_t -f supabase/migrations-deferred/20260926110000_interop_foundation.sql
 psql -d interop_t -c 'CREATE EXTENSION pgtap'   # or pg_prove if installed
-psql -d interop_t -f supabase/tests/interop_foundation.test.sql
+psql -d interop_t -f supabase/migrations-deferred/tests/interop_foundation.test.sql
 ```
 
 Never run these against production or any database with real patients.

@@ -81,8 +81,8 @@ src/interoperability/fhir/
   audit/         access audit records, IP hashing, redacted log lines
   gateway/       authentication, PostgREST access, queries, the handler
   conformance/   synthetic examples validated by the HL7 validator in CI
-supabase/migrations/20260926110000_interop_foundation.sql
-supabase/tests/interop_foundation.test.sql
+supabase/migrations-deferred/20260926110000_interop_foundation.sql
+supabase/migrations-deferred/tests/interop_foundation.test.sql
 ```
 
 ## Feature flags

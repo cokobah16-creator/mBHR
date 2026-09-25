@@ -71,7 +71,7 @@ care_team, patient_portal, external_system, any) and `actor_reference`,
 
 History is kept: neither table allows DELETE or TRUNCATE. A consent is
 withdrawn by recording the withdrawal, never by removing the row. The pgTAP
-file `supabase/tests/interop_foundation.test.sql` checks these rules.
+file `supabase/migrations-deferred/tests/interop_foundation.test.sql` checks these rules.
 
 The existing `public.patient_consent_records` (yes/no per consent type,
 used by the app) and `public.patient_data_sharing_preferences` (from the
