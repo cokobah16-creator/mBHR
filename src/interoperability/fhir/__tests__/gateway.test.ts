@@ -324,7 +324,8 @@ describe("searches", () => {
   it("filters Conditions by clinical status and never matches entered-in-error", async () => {
     const { call } = setup();
     const b = await body(await call(`/fhir/R4/Condition?patient=Patient/${PATIENT_A.fhir_id}&clinical-status=active`, { token: DOCTOR }));
-    expect(b.entry.map((e: { resource: { id: string } }) => e.resource.id)).toEqual([CONDITION_A.id]);
+    const matches = b.entry.filter((e: { search: { mode: string } }) => e.search.mode === "match");
+    expect(matches.map((e: { resource: { id: string } }) => e.resource.id)).toEqual([CONDITION_A.id]);
     const all = await body(await call(`/fhir/R4/Condition?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR }));
     expect(all.entry.filter((e: { search: { mode: string } }) => e.search.mode === "match")).toHaveLength(2);
     // Every Condition searchset says what the table does not cover.
