@@ -181,7 +181,7 @@ export function useAuth(): UseAuthReturn {
       if (outcome.linked) return null;
 
       // Not linked: do not stay signed in to a portal with no record.
-      await supabase.auth.signOut().catch(() => undefined);
+      await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
       clearStoredSupabaseAuth();
       return {
         code: "not_linked",

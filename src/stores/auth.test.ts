@@ -536,7 +536,7 @@ describe("useAuthStore", () => {
       expect(mockDbUsers.update).not.toHaveBeenCalled();
     });
 
-    it("refuses a guest record kept on this device when the server cannot be asked", async () => {
+    it("does not call a kept guest record 'not staff' when the server cannot be asked", async () => {
       mockDbUsers.get.mockResolvedValue({
         id: AUTH_USER.id,
         fullName: "Ngozi Eze",
@@ -547,7 +547,7 @@ describe("useAuthStore", () => {
       appUsersLookup({ data: null, error: { code: "PGRST000" } });
 
       expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
-      expect(useAuthStore.getState().signInRefusal).toBe("not_staff");
+      expect(useAuthStore.getState().signInRefusal).toBe("staff_check_failed");
       expect(mockDbSessions.add).not.toHaveBeenCalled();
     });
 
