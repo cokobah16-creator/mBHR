@@ -6,6 +6,26 @@ This checklist takes a common list of 20 things an app should do so it doesn't g
 
 The findings were produced by reading the code, then checked a second time by opening every cited file. Line numbers are correct as of the commit above and will drift as the code changes.
 
+## Progress
+
+*Updated 25 September 2026.* The fixes that needed no decision by the Foundation are in the code on branch `claude/list-creation-implementation-izwdi5`. Each item below has a **Done in the code** paragraph that says which steps are done and which remain.
+
+| Change | Items | Where |
+|---|---|---|
+| Resend key removed from the repository, and `send-otp-email` limited to signed-in staff | Fix these first | Lane mB, merge `433177f` |
+| Reminder opt-outs checked right before every send, and a pulled `false` counts | 18, 9 | Lane mC, merge `37eb105` |
+| Auto-enrolment trigger dropped, treatment sharing off by default, and portal access switched by staff with a recorded tick | 9, 6 | Lane mA, merge `ef67701` |
+| Three separate sign-up boxes, with the accepted versions kept | 6, 2 | Lane mA, merge `ef67701` |
+| Portal sign-up and linking for adults only, in the app and on the server | 17 | Lane mA, merge `ef67701`; `441eac3` |
+| Privacy notice names every processor, has a Children section, and is linked from staff sign-in and the portal | 1 | Lane mA, merge `ef67701`; `458b0b9` |
+
+Still to do by the Foundation:
+- Revoke the old Resend key.
+- Decide whether patients who were enrolled automatically keep portal access. Nothing was reversed.
+- The decisions under [Before you start](#before-you-start): the controller and contacts, retention periods, the "AI training" purpose, guardian verification, and two-way SMS.
+
+Unit tests, the type check and the build could not run where this work was done, because the npm registry was blocked. CI runs them on a pull request.
+
 ## Fix these first
 
 These two problems are not on the list of 20, but they carry more risk than most items on it.
@@ -25,6 +45,8 @@ These two problems are not on the list of 20, but they carry more risk than most
    1. Require a signed-in staff session for message mode, using `supabase/functions/_shared/security/staffAuth.ts`, which the SMS functions already use.
    2. Accept only a 4 to 8 digit `otp`, and HTML-escape every value placed in the email.
    3. Stop logging the address and the code.
+
+   **Done in the code:** the function now calls `requireStaff`, which reads the caller's role from `app_users`, so the anon key gets 401. Message mode is open to the roles that can send portal invitations in the app: volunteer, nurse, doctor, lead clinician and admin. Code mode is admin only and accepts a 4 to 8 digit code. Every value placed in the email is escaped (`supabase/functions/_shared/security/html.ts`). The logs no longer hold the address, the code, the subject or the message. The callers in the app send the signed-in user's token, and bulk invitations need an online sign-in. **Still to do by the Foundation:** deploy the function.
 
 The migrations used to give anonymous users read and insert access to every row in `patients`. The row-level security rework in `supabase/migrations/20260924110100_rls_clinical_core.sql` removed that, and a read-only check of the live database on 24 September 2026 found no such policy. No action is needed.
 
@@ -76,6 +98,21 @@ The migrations used to give anonymous users read and insert access to every row 
 10. Create `src/pages/legal/LegalLinks.tsx` (new) from the Privacy and Terms links at `AuthShell.tsx:42-56`. Render it in `LoginShell` (`Login.tsx:455`), after the form in `FirstRunSetup.tsx`, and in the "More" sheet of `PatientPortalLayout.tsx`. Reuse it in `Home.tsx`, `Layout.tsx`, `LegalPage.tsx` and `AuthShell.tsx`.
 11. Add a `/privacy` link to the invitation email footer (`supabase/functions/send-otp-email/index.ts:129,157`).
 12. In the same commit, update `docs/legal/README.md`. Fix `:4-5`: it says every patient accepts the notice at sign-up, which is not true for accounts that staff enable. Send the result to a Nigerian lawyer.
+
+**Done in the code (lane mA).** Steps 1, 3, 8 and 10 are done, and so are parts of steps 5 and 12.
+- `src/pages/legal/policyMeta.ts` holds `PRIVACY_VERSION` and `TERMS_VERSION`, and the pages take their dates from it.
+- A "Service providers" section names:
+  - Twilio as the SMS fallback
+  - Vercel, including the contact detail an invitation link carries
+  - GitHub Actions for the backup
+  - jsDelivr or Statically for the map outline
+  - `meet.jit.si` (8x8) for televisits
+- A "Your sharing choices" section lists the starting choices, from the same `DEFAULT_SHARING_FLAGS` the page uses.
+- A "Children" section matches the age rules in item 17.
+- `LegalLinks` is on staff sign-in and the device-PIN step, first-run setup, portal sign-in and sign-up, and the signed-in portal menus.
+- `docs/legal/README.md` says which accounts have no recorded acceptance.
+
+The version is not yet written to `patient_consent_records` (item 6). Steps 2, 4, 6, 7, 9 and 11 are still open, and a lawyer has not reviewed the notice. Steps 2, 6 and 7 need the controller, retention and AI-training decisions.
 
 **How to check it.**
 - `src/pages/legal/PrivacyPolicy.test.tsx` (new): reuse the `import.meta.glob` scan from `src/test/startupChunks.test.ts:24`, and read `public/` with `node:fs`. Look for `api.twilio.com`, `api.ng.termii.com`, `api.resend.com`, `meet.jit.si`, `cdn.jsdelivr.net` and `@sentry/react`. Render the page in a `MemoryRouter`. Fail if a provider found in the code is not named.
@@ -255,6 +292,16 @@ The migrations used to give anonymous users read and insert access to every row 
 14. In `CaregiverSetup.tsx:391-427`, add a required guardian attestation. Have `addManagedPatient` (`patientPortalAuth.ts:551`) record a consent with `consent_type = 'guardian_consent'` (see item 17).
 15. In the same commit, update "Your choices and rights" (`PrivacyPolicy.tsx:102`) and correct `docs/legal/README.md:3-5`.
 
+**Done in the code (lane mA).** Steps 1, 8 and 12 are done, and so are parts of steps 9, 10 and 15.
+- Portal sign-up has three unticked, separately labelled, required boxes: the terms, the privacy notice, and portal access to records.
+- Offline, the accepted versions and time are stored on the `LocalPortalUser`. The hard-coded `consentGiven: true` is gone.
+- Online, they go in `signUp` `options.data`. The patient can edit that user metadata, so it is not yet evidence of consent.
+- The staff form no longer ticks portal access by itself.
+- `PortalStatusCard` asks staff to tick that the patient agreed before turning access on. When the device is online and staff are signed in online, it also sets `patients.portal_enabled` on the server.
+- `docs/legal/README.md` is corrected.
+
+Nothing is written to `patient_consent_records` yet. Steps 2 to 7 (migration `000100`, the Dexie `consents` table and `recordConsent`), 11, 13 and 14 are still open.
+
 **How to check it.**
 - Extend `src/features/patient-portal/PatientRegister.test.tsx` (it clicks `#consent` at `:103`): submit fails until all three boxes are ticked, and `recordConsent` gets each kind and version.
 - Add `src/services/consent.test.ts` (new), mocking `db` as `src/services/queueManagement.test.ts:46` does, and consent cases in `src/validation/schemas.test.ts`.
@@ -362,6 +409,14 @@ The browser Termii gateway has been deleted (`src/services/messaging.ts:23-28`).
 16. Split the sign-up box (`PatientRegister.tsx:484-521`) into the three unticked boxes item 6 describes: terms, privacy notice, and portal access to records. Store each in `patient_consent_records`. Update `PatientRegister.test.tsx:103`, `:134`, `:163` and `:197`.
 17. Add the STOP line or preferences link from item 18 step 11 to every non-transactional message in `scripts/seed/data/messageTemplates.ts` and `src/services/messageTemplates.ts:16`. Shorten any message that would then go over 160 characters.
 18. In the same commit, update `src/pages/legal/PrivacyPolicy.tsx:77-78` and `:102-109`, and `docs/legal/README.md:5-6`.
+
+**Done in the code (lanes mA and mC).** Steps 1, 6 and 16 are done, and so are parts of steps 3, 12, 15 and 18.
+- Migration `000200` drops `trigger_auto_enrollment` and `check_auto_enrollment()`, and sets both settings to `false`.
+- It defaults `allow_treatment_access` to false. `DataSharingPreferences` starts it unticked.
+- `reminderSkipReason` now treats a pulled `false` as an opt-out (lane mC).
+- `ScheduleReminderForm` checks the same opt-out rule (`isReminderOptedOut`) before it schedules.
+
+Step 2 is not done, and deliberately so: whether patients who were enrolled automatically keep access is the Foundation's decision. Step 3's reminder and alert defaults, and steps 4, 5, 7 to 11, 13, 14 and 17, are still open. The auto-enrolment trigger is gone, so a new patient's server access now changes only through the steps listed in the migration header.
 
 **How to check it.**
 - `npm run test:run -- src/services/reminderEligibility.test.ts src/services/portalEnrollment.test.ts src/features/patient-portal/PatientRegister.test.tsx` passes with three new tests: a missing record gives `no_consent`, `disablePortalAccess` queues one `p_enabled: false` command, and all three sign-up boxes start unticked.
@@ -593,7 +648,7 @@ This change adds no data flow, so the privacy notice does not need to change.
 2. Create `supabase/migrations/20260926000400_add_patient_guardians.sql` (new) with `patient_guardians`: `patient_id` (FK, cascade), `guardian_name`, `guardian_phone`, `relationship` (`parent`, `legal_guardian`, `other_authorised`), `guardian_portal_user_id`, `verified_by_staff`, `verified_at`, `consent_record_id` (FK to `patient_consent_records`), timestamps and `revoked_at`.
 3. In it, enable RLS, revoke `anon`, and write policies with `app_is_staff()`, `app_has_permission('register')` and `app_portal_patient_ids()`. Write `CREATE POLICY` directly: `app_rls_policy` was dropped at `20260924110400_rls_verify_phi_lockdown.sql:101`.
 4. Do not recreate `check_auto_enrollment()` (`20260115072241_add_portal_enhancements_v3.sql:540-589`). Item 9 drops it and its trigger in `20260926000200_consent_defaults_off.sql`, so no patient, adult or minor, is enrolled automatically.
-5. In it, replace `portal_link_patient_record` so it returns `needs_staff_verification` for a minor's record and never self-creates one for a minor `p_dob`.
+5. In it, replace `portal_link_patient_record` so it returns `needs_staff_verification` for a minor's record and never self-creates one for a minor `p_dob`. **Done early**, in its own migration, `20260926000210_portal_link_adults_only.sql`.
 6. Store the consent in the existing `patient_consent_records` as `consent_type = 'guardian_consent'`. Staff with `register` can already insert there (`20260924110300_rls_patient_portal.sql:330-332`).
 7. Add `patientGuardians` (`id, patientId, _dirty, _syncedAt`) to the Dexie `version(19)` that item 6 adds after `src/db/index.ts:1505`. Keep consent rows in item 6's `consents` table.
 8. Register both in `src/sync/adapter.ts` (`Tbl` 54, `mapToDB` 94, `tables` 394, `localTableMap` 410), with `patient_consent_records` in `APPEND_ONLY` (77).
@@ -611,6 +666,15 @@ This change adds no data flow, so the privacy notice does not need to change.
 20. Add a "Guardians" panel to `src/pages/PatientDetail.tsx` beside `PortalStatusCard` (930), not inside it, for staff verification.
 21. At portal login, on the device, ask a guardian-linked patient who has turned 18 for their own consent, then set `revoked_at` on the link.
 22. In the same commit, add a "Children and people who cannot consent for themselves" section to `src/pages/legal/PrivacyPolicy.tsx`, bump `updated` (line 11), add guardian wording to `src/pages/legal/TermsOfUse.tsx:28-35`, and update `docs/legal/README.md:18`.
+
+**Done in the code (lane mA).** Steps 1, 5, 14 and 15 are done, and part of step 22.
+- `isMinor` and `ADULT_AGE` are in `src/utils/patient.ts`. `patientAge` reads a date of birth as a calendar day.
+- Portal sign-up requires a date of birth, online and offline, and refuses anyone under 18.
+- Sign-up, login and the email lookup never link an account to a child's record.
+- The server's `portal_link_patient_record` refuses the same cases (migration `000210`).
+- The privacy notice has a "Children" section.
+
+A record with no date of birth still links, and existing links are unchanged. Everything to do with guardians waits on the guardian decision: steps 2 to 4, 6 to 13, 16 to 21, and the terms wording in step 22.
 
 **How to check it.**
 - `npm run test:run` with new cases: 17 years 364 days and exactly 18 (`src/utils/patient.test.ts`), a minor without a guardian (`src/validation/schemas.test.ts`), and a blocked minor (`src/services/autoEnrollment.test.ts`, `src/features/patient-portal/PatientRegister.test.tsx`).
@@ -646,6 +710,8 @@ This change adds no data flow, so the privacy notice does not need to change.
 15. Create `src/pages/legal/Unsubscribe.tsx` (new) on `LegalPage`, and route it beside `/privacy` (`src/App.tsx:413`).
 16. In the same commit, add the Twilio fallback to `src/pages/legal/PrivacyPolicy.tsx:71` and describe STOP and the email link at `:106`. Document the new secrets in `docs/deployment/SMS_SETUP_TERMII.md` and `docs/deployment/EMAIL_SETUP_GUIDE.md`.
 17. Remove the disclaimer at `ManageAccount.tsx:284-287`, and hide "Email reminders".
+
+**Done in the code (first pass, no migration).** Step 6 and the device half of step 7 are done. `reminderSkipReason` now treats a pulled `false` as an opt-out, as it already did `0` (`src/services/reminderEligibility.ts`, `isReminderOptedOut`), and `ScheduleReminderForm` blocks it too. `notificationWorker.ts` reads the patient's setting on this device right before each of its four send paths. An opted-out reminder in the device outbox or queue ends `cancelled` and is never sent. A server `medication_reminders` row ends `failed`, because that table's status check has no `cancelled`. When the setting cannot be read, the reminder is held, not sent. `reminderKindForTemplateKey` and `TRANSACTIONAL_TEMPLATE_KEYS` live in `src/features/notifications/smsOutbox.ts`, so codes and televisit links are never suppressed. Step 12's security half is done too (see [Fix these first](#fix-these-first)): `send-otp-email` calls `requireStaff`, checks the code with `validOtp` and escapes every value. The server side is still open: steps 1 to 5 and 8 to 11, and step 12's `kind` field. So are the email headers, the unsubscribe page and STOP handling in steps 13 to 17, which wait on the decision below.
 
 **How to check it.**
 - `src/services/notificationWorker.test.ts`: a reminder for an opted-out patient ends `cancelled` and `fetch` is never called. Cover a local opt-out and one pulled as `medication_reminders: false`.
@@ -775,7 +841,8 @@ The newest migration is `20260925100000_sync_authority_foundation.sql`, so every
 | Migration (new) | Items |
 |---|---|
 | `20260926000100_record_portal_consent.sql` | 2, 6 |
-| `20260926000200_consent_defaults_off.sql` | 9 |
+| `20260926000200_consent_defaults_off.sql` | 9 (**done**, first pass) |
+| `20260926000210_portal_link_adults_only.sql` | 17 (**done**, step 5) |
 | `20260926000300_limit_conflict_deltas.sql` | 1, 7 |
 | `20260926000400_add_patient_guardians.sql` | 17 |
 | `20260926000500_message_categories_and_suppressions.sql` | 18 |
