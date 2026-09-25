@@ -428,7 +428,7 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
               // record): end this portal sign-in on the device, as a refused
               // sign-in does, and go back to the login page.
               if (!isSignedInStaff(data.session.user)) {
-                await client.auth.signOut().catch(() => undefined);
+                await client.auth.signOut({ scope: "local" }).catch(() => undefined);
                 clearStoredSupabaseAuth();
               }
               clearStoredPortalUser();

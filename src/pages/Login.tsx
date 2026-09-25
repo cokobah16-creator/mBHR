@@ -79,7 +79,7 @@ function refusalError(reason: SignInRefusal): LoginError {
       return {
         title: "Your staff record could not be checked",
         detail:
-          "This device could not confirm your staff account with the server. Check the connection and try again.",
+          "Your password was accepted, but the server could not confirm your staff account. Check the connection and try again. If it keeps happening, ask an administrator to check the server.",
       };
     default:
       return {
