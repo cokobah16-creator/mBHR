@@ -381,7 +381,7 @@ The browser Termii gateway has been deleted (`src/services/messaging.ts:23-28`).
 **How to check it.**
 - `npm run test:run` passes. Adding `fetch("https://new-vendor.io")` to any `src` file makes the new test fail.
 - Manual check on a Vercel preview: load the app once, go offline and reload. The map renders, DevTools shows no CDN request, and a test error reaches Sentry with no CSP violation.
-- `git grep -n re_YFFH` returns nothing, and the Resend dashboard shows the old key as revoked.
+- `git grep -n re_YFFH -- ':!docs/legal/LEGAL_READINESS_CHECKLIST.md'` returns nothing (this checklist names the prefix on purpose), and the Resend dashboard shows the old key as revoked.
 
 **Decision needed.** The Foundation must sign or accept a DPA with each of Supabase, Sentry, Resend, Termii, Twilio, Vercel and GitHub, and confirm where each one stores data. It must also decide whether to keep Twilio and Sentry replay (`docs/legal/README.md:25`), and whether to self-host Jitsi.
 
