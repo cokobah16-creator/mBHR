@@ -335,6 +335,6 @@
   "portal.visit.assessment": "[EN] Clinician's assessment",
   "portal.visit.yourConcern": "[EN] What you told the clinician",
   "portal.vital.flagHint": "[EN] Readings with a warning sign are outside the usual range. This is a guide, not a diagnosis. Talk to your clinician about them.",
-  "portal.vital.notRated": "[EN] These readings are not rated here, because the usual ranges depend on age and the portal only rates adults' readings. Ask your clinician what they mean for you.",
+  "portal.vital.notRated": "[EN] Blood pressure is not rated here for children, or when no date of birth is recorded, because the usual ranges depend on age. Ask your clinician what it means for you.",
   "portal.vital.recordedOn": "[EN] Recorded by the clinic team on {{date}}"
 }
