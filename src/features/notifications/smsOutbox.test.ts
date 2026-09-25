@@ -14,6 +14,7 @@ import {
   fromServerReminder,
   isStaffMarkedSent,
   isStuckSending,
+  isTransactionalTemplateKey,
   isWorkerSendable,
   localeFromPreference,
   maskPhone,
@@ -22,7 +23,9 @@ import {
   outboxTemplateFor,
   parseSendAt,
   PROVIDER_ACCEPTED_AT_KEY,
+  reminderKindForTemplateKey,
   sentAtLabel,
+  SERVER_REMINDER_KIND,
   sortOutbox,
   STAFF_FAILURE_PREFIX,
   STAFF_SENT_NOTE,
@@ -35,6 +38,7 @@ import {
   type ReminderDraft,
   type SendingContext,
 } from "./smsOutbox";
+import { REMINDER_SKIP_MESSAGE } from "@/services/reminderEligibility";
 
 const NOW = new Date(2026, 8, 23, 12, 0, 0);
 
@@ -502,6 +506,80 @@ describe("what the worker sends from the device outbox", () => {
       }),
     ).toBe(true);
     expect(isWorkerSendable(deviceMsg({ channel: "whatsapp" }))).toBe(false);
+  });
+});
+
+describe("which reminder setting covers a message", () => {
+  it("maps the reminder template keys to the patient's settings", () => {
+    expect(reminderKindForTemplateKey("followup.medication")).toBe("medication");
+    expect(reminderKindForTemplateKey("medication_reminder")).toBe("medication");
+    expect(reminderKindForTemplateKey("appointment.reminder")).toBe("appointment");
+    expect(reminderKindForTemplateKey("follow_up_reminder")).toBe("appointment");
+    expect(SERVER_REMINDER_KIND).toBe("medication");
+  });
+
+  it("never treats one-time codes or televisit links as reminders", () => {
+    expect(isTransactionalTemplateKey("otp")).toBe(true);
+    expect(isTransactionalTemplateKey("televisit_scheduled")).toBe(true);
+    expect(isTransactionalTemplateKey("medication_reminder")).toBe(false);
+    expect(reminderKindForTemplateKey("otp")).toBeNull();
+    expect(reminderKindForTemplateKey("televisit_scheduled")).toBeNull();
+  });
+
+  it("has no reminder setting for other or missing keys", () => {
+    expect(reminderKindForTemplateKey("custom")).toBeNull();
+    expect(reminderKindForTemplateKey("portal.invitation")).toBeNull();
+    expect(reminderKindForTemplateKey("")).toBeNull();
+    expect(reminderKindForTemplateKey(undefined)).toBeNull();
+  });
+});
+
+describe("reminders not sent because the patient opted out", () => {
+  it("says why a device reminder was cancelled", () => {
+    const item = fromDeviceMessage(
+      deviceMsg({ status: "cancelled", errorMessage: REMINDER_SKIP_MESSAGE.opted_out }),
+      "outbox",
+    );
+    expect(explainState(item, ctx())).toBe(
+      "Cancelled before sending. When mBHR went to send it, the patient had turned off this type of SMS reminder.",
+    );
+    const byStaff = fromDeviceMessage(deviceMsg({ status: "cancelled" }), "outbox");
+    expect(explainState(byStaff, ctx())).toBe("Cancelled. It will not be sent.");
+  });
+
+  it("says why a server reminder is marked failed", () => {
+    expect(describeFailure(REMINDER_SKIP_MESSAGE.opted_out)).toBe(
+      "When mBHR went to send it, the patient had turned off this type of SMS reminder, so it was not sent.",
+    );
+    const item = fromServerReminder({
+      id: "r1",
+      patientId: "p1",
+      medicationName: "Amoxicillin",
+      dosage: "500 mg",
+      scheduledAt: NOW,
+      phoneNumber: "+2348031234567",
+      message: "Take it now.",
+      status: "failed",
+      errorMessage: REMINDER_SKIP_MESSAGE.opted_out,
+    });
+    expect(explainState(item, ctx())).toMatch(/patient had turned off this type of SMS reminder/);
+  });
+
+  it("describes the opt-out in the past tense, since the patient may turn reminders back on", () => {
+    const cancelled = fromDeviceMessage(
+      deviceMsg({ status: "cancelled", errorMessage: REMINDER_SKIP_MESSAGE.opted_out }),
+      "outbox",
+    );
+    expect(explainState(cancelled, ctx())).not.toMatch(/has turned off/);
+    expect(describeFailure(REMINDER_SKIP_MESSAGE.opted_out)).not.toMatch(/has turned off/);
+  });
+
+  it("says when the reminder settings could not be read", () => {
+    expect(
+      describeFailure(
+        "preference_check_failed: the patient's reminder settings could not be read on this device",
+      ),
+    ).toMatch(/reminder settings could not be read/);
   });
 });
 

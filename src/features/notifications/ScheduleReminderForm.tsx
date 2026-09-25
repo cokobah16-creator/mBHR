@@ -13,6 +13,7 @@ import { PatientSearch } from "@/components/PatientSearch";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getSmsTemplateBody, renderTemplate } from "@/services/messageTemplates";
 import { queueSMS } from "@/services/notificationWorker";
+import { isReminderOptedOut } from "@/services/reminderEligibility";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import {
   MAX_MESSAGE_LENGTH,
@@ -202,7 +203,9 @@ export function ScheduleReminderForm({
 
   const messageText = messageEdited ? message : templateText;
   const parts = estimateSmsParts(messageText.trim());
-  const optedOut = preference?.medicationReminders === 0;
+  // Same rule as the notification worker, which also treats a setting
+  // pulled from the server as false as off.
+  const optedOut = isReminderOptedOut("medication", preference);
   const channelNote = preference?.communicationChannel
     ? CHANNEL_NOTE[preference.communicationChannel]
     : undefined;
