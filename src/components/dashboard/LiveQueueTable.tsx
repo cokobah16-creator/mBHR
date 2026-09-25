@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db";
+import { readActiveQueue } from "@/features/tickets/queueReads";
 import { FLOW_STAGE_LABELS, type FlowStage } from "@/services/patientFlow";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 
@@ -29,7 +30,7 @@ function useNow() {
 export function LiveQueueTable({ limit = 10 }: { limit?: number }) {
   const now = useNow();
   const rows = useLiveQuery(async () => {
-    const items = await db.queue.filter((q) => q.status !== "done").toArray();
+    const items = await readActiveQueue();
     const patients = await db.patients.bulkGet([...new Set(items.map((i) => i.patientId))]);
     const byId = new Map(patients.filter(Boolean).map((p) => [p!.id, p!]));
     return items.map((i) => ({ ...i, patient: byId.get(i.patientId) }));

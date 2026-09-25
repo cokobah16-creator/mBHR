@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Patient, type QueueItem } from "@/db";
+import { ACTIVE_QUEUE_STATUSES } from "@/features/tickets/queueReads";
 import { useAuthStore } from "@/stores/auth";
 import {
   canManageQueue,
@@ -86,7 +87,11 @@ export function EnhancedQueueBoard() {
   const [actionError, setActionError] = useState("");
   const [announcement, setAnnouncement] = useState("");
 
-  const queueItems = useLiveQuery(() => db.queue.orderBy("position").toArray(), []);
+  // Rows still waiting or being served only (indexed), in queue order.
+  const queueItems = useLiveQuery(
+    () => db.queue.where("status").anyOf(ACTIVE_QUEUE_STATUSES).sortBy("position"),
+    [],
+  );
 
   const activeItems = useMemo(
     () => (queueItems ?? []).filter((item) => item.status !== "done"),
