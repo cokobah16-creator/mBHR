@@ -30,6 +30,17 @@ export function dispenseMode(
   return local > 0 ? "local" : "ledger";
 }
 
+/**
+ * Whether a prescription, as re-read inside the write transaction, may still
+ * be dispensed or cancelled: it is open and no command for it is waiting.
+ * Another tab or window may have dispensed it since this page loaded.
+ */
+export function prescriptionStillOpen(
+  rx: Pick<Prescription, "status" | "pendingCommandId"> | undefined,
+): boolean {
+  return !!rx && rx.status === "open" && !rx.pendingCommandId;
+}
+
 export interface DispensePlanLine {
   itemId: string;
   qty: number;

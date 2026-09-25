@@ -6,6 +6,7 @@ import {
   dispenseMode,
   dispenseMovementId,
   planCoversAllLines,
+  prescriptionStillOpen,
   receiveProblem,
 } from "./pharmacyCommandsModel";
 import { allocateFEFO } from "@/features/pharmacy/fefo";
@@ -114,5 +115,20 @@ describe("receiveProblem", () => {
     expect(receiveProblem({ lotNumber: "L1", qty: 0, expiryDate: "2027-01-01" })).toMatch(/at least 1/);
     expect(receiveProblem({ lotNumber: "L1", qty: 2.5, expiryDate: "2027-01-01" })).toMatch(/whole/);
     expect(receiveProblem({ lotNumber: "L1", qty: 2, expiryDate: "nope" })).toMatch(/valid expiry/);
+  });
+});
+
+describe("prescriptionStillOpen (re-read inside the dispense transaction)", () => {
+  it("allows an open prescription with no command waiting", () => {
+    expect(prescriptionStillOpen({ status: "open" })).toBe(true);
+  });
+  it("refuses one dispensed or cancelled from another tab since the page loaded", () => {
+    expect(prescriptionStillOpen({ status: "dispensed" })).toBe(false);
+    expect(prescriptionStillOpen({ status: "partial" })).toBe(false);
+    expect(prescriptionStillOpen({ status: "void" })).toBe(false);
+  });
+  it("refuses one with a command still waiting, and one no longer on this device", () => {
+    expect(prescriptionStillOpen({ status: "open", pendingCommandId: "c1" })).toBe(false);
+    expect(prescriptionStillOpen(undefined)).toBe(false);
   });
 });

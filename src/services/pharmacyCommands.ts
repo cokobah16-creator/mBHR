@@ -48,6 +48,7 @@ import {
   countAdjustment,
   dispenseMode,
   planCoversAllLines,
+  prescriptionStillOpen,
   receiveProblem,
   type DispensePlanLine,
 } from "./pharmacyCommandsModel";
@@ -120,7 +121,7 @@ export async function voidPrescription(
   let mode = "local" as "queued" | "local";
   await mbhrDb.transaction("rw", [mbhrDb.prescriptions, mbhrDb.rx_commands], async () => {
     const rx = await mbhrDb.prescriptions.get(prescriptionId);
-    if (!rx || rx.status !== "open" || rx.pendingCommandId) throw named("PrescriptionNotOpen");
+    if (!prescriptionStillOpen(rx)) throw named("PrescriptionNotOpen");
     const neverUploaded = rx._dirty === 1 && !rx._syncedAt;
     if (!ledgerEnabled || rx.localOnly === 1 || neverUploaded) {
       // Not on the server: cancel here; it is never uploaded as open.
@@ -197,9 +198,10 @@ export async function dispensePrescription(
   const lotNumbers = new Map(plan.flatMap((line) => line.allocations.map((a) => [a.batchId, a.lotNumber] as const)));
 
   await mbhrDb.transaction("rw", rxTables(), async () => {
+    // Re-read inside the transaction: another tab may have dispensed this
+    // prescription, or used a lot, since the page loaded.
     const rx = await mbhrDb.prescriptions.get(prescription.id);
-    if (!rx || rx.status !== "open" || rx.pendingCommandId) throw named("PrescriptionNotOpen");
-    // Re-read inside the transaction: another tab may have used a lot.
+    if (!prescriptionStillOpen(rx)) throw named("PrescriptionNotOpen");
     for (const [batchId, qty] of built.byBatch) {
       const lot = await mbhrDb.pharmacy_batches.get(batchId);
       if (!lot || lot.qtyOnHand < qty) {

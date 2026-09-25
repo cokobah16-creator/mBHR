@@ -283,6 +283,25 @@ describe("allergies service", () => {
       expect(result).toBeNull();
     });
 
+    it("checks active allergies of every type, not only medication", async () => {
+      const recordedAsOther = {
+        id: "a2",
+        allergen: "Penicillin",
+        allergyType: "other",
+        isActive: 1,
+      };
+      const chain = makeChain([recordedAsOther]);
+      mockWhere.mockReturnValue({ equals: vi.fn().mockReturnValue(chain) });
+
+      const result = await checkMedicationAllergy("p1", "Amoxicillin 500 mg");
+      const keep = chain.filter.mock.calls[0][0] as (a: unknown) => boolean;
+
+      expect(result).toEqual(recordedAsOther);
+      expect(keep({ allergyType: "other", isActive: 1 })).toBe(true);
+      expect(keep({ allergyType: "food", isActive: true })).toBe(true);
+      expect(keep({ allergyType: "medication", isActive: 0 })).toBe(false);
+    });
+
     it("returns null when no medication allergies exist", async () => {
       const chain = makeChain([]);
       mockWhere.mockReturnValue({ equals: vi.fn().mockReturnValue(chain) });

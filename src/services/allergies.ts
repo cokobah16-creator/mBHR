@@ -136,7 +136,9 @@ export const checkMedicationAllergy = async (
   patientId: string,
   medicationName: string,
 ): Promise<PatientAllergy | null> => {
-  const allergies = await getMedicationAllergies(patientId);
+  // Every active allergy, whatever type it was recorded as: a drug allergy
+  // filed as "other" must still be caught. The matcher decides.
+  const allergies = await getActiveAllergies(patientId);
 
   // Direct name match or same drug class (e.g. penicillin → amoxicillin).
   const match = allergies.find(

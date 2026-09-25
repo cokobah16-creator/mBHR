@@ -4,7 +4,9 @@
 // outreach: an allergy recorded as "Penicillin" and a prescription for
 // "Amoxicillin 500 mg". This adds a small, conservative map of drug classes
 // commonly stocked at outreaches. It errs toward warning: a match means
-// "check before dispensing", not a diagnosis.
+// "check before dispensing", not a diagnosis. Every active allergy is
+// screened whatever type it was recorded as; an allergen the list does not
+// know is shown for a check by hand (uncheckedAllergens).
 
 export interface AllergyMatch {
   kind: "direct" | "class";
@@ -113,4 +115,34 @@ export function matchMedicationToAllergen(
     }
   }
   return null;
+}
+
+/**
+ * Whether the allergen names a drug or drug class in the list above, so a
+ * medicine that does not match it can be cleared. Anything else (a food, a
+ * drug not in the list, a spelling the list does not have) cannot.
+ */
+export function isRecognisedAllergen(allergen: string): boolean {
+  return classesForAllergen(allergen).length > 0;
+}
+
+/**
+ * Recorded allergens that must be checked by hand against these medicines:
+ * not recognised (see isRecognisedAllergen) and matching none of them.
+ * Listed once each, first spelling kept. There is no guessing at
+ * misspellings: an allergen the matcher does not know is never read as
+ * "no allergy".
+ */
+export function uncheckedAllergens(medicationNames: string[], allergens: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const allergen of allergens) {
+    const key = norm(allergen);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (isRecognisedAllergen(allergen)) continue;
+    if (medicationNames.some((med) => matchMedicationToAllergen(med, allergen))) continue;
+    out.push(allergen.trim().replace(/\s+/g, " "));
+  }
+  return out;
 }

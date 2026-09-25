@@ -4,11 +4,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useLiveQuery } from "dexie-react-hooks";
 import { formatNigerianDate } from "@/utils/dateFormat";
-import { db, generateId, createAuditLog, InventoryItem } from "@/db";
+import { db, generateId, createAuditLog, InventoryItem, type PatientAllergy } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
 import { recordStageEvent } from "@/services/stageEvents";
-import { matchMedicationToAllergen } from "@/utils/allergyMatch";
+import { matchMedicationToAllergen, uncheckedAllergens } from "@/utils/allergyMatch";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ExclamationTriangleIcon } from "@heroicons/react/20/solid";
 import { isAllergyActive } from "@/utils/allergyActive";
@@ -45,6 +45,7 @@ export function DispenseForm({
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [formError, setFormError] = useState("");
   const [allergyAcknowledged, setAllergyAcknowledged] = useState(false);
+  const [allergyRetry, setAllergyRetry] = useState(0);
 
   const {
     register,
@@ -58,16 +59,24 @@ export function DispenseForm({
   const watchedItemName = watch("itemName");
   const watchedQty = watch("qty");
 
-  const medicationAllergies = useLiveQuery(
-    () =>
-      db.patientAllergies
+  // Every active allergy, whatever type it was recorded as. Dispensing
+  // stays blocked while they load or if they cannot be read: that must
+  // never read as "no allergies".
+  const allergyRead = useLiveQuery(async () => {
+    const forId = patientId;
+    try {
+      const rows = await db.patientAllergies
         .where("patientId")
-        .equals(patientId)
-        .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
-        .toArray(),
-    [patientId],
-    [],
-  );
+        .equals(forId)
+        .filter((a) => isAllergyActive(a))
+        .toArray();
+      return { forId, status: "ready" as const, allergies: rows };
+    } catch {
+      return { forId, status: "error" as const, allergies: [] as PatientAllergy[] };
+    }
+  }, [patientId, allergyRetry]);
+  // A result for another patient (while the query re-runs) is still loading.
+  const allergyStatus = allergyRead && allergyRead.forId === patientId ? allergyRead.status : "loading";
 
   useEffect(() => {
     db.inventory
@@ -86,11 +95,21 @@ export function DispenseForm({
   );
 
   const conflicts = useMemo(() => {
-    if (!watchedItemName) return [];
-    return (medicationAllergies ?? [])
+    if (!watchedItemName || !allergyRead || allergyRead.forId !== patientId) return [];
+    return allergyRead.allergies
       .map((a) => ({ allergy: a, match: matchMedicationToAllergen(watchedItemName, a.allergen) }))
       .filter((c) => c.match !== null);
-  }, [watchedItemName, medicationAllergies]);
+  }, [watchedItemName, allergyRead, patientId]);
+
+  // Allergens the matcher does not know: checked by hand, with the same
+  // acknowledgement as a match.
+  const unchecked = useMemo(() => {
+    if (!watchedItemName || !allergyRead || allergyRead.forId !== patientId) return [];
+    return uncheckedAllergens(
+      [watchedItemName],
+      allergyRead.allergies.map((a) => a.allergen),
+    );
+  }, [watchedItemName, allergyRead, patientId]);
 
   // A new medicine needs a fresh acknowledgement.
   useEffect(() => setAllergyAcknowledged(false), [watchedItemName]);
@@ -100,12 +119,17 @@ export function DispenseForm({
   const insufficient = selectedItem !== null && qty > selectedItem.onHandQty;
   const belowReorder =
     selectedItem !== null && remaining !== null && remaining >= 0 && remaining <= selectedItem.reorderThreshold;
-  const blockedByAllergy = conflicts.length > 0 && !allergyAcknowledged;
+  const allergyWarning = conflicts.length > 0 || unchecked.length > 0;
+  const blockedByAllergy = allergyStatus !== "ready" || (allergyWarning && !allergyAcknowledged);
 
   const onSubmit = async (data: DispenseFormData) => {
     setFormError("");
     if (!selectedItem) {
       setFormError("Choose a medicine from the stock list.");
+      return;
+    }
+    if (allergyStatus !== "ready") {
+      setFormError("This patient's allergies have not been checked yet. Nothing was dispensed.");
       return;
     }
     if (blockedByAllergy) {
@@ -145,11 +169,19 @@ export function DispenseForm({
         });
       });
 
+      // The dispense is saved: a failed audit entry must not report it as
+      // not dispensed, which would invite a second dispense.
       await createAuditLog(
         currentUser?.role || "unknown",
-        conflicts.length > 0 ? "dispense_allergy_override" : "dispense",
+        conflicts.length > 0
+          ? "dispense_allergy_override"
+          : unchecked.length > 0
+            ? "dispense_allergy_checked_by_hand"
+            : "dispense",
         "medication",
         dispense.id,
+      ).catch((error) =>
+        console.warn("Dispense audit entry not saved:", error instanceof Error ? error.name : "unknown"),
       );
 
       await recordStageEvent({
@@ -223,22 +255,61 @@ export function DispenseForm({
           )}
         </div>
 
-        {conflicts.length > 0 && (
-          <div className="rounded-md border border-danger-line bg-danger-soft p-4" role="alert">
-            <p className="flex items-center gap-2 text-h3 text-danger-fg">
-              <ExclamationTriangleIcon className="h-5 w-5" aria-hidden />
-              Possible allergy
-            </p>
-            <ul className="mt-2 space-y-1 text-body text-danger-fg">
-              {conflicts.map(({ allergy, match }) => (
-                <li key={allergy.id}>
-                  Recorded allergy: <strong>{allergy.allergen}</strong> ({allergy.severity}
-                  {allergy.reaction ? `, ${allergy.reaction}` : ""})
-                  {match?.kind === "class" &&
-                    ` — ${watchedItemName} is in the same ${match.drugClass} class.`}
-                </li>
-              ))}
-            </ul>
+        {allergyStatus === "loading" && (
+          <p className="text-caption text-ink-muted" role="status">
+            Checking recorded allergies…
+          </p>
+        )}
+
+        {allergyStatus === "error" && (
+          <div className="banner banner-danger" role="alert">
+            <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+            <span className="flex-1">This patient's allergies could not be read, so dispensing is blocked.</span>
+            <button type="button" className="btn-secondary" onClick={() => setAllergyRetry((n) => n + 1)}>
+              Try again
+            </button>
+          </div>
+        )}
+
+        {allergyWarning && (
+          <div
+            className={`rounded-md border p-4 ${
+              conflicts.length > 0 ? "border-danger-line bg-danger-soft" : "border-warning-line bg-warning-soft"
+            }`}
+            role="alert"
+          >
+            {conflicts.length > 0 && (
+              <>
+                <p className="flex items-center gap-2 text-h3 text-danger-fg">
+                  <ExclamationTriangleIcon className="h-5 w-5" aria-hidden />
+                  Possible allergy
+                </p>
+                <ul className="mt-2 space-y-1 text-body text-danger-fg">
+                  {conflicts.map(({ allergy, match }) => (
+                    <li key={allergy.id}>
+                      Recorded allergy: <strong>{allergy.allergen}</strong> ({allergy.severity}
+                      {allergy.reaction ? `, ${allergy.reaction}` : ""})
+                      {match?.kind === "class" &&
+                        ` — ${watchedItemName} is in the same ${match.drugClass} class.`}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {unchecked.length > 0 && (
+              <div className={conflicts.length > 0 ? "mt-3" : ""}>
+                <p className="flex items-center gap-2 text-h3 text-warning-fg">
+                  <ExclamationTriangleIcon className="h-5 w-5" aria-hidden />
+                  {unchecked.length === 1 ? "Check this allergy by hand" : "Check these allergies by hand"}
+                </p>
+                <p className="mt-2 text-body text-ink">
+                  Recorded allergy to <strong>{unchecked.join(", ")}</strong>. The app cannot check{" "}
+                  {unchecked.length === 1 ? "it" : "these"} against medicines (not a medicine or drug class it
+                  knows, or spelt differently). Check by hand that {watchedItemName} is not, does not contain and
+                  is not related to {unchecked.length === 1 ? "it" : "them"}.
+                </p>
+              </div>
+            )}
             <label className="mt-3 flex items-start gap-2 text-body text-ink">
               <input
                 type="checkbox"
@@ -246,7 +317,11 @@ export function DispenseForm({
                 onChange={(e) => setAllergyAcknowledged(e.target.checked)}
                 className="mt-1 h-4 w-4"
               />
-              <span>I have checked this with the prescriber and will dispense anyway.</span>
+              <span>
+                {conflicts.length > 0
+                  ? "I have checked this with the prescriber and will dispense anyway."
+                  : `I have checked ${unchecked.length === 1 ? "this allergy" : "these allergies"} by hand and will dispense.`}
+              </span>
             </label>
           </div>
         )}
