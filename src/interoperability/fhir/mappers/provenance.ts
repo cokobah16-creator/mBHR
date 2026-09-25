@@ -39,6 +39,15 @@
 //     a review is the verification that makes a laboratory result final
 //     (provenance-participant-type "verifier"). Release, withhold, merge and
 //     upload carry no agent type.
+//   - The target Observation is the result as it is NOW (it has no
+//     versions). When a reviewed result's value, unit, range or
+//     interpretation changes, the database clears its review and release
+//     and stamps amended_at; the log keeps the old rows. So a review or
+//     release is published only while it still stands: the result still
+//     carries a review, and the event was recorded after the latest
+//     amendment. Otherwise it described an earlier value and is left out
+//     (like the events of a superseded result). A withhold is kept: an
+//     amendment does not lift it, the result stays off the portal.
 //   - activity is an explicit local code (https://mbhr.app/codes/provenance-activity)
 //     except for an upload, which is exactly v3-DataOperation CREATE.
 //   - Never published: the withhold reason and any other free text, the
@@ -53,6 +62,7 @@ import type { CodeableConcept, Coding, Meta, Reference, Resource } from "../type
 import { MBHR_CODES } from "../terminology/codeSystems";
 import { applyStatusMap, type StatusMap } from "../terminology/statusMaps";
 import { LAB_OBSERVATION_PREFIX } from "../resources/labObservation";
+import { canonicalMicros } from "./auditEvent";
 import { MBHR_SOURCE, instant, str, type MapContext, type Row } from "./common";
 
 // ---------------------------------------------------------------------------
@@ -217,8 +227,11 @@ export function parseProvenanceId(id: string): { kind: ProvenanceKind; sourceId:
 // ---------------------------------------------------------------------------
 
 export const LAB_EVENT_COLUMNS = ["id", "result_id", "action", "actor_id", "created_at"] as const;
-/** lab_results: the order of the result and whether a newer result replaced it. */
-export const LAB_RESULT_LINK_COLUMNS = ["id", "order_id", "superseded_by"] as const;
+/**
+ * lab_results: the order of the result, whether a newer result replaced it,
+ * whether it carries a review now, and when its value last changed.
+ */
+export const LAB_RESULT_LINK_COLUMNS = ["id", "order_id", "superseded_by", "reviewed_at", "amended_at"] as const;
 /** lab_orders: the patient of the order. */
 export const LAB_ORDER_LINK_COLUMNS = ["id", "patient_id"] as const;
 export const MERGE_EVENT_COLUMNS = ["id", "winner_id", "loser_id", "kind", "actor_id", "created_at"] as const;
@@ -254,12 +267,35 @@ export interface LabEventLinks {
   current: boolean;
   /** lab_orders.patient_id: internal, never published; must resolve to a Patient. */
   patientId: string;
+  /** lab_results.reviewed_at is set: the result carries a review now. */
+  reviewed: boolean;
+  /**
+   * lab_results.amended_at as stored (the latest change of value, unit,
+   * range or interpretation), or null when the result was never amended.
+   */
+  amendedAt: string | null;
+}
+
+/**
+ * Whether a review or release event still stands: the result still carries
+ * a review, and the event was recorded after the result's latest amendment
+ * (compared to the microsecond). An amendment time that cannot be read, or
+ * an event time that cannot be compared with it, counts as not standing:
+ * unknown is never published as verified.
+ */
+export function reviewStillStands(recordedAt: unknown, links: LabEventLinks): boolean {
+  if (!links.reviewed) return false;
+  if (links.amendedAt === null) return true;
+  const amended = canonicalMicros(links.amendedAt);
+  const recorded = canonicalMicros(recordedAt);
+  return amended !== null && recorded !== null && recorded > amended;
 }
 
 /**
  * lab_result_release_log row -> Provenance, or null (withheld) when the
  * action is not one of the three, the time is missing, the result is not
- * visible or was replaced, or its patient does not resolve.
+ * visible or was replaced, its patient does not resolve, or it is a review
+ * or release that no longer stands (see reviewStillStands).
  */
 export function mapLabReleaseEvent(
   row: Row,
@@ -273,6 +309,8 @@ export function mapLabReleaseEvent(
   const recorded = instant(row, "created_at");
   if (!id || !UUID.test(id) || !resultId || !UUID.test(resultId) || !activity || !recorded) return null;
   if (!links || !links.current || !UUID.test(links.orderId) || !refs.patientFhirIds.has(links.patientId)) return null;
+  // A cleared review (and the release that went with it) described an earlier value.
+  if ((activity === "lab-review" || activity === "lab-release") && !reviewStillStands(row.created_at, links)) return null;
 
   const agent: ProvenanceAgent = { who: staffAgent(staff, row.actor_id) };
   if (activity === "lab-review") agent.type = VERIFIER;

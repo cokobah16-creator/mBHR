@@ -73,11 +73,19 @@ const ORDER_M = { id: "0a000000-0000-4000-8000-00000000000b", patient_id: P_MERG
 const ORDER_O = { id: "0a000000-0000-4000-8000-00000000000c", patient_id: P_OTHER.id };
 const ORDER_X = { id: "0a000000-0000-4000-8000-00000000000d", patient_id: P_ORPHAN.id };
 
-const RES_A1 = { id: "0e000000-0000-4000-8000-0000000000a1", order_id: ORDER_A.id, superseded_by: null };
-const RES_A2 = { id: "0e000000-0000-4000-8000-0000000000a2", order_id: ORDER_A.id, superseded_by: RES_A1.id };
-const RES_M = { id: "0e000000-0000-4000-8000-0000000000b1", order_id: ORDER_M.id, superseded_by: null };
-const RES_O = { id: "0e000000-0000-4000-8000-0000000000c1", order_id: ORDER_O.id, superseded_by: null };
-const RES_X = { id: "0e000000-0000-4000-8000-0000000000d1", order_id: ORDER_X.id, superseded_by: null };
+const labResult = (id: string, order: string, reviewedAt: string | null, over: Json = {}) => ({
+  id,
+  order_id: order,
+  superseded_by: null,
+  reviewed_at: reviewedAt,
+  amended_at: null,
+  ...over,
+});
+const RES_A1 = labResult("0e000000-0000-4000-8000-0000000000a1", ORDER_A.id, "2026-09-12T08:00:00.123456+00:00");
+const RES_A2 = labResult("0e000000-0000-4000-8000-0000000000a2", ORDER_A.id, "2026-09-12T07:00:00+00:00", { superseded_by: RES_A1.id });
+const RES_M = labResult("0e000000-0000-4000-8000-0000000000b1", ORDER_M.id, "2026-09-13T08:00:00+00:00");
+const RES_O = labResult("0e000000-0000-4000-8000-0000000000c1", ORDER_O.id, "2026-09-14T08:00:00+00:00");
+const RES_X = labResult("0e000000-0000-4000-8000-0000000000d1", ORDER_X.id, "2026-09-12T11:00:00+00:00");
 
 const WITHHOLD_REASON = "WITHHOLD-REASON: discuss in person before release";
 const logRow = (n: number, result: string, action: string | null, actor: string | null, at: string, reason: string | null = null) => ({
@@ -494,7 +502,7 @@ const REFS = {
   ]),
 };
 const STAFF = new Map([[DOCTOR_UID, { reference: `Practitioner/${DOCTOR_PRACTITIONER}` }]]);
-const LINK_A1 = { orderId: ORDER_A.id, current: true, patientId: P_KEPT.id };
+const LINK_A1 = { orderId: ORDER_A.id, current: true, patientId: P_KEPT.id, reviewed: true, amendedAt: null };
 
 describe("Provenance ids", () => {
   it("are derived, stable, valid FHIR ids, and parse back", () => {
@@ -551,7 +559,7 @@ describe("Provenance mapping", () => {
     expect(mapLabReleaseEvent({ ...LOG_REVIEW, action: null }, LINK_A1, REFS, STAFF)).toBeNull();
     expect(mapLabReleaseEvent({ ...LOG_REVIEW, created_at: null }, LINK_A1, REFS, STAFF)).toBeNull();
     expect(mapLabReleaseEvent(LOG_SUPERSEDED, { ...LINK_A1, current: false }, REFS, STAFF)).toBeNull();
-    expect(mapLabReleaseEvent(LOG_X, { orderId: ORDER_X.id, current: true, patientId: P_ORPHAN.id }, REFS, STAFF)).toBeNull();
+    expect(mapLabReleaseEvent(LOG_X, { ...LINK_A1, orderId: ORDER_X.id, patientId: P_ORPHAN.id }, REFS, STAFF)).toBeNull();
     expect(mapLabReleaseEvent(LOG_REVIEW, undefined, REFS, STAFF)).toBeNull();
   });
 

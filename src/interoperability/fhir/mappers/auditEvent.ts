@@ -37,6 +37,11 @@
 //               search values: only parameter names were ever stored, and
 //               they are not published either)
 //
+// Reading an AuditEvent discloses which patients' records were accessed, so
+// the resource module hands the gateway the internal id behind every
+// Patient entity it publishes (auditEntityPatients) and the caller's own
+// access audit records each of them.
+//
 // Rows that cannot be told apart from a forged record are not published: a
 // "permit" row from an account that was neither staff nor a portal patient
 // can only come from a direct call of the Phase 1 recording function
@@ -208,6 +213,58 @@ export function auditPatientIds(row: Row): string[] {
   return Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && PATIENT_ID.test(x)))] : [];
 }
 
+/** One Patient entity of an event: its published id and the internal ids behind it (never published). */
+export interface EntityPatient {
+  fhirId: string;
+  internalIds: string[];
+}
+
+/**
+ * The patients an event names in entity, in the order the row records
+ * them: each canonical Patient once, with every internal id on the row that
+ * resolves to it (a merged-away record and its kept record are one
+ * entity). A patient that does not resolve is not named at all.
+ */
+export function auditEntityPatients(row: Row, refs: MapContext): EntityPatient[] {
+  const byFhirId = new Map<string, EntityPatient>();
+  for (const pid of auditPatientIds(row)) {
+    const fhirId = refs.patientFhirIds.get(pid);
+    if (!fhirId) continue;
+    const entry = byFhirId.get(fhirId);
+    if (entry) entry.internalIds.push(pid);
+    else byFhirId.set(fhirId, { fhirId, internalIds: [pid] });
+  }
+  return [...byFhirId.values()];
+}
+
+// ---------------------------------------------------------------------------
+// Exact server times
+// ---------------------------------------------------------------------------
+
+const MICROS = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}(?::?\d{2})?)$/;
+
+/**
+ * A timestamptz as the database sent it, in UTC with all six fractional
+ * digits, or null when it is not one. Two such values compare correctly as
+ * strings. Used where a millisecond value would be wrong: the AuditEvent
+ * keyset (rows within the same millisecond) and the order of a laboratory
+ * event and the result's amendment (mappers/provenance.ts).
+ */
+export function canonicalMicros(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const m = MICROS.exec(value.trim());
+  if (!m) return null;
+  const frac = (m[3] ?? "").padEnd(6, "0");
+  let zone = m[4];
+  if (zone !== "Z") {
+    const digits = zone.replace(":", "");
+    zone = `${digits.slice(0, 3)}:${digits.length > 3 ? digits.slice(3, 5) : "00"}`;
+  }
+  const t = Date.parse(`${m[1]}T${m[2]}.${frac.slice(0, 3)}${zone}`);
+  if (Number.isNaN(t)) return null;
+  return new Date(t).toISOString().replace(/Z$/, `${frac.slice(3)}Z`);
+}
+
 /**
  * The kind of account that made the request. Rows written before the
  * Phase 2 recording function carry no kind: a recorded staff role means a
@@ -242,11 +299,12 @@ export function auditOutcome(row: Row): AuditEventOutcome | null {
 }
 
 /**
- * The patient a row belongs to, for the gateway's scope check and the
- * caller's own access audit (internal id, never published): the first
- * recorded patient that the search named, or the first recorded patient.
- * null when the search named patients and the row records none of them
- * (the row is then not shown).
+ * The patient a row belongs to, for the gateway's scope check (internal
+ * id, never published): the first recorded patient that the search named,
+ * or the first recorded patient. null when the search named patients and
+ * the row records none of them (the row is then not shown). The caller's
+ * access audit records this patient AND every other patient the event
+ * names (see auditEntityPatients).
  */
 export function auditOwner(row: Row, named: readonly string[] | null): string | null {
   const ids = auditPatientIds(row);
@@ -333,22 +391,35 @@ export function mapAuditEvent(row: Row, refs: MapContext, staff: ReadonlyMap<str
     event.purposeOfEvent = [{ coding: [{ system: PURPOSE_OF_USE_SYSTEM, code: purpose }] }];
   }
 
-  const entities: AuditEventEntity[] = [];
-  const seen = new Set<string>();
-  for (const pid of auditPatientIds(row)) {
-    // Canonical record; a patient that no longer resolves (deleted, broken
-    // merge chain) is left out rather than named by its internal id.
-    const fhirId = refs.patientFhirIds.get(pid);
-    if (!fhirId || seen.has(fhirId)) continue;
-    seen.add(fhirId);
-    entities.push({
-      what: { reference: `Patient/${fhirId}` },
-      type: { system: RESOURCE_TYPES_SYSTEM, code: "Patient" },
-      role: ROLE_PATIENT,
-    });
-  }
+  // Canonical records; a patient that no longer resolves (deleted, broken
+  // merge chain) is left out rather than named by its internal id.
+  const entities: AuditEventEntity[] = auditEntityPatients(row, refs).map((p) => ({
+    what: { reference: `Patient/${p.fhirId}` },
+    type: { system: RESOURCE_TYPES_SYSTEM, code: "Patient" },
+    role: ROLE_PATIENT,
+  }));
   const resource = resourceEntity(row, action, permitted);
   if (resource) entities.push(resource);
   if (entities.length) event.entity = entities;
   return event;
+}
+
+function isPatientEntity(e: AuditEventEntity): boolean {
+  return e.role?.system === OBJECT_ROLE_SYSTEM && e.role.code === ROLE_PATIENT.code;
+}
+
+/**
+ * The event naming only the Patient entities in `fhirIds` (the resource
+ * read or searched is kept). Used when one event names more patients than
+ * the caller's own access audit can record: a patient is never shown to a
+ * reader without the access being recorded.
+ */
+export function keepPatientEntities(event: AuditEvent, fhirIds: ReadonlySet<string>): AuditEvent {
+  const entity = (event.entity ?? []).filter(
+    (e) => !isPatientEntity(e) || (e.what?.reference !== undefined && fhirIds.has(e.what.reference.slice("Patient/".length))),
+  );
+  const out: AuditEvent = { ...event };
+  if (entity.length) out.entity = entity;
+  else delete out.entity;
+  return out;
 }

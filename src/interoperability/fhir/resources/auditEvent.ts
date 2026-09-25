@@ -14,27 +14,37 @@
 // parameters are checked here on the rows it returns, page by page, like
 // keysetPage(): a page can come back short with a next link, but a match is
 // never skipped.
+//
+// An AuditEvent tells its reader whose records were accessed. So the
+// caller's own access audit records every patient the served events name
+// (each Patient entity, and the Patient a read asked for), not only the
+// patient the search named. That audit holds at most 100 patients per
+// request: a page ends early, with a next link, before it would name more.
 
 import { errors } from "../errors/operationOutcome";
 import type { Reference } from "../types/fhir";
 import { READ_PERMISSIONS } from "../authorization/permissions";
-import type { Row } from "../mappers/common";
+import { str, type Row } from "../mappers/common";
 import {
   AUDIT_EVENT_ACTION,
   AUDIT_EVENT_ACTION_SYSTEM,
   AUDIT_EVENT_OUTCOME,
   AUDIT_EVENT_OUTCOME_SYSTEM,
   RESTFUL_INTERACTION_SYSTEM,
+  auditEntityPatients,
   auditOutcome,
   auditOwner,
   auditPatientIds,
+  canonicalMicros,
+  keepPatientEntities,
   mapAuditEvent,
   staffAccountId,
   type AuditEvent,
   type AuditEventAction,
   type AuditEventOutcome,
+  type EntityPatient,
 } from "../mappers/auditEvent";
-import { referenceContext } from "../patients/canonical";
+import { referenceContext, resolvePatients } from "../patients/canonical";
 import { intersectDates, parseDateSearch, parseId, parseToken, type Cursor, type ParsedSearch } from "../search/params";
 import { applyStatusMap, sourceValuesFor } from "../terminology/statusMaps";
 import { isObj, type AddIssue } from "../validation/validate";
@@ -94,6 +104,7 @@ export const definition: ResourceDefinition = {
     "Never published: account ids, IP address hashes, user agents, request ids, search values and search parameter names.",
     "A patient whose record was deleted, or whose merge chain does not end, is left out of entity rather than named by an internal id.",
     "A refusal record is kept even when the account made it itself through the database function; a permitted access is recorded only for staff and for the patient's own portal account.",
+    "Reading AuditEvents is itself recorded against every patient the served events name. One response names at most 100 patients: a page may come back short, with a next link. A single event naming more patients than that (possible only at the 100-patient limit of one request) lists the first ones.",
     "Staff with audit_access only; not available to patients.",
   ],
 };
@@ -102,6 +113,8 @@ export const definition: ResourceDefinition = {
 const MAX_LIMIT = 101;
 /** p_patient_ids takes at most 100 entries. */
 const MAX_PATIENT_IDS = 100;
+/** The access audit records at most this many patients per request (audit/audit.ts). */
+export const MAX_AUDITED_PATIENTS = 100;
 /** Without an id or patient, a date range must be closed and at most this long. */
 export const MAX_DATE_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
 
@@ -109,28 +122,10 @@ export const MAX_DATE_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
 // Keyset: (occurred_at, id), newest first
 // ---------------------------------------------------------------------------
 
-const MICROS = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}(?::?\d{2})?)$/;
+// The keyset compares exactly what the database stores (canonicalMicros): a
+// millisecond value would skip rows within the same millisecond.
+export { canonicalMicros };
 const CANONICAL_MICROS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
-
-/**
- * A timestamptz as the database sent it, in UTC with all six fractional
- * digits (the keyset must compare exactly what the database stores; a
- * millisecond value would skip rows within the same millisecond).
- */
-export function canonicalMicros(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const m = MICROS.exec(value.trim());
-  if (!m) return null;
-  const frac = (m[3] ?? "").padEnd(6, "0");
-  let zone = m[4];
-  if (zone !== "Z") {
-    const digits = zone.replace(":", "");
-    zone = `${digits.slice(0, 3)}:${digits.length > 3 ? digits.slice(3, 5) : "00"}`;
-  }
-  const t = Date.parse(`${m[1]}T${m[2]}.${frac.slice(0, 3)}${zone}`);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toISOString().replace(/Z$/, `${frac.slice(3)}Z`);
-}
 
 interface AuditKey {
   occurred: string;
@@ -201,9 +196,59 @@ async function staffReferences(ctx: QueryCtx, rows: Row[]): Promise<Map<string, 
   }
 }
 
-interface Mapped {
+/** One served event and the patients behind it (internal ids, never published). */
+export interface Mapped {
   res: AuditEvent;
   owner: string | null;
+  /** The Patient entities the event names (their internal ids are never published). */
+  patients: EntityPatient[];
+  /** Internal id of the Patient a read asked for (the resource entity), when that record exists. */
+  readPatient: string | null;
+}
+
+/**
+ * Adds an event's patients to `audited`, the patients the caller's own
+ * access audit will record for this request. Returns the event to serve:
+ * as mapped when all its patients fit in the audit; null when they do not
+ * and the page already has an event (the page ends before this one, and
+ * the next page starts with it); when this is the page's first event, the
+ * event naming only the patients that fit (so every page makes progress).
+ */
+export function fitToAudit(audited: Set<string>, m: Mapped, first: boolean): Mapped | null {
+  const always = [m.owner, m.readPatient].filter((v): v is string => v !== null);
+  const needed = new Set([...always, ...m.patients.flatMap((p) => p.internalIds)].filter((id) => !audited.has(id)));
+  if (audited.size + needed.size <= MAX_AUDITED_PATIENTS) {
+    for (const id of needed) audited.add(id);
+    return m;
+  }
+  if (!first) return null;
+  // The owner and the Patient read are always recorded (the gateway records
+  // owners itself); then as many Patient entities as the audit still holds.
+  for (const id of always) audited.add(id);
+  const kept: EntityPatient[] = [];
+  for (const p of m.patients) {
+    const extra = p.internalIds.filter((id) => !audited.has(id));
+    if (audited.size + extra.length > MAX_AUDITED_PATIENTS) continue;
+    for (const id of extra) audited.add(id);
+    kept.push(p);
+  }
+  return { ...m, res: keepPatientEntities(m.res, new Set(kept.map((p) => p.fhirId))), patients: kept };
+}
+
+/** The Patient id a read row asked for (lower case), or null for any other row. */
+function readPatientFhirId(row: Row): string | null {
+  if (applyStatusMap(AUDIT_EVENT_ACTION, row.action) !== "R" || str(row, "resource_type") !== "Patient") return null;
+  const id = str(row, "resource_id");
+  return id && UUID.test(id) ? id.toLowerCase() : null;
+}
+
+/** Internal ids of the Patient records that reads on these rows asked for (Patient/[id]). */
+async function readPatients(ctx: QueryCtx, rows: Row[]): Promise<Map<string, string>> {
+  const fhirIds = [...new Set(rows.map(readPatientFhirId).filter((id): id is string => id !== null))];
+  const out = new Map<string, string>();
+  if (!fhirIds.length) return out;
+  for (const r of await resolvePatients(ctx.db, { fhirIds })) out.set(r.input.toLowerCase(), r.id);
+  return out;
 }
 
 /** Rows the search conditions checked here (not by the function) must also meet. */
@@ -227,9 +272,10 @@ function passes(row: Row, checks: RowChecks): boolean {
 }
 
 async function mapRows(ctx: QueryCtx, rows: Row[], checks: RowChecks): Promise<(Mapped | null)[]> {
-  const [refs, staff] = await Promise.all([
+  const [refs, staff, reads] = await Promise.all([
     referenceContext(ctx.db, rows.flatMap(auditPatientIds)),
     staffReferences(ctx, rows),
+    readPatients(ctx, rows),
   ]);
   return rows.map((row) => {
     // A row the function should not have returned for this search (a
@@ -238,7 +284,14 @@ async function mapRows(ctx: QueryCtx, rows: Row[], checks: RowChecks): Promise<(
     const owner = auditOwner(row, checks.named);
     if (checks.named && owner === null) return null;
     const res = mapAuditEvent(row, refs, staff);
-    return res ? { res, owner } : null;
+    if (!res) return null;
+    const readId = readPatientFhirId(row);
+    return {
+      res,
+      owner,
+      patients: auditEntityPatients(row, refs),
+      readPatient: readId !== null ? (reads.get(readId) ?? null) : null,
+    };
   });
 }
 
@@ -249,10 +302,11 @@ async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
   if (!UUID.test(id)) return emptyResult();
   const args: FunctionArgs = { p_id: id.toLowerCase(), p_patient_ids: null, p_from: null, p_to: null, p_decision: null };
   const rows = await fetchRows(ctx, args, null, 1);
-  const mapped = (await mapRows(ctx, rows, { ...NO_CHECKS, id: id.toLowerCase() })).filter((m): m is Mapped => m !== null);
-  return mapped.length
-    ? { page: { resources: [mapped[0].res], next: null }, owners: [mapped[0].owner] }
-    : emptyResult();
+  const [found] = (await mapRows(ctx, rows, { ...NO_CHECKS, id: id.toLowerCase() })).filter((m): m is Mapped => m !== null);
+  if (!found) return emptyResult();
+  const audited = new Set<string>();
+  const m = fitToAudit(audited, found, true) as Mapped;
+  return { page: { resources: [m.res], next: null }, owners: [m.owner], requestedPatientIds: [...audited] };
 }
 
 /** outcome=: a code of the value set, or 400. */
@@ -334,11 +388,14 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   };
   const checks: RowChecks = { named, outcome, action, id, from: range.from, to: range.to };
 
-  const { items, next } = await auditPage(ctx, args, checks, search.count, decodeKey(search.cursor));
+  // The patients the gateway records anyway (the one the search named).
+  const audited = new Set(notes.requestedPatientIds ?? []);
+  const { items, next } = await auditPage(ctx, args, checks, search.count, decodeKey(search.cursor), audited);
   return {
     page: { resources: items.map((m) => m.res), next },
     owners: items.map((m) => m.owner),
     ...notes,
+    requestedPatientIds: [...audited],
   };
 }
 
@@ -347,6 +404,8 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
  * tables: when rows keep failing the checks, fetching stops after
  * MAX_KEYSET_ROUNDS batches and the page is returned short WITH a next link
  * that resumes after the last row examined, so a later match is never lost.
+ * A page also ends early when the next event would name more patients than
+ * the access audit can record (`audited`, which gains every patient served).
  */
 async function auditPage(
   ctx: QueryCtx,
@@ -354,6 +413,7 @@ async function auditPage(
   checks: RowChecks,
   count: number,
   start: AuditKey | null,
+  audited: Set<string>,
 ): Promise<{ items: Mapped[]; next: Cursor | null }> {
   const batch = Math.min(Math.max(count + 1, 25), MAX_LIMIT);
   const out: { m: Mapped; key: AuditKey }[] = [];
@@ -370,7 +430,10 @@ async function auditPage(
       if (m) {
         // Another match exists: the page is full, resume after its last entry.
         if (out.length === count) return finish(out[out.length - 1].key);
-        out.push({ m, key });
+        const served = fitToAudit(audited, m, out.length === 0);
+        // Its patients would not all be recorded: the next page starts with it.
+        if (!served) return finish(out[out.length - 1].key);
+        out.push({ m: served, key });
       }
       after = key;
     }

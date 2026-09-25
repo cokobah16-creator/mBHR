@@ -9,7 +9,9 @@
 // cursor records which source the page stopped in (p = "l", "m" or "d").
 // A search whose _id or target can only match one source reads only that
 // one. Staff with lab_review but not audit_access (restriction
-// "lab_events_only") read the laboratory events only.
+// "lab_events_only") read the laboratory events only, and only by _id,
+// target or patient: a recorded range alone would list the laboratory
+// reports of every patient.
 //
 // Every source is read as the caller, so row-level security applies on top
 // (the release log needs lab_review or audit_access; merges need
@@ -19,7 +21,7 @@
 import { errors } from "../errors/operationOutcome";
 import type { Reference } from "../types/fhir";
 import { READ_PERMISSIONS } from "../authorization/permissions";
-import { str, type Row } from "../mappers/common";
+import { instant, str, type Row } from "../mappers/common";
 import {
   LAB_EVENT_ACTIVITY,
   LAB_EVENT_COLUMNS,
@@ -89,7 +91,7 @@ export const definition: ResourceDefinition = {
       name: "recorded",
       type: "date",
       documentation:
-        "When the event was stored (server time). A date without a time is a clinic day in Africa/Lagos. Up to two bounds. Without _id, target or patient it must be a closed range of at most 31 days.",
+        "When the event was stored (server time). A date without a time is a clinic day in Africa/Lagos. Up to two bounds. Without _id, target or patient it needs audit_access and a closed range of at most 31 days.",
       maxRepeats: 2,
     },
   ],
@@ -101,7 +103,8 @@ export const definition: ResourceDefinition = {
   sensitiveSearch: true,
   notes: [
     "Only events the database records itself: laboratory result review, release and withhold; merges made by the server-side merge function; document uploads. Visits, vital signs, consultations, prescriptions, dispenses, allergies and conditions have no server-verified author and get no Provenance: an empty result does not mean nothing changed.",
-    "Staff with lab_review but not audit_access see laboratory events only.",
+    "Staff with lab_review but not audit_access see laboratory events only, and must give _id, target or patient (a recorded range alone is refused).",
+    "A review or release is published only while it still stands: when a reviewed result's value, unit, range or interpretation changes, its review and release are cleared and the earlier events are left out (a withhold stays, as the result stays off the portal).",
     "Merges recorded before the server-side merge function (no server-stamped actor) are not published.",
     "Document uploads name no person: 'Patient portal account' for a portal upload, otherwise 'mBHR account' (documents stored before the ownership change are all marked clinic records, whoever uploaded them). Removed documents are left out.",
     "Events of a laboratory result that a newer result replaced are left out, like the result itself.",
@@ -203,7 +206,16 @@ function buildPlan(ctx: QueryCtx, search: ParsedSearch): Plan {
 
   const range = plan.recorded?.length ? intersectDates(plan.recorded.map((r) => parseDateSearch(r, "recorded"))) : null;
   if (!idParam && !target && !ctx.patients) {
-    // Anti-enumeration: a recorded range alone must be closed and short.
+    // Anti-enumeration. A recorded range alone lists events of every
+    // patient, and each laboratory event names a DiagnosticReport: that is
+    // an audit tool, for audit_access holders only. A lab_review holder
+    // names a patient or a record, as for DiagnosticReport itself.
+    if (ctx.restrictions.has("lab_events_only")) {
+      throw errors.forbidden(
+        "A Provenance search by recorded alone needs audit_access. Give _id, target or patient.",
+      );
+    }
+    // And it must be closed and short.
     const closed = range !== null && range.from !== null && range.to !== null;
     if (!closed || Date.parse(range.to as string) - Date.parse(range.from as string) > MAX_RECORDED_RANGE_MS) {
       throw errors.forbidden(
@@ -359,7 +371,15 @@ async function mapLabRows(ctx: QueryCtx, rows: Row[]): Promise<(Item | null)[]> 
     const orderId = str(r, "order_id");
     const patientId = orderId ? orderPatient.get(orderId) : undefined;
     if (id && orderId && patientId) {
-      links.set(id, { orderId, current: r.superseded_by === null || r.superseded_by === undefined, patientId });
+      const amended = r.amended_at;
+      links.set(id, {
+        orderId,
+        current: r.superseded_by === null || r.superseded_by === undefined,
+        patientId,
+        reviewed: instant(r, "reviewed_at") !== undefined,
+        // Anything stored that is not a time still counts as an amendment (at an unknown time).
+        amendedAt: amended === null || amended === undefined ? null : String(amended),
+      });
     }
   }
   const [refs, staff] = await Promise.all([
