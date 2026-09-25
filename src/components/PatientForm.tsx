@@ -616,7 +616,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                     <span className="text-ink-muted block mt-1">
                       {dobIsMinor
                         ? MINOR_PORTAL_ACCESS_MESSAGE
-                        : "A portal account is made on the server, which needs an internet connection. No message is sent to the patient. To send an invitation or share a registration link, use Patient portal on their record."}
+                        : "When you save, mBHR tries to make a portal account on the server. This needs an internet connection and can fail, for example before the patient's record is uploaded. No message is sent to the patient. To turn on access later, send an invitation or share a registration link, use Patient portal on their record."}
                     </span>
                   </label>
                 </div>
