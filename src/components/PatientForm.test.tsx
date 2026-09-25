@@ -145,6 +145,18 @@ describe("PatientForm portal access", () => {
     expect(screen.getByText(/sends the portal invitation from the patient/i)).toBeTruthy();
   });
 
+  it("does not offer to send an invitation on registration, even to roles with portal_invite", async () => {
+    // Registering never sends an invitation, so no box may promise one.
+    mocks.role = "registration_lead";
+    render(<PatientForm />);
+    fireEvent.change(byId("phone"), { target: { value: "08012345678" } });
+    fireEvent.click(portalBox());
+    await screen.findByLabelText(/explained portal access terms/i);
+
+    expect(screen.queryByLabelText(/send portal invitation now/i)).toBeNull();
+    expect(screen.getByText(/does not send a portal invitation/i)).toBeTruthy();
+  });
+
   it("asks for portal access only when the box was ticked and attested", async () => {
     render(<PatientForm />);
     await fillRequiredFields("1990-01-01");

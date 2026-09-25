@@ -664,34 +664,13 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                       </p>
                     )}
 
-                    {canSendInvite ? (
-                    <div className="flex items-start ml-6">
-                      <input
-                        {...register("sendInviteNow")}
-                        type="checkbox"
-                        id="sendInviteNow"
-                        className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
-                      />
-                      <label
-                        htmlFor="sendInviteNow"
-                        className="ml-2 text-body text-ink"
-                      >
-                        <span className="font-medium">
-                          Send portal invitation now
-                        </span>
-                        <span className="text-ink-muted block mt-1">
-                          Uncheck to send invitation later from patient details
-                          page
-                        </span>
-                      </label>
-                    </div>
-                    ) : (
-                      <p className="field-hint ml-6">
-                        A registration lead, lead clinician or administrator
-                        sends the portal invitation from the patient&apos;s
-                        record.
-                      </p>
-                    )}
+                    {/* Registering never sends an invitation: the invitation
+                        is sent from the patient's record. */}
+                    <p className="field-hint ml-6">
+                      {canSendInvite
+                        ? "Registering does not send a portal invitation. Send it from the patient's record once portal access is confirmed."
+                        : "A registration lead, lead clinician or administrator sends the portal invitation from the patient's record."}
+                    </p>
                   </>
                 )}
               </div>
