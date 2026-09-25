@@ -35,8 +35,8 @@
 --     has today do not recognise one either).
 --   * No portal_enabled_changed_at column: changed_at is NULL. The app does
 --     not read it (src/services/portalAccessRules.ts:203-206).
--- It fails, and changes nothing, if patients.id, auth_uid or portal_enabled
--- is missing, or if 20260925160000 has not been applied (see below).
+-- It fails, and changes nothing, if 20260925160000 has not been applied
+-- (see below), or if patients.id, auth_uid or portal_enabled is missing.
 --
 -- Why it is safe: it reads one table and writes nothing. No table, row,
 -- policy or other function changes. The anon key cannot call it. It returns
@@ -72,11 +72,20 @@
 -- production, 20260925160000 is no longer newer than production's newest
 -- and cannot run on its own. And until 20260925160000, the anon key can make
 -- itself staff and so write any patient's auth_uid, which this function
--- trusts. If 20260925160000 was applied some other way, record it first:
--- supabase migration repair --linked --status applied 20260925160000.
+-- trusts. So the check comes first, even before "already exists" (a
+-- function made by hand must not let this version be recorded ahead of
+-- 20260925160000). A dry-run runs no SQL, so only rehearse and apply catch
+-- the order. Until both hotfixes are in, record nothing on production any
+-- other way (SQL editor migrations, the Supabase connector): a newer version
+-- there stops both from running on their own.
 -- Actions > Database migrations > Run workflow, with "only" set to
 -- 20260925170000: rehearse, then dry-run, then apply. Checks:
--- supabase/hotfix-checks/20260925170000.sql. Safe to re-run.
+-- supabase/hotfix-checks/20260925170000.sql. Running the file again is a
+-- no-op; the workflow refuses a second run anyway.
+--
+-- The Supabase CLI does not show this file's notices in the run's log, so
+-- after apply confirm it read-only in the SQL editor:
+--   SELECT to_regprocedure('public.portal_access_status()') IS NOT NULL;
 --
 -- Rollback (before Wave B only; the portal then refuses every new sign-in
 -- again): DROP FUNCTION IF EXISTS public.portal_access_status(); then, to
@@ -92,6 +101,17 @@ DECLARE
   v_changed_at   text;
   v_body         text;
 BEGIN
+  -- The app_users hotfix must be recorded first (see the header), before
+  -- anything else. Nested so the history table is only read where it
+  -- exists; a database built in filename order records 20260925160000
+  -- before this runs.
+  IF to_regclass('supabase_migrations.schema_migrations') IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations
+                    WHERE version = '20260925160000') THEN
+      RAISE EXCEPTION 'portal hotfix: apply 20260925160000 first; once 20260925170000 is recorded, 20260925160000 can no longer run on its own';
+    END IF;
+  END IF;
+
   IF to_regprocedure('public.portal_access_status()') IS NOT NULL THEN
     RAISE NOTICE 'portal_access_status() already exists; left as it is';
     RETURN;
@@ -100,15 +120,6 @@ BEGIN
     RAISE WARNING 'patient_portal_access_events exists but portal_access_status() does not: '
                   '20260925100100 owns this function, so nothing was created';
     RETURN;
-  END IF;
-
-  -- The app_users hotfix must be recorded first (see the header). Nested so
-  -- the history table is only read where it exists.
-  IF to_regclass('supabase_migrations.schema_migrations') IS NOT NULL THEN
-    IF NOT EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations
-                    WHERE version = '20260925160000') THEN
-      RAISE EXCEPTION 'portal hotfix: apply 20260925160000 first (or, if it was applied some other way, record it with migration repair); once 20260925170000 is recorded, 20260925160000 can no longer run on its own';
-    END IF;
   END IF;
 
   IF to_regclass('public.patients') IS NULL THEN

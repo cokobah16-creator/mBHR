@@ -81,6 +81,8 @@ DECLARE
   v_vals       text[];
   v_constraint text;
   v_column     text;
+  v_schema     text;
+  v_table      text;
   v_def        text;
 BEGIN
   FOR r IN SELECT jsonb_array_elements($rows$[
@@ -162,15 +164,22 @@ BEGIN
       EXECUTE format('INSERT INTO %s (%s) VALUES (%s)',
                      v_rel, array_to_string(v_cols, ', '), array_to_string(v_vals, ', '));
     EXCEPTION
+      -- Name the table the error came from: a trigger can write elsewhere.
       WHEN check_violation OR foreign_key_violation OR unique_violation THEN
-        GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
-        SELECT pg_get_constraintdef(oid) INTO v_def
-          FROM pg_constraint WHERE conrelid = v_rel AND conname = v_constraint;
-        RAISE EXCEPTION 'the test rows break % rule %: %',
-          v_rel, v_constraint, coalesce(v_def, '(a unique index)');
+        GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME,
+                                v_schema = SCHEMA_NAME, v_table = TABLE_NAME;
+        SELECT pg_get_constraintdef(c.oid) INTO v_def
+          FROM pg_constraint AS c JOIN pg_class AS t ON t.oid = c.conrelid
+          JOIN pg_namespace AS n ON n.oid = t.relnamespace
+         WHERE n.nspname = v_schema AND t.relname = v_table AND c.conname = v_constraint;
+        RAISE EXCEPTION 'adding the test rows to % breaks %.% rule %: %',
+          v_rel, quote_ident(v_schema), quote_ident(v_table), v_constraint,
+          coalesce(v_def, '(a unique index)');
       WHEN not_null_violation THEN
-        GET STACKED DIAGNOSTICS v_column = COLUMN_NAME;
-        RAISE EXCEPTION 'the test rows leave %.% empty, and it is NOT NULL', v_rel, v_column;
+        GET STACKED DIAGNOSTICS v_column = COLUMN_NAME,
+                                v_schema = SCHEMA_NAME, v_table = TABLE_NAME;
+        RAISE EXCEPTION 'adding the test rows to % leaves %.%.% empty, and it is NOT NULL',
+          v_rel, quote_ident(v_schema), quote_ident(v_table), v_column;
       WHEN OTHERS THEN
         RAISE EXCEPTION 'the test rows could not be added to %: % (%)', v_rel, SQLERRM, SQLSTATE;
     END;
