@@ -6,9 +6,11 @@ name: FHIR R4 interoperability
 #   gateway      unit and security tests, then the HL7 FHIR Validator over
 #                the gateway's example output (resources, a searchset
 #                Bundle, an OperationOutcome and the CapabilityStatement)
-#   interop-db   the interop migration on a plain PostgreSQL 16 with pgTAP:
-#                applied twice (idempotent), its pgTAP file, the documented
-#                rollback, and applied again
+#   interop-db   both interop migrations (Phase 1, then Phase 2) on a plain
+#                PostgreSQL 16 with pgTAP: each applied twice (idempotent),
+#                both pgTAP files, the documented rollbacks (Phase 2 first),
+#                applied again, and Phase 2 on a base without the indexes it
+#                guards
 
 on:
   pull_request:
@@ -21,6 +23,8 @@ on:
       - "scripts/ci/interop_db_base.py"
       - "supabase/migrations/20260926110000_interop_foundation.sql"
       - "supabase/tests/interop_foundation.test.sql"
+      - "supabase/migrations/20260926130000_interop_phase2.sql"
+      - "supabase/tests/interop_phase2.test.sql"
       - ".github/workflows/interop-fhir.yml"
   push:
     branches:
@@ -108,24 +112,51 @@ jobs:
           python3 scripts/ci/interop_db_base.py > /tmp/base.sql
           sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/base.sql
 
-      - name: Apply the migration twice
+      - name: Apply both migrations twice
         run: |
           cp supabase/migrations/20260926110000_interop_foundation.sql /tmp/up.sql
+          cp supabase/migrations/20260926130000_interop_phase2.sql /tmp/up2.sql
           sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up.sql
           sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up2.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up2.sql
 
       - name: pgTAP
         run: |
           cp supabase/tests/interop_foundation.test.sql /tmp/interop_foundation.test.sql
+          cp supabase/tests/interop_phase2.test.sql /tmp/interop_phase2.test.sql
           sudo -u postgres psql -q -d interop_ci -c 'CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions'
-          sudo -u postgres pg_prove -d interop_ci /tmp/interop_foundation.test.sql
+          sudo -u postgres pg_prove -d interop_ci /tmp/interop_foundation.test.sql /tmp/interop_phase2.test.sql
 
-      - name: Rollback, then apply again
+      - name: Rollback (Phase 2, then Phase 1), then apply again
         run: |
+          sed -n '/^-- Rollback (in this order/,/^-- End of rollback/p' supabase/migrations/20260926130000_interop_phase2.sql \
+            | grep -E '^--   (DROP|ALTER|GRANT|DELETE|DO) ' | sed 's/^--   //' > /tmp/down2.sql
+          test "$(wc -l < /tmp/down2.sql)" -eq 43
           sed -n '/^-- Rollback/,/^-- Dropping/p' supabase/migrations/20260926110000_interop_foundation.sql \
             | grep -E '^--   (DROP|DELETE)' | sed 's/^--   //' > /tmp/down.sql
           test "$(wc -l < /tmp/down.sql)" -eq 5
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/down2.sql
+          test "$(sudo -u postgres psql -At -d interop_ci -c "select has_function_privilege('authenticated', 'public.fhir_record_access(uuid, text, text, text, text[], text, text, text, integer, text[], text, text)', 'EXECUTE')")" = "t"
+          sudo -u postgres pg_prove -d interop_ci /tmp/interop_foundation.test.sql
           sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/down.sql
           test "$(sudo -u postgres psql -At -d interop_ci -c "select count(*) from pg_namespace where nspname = 'interop'")" = "0"
           test "$(sudo -u postgres psql -At -d interop_ci -c "select count(*) from pg_proc where proname like 'fhir\_%'")" = "0"
           sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up2.sql
+          sudo -u postgres pg_prove -d interop_ci /tmp/interop_foundation.test.sql /tmp/interop_phase2.test.sql
+
+      # Production may lack the repository's patient_allergies and
+      # patient_documents indexes; Phase 2 then builds its own.
+      - name: Phase 2 on a base without the indexes it guards
+        run: |
+          sed -e '/idx_patient_allergies_patient_id/d' -e '/idx_patient_documents_patient/d' -e '/idx_documents_patient/d' /tmp/base.sql > /tmp/base_noidx.sql
+          sudo -u postgres createdb interop_noidx
+          sudo -u postgres psql -q -c 'ALTER DATABASE interop_noidx SET search_path = public, extensions'
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_noidx -f /tmp/base_noidx.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_noidx -f /tmp/up.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_noidx -f /tmp/up2.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_noidx -f /tmp/up2.sql
+          test "$(sudo -u postgres psql -At -d interop_noidx -c "select count(*) from pg_class where relname like 'interop\_%\_idx' and relkind = 'i'")" = "5"
+          sudo -u postgres psql -q -d interop_noidx -c 'CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions'
+          sudo -u postgres pg_prove -d interop_noidx /tmp/interop_phase2.test.sql

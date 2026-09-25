@@ -4,7 +4,7 @@
 // winning, and the restrictions it hands to the resource modules.
 
 import { describe, expect, it } from "vitest";
-import { authorizeFhirRequest, type Actor, type AuthorizeDeps, type FhirAuthorizationRequest } from "../authorization/authorize";
+import { authorizeFhirRequest, consentStep, type Actor, type AuthorizeDeps, type FhirAuthorizationRequest } from "../authorization/authorize";
 import type { ConsentDirective } from "../consent/evaluateConsent";
 
 const NOW = new Date("2026-09-25T12:00:00Z");
@@ -191,5 +191,48 @@ describe("consent step", () => {
       { enforcementEnabled: true },
     );
     expect(r).toMatchObject({ decision: "deny", reason: "consent_withdrawn" });
+  });
+});
+
+describe("consent step on a governed purpose (consentStep)", () => {
+  const research = req({ purposeOfUse: "HRESCH", patientIds: [A] });
+  const counting = () => {
+    const calls: string[][] = [];
+    return { calls, loadDirectives: async (ids: string[]) => (calls.push(ids), []) };
+  };
+
+  it("denies without loading directives while enforcement is off", async () => {
+    const c = counting();
+    const r = await consentStep(doctor, research, deps({ config: { ...config, consentEnforcementEnabled: false }, loadDirectives: c.loadDirectives }));
+    expect(r.denied).toBe("consent_enforcement_disabled");
+    expect(c.calls).toEqual([]);
+  });
+
+  it("denies without loading directives when no patient is named", async () => {
+    const c = counting();
+    const r = await consentStep(doctor, req({ purposeOfUse: "HRESCH" }), deps({ loadDirectives: c.loadDirectives }));
+    expect(r.denied).toBe("consent_requires_patient_context");
+    expect(c.calls).toEqual([]);
+  });
+
+  it("denies staff who may not read consent records, without asking the database", async () => {
+    const c = counting();
+    const r = await consentStep(labOnly, research, deps({ loadDirectives: c.loadDirectives }));
+    expect(r.denied).toBe("consent_not_readable");
+    expect(c.calls).toEqual([]);
+  });
+
+  it("loads directives once for the named patients and denies without an explicit permit", async () => {
+    const c = counting();
+    const r = await consentStep(doctor, research, deps({ loadDirectives: c.loadDirectives }));
+    expect(c.calls).toEqual([[A]]);
+    expect(r).toMatchObject({ denied: "no_consent_permit", consent: { decision: "deny" } });
+  });
+
+  it("is not applicable to internal treatment, so nothing is loaded", async () => {
+    const c = counting();
+    const r = await consentStep(nurse, req({ patientIds: [A] }), deps({ loadDirectives: c.loadDirectives }));
+    expect(r).toMatchObject({ denied: null, consent: { decision: "not-applicable" } });
+    expect(c.calls).toEqual([]);
   });
 });

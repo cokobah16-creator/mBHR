@@ -135,6 +135,11 @@ const PATIENT_CLASS_RESTRICTIONS: Partial<Record<FhirResourceType, string>> = {
   Consent: "own_consents_only",
 };
 
+/** Consent refusals that do not depend on any directive. */
+const DIRECTIVE_INDEPENDENT = new Set(["consent_enforcement_disabled", "break_glass_not_enabled"]);
+/** Permissions fhir_consent_directives accepts (Phase 2 migration). */
+const CONSENT_READERS = ["consult", "portal_manage", "audit_access"] as const;
+
 export async function authorizeFhirRequest(
   req: FhirAuthorizationRequest,
   deps: AuthorizeDeps,
@@ -211,9 +216,32 @@ export async function authorizeFhirRequest(
   }
 
   // 10. consent
-  const purpose = req.purposeOfUse;
+  const step10 = await consentStep(actor, req, deps);
+  if (step10.denied) return { ...deny("consent", step10.denied), consent: step10.consent };
+  const consent = step10.consent;
+
+  // 11. sensitivity
+  restrictions.push("no_security_labels");
+
+  // 12. log (the gateway records this decision before answering)
+  return { allowed: true, reason: "permitted", step: "log", status: 200, restrictions, consent };
+}
+
+/**
+ * Step 10 on its own. No purpose the surface accepts today is governed by
+ * consent, so the gateway never reaches the directive lookup yet; the step
+ * is exported so its tests can drive the governed path directly.
+ */
+export async function consentStep(
+  actor: Actor,
+  req: FhirAuthorizationRequest,
+  deps: AuthorizeDeps,
+): Promise<{ denied: string | null; consent: ConsentEvaluation | null }> {
+  const purposeOfUse = req.purposeOfUse;
+  if (purposeOfUse === null) return { denied: "purpose_invalid", consent: null };
   const action: ConsentAction = "access";
   const named = req.patientIds ?? [];
+  const enforcementEnabled = deps.config.consentEnforcementEnabled;
   const base = {
     actor: { kind: actor.kind, role: actor.role },
     clientId: null,
@@ -221,29 +249,26 @@ export async function authorizeFhirRequest(
     resourceType: req.resourceType,
     dataClass: req.dataClass,
     action,
-    purposeOfUse: purpose,
+    purposeOfUse,
     timestamp: deps.now,
   };
   // Whether consent governs this access does not depend on the patient.
-  const probe = evaluateConsent({ ...base, patientId: "" }, [], { enforcementEnabled: deps.config.consentEnforcementEnabled });
-  let consent: ConsentEvaluation = probe;
-  if (probe.decision !== "not-applicable") {
-    if (!named.length) {
-      return { ...deny("consent", "consent_requires_patient_context"), consent: probe };
-    }
-    const directives = deps.loadDirectives ? await deps.loadDirectives(named) : [];
-    for (const patientId of named) {
-      const result = evaluateConsent({ ...base, patientId }, directives, {
-        enforcementEnabled: deps.config.consentEnforcementEnabled,
-      });
-      consent = result;
-      if (result.decision !== "permit") return { ...deny("consent", result.reason), consent: result };
-    }
+  const probe = evaluateConsent({ ...base, patientId: "" }, [], { enforcementEnabled });
+  if (probe.decision === "not-applicable") return { denied: null, consent: probe };
+  // Refusals that no directive can change (enforcement off, break-glass)
+  // are final without reading anyone's consent records.
+  if (probe.decision === "deny" && DIRECTIVE_INDEPENDENT.has(probe.reason)) return { denied: probe.reason, consent: probe };
+  if (!named.length) return { denied: "consent_requires_patient_context", consent: probe };
+  // fhir_consent_directives answers only callers who may read consent
+  // records; anyone else is refused here rather than by an empty answer.
+  if (actor.kind === "staff" && !hasAny(actor.permissions, CONSENT_READERS)) {
+    return { denied: "consent_not_readable", consent: probe };
   }
-
-  // 11. sensitivity
-  restrictions.push("no_security_labels");
-
-  // 12. log (the gateway records this decision before answering)
-  return { allowed: true, reason: "permitted", step: "log", status: 200, restrictions, consent };
+  const directives = deps.loadDirectives ? await deps.loadDirectives(named) : [];
+  let consent: ConsentEvaluation = probe;
+  for (const patientId of named) {
+    consent = evaluateConsent({ ...base, patientId }, directives, { enforcementEnabled });
+    if (consent.decision !== "permit") return { denied: consent.reason, consent };
+  }
+  return { denied: null, consent };
 }
