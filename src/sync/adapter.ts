@@ -560,6 +560,17 @@ function mayUploadStaffAccounts(): boolean {
   return !!role && can(role, "users");
 }
 
+/** Server columns of a staff row that grant access. */
+const STAFF_PRIVILEGE_COLUMNS = ["role", "admin_access", "admin_permanent"] as const;
+
+/**
+ * The staff row's current values were saved on the Users screen (which
+ * checks the users permission and records who saved them).
+ */
+function staffEditFromUsersScreen(record: Row): boolean {
+  return typeof record._staffEditBy === "string" && record._staffEditBy !== "";
+}
+
 function isPermissionRefusal(error: unknown, status?: number): boolean {
   const code =
     error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
@@ -806,6 +817,11 @@ async function upsertRow(
 ): Promise<{ error: unknown; status?: number; serverVersion?: number }> {
   if (!sb) return { error: namedSyncError("SyncNotConfigured") };
   const payload = toDB(record, mapToDB[t]);
+  if (t === "app_users" && !staffEditFromUsersScreen(record)) {
+    // Role and admin access travel only with an edit made on the Users
+    // screen; any other local change to a staff row uploads its name only.
+    for (const column of STAFF_PRIVILEGE_COLUMNS) delete payload[column];
+  }
   if (serverLacksFoundation) {
     for (const column of FOUNDATION_COLUMNS[t] ?? []) delete payload[column];
   }

@@ -34,6 +34,9 @@ export interface User {
   accessConflict?: 0 | 1;
   adminAccess?: boolean;
   adminPermanent?: boolean;
+  // Device-local, never uploaded: who last saved this account on the Users
+  // screen. Only such a save uploads role and admin access.
+  _staffEditBy?: string;
   createdAt: Date;
   updatedAt: Date;
   isActive: 0 | 1;

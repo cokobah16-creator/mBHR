@@ -506,6 +506,31 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       expect(mockFrom).toHaveBeenCalledWith("app_users");
     });
 
+    it("uploads a staff role and admin access only when they were saved on the Users screen", async () => {
+      const { db } = await import("@/db");
+      Object.assign(db, {
+        users: fakeTable([
+          { id: "u1", fullName: "Ada", role: "admin", adminAccess: true, _dirty: 1 },
+          { id: "u2", fullName: "Bayo", role: "doctor", adminAccess: false, _staffEditBy: "u3", _dirty: 1 },
+        ]),
+      });
+      const remote = remoteTable({});
+      mockFrom.mockImplementation(() => remote);
+      const { useAuthStore } = await import("@/stores/auth");
+      const { pushChanges } = await import("./adapter");
+
+      useAuthStore.setState({ currentUser: { id: "u3", role: "admin" } as never });
+      await pushChanges();
+
+      const payloads = remote.upsert.mock.calls.map((c) => c[0] as Row);
+      const ada = payloads.find((p) => p.id === "u1");
+      const bayo = payloads.find((p) => p.id === "u2");
+      expect(ada).toMatchObject({ id: "u1", full_name: "Ada" });
+      expect(ada).not.toHaveProperty("role");
+      expect(ada).not.toHaveProperty("admin_access");
+      expect(bayo).toMatchObject({ id: "u2", role: "doctor", admin_access: false });
+    });
+
     it("keeps the server's row version after an upload and compares versions, not clocks", async () => {
       const { db } = await import("@/db");
       const patients = fakeTable([

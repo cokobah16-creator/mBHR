@@ -212,6 +212,7 @@ export function UserManagement() {
           ...pinFields,
           adminAccess: form.adminAccess,
           adminPermanent: form.adminPermanent,
+          _staffEditBy: currentUser?.id,
           updatedAt: new Date(),
         });
       } else {
@@ -226,6 +227,7 @@ export function UserManagement() {
           ...pinFields,
           adminAccess: form.adminAccess,
           adminPermanent: form.adminPermanent,
+          _staffEditBy: currentUser?.id,
           isActive: 1,
           createdAt: new Date(),
           updatedAt: new Date(),

@@ -3,6 +3,7 @@ import {
   buildLocalPatch,
   coerceToLocalShape,
   deviceMatchesDecision,
+  isProtectedField,
   mergeFieldChoicesFor,
   planDeviceWrite,
   planHasWork,
@@ -103,6 +104,57 @@ describe("planDeviceWrite: sync conflicts", () => {
     });
     if (p.kind !== "update_record") throw new Error("expected update");
     expect(p.changes.map((c) => c.field)).toEqual(["tempC"]);
+  });
+
+  it("writes only name and contact details to a staff account", () => {
+    const staffConflict = {
+      ...syncConflict([
+        f("role", "nurse", "admin"),
+        f("adminAccess", false, true),
+        f("adminPermanent", false, true),
+        f("pinHash", "old", "new"),
+        f("pinSalt", "s1", "s2"),
+        f("isActive", 0, 1, "number"),
+        f("lastOnlineVerifiedAt", "2026-01-01", "2026-09-01"),
+        f("disabledLocallyAt", "2026-01-01", null),
+        f("phone", "0801", "0802"),
+      ]),
+      entityType: "app_users",
+      entityId: "u1",
+    };
+    const record = { id: "u1", role: "nurse", adminAccess: false, pinHash: "old", phone: "0801" };
+    const p = planDeviceWrite({
+      conflict: staffConflict,
+      strategy: "keep_remote",
+      selections: {},
+      awaitingApproval: false,
+      snapshot: { table: "users", record, partner: null },
+    });
+    if (p.kind !== "update_record") throw new Error("expected update");
+    expect(p.changes.map((c) => c.field)).toEqual(["phone"]);
+    expect(buildLocalPatch(p.changes, "users")).toEqual({ phone: "0802" });
+  });
+
+  it("plans nothing for a staff account when only protected fields differ", () => {
+    const p = planDeviceWrite({
+      conflict: { ...syncConflict([f("role", "nurse", "admin"), f("pinHash", "a", "b")]), entityType: "app_users" },
+      strategy: "keep_remote",
+      selections: {},
+      awaitingApproval: false,
+      snapshot: { table: "users", record: { id: "vit-1", role: "nurse", pinHash: "a" }, partner: null },
+    });
+    expect(p).toEqual({ kind: "none", reason: "no_fields" });
+  });
+
+  it("never builds a staff account patch with protected fields, whatever the plan holds", () => {
+    const changes = [
+      { field: "role", label: "role", side: "remote" as const, next: "admin", current: "nurse", changesValue: true, changedSinceReport: false },
+      { field: "pinHash", label: "pinHash", side: "remote" as const, next: "x", current: "y", changesValue: true, changedSinceReport: false },
+      { field: "fullName", label: "fullName", side: "remote" as const, next: "Ada O.", current: "Ada", changesValue: true, changedSinceReport: false },
+    ];
+    expect(buildLocalPatch(changes, "users")).toEqual({ fullName: "Ada O." });
+    expect(isProtectedField("role", "users")).toBe(true);
+    expect(isProtectedField("role", "vitals")).toBe(false);
   });
 });
 
