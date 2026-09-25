@@ -42,6 +42,7 @@ Files in `src/interoperability/fhir/__tests__/` (plus
 | `authorize.test.ts` | The order of the 12 steps, the restrictions handed to modules, and the consent step, including `consentStep()` on a governed purpose |
 | `consentPolicy.test.ts` | `evaluateConsent()`: which accesses consent governs, default-deny, withdrawal and expiry, parsing of directives |
 | `consentResource.test.ts` | Consent status maps, mapper, who may read, searches, patient self-access, nothing forbidden is served |
+| `consentDirectiveLoader.test.ts` | The consent step's directive lookup: the named patient's merge family, directives read as the named patient's, more than 100 refused (503) |
 | `framework.test.ts` | Configuration and flags, search parameter parsing, the access decision, the CapabilityStatement |
 | `mappers.test.ts` | Patient, Encounter, vital-sign Observation and Condition mapping; the structural validator; the conformance examples |
 | `laboratory.test.ts` | Lab status maps, test codes, values, interpretation, review state; laboratory Observation, DiagnosticReport and ServiceRequest; staff and patient access; merged patients; what is never published |

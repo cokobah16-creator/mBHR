@@ -133,14 +133,19 @@ row, with the consent id and provision id when one decided it.
 `PATRQT`. Both are not-applicable. So step 10 never loads directives in
 this release, and every audit row records `not-applicable`. The governed
 path is covered by unit tests only: `consentPolicy.test.ts` tests the
-evaluator, and `authorize.test.ts` calls `consentStep()` directly.
+evaluator, `authorize.test.ts` calls `consentStep()` directly, and
+`consentDirectiveLoader.test.ts` tests the lookup below.
 
-Two limits of the lookup matter only once a governed purpose is served:
+How step 10 looks up directives once a governed purpose is served
+(`loadConsentDirectives()` in `gateway/handler.ts`):
 
-- It sends the named patient's current record ids only.
-  `fhir_consent_directives()` matches `patient_id` exactly, so a directive
-  still filed under a record that was merged away would not be found.
-- It asks for at most 100 directives and does not page.
+- A merge does not move consent records. When the request names one
+  patient, the lookup asks for that patient's whole merge family (the
+  kept record and the records merged into it that the caller can see) and
+  reads every directive as the named patient's, so a refusal filed under
+  a merged-away record still counts.
+- It never decides on a partial set: it asks for up to 101 directives,
+  and more than 100 is a 503, not a decision on the first hundred.
 
 ## The consent register
 

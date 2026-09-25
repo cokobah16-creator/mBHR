@@ -35,6 +35,37 @@ import { SupabaseStorage } from "./storage";
 
 export { fhirPath } from "./guard";
 
+/** Most directives one consent decision reads; more is refused, never truncated. */
+export const MAX_DECISION_DIRECTIVES = 100;
+
+/**
+ * The consent directives for the patient a request names. A merge does not
+ * move consent records, so a directive can still be filed under a record
+ * merged into the named one: when the request names one patient and its
+ * merge family is known (`family`, canonical first), the whole family is
+ * asked for and every directive is read as the named patient's. The
+ * decision is never made on a partial set: more than
+ * MAX_DECISION_DIRECTIVES directives is a 503, not the first hundred.
+ */
+export async function loadConsentDirectives(
+  db: Postgrest,
+  named: string[],
+  family: string[] | null,
+): Promise<ReturnType<typeof parseDirectives>> {
+  const ids = named.length === 1 && family?.includes(named[0]) ? [...new Set([named[0], ...family])] : named;
+  const raw = await db.rpc<unknown>("fhir_consent_directives", {
+    p_patient_ids: ids,
+    p_consent_ids: null,
+    p_after: null,
+    p_limit: MAX_DECISION_DIRECTIVES + 1,
+  });
+  if (!Array.isArray(raw)) throw errors.unavailable();
+  if (raw.length > MAX_DECISION_DIRECTIVES) throw errors.unavailable();
+  const directives = parseDirectives(raw);
+  if (ids === named) return directives;
+  return directives.filter((d) => ids.includes(d.patient_id)).map((d) => ({ ...d, patient_id: named[0] }));
+}
+
 export interface GatewayDeps {
   env: Env;
   fetchImpl?: FetchLike;
@@ -306,15 +337,7 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       {
         config,
         now: now(),
-        loadDirectives: async (ids) =>
-          parseDirectives(
-            await db.rpc<unknown>("fhir_consent_directives", {
-              p_patient_ids: ids,
-              p_consent_ids: null,
-              p_after: null,
-              p_limit: 100,
-            }),
-          ),
+        loadDirectives: (ids) => loadConsentDirectives(db, ids, patients?.ids ?? null),
       },
     );
     if (!decision.allowed) {
