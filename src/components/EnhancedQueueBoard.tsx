@@ -16,7 +16,7 @@ import {
   QueuePermissionError,
   QueueValidationError,
 } from "@/services/queueManagement";
-import { normalisePriority } from "@/services/queuePriority";
+import { compareWaiting, normalisePriority } from "@/services/queuePriority";
 import { patientStatusFromQueue } from "@/services/patientStatus";
 import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -165,7 +165,7 @@ export function EnhancedQueueBoard() {
     }
     const nextItem = activeItems
       .filter((item) => item.stage === stage && item.status === "waiting")
-      .sort((a, b) => a.position - b.position)[0];
+      .sort(compareWaiting)[0];
     if (!nextItem) return;
     void run(`${patientName(nextItem)} called to ${FLOW_STAGE_LABELS[stage].toLowerCase()}.`, async () => {
       await queueManagement.startService(
@@ -230,7 +230,7 @@ export function EnhancedQueueBoard() {
   );
   const waitingPatients = activeItems
     .filter((item) => item.stage === selectedStage && item.status === "waiting")
-    .sort((a, b) => a.position - b.position);
+    .sort(compareWaiting);
   const allowed = canActOn(selectedStage);
   const stageName = FLOW_STAGE_LABELS[selectedStage];
 

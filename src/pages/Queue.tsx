@@ -9,6 +9,7 @@ import {
   QueueValidationError,
 } from "@/services/queueManagement";
 import {
+  compareWaiting,
   downgradeOptions,
   MAX_REASON_LENGTH,
   mayDowngradePriority,
@@ -192,7 +193,7 @@ export function Queue() {
     () =>
       (allQueueItems ?? [])
         .filter((i) => i.stage === selectedStage && i.status !== "done")
-        .sort((a, b) => a.position - b.position)
+        .sort(compareWaiting)
         .map((i) => ({ ...i, patient: patientById.get(i.patientId) })),
     [allQueueItems, selectedStage, patientById],
   );
