@@ -235,6 +235,12 @@ export interface OutboxItem {
   deliveredAt?: Date;
   attempts: number;
   errorMessage?: string;
+  /**
+   * A due server reminder for a patient who turned medication reminders off
+   * on this device: every send run skips it, and it stays pending on the
+   * server (this device does not write its status).
+   */
+  optedOut?: boolean;
 }
 
 function toDate(value: DateLike): Date | undefined {
@@ -371,7 +377,15 @@ export function isProviderAccepted(errorMessage: string | undefined): boolean {
   return (errorMessage || "").trim().toLowerCase().startsWith(PROVIDER_ACCEPTED_MARKER);
 }
 
-export function fromServerReminder(r: StoredServerReminder): OutboxItem {
+/**
+ * `optedOut`: the patient has turned medication reminders off on this device
+ * (isReminderOptedOut with SERVER_REMINDER_KIND). Only kept on a reminder
+ * that is still waiting to be sent.
+ */
+export function fromServerReminder(
+  r: StoredServerReminder,
+  optedOut = false,
+): OutboxItem {
   const id = r.id ?? "";
   const state = stateFromServerStatus(r.status);
   return {
@@ -395,6 +409,7 @@ export function fromServerReminder(r: StoredServerReminder): OutboxItem {
     sentAt: toDate(r.sentAt),
     attempts: 0,
     errorMessage: r.errorMessage || undefined,
+    optedOut: state === "queued" && optedOut,
   };
 }
 
@@ -683,6 +698,9 @@ export function explainState(item: OutboxItem, ctx: SendingContext): string {
 
   if (item.store === "server") {
     if (!due) return `${retryNote}Stored on the server for ${formatWhen(item.scheduledFor)}.`;
+    if (item.optedOut) {
+      return `${retryNote}Not sent: the patient has turned off this type of SMS reminder. It stays pending on the server and is skipped on every send run. Mark it as failed, or turn this type of reminder back on if the patient wants it.`;
+    }
     return `${retryNote}Due. Sent when someone presses Send due messages now or while automatic sending is on.`;
   }
 

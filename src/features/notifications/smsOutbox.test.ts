@@ -262,6 +262,29 @@ describe("wording", () => {
     expect(explainState(item, ctx())).toMatch(/No delivery receipt/);
   });
 
+  it("does not call a due server reminder for an opted-out patient due", () => {
+    const base = {
+      id: "r1",
+      patientId: "p1",
+      medicationName: "X",
+      dosage: "1",
+      scheduledAt: new Date(NOW.getTime() - 1000),
+      phoneNumber: "08031234567",
+      message: "m",
+      status: "pending",
+    };
+    const optedOut = fromServerReminder(base, true);
+    expect(optedOut.optedOut).toBe(true);
+    const text = explainState(optedOut, ctx({ autoSending: true }));
+    expect(text).toMatch(/turned off this type of SMS reminder/);
+    expect(text).toMatch(/stays pending on the server/);
+    expect(text).not.toMatch(/Due\./);
+
+    expect(explainState(fromServerReminder(base), ctx())).toMatch(/^Due\./);
+    // Only a reminder still waiting to be sent is flagged.
+    expect(fromServerReminder({ ...base, status: "sent" }, true).optedOut).toBe(false);
+  });
+
   it("includes earlier failed attempts for retried messages", () => {
     const item = fromDeviceMessage(
       deviceMsg({ attempts: 1, errorMessage: "Failed to fetch" }),
