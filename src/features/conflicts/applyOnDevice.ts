@@ -8,6 +8,7 @@ import logger from "@/lib/logger";
 import type { Role } from "@/auth/roles";
 import { requestMerge } from "@/services/patientMerge";
 import { fetchServerVersion } from "@/sync/adapter";
+import { serverStampOf } from "@/sync/serverStamp";
 import { buildLocalPatch, mergeFieldChoicesFor, type DevicePlan } from "./devicePlan";
 import { localTable } from "./localContext";
 
@@ -66,6 +67,8 @@ export async function applyPlanOnDevice(
   plan: DevicePlan,
   actor: DeviceActor,
   entityType: string,
+  /** The server's updated_at the conflict was raised on, when known. */
+  remoteUpdatedAt?: string,
 ): Promise<ApplyResult> {
   if (plan.kind === "none") return { applied: false };
 
@@ -84,13 +87,17 @@ export async function applyPlanOnDevice(
     }
     // Patients and queue: record the server version this decision was
     // applied against, so the next upload is not held back as the same
-    // conflict again (skipped when the server cannot be read).
+    // conflict again (skipped when the server cannot be read). Every record
+    // type also records the server's updated_at the conflict was raised on
+    // (a server change made after it is still compared at the upload).
     const serverVersion = await fetchServerVersion(entityType, plan.recordId);
+    const serverStamp = serverStampOf(remoteUpdatedAt);
     const updated = await table.update(plan.recordId, {
       ...patch,
       updatedAt: new Date(),
       _dirty: 1,
       ...(serverVersion !== undefined ? { _serverVersion: serverVersion } : {}),
+      ...(serverStamp !== undefined ? { _serverUpdatedAt: serverStamp } : {}),
     });
     if (!updated) throw namedError("LocalRecordMissing");
     await auditOnDevice(actor, "conflict_resolution_applied", entityType, plan.recordId);

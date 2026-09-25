@@ -12,7 +12,7 @@ import { can } from "@/auth/roles";
 import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
 import { allocateFEFO, type FefoResult } from "./fefo";
-import { matchMedicationToAllergen } from "@/utils/allergyMatch";
+import { matchMedicationToAllergen, uncheckedAllergens } from "@/utils/allergyMatch";
 import {
   confirmDispenseNow,
   dispensePrescription,
@@ -205,6 +205,7 @@ export default function Dispense() {
     // a failed lookup must never read as "no allergies".
     // The prescription may name a record merged into another on this
     // device: check the allergies of every record in the merge chain.
+    // Every active allergy is screened, whatever type it was recorded as.
     setAllergyStatus("loading");
     let stale = false;
     resolveDispensePatient({ get: (id) => db.patients.get(id) }, selectedPatientId)
@@ -212,7 +213,7 @@ export default function Dispense() {
         const as = await db.patientAllergies
           .where("patientId")
           .anyOf(who.chain)
-          .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
+          .filter((a) => isAllergyActive(a))
           .toArray();
         const queue = who.ok
           ? await db.queue.where("patientId").equals(who.patient.id).toArray()
@@ -256,6 +257,13 @@ export default function Dispense() {
       ),
     [plans, allergens],
   );
+  // Allergens the matcher does not know: checked by hand, with the same
+  // acknowledgement as a match.
+  const allergyUnchecked = useMemo(
+    () => uncheckedAllergens(plans.map((p) => p.item?.medName ?? ""), allergens),
+    [plans, allergens],
+  );
+  const allergyWarning = allergyHits.length > 0 || allergyUnchecked.length > 0;
 
   const mode = chosen ? dispenseMode(chosen.lines, items) : "missing";
   const mayDispense = !!currentUser && can(currentUser.role, "dispense");
@@ -274,7 +282,7 @@ export default function Dispense() {
     mode !== "mixed" &&
     mode !== "missing" &&
     allergyStatus === "ready" &&
-    (allergyHits.length === 0 || allergyAck) &&
+    (!allergyWarning || allergyAck) &&
     !!idChoice &&
     idConfirmed &&
     !loading;
@@ -332,6 +340,19 @@ export default function Dispense() {
             id: ulid(),
             actorRole: currentUser.role ?? "unknown",
             action: "dispense_allergy_override",
+            entity: "prescription",
+            entityId: chosen.id,
+            at: new Date(),
+          })
+          .catch(() => undefined);
+      }
+
+      if (allergyUnchecked.length > 0) {
+        await db.auditLogs
+          .add({
+            id: ulid(),
+            actorRole: currentUser.role ?? "unknown",
+            action: "dispense_allergy_checked_by_hand",
             entity: "prescription",
             entityId: chosen.id,
             at: new Date(),
@@ -650,20 +671,45 @@ export default function Dispense() {
                 </p>
               )}
 
-              {allergyHits.length > 0 && (
-                <div className="rounded-md border border-danger-line bg-danger-soft p-4" role="alert">
-                  <p className="flex items-center gap-2 text-h3 text-danger-fg">
-                    <ExclamationTriangleIcon className="h-5 w-5" aria-hidden />
-                    Possible allergy
-                  </p>
-                  <ul className="mt-1 text-body text-danger-fg">
-                    {allergyHits.map((h, i) => (
-                      <li key={i}>
-                        {h.med}: recorded allergy to <strong>{h.allergen}</strong>
-                        {h.match?.kind === "class" ? ` (${h.match.drugClass} class)` : ""}
-                      </li>
-                    ))}
-                  </ul>
+              {allergyWarning && (
+                <div
+                  className={`rounded-md border p-4 ${
+                    allergyHits.length > 0
+                      ? "border-danger-line bg-danger-soft"
+                      : "border-warning-line bg-warning-soft"
+                  }`}
+                  role="alert"
+                >
+                  {allergyHits.length > 0 && (
+                    <>
+                      <p className="flex items-center gap-2 text-h3 text-danger-fg">
+                        <ExclamationTriangleIcon className="h-5 w-5" aria-hidden />
+                        Possible allergy
+                      </p>
+                      <ul className="mt-1 text-body text-danger-fg">
+                        {allergyHits.map((h, i) => (
+                          <li key={i}>
+                            {h.med}: recorded allergy to <strong>{h.allergen}</strong>
+                            {h.match?.kind === "class" ? ` (${h.match.drugClass} class)` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  {allergyUnchecked.length > 0 && (
+                    <div className={allergyHits.length > 0 ? "mt-3" : ""}>
+                      <p className="flex items-center gap-2 text-h3 text-warning-fg">
+                        <ExclamationTriangleIcon className="h-5 w-5" aria-hidden />
+                        {allergyUnchecked.length === 1 ? "Check this allergy by hand" : "Check these allergies by hand"}
+                      </p>
+                      <p className="mt-1 text-body text-ink">
+                        Recorded allergy to <strong>{allergyUnchecked.join(", ")}</strong>. The app cannot check{" "}
+                        {allergyUnchecked.length === 1 ? "it" : "these"} against medicines (not a medicine or drug
+                        class it knows, or spelt differently). Check by hand that none of the medicines below is,
+                        contains or is related to {allergyUnchecked.length === 1 ? "it" : "them"}.
+                      </p>
+                    </div>
+                  )}
                   <label className="mt-3 flex min-h-touch-target items-start gap-2 text-body text-ink">
                     <input
                       type="checkbox"
@@ -671,7 +717,11 @@ export default function Dispense() {
                       onChange={(e) => setAllergyAck(e.target.checked)}
                       className="mt-1 h-4 w-4"
                     />
-                    <span>I have checked this with the prescriber and will dispense anyway.</span>
+                    <span>
+                      {allergyHits.length > 0
+                        ? "I have checked this with the prescriber and will dispense anyway."
+                        : `I have checked ${allergyUnchecked.length === 1 ? "this allergy" : "these allergies"} by hand and will dispense.`}
+                    </span>
                   </label>
                 </div>
               )}

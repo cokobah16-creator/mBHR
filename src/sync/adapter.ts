@@ -16,6 +16,12 @@ import { findFieldConflicts } from "./fieldCompare";
 import { mergePulledRow } from "./pullMerge";
 import { keepLocalRevocation, staffFromServerRow } from "./staffRoster";
 import { markersAfterUpload } from "./uploadMarkers";
+import {
+  serverStampMarker,
+  serverStampOf,
+  serverUnchangedSince,
+  stampAfterUpload,
+} from "./serverStamp";
 import { namedSyncError, syncErrorCode } from "./errorCode";
 import { queueSyncConflicts } from "./queueConflicts";
 import { advanceCursor, isCursorAhead } from "./cursorGuard";
@@ -91,6 +97,15 @@ const PULL_ONLY: ReadonlySet<Tbl> = new Set<Tbl>(["patient_merges"]);
  * device last saw, not by comparing device and server clocks.
  */
 const VERSIONED: ReadonlySet<Tbl> = new Set<Tbl>(["patients", "queue"]);
+
+/**
+ * Tables whose conflicts are detected by comparing the server's updated_at
+ * with the one this device last saw (_serverUpdatedAt, see serverStamp.ts):
+ * every uploaded table without row_version.
+ */
+function comparesServerStamp(t: Tbl): boolean {
+  return !APPEND_ONLY.has(t) && !PULL_ONLY.has(t) && !VERSIONED.has(t);
+}
 
 /** Uploaded columns (this device's field -> server column). */
 const mapToDB: Record<Tbl, Record<string, string>> = {
@@ -762,6 +777,7 @@ async function detectConflict(
 
     const remoteVersion = Number(remoteData.row_version);
     const localVersion = localData._serverVersion;
+    const seenStamp = serverStampOf(localData._serverUpdatedAt);
     if (
       VERSIONED.has(table) &&
       Number.isFinite(remoteVersion) &&
@@ -771,7 +787,18 @@ async function detectConflict(
       // it: this device's edit is the only change. (Server version numbers,
       // not device clocks, so clock differences cannot fake a conflict.)
       if (remoteVersion === localVersion) return { hasConflict: false };
+    } else if (comparesServerStamp(table) && seenStamp !== undefined) {
+      // Same rule with the server's own updated_at as this device last saw
+      // it: unchanged means this device's edit is the only change. Changed:
+      // compare the fields below. (Server stamps on both sides, so a device
+      // clock running behind or ahead cannot fake or hide a conflict.)
+      if (serverUnchangedSince(remoteData.updated_at, seenStamp)) {
+        return { hasConflict: false };
+      }
     } else {
+      // No server version or stamp seen yet (records from before the stamp
+      // was kept, records not downloaded or read back since, queued
+      // operations): compare with this device's clock.
       const localUpdated = new Date(
         localData.updatedAt || localData.updated_at,
       ).getTime();
@@ -852,6 +879,60 @@ async function upsertRow(
   return result;
 }
 
+/** Rows per request when the server's updated_at is read back after uploads. */
+const READ_BACK_CHUNK = 100;
+
+/**
+ * After uploads to `t`: read the server's updated_at of the uploaded rows
+ * and keep it (_serverUpdatedAt) on each row the server still holds as this
+ * device uploaded it, so the next edit is compared with the server's stamp,
+ * not this device's clock. A separate read, not a reply to the upload: an
+ * upload that returns rows needs read permission, and roles that may upload
+ * but not read back would be refused. Best effort: a failed read fails
+ * nothing. A row it did not stamp keeps none (the upload made the earlier
+ * one stale): its next edit falls back to the clock check, as before stamps
+ * were kept, instead of always being compared field by field with this
+ * device's own upload.
+ */
+async function readBackServerStamps(
+  t: Tbl,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  table: any,
+  uploaded: Row[],
+): Promise<void> {
+  if (!sb || uploaded.length === 0) return;
+  const byId = new Map(uploaded.map((record) => [String(record.id), record]));
+  const ids = [...byId.keys()];
+  const columns = [...new Set(["id", "updated_at", ...Object.values(mapToDB[t])])].join(",");
+  for (let i = 0; i < ids.length; i += READ_BACK_CHUNK) {
+    try {
+      const { data, error } = await sb
+        .from(t)
+        .select(columns)
+        .in("id", ids.slice(i, i + READ_BACK_CHUNK));
+      if (error) {
+        console.warn(`[sync] could not read back ${t} after upload`, syncErrorCode(error));
+        return;
+      }
+      for (const serverRow of (data ?? []) as unknown as Row[]) {
+        const record = byId.get(String(serverRow.id));
+        if (!record) continue;
+        // Another change reached the server in between: put back the stamp
+        // the upload was checked against, so that change is still compared
+        // at the next upload.
+        const stamp =
+          stampAfterUpload(record, serverRow, mapToDB[t]) ??
+          serverStampOf(record._serverUpdatedAt);
+        if (stamp === undefined) continue;
+        await table.update(record.id, { _serverUpdatedAt: stamp }).catch(() => undefined);
+      }
+    } catch (error) {
+      console.warn(`[sync] could not read back ${t} after upload`, syncErrorCode(error));
+      return;
+    }
+  }
+}
+
 export interface PushSummary {
   conflicts: ConflictData[];
   /** Rows the server accepted. */
@@ -899,6 +980,7 @@ export async function pushChanges(): Promise<PushSummary> {
         return [];
       });
     if (!dirty?.length) continue;
+    const uploaded: Row[] = [];
 
     for (const record of dirty) {
       // Refused for this person recently: leave it for someone authorised.
@@ -951,9 +1033,13 @@ export async function pushChanges(): Promise<PushSummary> {
             ...markersAfterUpload(record, current, syncedAt),
             _syncBlock: undefined,
             ...(serverVersion !== undefined ? { _serverVersion: serverVersion } : {}),
+            // This upload changed the server's updated_at, so the one seen
+            // before it is stale; the read-back below records the new one.
+            ...(comparesServerStamp(t) ? { _serverUpdatedAt: undefined } : {}),
           });
         });
         summary.uploaded += 1;
+        uploaded.push(record);
       } else if (isPermissionRefusal(error, status)) {
         // Not this person's to upload (e.g. a nurse's vitals on a tablet
         // now signed in by a pharmacist). Keep it, unsent, for someone
@@ -971,6 +1057,10 @@ export async function pushChanges(): Promise<PushSummary> {
         console.warn(`[sync] upload refused for ${t}`, syncErrorCode(error));
       }
     }
+
+    // The server's stamp of what was just uploaded (versioned tables got
+    // their row_version with the upload itself).
+    if (comparesServerStamp(t)) await readBackServerStamps(t, table, uploaded);
   }
 
   return summary;
@@ -1001,6 +1091,7 @@ async function applyPulledRows(
 ): Promise<void> {
   const syncedAt = new Date().toISOString();
   const serverOwned = serverOwnedFor(t);
+  const keepsStamp = !APPEND_ONLY.has(t) && !PULL_ONLY.has(t);
   // Read and write each row in one transaction so an edit saved on this
   // device between the read and the write cannot be overwritten.
   await db.transaction("rw", table, async () => {
@@ -1011,11 +1102,13 @@ async function applyPulledRows(
       // Rows with unsent changes are kept (only their server-owned fields
       // are updated); others get the server row laid over the local one,
       // so device-only fields survive (patient search keys, staff PIN
-      // hashes).
+      // hashes). Only a row laid over takes the server's updated_at: a row
+      // with unsent changes keeps the stamp its edit was made against, so
+      // a change made meanwhile on another device is still found.
       const decision = mergePulledRow(
         localRow,
         mapped,
-        { _dirty: 0, _syncedAt: syncedAt },
+        { _dirty: 0, _syncedAt: syncedAt, ...(keepsStamp ? serverStampMarker(row) : {}) },
         { serverOwned, held: heldFor(t, localRow) },
       );
       if (decision.kind === "kept-local") {

@@ -1,9 +1,10 @@
 // Aggregations for the Outreach Summary report.
 // Pure functions over Dexie — no React dependencies.
-import { db, Patient, Visit } from "@/db";
+import { db, Patient, Visit, type Vital } from "@/db";
 import { mbhrDb, type Prescription } from "@/db/mbhr";
 import { listActiveSiteNames } from "@/services/sites";
 import { tallyMedicines, type MedicineTally } from "@/services/outreachMedicines";
+import { isAbnormalVitalFlag } from "@/utils/vitals";
 
 export type { MedicineTally } from "@/services/outreachMedicines";
 
@@ -130,6 +131,25 @@ export function getAgeBands(patients: Patient[], asOf: Date): AgeBands {
   return out;
 }
 
+/**
+ * Distinct patients with an abnormal vitals flag on a reading from one of
+ * the given visits. The paediatric-chart prompt that every child's reading
+ * carries does not count on its own (see isAbnormalVitalFlag).
+ */
+export function countHighRiskPatients(
+  vitals: Array<Pick<Vital, "patientId" | "visitId" | "flags">>,
+  visitIds: Set<string>,
+): number {
+  const flaggedPatients = new Set<string>();
+  for (const v of vitals) {
+    if (!visitIds.has(v.visitId)) continue;
+    if (Array.isArray(v.flags) && v.flags.some(isAbnormalVitalFlag)) {
+      flaggedPatients.add(v.patientId);
+    }
+  }
+  return flaggedPatients.size;
+}
+
 const REFERRAL_PATTERN = /\brefer(?:r(?:ed|al|ing))?\b/i;
 
 function isLikelyReferral(soapPlan: string | undefined): boolean {
@@ -173,19 +193,12 @@ export async function getOutreachSummary(
     .sort((a, b) => b.count - a.count)
     .slice(0, 20);
 
-  // Vitals → high-risk count: distinct patients with any flagged vitals row in range.
+  // Vitals → high-risk count: distinct patients with an abnormal vitals row in range.
   const vitals = await db.vitals
     .where("takenAt")
     .between(filters.start, filters.end, true, false)
     .toArray();
-  const flaggedPatients = new Set<string>();
-  for (const v of vitals) {
-    if (!visitIds.has(v.visitId)) continue;
-    if (Array.isArray(v.flags) && v.flags.length > 0) {
-      flaggedPatients.add(v.patientId);
-    }
-  }
-  const highRiskCases = flaggedPatients.size;
+  const highRiskCases = countHighRiskPatients(vitals, visitIds);
 
   // Medicines dispensed: db.dispenses (visit dispensing and prescription
   // dispenses downloaded from the server) plus prescription dispenses made

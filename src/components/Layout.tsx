@@ -8,6 +8,12 @@ import useLowStockWatcher from "@/features/inventory/useLowStockWatcher";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { AccessibilityControls } from "@/components/AccessibilityControls";
 import { can, getRoleDisplayName, type Role } from "@/auth/roles";
+import {
+  INVENTORY_ROLES,
+  PATIENT_RECORD_ROLES,
+  QUEUE_ROLES,
+  roleIn,
+} from "@/auth/routeAccess";
 import { pharmacyTasksForRole } from "@/components/shell/pharmacyTasks";
 import { ActiveSiteControl } from "@/components/shell/ActiveSiteControl";
 import { SyncStatusControl } from "@/components/shell/SyncStatusControl";
@@ -236,8 +242,12 @@ export function Layout({ children }: LayoutProps) {
       label: "Patient care",
       items: [
         { key: "dashboard", name: t("nav.dashboard"), href: "/dashboard", icon: HomeIcon },
-        { key: "patients", name: t("nav.patients"), href: "/patients", icon: UserGroupIcon },
-        { key: "queue", name: t("nav.queue"), href: "/queue", icon: QueueListIcon },
+        ...(roleIn(role, PATIENT_RECORD_ROLES)
+          ? [{ key: "patients", name: t("nav.patients"), href: "/patients", icon: UserGroupIcon }]
+          : []),
+        ...(roleIn(role, QUEUE_ROLES)
+          ? [{ key: "queue", name: t("nav.queue"), href: "/queue", icon: QueueListIcon }]
+          : []),
         ...(hasPerm("register")
           ? [{ key: "register", name: "Registration", href: "/register", icon: UserPlusIcon }]
           : []),
@@ -286,7 +296,9 @@ export function Layout({ children }: LayoutProps) {
         ...(hasRole("volunteer", "registration_lead", "nurse", "doctor", "admin")
           ? [{ key: "tickets", name: t("nav.issue_tickets"), href: "/tickets/issue", icon: TicketIcon }]
           : []),
-        { key: "inventory", name: t("nav.inventory"), href: "/inventory", icon: CubeIcon },
+        ...(roleIn(role, INVENTORY_ROLES)
+          ? [{ key: "inventory", name: t("nav.inventory"), href: "/inventory", icon: CubeIcon }]
+          : []),
         ...(hasRole("admin", "doctor", "nurse")
           ? [{ key: "outreach", name: "Outreach reports", href: "/reports/outreach", icon: DocumentChartBarIcon }]
           : []),

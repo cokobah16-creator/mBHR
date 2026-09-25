@@ -1,11 +1,61 @@
 // Vital signs calculations and flagging
 
+import { patientAge } from './patient'
+
 export interface VitalFlags {
   hypertension?: boolean
   fever?: boolean
   tachycardia?: boolean
   underweight?: boolean
   obese?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Age. The heart-rate, blood-pressure and BMI thresholds in this file are
+// adult ones. A child's normal ranges depend on age and none have been agreed
+// with the clinical team yet, so for a reading taken before 18, or when the
+// age is not known, those flags are left out and the reading is marked for a
+// check against a paediatric chart instead.
+// ---------------------------------------------------------------------------
+
+/** Age from which the adult thresholds in this file apply. */
+export const ADULT_VITALS_MIN_AGE = 18
+
+/** Flag stored in place of the adult-only flags when adult thresholds do not apply. */
+export const PAEDIATRIC_CHECK_FLAG = 'check_paediatric_chart'
+
+/**
+ * flagVitals flags still raised when adult thresholds do not apply: low
+ * oxygen saturation, fever and low temperature, with unchanged thresholds.
+ * They were raised at every age before, and the range table in
+ * db/seedVitalsRanges uses one SpO2 range for every age and puts both
+ * temperature limits at or beyond the edge of every age band. Keeping them
+ * means a child's critical reading is never reduced to a prompt. Awaiting
+ * clinical confirmation (docs/clinical/CLINICAL_LOGIC_CHANGES.md).
+ */
+export const FLAGS_FOR_ALL_AGES: readonly string[] = ['low_spo2', 'high_temp', 'low_temp']
+
+/**
+ * Whether a stored flag marks an abnormal reading. The paediatric-chart
+ * prompt does not: every child's reading carries it, whatever the values, so
+ * counts of abnormal or high-risk readings must leave it out.
+ */
+export function isAbnormalVitalFlag(flag: string): boolean {
+  return flag !== PAEDIATRIC_CHECK_FLAG
+}
+
+/**
+ * Whether adult thresholds apply to a reading: the patient was 18 or over
+ * when it was taken. False when the date of birth is missing or unreadable,
+ * so an unknown age is never treated as adult.
+ */
+export function adultVitalRangesApply(
+  dob: string | null | undefined,
+  takenAt: Date | string | number = new Date(),
+): boolean {
+  const at = new Date(takenAt)
+  const age = patientAge(dob, Number.isNaN(at.getTime()) ? new Date() : at)
+  return age !== null && age >= ADULT_VITALS_MIN_AGE
 }
 
 export function calculateBMI(weightKg: number, heightCm: number): number {
@@ -85,6 +135,7 @@ export function getFlagColor(flag: string): string {
       return 'text-red-600 bg-red-50'
     case 'low_bmi':
     case 'high_bmi':
+    case PAEDIATRIC_CHECK_FLAG:
       return 'text-yellow-600 bg-yellow-50'
     default:
       return 'text-gray-600 bg-gray-50'
@@ -111,6 +162,8 @@ export function getFlagLabel(flag: string): string {
       return 'Underweight'
     case 'high_bmi':
       return 'Obese'
+    case PAEDIATRIC_CHECK_FLAG:
+      return 'Check paediatric chart'
     default:
       return flag
   }
@@ -184,6 +237,7 @@ export function getFlagTone(flag: string): ClinicalTone {
   switch (flag) {
     case 'low_bmi':
     case 'high_bmi':
+    case PAEDIATRIC_CHECK_FLAG:
       return 'warning'
     case 'high_bp':
     case 'low_bp':
@@ -203,16 +257,24 @@ export function getFlagTone(flag: string): ClinicalTone {
  * Use this instead of calling calculateBMI/flagVitals directly: both have
  * positional/renamed parameters that were previously passed incorrectly
  * (height and weight swapped; tempC/pulseBpm/spo2 never reaching the flags).
+ *
+ * Pass adultRanges: false for a patient under 18 or of unknown age (see
+ * adultVitalRangesApply). Only the FLAGS_FOR_ALL_AGES flags are then kept
+ * (heart-rate, blood-pressure and BMI flags are left out), and a reading is
+ * also marked PAEDIATRIC_CHECK_FLAG, so it never reads as normal.
  */
-export function assessVitals(v: {
-  heightCm?: number | null
-  weightKg?: number | null
-  tempC?: number | null
-  pulseBpm?: number | null
-  systolic?: number | null
-  diastolic?: number | null
-  spo2?: number | null
-}): { bmi: number | null; flags: string[] } {
+export function assessVitals(
+  v: {
+    heightCm?: number | null
+    weightKg?: number | null
+    tempC?: number | null
+    pulseBpm?: number | null
+    systolic?: number | null
+    diastolic?: number | null
+    spo2?: number | null
+  },
+  opts: { adultRanges?: boolean } = {},
+): { bmi: number | null; flags: string[] } {
   const bmi =
     v.heightCm && v.weightKg && v.heightCm > 0 && v.weightKg > 0
       ? calculateBMI(v.weightKg, v.heightCm)
@@ -225,6 +287,11 @@ export function assessVitals(v: {
     spo2: v.spo2 ?? undefined,
     bmi: bmi ?? undefined,
   })
+  if (opts.adultRanges === false) {
+    const kept = flags.filter((flag) => FLAGS_FOR_ALL_AGES.includes(flag))
+    const hasReading = !!(v.systolic || v.diastolic || v.tempC || v.pulseBpm || v.spo2 || bmi)
+    return { bmi, flags: hasReading ? [...kept, PAEDIATRIC_CHECK_FLAG] : kept }
+  }
   return { bmi, flags }
 }
 
@@ -243,4 +310,55 @@ export function resolveBmi(v: {
   }
   if (v.bmi && v.bmi >= 8 && v.bmi <= 90) return v.bmi
   return undefined
+}
+
+// ---------------------------------------------------------------------------
+// Vitals form values. Every measurement is optional: a field left empty is
+// stored as absent, never as NaN or 0.
+// ---------------------------------------------------------------------------
+
+export const VITAL_MEASUREMENTS = [
+  'heightCm',
+  'weightKg',
+  'tempC',
+  'pulseBpm',
+  'systolic',
+  'diastolic',
+  'spo2',
+] as const
+
+export type VitalMeasurement = (typeof VITAL_MEASUREMENTS)[number]
+
+/**
+ * A number input's value as a measurement. An empty field is undefined; any
+ * other text becomes a number (NaN when unreadable, so validation rejects
+ * it instead of the entry being dropped).
+ */
+export function parseMeasurement(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw === 'number') return raw
+  const text = String(raw).trim()
+  return text === '' ? undefined : Number(text)
+}
+
+/** The measurements that hold a usable number; empty fields are left out. */
+export function enteredMeasurements(
+  values: Partial<Record<VitalMeasurement, unknown>>,
+): Partial<Record<VitalMeasurement, number>> {
+  const out: Partial<Record<VitalMeasurement, number>> = {}
+  for (const key of VITAL_MEASUREMENTS) {
+    const value = values?.[key]
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value
+  }
+  return out
+}
+
+/** Whether anything has been typed into the vitals form, readable or not. */
+export function hasVitalsEntries(
+  values: Partial<Record<VitalMeasurement, unknown>>,
+): boolean {
+  return VITAL_MEASUREMENTS.some((key) => {
+    const value = values?.[key]
+    return value !== undefined && value !== null && value !== ''
+  })
 }

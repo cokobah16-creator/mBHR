@@ -93,7 +93,9 @@ mBHR is an offline-first Progressive Web App (PWA) for medical record management
   - Cursor-based incremental sync
   - Conflict detection (by server `row_version` for patients; queue rows are
     last-writer-wins for priority and position, and the server keeps their
-    status, stage and ticket)
+    status, stage and ticket; other uploaded tables compare the server's
+    `updated_at` with the one the device last saw, `_serverUpdatedAt`, never
+    with the device clock: `src/sync/serverStamp.ts`)
   - Dirty flag tracking
   - Field-level mapping
 
@@ -224,7 +226,10 @@ Success (completed) | Failure (retry or failed)
 ### Detection
 Conflicts occur when:
 1. Record modified locally (dirty flag set)
-2. Same record modified on server (newer updated_at)
+2. Same record changed on the server since this device last saw it (a
+   different `row_version`, or a server `updated_at` other than the
+   device's `_serverUpdatedAt`; a record with neither yet falls back to
+   comparing timestamps)
 3. Push attempt finds version mismatch
 
 ### Resolution Strategies

@@ -4,12 +4,15 @@ import { PatientSearch } from "@/components/PatientSearch";
 import { DispenseForm } from "@/components/DispenseForm";
 import { db, Visit, Patient, Consultation } from "@/db";
 import { BeakerIcon } from "@heroicons/react/24/outline";
+import { ExclamationTriangleIcon } from "@heroicons/react/20/solid";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PharmacySkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 import { ensureTodaysVisit } from "@/services/visits";
 import { activePatientFor } from "@/services/activePatient";
+import { formatNigerianDateTime } from "@/utils/dateFormat";
+import { pharmacyConsultation, type PharmacyConsultation } from "@/features/pharmacy/visitConsultation";
 
 export function Pharmacy() {
   const { visitId } = useParams<{ visitId: string }>();
@@ -17,7 +20,7 @@ export function Pharmacy() {
   const [visit, setVisit] = useState<Visit | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [consultation, setConsultation] = useState<Consultation | null>(null);
+  const [consult, setConsult] = useState<PharmacyConsultation<Consultation>>({ kind: "none" });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,12 +36,13 @@ export function Pharmacy() {
       const visitData = await db.visits.get(id);
       if (visitData) {
         setVisit(visitData);
-        const [patientData, consultationData] = await Promise.all([
+        const [patientData, forVisit, forPatient] = await Promise.all([
           db.patients.get(visitData.patientId),
-          db.consultations.where("visitId").equals(id).first(),
+          db.consultations.where("visitId").equals(id).toArray(),
+          db.consultations.where("patientId").equals(visitData.patientId).toArray(),
         ]);
         setPatient(patientData || null);
-        setConsultation(consultationData || null);
+        setConsult(pharmacyConsultation([...forVisit, ...forPatient], id));
       }
     } catch (error) {
       console.error("Error loading visit data:", error);
@@ -55,16 +59,13 @@ export function Pharmacy() {
       // Continue today's visit if there is one; otherwise start it.
       const newVisit: Visit = await ensureTodaysVisit(selectedPatient.id);
 
-      // Load consultation for this patient (most recent)
-      const consultationData = await db.consultations
-        .where("patientId")
-        .equals(selectedPatient.id)
-        .reverse()
-        .first();
+      // Only today's consultation for this visit is the current plan; an
+      // older one is shown dated.
+      const consultations = await db.consultations.where("patientId").equals(selectedPatient.id).toArray();
 
       setPatient(selectedPatient);
       setVisit(newVisit);
-      setConsultation(consultationData || null);
+      setConsult(pharmacyConsultation(consultations, newVisit.id));
       setSelectedPatient(selectedPatient);
     } catch (error) {
       console.error("Error creating visit:", error);
@@ -135,6 +136,8 @@ export function Pharmacy() {
     );
   }
 
+  const consultation = consult.consultation;
+
   return (
     <div>
       <PageHeader
@@ -156,34 +159,53 @@ export function Pharmacy() {
         <section className="panel" aria-labelledby="rx-summary-title">
           <div className="panel-header">
             <h2 id="rx-summary-title" className="panel-title">
-              From the consultation
+              {consult.kind === "current"
+                ? "From today's consultation"
+                : consult.kind === "earlier"
+                  ? "Earlier consultation"
+                  : "From the consultation"}
             </h2>
           </div>
           {consultation ? (
-            <dl className="panel-body space-y-3 text-body">
-              <div>
-                <dt className="section-label">Clinician</dt>
-                <dd className="text-ink">{consultation.providerName}</dd>
-              </div>
-              {consultation.provisionalDx.length > 0 && (
-                <div>
-                  <dt className="section-label">Diagnoses</dt>
-                  <dd>
-                    <ul className="list-disc pl-5 text-ink">
-                      {consultation.provisionalDx.map((dx, index) => (
-                        <li key={index}>{dx}</li>
-                      ))}
-                    </ul>
-                  </dd>
+            <div className="panel-body space-y-3 text-body">
+              {consult.kind === "earlier" && (
+                <div className="banner banner-warning" role="status">
+                  <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <span>
+                    Not from today's visit: this plan is from an earlier consultation. Confirm the prescription
+                    with a clinician before dispensing.
+                  </span>
                 </div>
               )}
-              <div>
-                <dt className="section-label">Plan</dt>
-                <dd className="whitespace-pre-line text-ink">
-                  {consultation.soapPlan || "No plan recorded."}
-                </dd>
-              </div>
-            </dl>
+              <dl className="space-y-3">
+                <div>
+                  <dt className="section-label">Recorded</dt>
+                  <dd className="text-ink">{formatNigerianDateTime(consultation.createdAt) || "Date not recorded"}</dd>
+                </div>
+                <div>
+                  <dt className="section-label">Clinician</dt>
+                  <dd className="text-ink">{consultation.providerName}</dd>
+                </div>
+                {consultation.provisionalDx.length > 0 && (
+                  <div>
+                    <dt className="section-label">Diagnoses</dt>
+                    <dd>
+                      <ul className="list-disc pl-5 text-ink">
+                        {consultation.provisionalDx.map((dx, index) => (
+                          <li key={index}>{dx}</li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                )}
+                <div>
+                  <dt className="section-label">Plan</dt>
+                  <dd className="whitespace-pre-line text-ink">
+                    {consultation.soapPlan || "No plan recorded."}
+                  </dd>
+                </div>
+              </dl>
+            </div>
           ) : (
             <p className="panel-body text-body text-warning-fg">
               No consultation recorded for this patient. Confirm the

@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { rows, mockSelect } = vi.hoisted(() => ({
+const { rows, mockSelect, signedIn } = vi.hoisted(() => ({
   rows: new Map<string, Record<string, unknown>>(),
   mockSelect: vi.fn(),
+  // The online account the server answers for.
+  signedIn: { id: "u1" as string | null },
 }));
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     from: () => ({ select: mockSelect }),
-    auth: { signOut: vi.fn() },
+    auth: {
+      signOut: vi.fn(),
+      getSession: async () => ({
+        data: { session: signedIn.id ? { user: { id: signedIn.id } } : null },
+        error: null,
+      }),
+    },
   },
 }));
 
@@ -38,11 +46,17 @@ vi.mock("@/lib/logger", () => ({
   warn: vi.fn(),
 }));
 
-import { keepLocalRevocation, pullStaffRoster, staffFromServerRow } from "./staffRoster";
+import {
+  isFullStaffDirectory,
+  keepLocalRevocation,
+  pullStaffRoster,
+  staffFromServerRow,
+} from "./staffRoster";
 
 beforeEach(() => {
   rows.clear();
   mockSelect.mockReset();
+  signedIn.id = "u1";
 });
 
 describe("staffFromServerRow", () => {
@@ -120,6 +134,7 @@ describe("pullStaffRoster", () => {
         { id: "u1", full_name: "Ada Okafor", role: "doctor" },
         { id: "u2", full_name: "Chidi Eze", role: "pharmacist" },
       ],
+      count: 2,
       error: null,
     });
 
@@ -128,6 +143,45 @@ describe("pullStaffRoster", () => {
     expect(result).toEqual({ ok: true, staff: 2, deactivated: 1 });
     expect(rows.get("gone")?.isActive).toBe(0);
     expect(rows.get("local")?.isActive).toBe(1);
+  });
+
+  it("switches nobody off when the server cut the directory short", async () => {
+    rows.set("u3", { id: "u3", fullName: "Past the limit", isActive: 1, _syncedAt: "2026-09-01" });
+    mockSelect.mockResolvedValue({
+      data: [
+        { id: "u1", full_name: "Ada Okafor", role: "doctor" },
+        { id: "u2", full_name: "Chidi Eze", role: "pharmacist" },
+      ],
+      count: 3,
+      error: null,
+    });
+
+    expect(await pullStaffRoster()).toEqual({ ok: true, staff: 2, deactivated: 0 });
+    expect(rows.get("u3")?.isActive).toBe(1);
+  });
+
+  it("switches nobody off when the answer is not an active staff member's view", async () => {
+    rows.set("other", { id: "other", fullName: "Chidi", isActive: 1, _syncedAt: "2026-09-01" });
+    const answer = (callerRole: string) => ({
+      data: [
+        { id: "u1", full_name: "Signed in", role: callerRole },
+        { id: "u2", full_name: "Ngozi", role: "nurse" },
+      ],
+      count: 2,
+      error: null,
+    });
+
+    // The signed-in account has no staff role.
+    mockSelect.mockResolvedValue(answer("guest"));
+    expect(await pullStaffRoster()).toMatchObject({ ok: true, deactivated: 0 });
+    // The signed-in account is not in the answer, or not known.
+    mockSelect.mockResolvedValue(answer("doctor"));
+    signedIn.id = "someone-else";
+    expect(await pullStaffRoster()).toMatchObject({ ok: true, deactivated: 0 });
+    signedIn.id = null;
+    expect(await pullStaffRoster()).toMatchObject({ ok: true, deactivated: 0 });
+
+    expect(rows.get("other")?.isActive).toBe(1);
   });
 
   it("switches nobody off when the server shows only the signed-in person", async () => {
@@ -175,6 +229,30 @@ describe("pullStaffRoster", () => {
   it("reports a failed download without throwing", async () => {
     mockSelect.mockResolvedValue({ data: null, error: { code: "42501" } });
     expect(await pullStaffRoster()).toEqual({ ok: false, reason: "error" });
+  });
+});
+
+describe("isFullStaffDirectory", () => {
+  const two = [
+    { id: "u1", role: "doctor" },
+    { id: "u2", role: "nurse" },
+  ];
+
+  it("accepts every counted row, including the caller as active staff", () => {
+    expect(isFullStaffDirectory(two, 2, "u1")).toBe(true);
+  });
+
+  it("refuses one row, a short or uncounted page, and an unknown caller", () => {
+    expect(isFullStaffDirectory([two[0]], 1, "u1")).toBe(false);
+    expect(isFullStaffDirectory(two, 1000, "u1")).toBe(false);
+    expect(isFullStaffDirectory(two, null, "u1")).toBe(false);
+    expect(isFullStaffDirectory(two, 2, null)).toBe(false);
+    expect(isFullStaffDirectory(two, 2, "u9")).toBe(false);
+  });
+
+  it("refuses an answer to a caller who is switched off or not staff", () => {
+    expect(isFullStaffDirectory([{ ...two[0], is_active: false }, two[1]], 2, "u1")).toBe(false);
+    expect(isFullStaffDirectory([{ ...two[0], role: "guest" }, two[1]], 2, "u1")).toBe(false);
   });
 });
 

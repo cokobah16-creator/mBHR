@@ -10,6 +10,10 @@ interface VisualNumberInputProps {
   label: string
   unit?: string
   showDots?: boolean
+  /** Shown under the input and read with it, e.g. the accepted range. */
+  hint?: string
+  /** Marks the entry as not accepted (shows the hint as an error). */
+  invalid?: boolean
   className?: string
 }
 
@@ -29,27 +33,36 @@ export function VisualNumberInput({
   label,
   unit,
   showDots = true,
+  hint,
+  invalid = false,
   className = ''
 }: VisualNumberInputProps) {
-  const [inputValue, setInputValue] = useState(value.toString())
+  const [inputValue, setInputValue] = useState(Number.isNaN(value) ? '' : value.toString())
   const inputId = useId()
   const unitId = `${inputId}-unit`
+  const hintId = `${inputId}-hint`
+  const describedBy = [unit && unitId, hint && hintId].filter(Boolean).join(' ')
   const decimals = decimalsOf(step)
   const round = (n: number) => Number(n.toFixed(decimals))
 
   // Follow changes made by the parent without overwriting what is being typed.
+  // NaN means the typed text was not accepted: keep showing it.
   useEffect(() => {
+    if (Number.isNaN(value)) return
     setInputValue((prev) => (parseFloat(prev) === value ? prev : value.toString()))
   }, [value])
 
+  // After an entry that was not accepted, the buttons start from the minimum.
+  const current = Number.isNaN(value) ? min : value
+
   const handleIncrement = () => {
-    const newValue = round(Math.min(max, value + step))
+    const newValue = round(Math.min(max, current + step))
     onChange(newValue)
     setInputValue(newValue.toString())
   }
 
   const handleDecrement = () => {
-    const newValue = round(Math.max(min, value - step))
+    const newValue = round(Math.max(min, current - step))
     onChange(newValue)
     setInputValue(newValue.toString())
   }
@@ -58,10 +71,10 @@ export function VisualNumberInput({
     const inputVal = e.target.value
     setInputValue(inputVal)
 
+    // Empty, not a number or out of range: tell the parent with NaN, so it
+    // never keeps the previous value while the box shows something else.
     const numVal = parseFloat(inputVal)
-    if (!isNaN(numVal) && numVal >= min && numVal <= max) {
-      onChange(numVal)
-    }
+    onChange(!isNaN(numVal) && numVal >= min && numVal <= max ? numVal : Number.NaN)
   }
 
   const renderDots = () => {
@@ -89,7 +102,7 @@ export function VisualNumberInput({
         <button
           type="button"
           onClick={handleDecrement}
-          disabled={value <= min}
+          disabled={current <= min}
           className="btn-secondary h-12 w-12 px-0"
           aria-label={`Decrease ${label}`}
         >
@@ -100,13 +113,14 @@ export function VisualNumberInput({
           <input
             id={inputId}
             type="number"
-            inputMode="decimal"
+            inputMode={decimals === 0 ? 'numeric' : 'decimal'}
             value={inputValue}
             onChange={handleInputChange}
             min={min}
             max={max}
             step={step}
-            aria-describedby={unit ? unitId : undefined}
+            aria-describedby={describedBy || undefined}
+            aria-invalid={invalid ? 'true' : undefined}
             className="input-field w-28 text-center text-h1 tabular-nums"
           />
           {unit && (
@@ -117,13 +131,19 @@ export function VisualNumberInput({
         <button
           type="button"
           onClick={handleIncrement}
-          disabled={value >= max}
+          disabled={current >= max}
           className="btn-secondary h-12 w-12 px-0"
           aria-label={`Increase ${label}`}
         >
           <PlusIcon className="h-6 w-6" aria-hidden />
         </button>
       </div>
+
+      {hint && (
+        <p id={hintId} className={`${invalid ? 'field-error' : 'field-hint'} text-center`}>
+          {hint}
+        </p>
+      )}
 
       {renderDots()}
     </div>

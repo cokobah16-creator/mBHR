@@ -6,7 +6,8 @@ import { useToast } from "@/stores/toast";
 import { can } from "@/auth/roles";
 import type { Patient } from "@/db";
 import { chooseExistingForRegistration } from "@/services/patientMerge";
-import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { assessDedupeMatch } from "@/utils/dedupeMatch";
 import {
   ExclamationTriangleIcon,
   UserIcon,
@@ -99,47 +100,6 @@ export function PatientDedupeModal({
     }
   };
 
-  const getMatchScore = (candidate: Patient): number => {
-    let score = 0;
-
-    if (
-      candidate.phone &&
-      newPatient.phone &&
-      candidate.phone.replace(/\D/g, "") === newPatient.phone.replace(/\D/g, "")
-    ) {
-      score += 50;
-    }
-
-    if (
-      candidate.givenName?.toLowerCase() === newPatient.givenName?.toLowerCase()
-    ) {
-      score += 20;
-    }
-
-    if (
-      candidate.familyName?.toLowerCase() ===
-      newPatient.familyName?.toLowerCase()
-    ) {
-      score += 20;
-    }
-
-    if (candidate.dob === newPatient.dob) {
-      score += 30;
-    }
-
-    if (candidate.sex === newPatient.sex) {
-      score += 10;
-    }
-
-    return score;
-  };
-
-  const getMatchLabel = (score: number): { label: string; tone: Tone } => {
-    if (score >= 70) return { label: "Likely the same person", tone: "warning" };
-    if (score >= 40) return { label: "Possible match", tone: "info" };
-    return { label: "Weak match", tone: "neutral" };
-  };
-
   const formatField = (value: unknown): string => {
     if (!value) return "—";
     if (value instanceof Date) return formatNigerianDate(value);
@@ -209,6 +169,9 @@ export function PatientDedupeModal({
                   {newPatient.dob
                     ? formatNigerianDate(newPatient.dob)
                     : formatField(newPatient.dob)}
+                  {newPatient.dobEstimated === 1 && (
+                    <span className="text-ink-muted"> (estimated from age)</span>
+                  )}
                 </dd>
               </div>
               <div>
@@ -226,8 +189,7 @@ export function PatientDedupeModal({
             </legend>
             <div className="space-y-3">
               {candidates.map((candidate) => {
-                const matchScore = getMatchScore(candidate);
-                const matchInfo = getMatchLabel(matchScore);
+                const matchInfo = assessDedupeMatch(candidate, newPatient);
                 const isSelected = selectedWinner === candidate.id;
                 const phoneMatches = candidate.phone === newPatient.phone;
                 const dobMatches = candidate.dob === newPatient.dob;
@@ -293,6 +255,7 @@ export function PatientDedupeModal({
                           {candidate.dob
                             ? formatNigerianDate(candidate.dob)
                             : formatField(candidate.dob)}
+                          {candidate.dobEstimated === 1 && " (estimated)"}
                         </span>
                         <MatchMark matches={dobMatches} />
                       </div>
@@ -310,6 +273,13 @@ export function PatientDedupeModal({
                         <span className="text-ink-secondary">{candidate.state}</span>
                       </div>
                     </div>
+
+                    {matchInfo.maybeRelative && (
+                      <p className="mt-2 text-caption text-ink-secondary">
+                        Different first name on the same phone: this may be a
+                        family member, not the same person.
+                      </p>
+                    )}
 
                     <div className="mt-2 text-caption text-ink-muted">
                       Registered {formatNigerianDate(candidate.createdAt)}

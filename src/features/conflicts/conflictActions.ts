@@ -59,11 +59,16 @@ interface DeviceApply {
 async function applyPlan(
   plan: DevicePlan,
   actor: ConflictActor,
-  entityType: string,
+  conflict: Pick<ConflictResolution, "entityType" | "conflictDetails">,
 ): Promise<DeviceApply> {
   if (plan.kind === "none") return { outcome: "not_applied" };
   try {
-    const result = await applyPlanOnDevice(plan, actor, entityType);
+    const result = await applyPlanOnDevice(
+      plan,
+      actor,
+      conflict.entityType,
+      conflict.conflictDetails?.remoteTimestamp,
+    );
     return result.applied === true
       ? { outcome: "applied", merge: result.merge }
       : { outcome: "not_applied", message: result.message };
@@ -179,7 +184,7 @@ export async function resolveWithPlan(input: {
   const device: DeviceApply =
     plan.kind === "none" && plan.reason === "awaiting_approval"
       ? { outcome: "not_applied" }
-      : await applyPlan(plan, actor, conflict.entityType);
+      : await applyPlan(plan, actor, conflict);
   return {
     ok: true,
     status: "resolved",
@@ -231,7 +236,7 @@ export async function approveWithPlan(input: {
     };
   }
 
-  const device = await applyPlan(plan, actor, conflict.entityType);
+  const device = await applyPlan(plan, actor, conflict);
   return {
     ok: true,
     status: "resolved",
@@ -289,7 +294,7 @@ export async function applyRecordedDecision(input: {
   if (conflict.status !== "resolved" || conflict.resolutionStrategy === "ignore") {
     return { ok: false, device: "not_applied", title: "Not applied", body: "Only resolved decisions can be applied." };
   }
-  const device = await applyPlan(plan, actor, conflict.entityType);
+  const device = await applyPlan(plan, actor, conflict);
   if (device.outcome === "failed") {
     return {
       ok: false,

@@ -155,6 +155,7 @@
   "common": {
     "all": "[EN] All",
     "available": "[EN] available",
+    "months": "[EN] months",
     "of": "[EN] of",
     "years": "[EN] years"
   },
@@ -206,6 +207,9 @@
     "insufficientStock": "[EN] Insufficient stock: {{available}} available, {{requested}} requested"
   },
   "simple": {
+    "ageHint": "[EN] For a child under 2 you can give the age in months. The date of birth is saved as an estimate from the age.",
+    "ageRangeMonths": "[EN] Age from {{min}} to {{max}} months. For a child of 2 years or more, choose Years.",
+    "ageRangeYears": "[EN] Age from {{min}} to {{max}} years. For a baby under 1 year, choose Months.",
     "chooseAction": "[EN] Choose what you want to do",
     "directionsExample": "[EN] Take twice daily with food",
     "dosageExample": "[EN] e.g., 1 tablet, 5ml",
@@ -366,5 +370,6 @@
   "portal.visit.assessment": "[EN] Clinician's assessment",
   "portal.visit.yourConcern": "[EN] What you told the clinician",
   "portal.vital.flagHint": "[EN] Readings with a warning sign are outside the usual range. This is a guide, not a diagnosis. Talk to your clinician about them.",
+  "portal.vital.notRated": "[EN] These readings are not rated here, because the usual ranges depend on age and the portal only rates adults' readings. Ask your clinician what they mean for you.",
   "portal.vital.recordedOn": "[EN] Recorded by the clinic team on {{date}}"
 }

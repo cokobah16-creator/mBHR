@@ -12,7 +12,11 @@ import {
   pickNextAppointment,
   portalLabAdvice,
   portalLabInterpretationInfo,
+  portalBpStatus,
   portalLabLoadNotice,
+  portalRatesVitals,
+  portalTempStatus,
+  portalVitalStatus,
   upcomingAppointments,
   vitalStatusTone,
 } from "./portalStatus";
@@ -204,6 +208,52 @@ describe("vitalStatusTone", () => {
     expect(vitalStatusTone("normal")).toBe("success");
     expect(vitalStatusTone("monitor")).toBe("warning");
     expect(vitalStatusTone("attention")).toBe("danger");
+  });
+});
+
+describe("portal vital badges follow the staff classification", () => {
+  it("maps staff tones to portal badges", () => {
+    expect(portalVitalStatus("success")).toBe("normal");
+    expect(portalVitalStatus("warning")).toBe("monitor");
+    expect(portalVitalStatus("danger")).toBe("attention");
+    expect(portalVitalStatus("critical")).toBe("attention");
+    expect(portalVitalStatus("neutral")).toBeNull();
+    expect(portalVitalStatus(null)).toBeNull();
+  });
+
+  it("reads the diastolic value, not systolic alone", () => {
+    expect(portalBpStatus(118, 95)).toBe("attention");
+    expect(portalBpStatus(125, 85)).toBe("monitor");
+    expect(portalBpStatus(115, 75)).toBe("normal");
+  });
+
+  it("never calls high or low blood pressure normal", () => {
+    expect(portalBpStatus(150, 85)).toBe("attention");
+    expect(portalBpStatus(185, 100)).toBe("attention");
+    expect(portalBpStatus(80, 50)).toBe("attention");
+  });
+
+  it("escalates low temperatures as well as fever", () => {
+    expect(portalTempStatus(34)).toBe("attention");
+    expect(portalTempStatus(38.5)).toBe("attention");
+    expect(portalTempStatus(36.8)).toBe("normal");
+    expect(portalTempStatus(null)).toBeNull();
+  });
+
+  it("rates readings for adults only", () => {
+    const takenAt = new Date(2026, 8, 25, 10, 0);
+    expect(portalRatesVitals("1980-05-01", takenAt)).toBe(true);
+    expect(portalRatesVitals("2008-09-10", takenAt)).toBe(true);
+    expect(portalRatesVitals("2008-10-10", takenAt)).toBe(false);
+    expect(portalRatesVitals("2020-01-01", takenAt)).toBe(false);
+    expect(portalRatesVitals(null, takenAt)).toBe(false);
+    expect(portalRatesVitals("not a date", takenAt)).toBe(false);
+  });
+
+  it("uses the age on the day of the reading", () => {
+    // 17 when measured, 18 later: that reading stays unrated.
+    expect(portalRatesVitals("2008-06-15", "2026-05-31")).toBe(false);
+    expect(portalRatesVitals("2008-06-15", "2026-07-01")).toBe(true);
   });
 });
 

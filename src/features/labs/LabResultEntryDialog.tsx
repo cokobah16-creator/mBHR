@@ -26,6 +26,8 @@ export type LabResultFormValues = z.infer<typeof resultSchema>;
 interface LabResultEntryDialogProps {
   testName: string;
   patientLabel: string;
+  /** MBHR ID, sex and age, so patients who share a name are told apart. */
+  patientIdentity?: string;
   saving: boolean;
   /** Why the last save failed, shown inside the dialog. */
   error: string | null;
@@ -89,6 +91,7 @@ function useDialogBehaviour(
 export function LabResultEntryDialog({
   testName,
   patientLabel,
+  patientIdentity,
   saving,
   error,
   onCancel,
@@ -123,7 +126,9 @@ export function LabResultEntryDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="lab-result-title"
-        aria-describedby="lab-result-subtitle"
+        aria-describedby={
+          patientIdentity ? "lab-result-subtitle lab-result-identity" : "lab-result-subtitle"
+        }
         onKeyDown={trapTab}
         className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-xl"
       >
@@ -135,6 +140,12 @@ export function LabResultEntryDialog({
             <p id="lab-result-subtitle" className="text-body text-ink-muted">
               {testName} · {patientLabel}
             </p>
+            {patientIdentity && (
+              <p id="lab-result-identity" className="text-caption text-ink-secondary">
+                {patientIdentity}. Check that the specimen is this patient's before
+                you save.
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -237,7 +248,7 @@ export function LabResultEntryDialog({
                 role={errors.interpretation ? "alert" : undefined}
               >
                 {errors.interpretation?.message ??
-                  "Abnormal and critical results are listed first for clinician review."}
+                  "You choose this: the app does not work it out from the value or range. Abnormal and critical results are listed first for clinician review."}
               </p>
             </div>
 
@@ -284,6 +295,8 @@ interface LabReleaseDialogProps {
   mode: LabReleaseMode;
   testName: string;
   patientLabel: string;
+  /** MBHR ID, sex and age, so patients who share a name are told apart. */
+  patientIdentity?: string;
   /** How many results the action applies to. */
   resultCount: number;
   /**
@@ -312,6 +325,7 @@ export function LabReleaseDialog({
   mode,
   testName,
   patientLabel,
+  patientIdentity,
   resultCount,
   withheldCount = 0,
   saving,
@@ -372,6 +386,9 @@ export function LabReleaseDialog({
             <p id="lab-release-subtitle" className="text-body text-ink-muted">
               {testName} · {patientLabel}
             </p>
+            {patientIdentity && (
+              <p className="text-caption text-ink-secondary">{patientIdentity}</p>
+            )}
           </div>
           <button
             type="button"

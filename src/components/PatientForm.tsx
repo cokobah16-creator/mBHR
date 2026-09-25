@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -29,6 +29,9 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   const { t } = useTranslation();
   const { addPatient } = usePatientsStore();
   const [loading, setLoading] = useState(false);
+  // One registration at a time: a double tap must not create two patients
+  // and tickets. Left set after a success, when the page moves on.
+  const savingRef = useRef(false);
   const [submitError, setSubmitError] = useState("");
   const { push: pushToast } = useToast();
   const [photo, setPhoto] = useState<string | null>(null);
@@ -82,7 +85,10 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
       setSubmitError("Your role cannot register patients. Ask a registration volunteer, nurse, doctor or administrator.");
       return;
     }
+    if (savingRef.current) return;
+    savingRef.current = true;
     setLoading(true);
+    let patientId: string | null = null;
     try {
       const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
 
@@ -100,7 +106,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         photoUrl: photo || "",
       };
 
-      const patientId = await addPatient(patientData);
+      patientId = await addPatient(patientData);
 
 
       // Ask for portal access only when staff ticked the box, and never for
@@ -160,6 +166,19 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
       onSuccess?.(patientId);
     } catch (error) {
+      if (patientId) {
+        // The patient is saved; only portal enrolment failed. Saying "not
+        // registered" here would invite a second registration.
+        console.warn("Portal enrollment failed");
+        pushToast({
+          id: crypto.randomUUID(),
+          title: "Portal access not set up",
+          tone: "warning",
+          body: "The patient is registered, but portal enrolment failed. You can enable it later from their record.",
+        });
+        onSuccess?.(patientId);
+        return;
+      }
       // Check if it's a duplicate error
       if (error.message.startsWith("DUPLICATES_FOUND:")) {
         const duplicateData = JSON.parse(
@@ -173,6 +192,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         );
       }
     } finally {
+      if (!patientId) savingRef.current = false;
       setLoading(false);
     }
   };
@@ -190,6 +210,9 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         setDedupeData(null);
         return;
       }
+      if (savingRef.current) return;
+      savingRef.current = true;
+      setLoading(true);
       // Force create new patient (bypass duplicate check)
       try {
         // Staff confirmed this is a different person: keep their real name
@@ -203,6 +226,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         );
         onSuccess?.(patientId);
       } catch (error) {
+        savingRef.current = false;
         console.error(
           "Error creating new patient:",
           error instanceof Error ? error.name : error,
@@ -210,6 +234,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
         setSubmitError(
           "The patient was not registered — the record could not be saved. Try again.",
         );
+      } finally {
+        setLoading(false);
       }
     } else if (action === "merge" && winnerId) {
       // Use existing patient
@@ -621,6 +647,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                           "Please provide at least an email or phone number for portal access",
                         );
                         e.target.checked = false;
+                        return;
                       }
                       // Pass the change on so the form records the tick.
                       void portalEnabledField.onChange(e);

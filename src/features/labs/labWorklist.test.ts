@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import type { Patient } from "@/db";
+import { formatPatientId } from "@/utils/patient";
 import {
   compareWorklist,
   countByFilter,
@@ -8,6 +10,7 @@ import {
   interpretationMeta,
   isInterpretation,
   isLabFilter,
+  labPatientIdentity,
   matchesFilter,
   matchesSearch,
   orderOutcomeMeta,
@@ -16,8 +19,10 @@ import {
   resultsToRelease,
   resultsWithholdable,
   severityOf,
+  worklistGapMessage,
   worstInterpretation,
   worstUnreviewed,
+  PATIENT_NOT_LOCAL_BLOCK,
   type LabStage,
   type WorklistSortable,
 } from "./labWorklist";
@@ -470,5 +475,83 @@ describe("orderOutcomeMeta", () => {
       label: "Processing",
       tone: "info",
     });
+  });
+});
+
+describe("labPatientIdentity", () => {
+  const now = new Date("2026-09-25T10:00:00");
+  const patient = (id: string, extra: Partial<Patient> = {}): Patient =>
+    ({
+      id,
+      givenName: "Amina",
+      familyName: "Bello",
+      sex: "female",
+      dob: "1992-03-01",
+      address: "",
+      state: "",
+      lga: "",
+      ...extra,
+    }) as Patient;
+
+  it("tells apart two patients who share a name by MBHR ID, sex and age", () => {
+    const idA = "0f3c9a2e-0000-4000-8000-00000000a1b2";
+    const idB = "0f3c9a2e-0000-4000-8000-00000000c3d4";
+    const a = labPatientIdentity(idA, patient(idA), now);
+    const b = labPatientIdentity(idB, patient(idB, { sex: "male", dob: "2019-06-01" }), now);
+    expect(a).toContain(formatPatientId(idA));
+    expect(a).toContain("Female");
+    expect(a).toContain("34 years");
+    expect(b).toContain(formatPatientId(idB));
+    expect(b).toContain("Male");
+    expect(b).toContain("7 years");
+    expect(a).not.toBe(b);
+  });
+
+  it("still shows the order's MBHR ID when the record is not on this device", () => {
+    const line = labPatientIdentity("0f3c9a2e-0000-4000-8000-00000000a1b2", undefined, now);
+    expect(line).toContain(formatPatientId("0f3c9a2e-0000-4000-8000-00000000a1b2"));
+    expect(line).toMatch(/name, sex and age unknown/);
+    expect(line).not.toMatch(/years/);
+  });
+
+  it("says why collection and result entry wait for the record", () => {
+    expect(PATIENT_NOT_LOCAL_BLOCK).toMatch(/cannot be identified/);
+    expect(PATIENT_NOT_LOCAL_BLOCK).toMatch(/Sync this device/);
+  });
+});
+
+describe("worklistGapMessage", () => {
+  const none = { openTruncated: false, unreviewedTruncated: false, criticalTruncated: false };
+
+  it("says nothing when every open order and unreviewed result was read", () => {
+    expect(worklistGapMessage(none, 500)).toBeNull();
+  });
+
+  it("says when open orders were left out", () => {
+    const message = worklistGapMessage({ ...none, openTruncated: true }, 500);
+    expect(message).toMatch(/more than 500 open orders/);
+    expect(message).toMatch(/oldest are not listed/);
+  });
+
+  it("says unreviewed results were left out but every critical one is listed", () => {
+    const message = worklistGapMessage({ ...none, unreviewedTruncated: true }, 500);
+    expect(message).toMatch(/more than 500 results waiting for review/);
+    expect(message).toMatch(/every critical one is/);
+  });
+
+  it("never claims every critical result is listed when some were left out", () => {
+    const message = worklistGapMessage(
+      { ...none, unreviewedTruncated: true, criticalTruncated: true },
+      500,
+    );
+    expect(message).toMatch(/critical results waiting for review; some are not listed/);
+    expect(message).not.toMatch(/every critical one is/);
+  });
+});
+
+describe("describeLabError for a blank result", () => {
+  it("asks for the result", () => {
+    const err = Object.assign(new Error("x"), { name: "LabServiceError", code: "EMPTY_VALUE" });
+    expect(describeLabError(err, "Nothing was saved.")).toBe("Nothing was saved. Enter the result.");
   });
 });

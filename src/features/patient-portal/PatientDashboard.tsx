@@ -39,7 +39,11 @@ import * as logger from "@/lib/logger";
 import {
   formatPortalDate,
   pickNextAppointment,
+  portalBpStatus,
+  portalRatesVitals,
+  portalTempStatus,
   vitalStatusTone,
+  type PortalVitalStatus,
 } from "./portalStatus";
 import {
   clearPortalSession,
@@ -51,21 +55,7 @@ import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type VitalStatus = "normal" | "monitor" | "attention";
-
-function bpStatus(systolic: number): VitalStatus {
-  if (systolic < 120) return "normal";
-  if (systolic < 140) return "monitor";
-  return "attention";
-}
-
-function tempStatus(temp: number): VitalStatus {
-  if (temp >= 36.1 && temp <= 37.2) return "normal";
-  if (temp <= 38.0) return "monitor";
-  return "attention";
-}
-
-const statusLabelKey: Record<VitalStatus, string> = {
+const statusLabelKey: Record<PortalVitalStatus, string> = {
   normal: "portal.vital.status.normal",
   monitor: "portal.vital.status.monitor",
   attention: "portal.vital.status.attention",
@@ -117,7 +107,7 @@ function VitalCard({
   value: string;
   unit?: string;
   /** Omitted for readings the portal does not assess (e.g. weight). */
-  status?: VitalStatus;
+  status?: PortalVitalStatus;
 }) {
   const { t } = useT();
   return (
@@ -148,16 +138,30 @@ interface VitalsView {
   tempC?: number | null;
 }
 
-function VitalsPanel({ vitals }: { vitals: VitalsView }) {
+function VitalsPanel({
+  vitals,
+  dob,
+}: {
+  vitals: VitalsView;
+  /** The patient's date of birth: readings are rated for adults only. */
+  dob?: string | null;
+}) {
   const { t } = useT();
   const hasBp = !!vitals.systolic && !!vitals.diastolic;
   const hasTemp = vitals.tempC != null && vitals.tempC !== 0;
   const hasWeight = vitals.weightKg != null;
   if (!hasBp && !hasTemp && !hasWeight) return null;
 
-  const bp = hasBp ? bpStatus(vitals.systolic as number) : null;
-  const temp = hasTemp ? tempStatus(vitals.tempC as number) : null;
+  // Rated with the same classification as the staff screens. A child's
+  // blood pressure (or any when the age is unknown) is not rated against
+  // adult ranges: it is shown without a badge and with a note instead.
+  // Temperature is rated at every age, as the staff fever and low
+  // temperature flags are.
+  const rated = portalRatesVitals(dob, vitals.takenAt);
+  const bp = hasBp && rated ? portalBpStatus(vitals.systolic, vitals.diastolic) : null;
+  const temp = hasTemp ? portalTempStatus(vitals.tempC) : null;
   const anyFlag = (bp && bp !== "normal") || (temp && temp !== "normal");
+  const notRated = !rated && hasBp;
 
   return (
     <section className="panel" aria-labelledby="home-vitals">
@@ -177,12 +181,12 @@ function VitalsPanel({ vitals }: { vitals: VitalsView }) {
           })}
         </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {hasBp && bp && (
+          {hasBp && (
             <VitalCard
               label={t("portal.vital.bloodPressure")}
               value={`${vitals.systolic}/${vitals.diastolic}`}
               unit={t("portal.vital.unit.mmHg")}
-              status={bp}
+              status={bp ?? undefined}
             />
           )}
           {hasWeight && (
@@ -192,14 +196,23 @@ function VitalsPanel({ vitals }: { vitals: VitalsView }) {
               unit={t("portal.vital.unit.kg")}
             />
           )}
-          {hasTemp && temp && (
+          {hasTemp && (
             <VitalCard
               label={t("portal.vital.temperature")}
               value={`${vitals.tempC}°C`}
-              status={temp}
+              status={temp ?? undefined}
             />
           )}
         </div>
+        {notRated && (
+          <p className="mt-3 flex items-start gap-2 text-caption text-ink-secondary">
+            <InformationCircleIcon
+              className="h-4 w-4 shrink-0 text-ink-muted"
+              aria-hidden
+            />
+            {t("portal.vital.notRated")}
+          </p>
+        )}
         {anyFlag && (
           <p className="mt-3 flex items-start gap-2 text-caption text-ink-secondary">
             <InformationCircleIcon
@@ -437,7 +450,7 @@ function SupabaseDashboard() {
         </div>
       )}
 
-      {latest && <VitalsPanel vitals={latest} />}
+      {latest && <VitalsPanel vitals={latest} dob={profile.dob} />}
 
       <MedicinesPanel
         medicines={medications.map((m) => ({
@@ -647,6 +660,7 @@ function OfflineDashboard() {
             weightKg: recentVitals.weightKg,
             tempC: recentVitals.tempC,
           }}
+          dob={patient.dob}
         />
       )}
 

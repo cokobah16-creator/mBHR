@@ -21,7 +21,7 @@ import {
 import { PageHeader } from "@/components/ui/PageHeader";
 import { LiveQueueTable } from "@/components/dashboard/LiveQueueTable";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { getFlagLabel, getFlagTone } from "@/utils/vitals";
+import { getFlagLabel, getFlagTone, isAbnormalVitalFlag } from "@/utils/vitals";
 
 /** Latest valid Date: upper bound for Date-typed index ranges. */
 const LATEST_DATE = new Date(8.64e15);
@@ -126,7 +126,8 @@ export function Dashboard() {
       0,
     ) ?? 0;
 
-  // Patients with at least one abnormal vital sign recorded today
+  // Patients with at least one abnormal vital sign recorded today. A reading
+  // holding only the paediatric-chart prompt is not abnormal.
   const flaggedToday =
     useLiveQuery(
       async () => {
@@ -136,7 +137,7 @@ export function Dashboard() {
           .toArray();
         const byPatient = new Map<string, Set<string>>();
         for (const v of todaysVitals) {
-          if (Array.isArray(v.flags) && v.flags.length > 0) {
+          if (Array.isArray(v.flags) && v.flags.some(isAbnormalVitalFlag)) {
             const set = byPatient.get(v.patientId) ?? new Set<string>();
             v.flags.forEach((f) => set.add(f));
             byPatient.set(v.patientId, set);

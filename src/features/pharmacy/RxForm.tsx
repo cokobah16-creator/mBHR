@@ -8,7 +8,7 @@ import { useToast } from "@/stores/toast";
 import { PatientSearch } from "@/components/PatientSearch";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { matchMedicationToAllergen } from "@/utils/allergyMatch";
+import { matchMedicationToAllergen, uncheckedAllergens } from "@/utils/allergyMatch";
 import {
   canPrescribe,
   createPrescription,
@@ -99,20 +99,26 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
       .catch(() => setError("Could not load the medicine list on this device."));
   }, []);
 
-  const allergens =
-    useLiveQuery(
-      async () =>
-        effectivePatientId
-          ? (
-              await db.patientAllergies
-                .where("patientId")
-                .anyOf([...new Set([effectivePatientId, requestedPatientId ?? effectivePatientId])])
-                .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
-                .toArray()
-            ).map((a) => a.allergen)
-          : [],
-      [effectivePatientId, requestedPatientId],
-    ) ?? [];
+  // Every active allergy, whatever type it was recorded as. Still loading
+  // (or still the previous patient's) and unreadable are shown as such,
+  // never as "no allergies".
+  const allergyRead = useLiveQuery(async () => {
+    const forId = effectivePatientId;
+    if (!forId) return { forId, status: "ready" as const, allergens: [] as string[] };
+    try {
+      const rows = await db.patientAllergies
+        .where("patientId")
+        .anyOf([...new Set([forId, requestedPatientId ?? forId])])
+        .filter((a) => isAllergyActive(a))
+        .toArray();
+      return { forId, status: "ready" as const, allergens: rows.map((a) => a.allergen) };
+    } catch {
+      return { forId, status: "error" as const, allergens: [] as string[] };
+    }
+  }, [effectivePatientId, requestedPatientId]);
+  const allergyStatus =
+    allergyRead && allergyRead.forId === effectivePatientId ? allergyRead.status : "loading";
+  const allergens = allergyStatus === "ready" ? allergyRead.allergens : [];
 
   const existing = useLiveQuery(
     async () =>
@@ -129,6 +135,8 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
   const allergyHits = selectedItem
     ? allergens.filter((a) => matchMedicationToAllergen(selectedItem.medName, a))
     : [];
+  // Allergens the matcher does not know are shown for a check by hand.
+  const allergyUnchecked = selectedItem ? uncheckedAllergens([selectedItem.medName], allergens) : [];
 
   async function save() {
     setError("");
@@ -294,12 +302,40 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
         )}
       </div>
 
+      {effectivePatientId && allergyStatus === "loading" && (
+        <p className="text-caption text-ink-muted" role="status">
+          Checking recorded allergies…
+        </p>
+      )}
+
+      {effectivePatientId && allergyStatus === "error" && (
+        <div className="banner banner-danger" role="alert">
+          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <span>
+            This patient's allergies could not be read on this device. Ask the patient about allergies before
+            prescribing.
+          </span>
+        </div>
+      )}
+
       {allergyHits.length > 0 && (
         <div className="banner banner-danger" role="alert">
           <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
           <span>
             Possible allergy: recorded allergy to <strong>{allergyHits.join(", ")}</strong>. Check before
             prescribing {selectedItem?.medName}.
+          </span>
+        </div>
+      )}
+
+      {allergyUnchecked.length > 0 && (
+        <div className="banner banner-warning" role="alert">
+          <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+          <span>
+            Check by hand: recorded allergy to <strong>{allergyUnchecked.join(", ")}</strong>. The app cannot check{" "}
+            {allergyUnchecked.length === 1 ? "it" : "these"} against medicines (not a medicine or drug class it
+            knows, or spelt differently). Check that {selectedItem?.medName} is safe for this patient before
+            prescribing.
           </span>
         </div>
       )}

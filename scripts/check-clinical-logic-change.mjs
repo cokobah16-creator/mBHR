@@ -87,6 +87,7 @@ export const CLINICAL_PATH_RULES = [
       "src/features/pharmacy/fefo.ts",
       "src/features/pharmacy/Dispense.tsx",
       "src/features/pharmacy/RxForm.tsx",
+      "src/features/pharmacy/visitConsultation.ts",
       "src/services/pharmacyCommands.ts",
       "src/services/pharmacyCommandsModel.ts",
       "src/services/sms.ts",

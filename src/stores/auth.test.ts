@@ -4,6 +4,7 @@ import {
   accessFromAppUser,
   endSessionIfRevoked,
   isDeactivatedAppUser,
+  revalidateOnlineSession,
   useAuthStore,
 } from "./auth";
 import { verifyPin } from "@/utils/pin";
@@ -29,6 +30,10 @@ const { mockDbUsers, mockDbSessions, mockSupabase, mockFrom } = vi.hoisted(() =>
       auth: {
         signInWithPassword: vi.fn(),
         signOut: vi.fn().mockResolvedValue({ error: null }),
+        // Requests go out as the signed-in staff member (AUTH_USER below).
+        getSession: vi
+          .fn()
+          .mockResolvedValue({ data: { session: { user: { id: "auth-uid-1" } } }, error: null }),
       },
       from: mockFrom,
     },
@@ -78,6 +83,7 @@ describe("useAuthStore", () => {
       lockoutUntil: null,
       sessionExpiresAt: null,
       lastActivityAt: null,
+      lockedAt: null,
       authMode: null,
       cloudUserId: null,
       signInRefusal: null,
@@ -728,6 +734,257 @@ describe("useAuthStore", () => {
         role: "nurse",
         pinHash: PIN_ON_DEVICE,
       });
+    });
+  });
+
+  describe("idle lock", () => {
+    const ada = {
+      id: "u-ada",
+      fullName: "Ada Okafor",
+      role: "doctor",
+      pinHash: "hash-ada",
+      pinSalt: "salt-ada",
+      isActive: 1,
+    };
+
+    function signedInAndLocked(extra: Record<string, unknown> = {}) {
+      useAuthStore.setState({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        currentUser: { ...ada, pinHash: PIN_ON_DEVICE, pinSalt: PIN_ON_DEVICE } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        currentSession: { id: "s1", userId: ada.id } as any,
+        isAuthenticated: true,
+        authMode: "offline",
+        sessionExpiresAt: Date.now() + 60 * 60 * 1000,
+        lastActivityAt: Date.now() - 11 * 60 * 1000,
+        ...extra,
+      });
+      useAuthStore.getState().lockSession();
+      mockDbUsers.get.mockResolvedValue(ada);
+    }
+
+    it("locks, ignores activity, and unlocks only with the same person's PIN", async () => {
+      signedInAndLocked();
+      const lockedAt = useAuthStore.getState().lockedAt;
+      expect(lockedAt).not.toBeNull();
+
+      const before = useAuthStore.getState().lastActivityAt;
+      useAuthStore.getState().updateActivity();
+      expect(useAuthStore.getState().lastActivityAt).toBe(before);
+
+      vi.mocked(verifyPin).mockResolvedValue(false);
+      expect(await useAuthStore.getState().unlockSession("111111")).toBe(false);
+      expect(useAuthStore.getState()).toMatchObject({ lockedAt, failedAttempts: 1 });
+      expect(mockDbUsers.get).toHaveBeenCalledWith("u-ada");
+
+      vi.mocked(verifyPin).mockResolvedValue(true);
+      expect(await useAuthStore.getState().unlockSession("482913")).toBe(true);
+      expect(verifyPin).toHaveBeenLastCalledWith("482913", "hash-ada", "salt-ada");
+      expect(useAuthStore.getState()).toMatchObject({
+        isAuthenticated: true,
+        lockedAt: null,
+        failedAttempts: 0,
+      });
+    });
+
+    it("signs out after too many wrong PINs on the lock screen", async () => {
+      signedInAndLocked({ failedAttempts: 4 });
+      vi.mocked(verifyPin).mockResolvedValue(false);
+
+      expect(await useAuthStore.getState().unlockSession("111111")).toBe(false);
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      expect(useAuthStore.getState().lockoutUntil).not.toBeNull();
+    });
+
+    it("signs out when the account was switched off while locked", async () => {
+      signedInAndLocked();
+      mockDbUsers.get.mockResolvedValue({ ...ada, isActive: 0 });
+      vi.mocked(verifyPin).mockResolvedValue(true);
+
+      expect(await useAuthStore.getState().unlockSession("482913")).toBe(false);
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    });
+
+    it("does not call a PIN wrong, or count it, when the account cannot be read", async () => {
+      signedInAndLocked();
+      // Another window upgraded the database and this window's copy closed.
+      mockDbUsers.get.mockRejectedValueOnce(
+        Object.assign(new Error("closed"), { name: "DatabaseClosedError" }),
+      );
+      vi.mocked(verifyPin).mockResolvedValue(true);
+
+      expect(await useAuthStore.getState().unlockSession("482913")).toBe("unreadable");
+      expect(verifyPin).not.toHaveBeenCalled();
+      expect(useAuthStore.getState()).toMatchObject({ isAuthenticated: true, failedAttempts: 0 });
+      expect(useAuthStore.getState().lockedAt).not.toBeNull();
+    });
+
+    it("refuses an unlock while the device is locked out, without checking the PIN", async () => {
+      signedInAndLocked({ lockoutUntil: Date.now() + 60_000 });
+      vi.mocked(verifyPin).mockResolvedValue(true);
+
+      expect(await useAuthStore.getState().unlockSession("482913")).toBe(false);
+      expect(verifyPin).not.toHaveBeenCalled();
+      expect(useAuthStore.getState().lockedAt).not.toBeNull();
+    });
+
+    it("the PIN sign-in is refused during a lockout without checking the PIN", async () => {
+      useAuthStore.setState({ lockoutUntil: Date.now() + 60_000 });
+      mockDbUsers.get.mockResolvedValue(ada);
+      vi.mocked(verifyPin).mockResolvedValue(true);
+
+      expect(await useAuthStore.getState().login("u-ada", "482913")).toBe(false);
+      expect(verifyPin).not.toHaveBeenCalled();
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    });
+  });
+
+  describe("a session restored when the app starts", () => {
+    function storeSession(state: Record<string, unknown>) {
+      localStorage.setItem(
+        "mbhr-auth",
+        JSON.stringify({
+          state: {
+            failedAttempts: 0,
+            lockoutUntil: null,
+            currentSession: { id: "s1", userId: "u-ada" },
+            isAuthenticated: true,
+            authMode: "online",
+            cloudUserId: "u-ada",
+            sessionExpiresAt: Date.now() + 60 * 60 * 1000,
+            ...state,
+          },
+          version: 0,
+        }),
+      );
+    }
+    const withPin = {
+      id: "u-ada",
+      fullName: "Ada Okafor",
+      role: "doctor",
+      pinHash: PIN_ON_DEVICE,
+      pinSalt: PIN_ON_DEVICE,
+      isActive: 1,
+    };
+
+    it("is never an online sign-in whose device PIN was not chosen yet", async () => {
+      storeSession({
+        currentUser: { ...withPin, pinHash: "", pinSalt: "" },
+        lastActivityAt: Date.now(),
+      });
+
+      await useAuthStore.persist.rehydrate();
+
+      expect(useAuthStore.getState()).toMatchObject({
+        isAuthenticated: false,
+        currentUser: null,
+        authMode: null,
+        cloudUserId: null,
+      });
+    });
+
+    it("opens locked when it was left idle, so a reload does not reset the clock", async () => {
+      storeSession({ currentUser: withPin, lastActivityAt: Date.now() - 20 * 60 * 1000 });
+
+      await useAuthStore.persist.rehydrate();
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
+      expect(useAuthStore.getState().lockedAt).not.toBeNull();
+    });
+
+    it("opens unlocked when it was in use a moment ago", async () => {
+      storeSession({ currentUser: withPin, lastActivityAt: Date.now() - 60 * 1000, lockedAt: null });
+
+      await useAuthStore.persist.rehydrate();
+
+      expect(useAuthStore.getState()).toMatchObject({ isAuthenticated: true, lockedAt: null });
+    });
+  });
+
+  describe("revalidateOnlineSession", () => {
+    const online = {
+      id: AUTH_USER.id,
+      fullName: "Ngozi Obi",
+      role: "nurse",
+      pinHash: PIN_ON_DEVICE,
+      pinSalt: PIN_ON_DEVICE,
+      isActive: 1,
+    };
+
+    function signedInOnline(authMode: "online" | "offline" = "online") {
+      useAuthStore.setState({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        currentUser: online as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        currentSession: { id: "s1", userId: online.id } as any,
+        isAuthenticated: true,
+        authMode,
+        cloudUserId: authMode === "online" ? AUTH_USER.id : null,
+      });
+    }
+
+    it("ends the session and switches the record off when the server staff record is gone", async () => {
+      signedInOnline();
+      appUsersLookup({ data: null, error: null });
+
+      expect(await revalidateOnlineSession()).toBe(true);
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      expect(mockDbUsers.update).toHaveBeenCalledWith(
+        AUTH_USER.id,
+        expect.objectContaining({ isActive: 0 }),
+      );
+    });
+
+    it("ends the session when the server has switched the account off", async () => {
+      signedInOnline();
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "nurse", is_active: false }, error: null });
+
+      expect(await revalidateOnlineSession()).toBe(true);
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      // A record marked switched off counts whoever the server answered.
+      expect(mockSupabase.auth.getSession).not.toHaveBeenCalled();
+    });
+
+    it("changes nothing when the server answered someone other than this person", async () => {
+      signedInOnline();
+      mockSupabase.auth.getSession
+        // The online sign-in was lost mid-sync: the request went out without it.
+        .mockResolvedValueOnce({ data: { session: null }, error: null })
+        // Another account signed in in this browser.
+        .mockResolvedValueOnce({ data: { session: { user: { id: "portal-uid" } } }, error: null })
+        .mockRejectedValueOnce(new Error("storage unavailable"));
+
+      appUsersLookup({ data: null, error: null });
+      expect(await revalidateOnlineSession()).toBe(false);
+      expect(await revalidateOnlineSession()).toBe(false);
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "patient" }, error: null });
+      expect(await revalidateOnlineSession()).toBe(false);
+
+      expect(mockSupabase.auth.getSession).toHaveBeenCalledTimes(3);
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
+      expect(mockDbUsers.update).not.toHaveBeenCalled();
+    });
+
+    it("keeps the session for active staff, and when the server cannot be asked", async () => {
+      signedInOnline();
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "nurse" }, error: null });
+      expect(await revalidateOnlineSession()).toBe(false);
+
+      appUsersLookup({ data: null, error: { code: "PGRST000" } });
+      expect(await revalidateOnlineSession()).toBe(false);
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
+      expect(mockDbUsers.update).not.toHaveBeenCalled();
+    });
+
+    it("asks nothing for a PIN session", async () => {
+      signedInOnline("offline");
+
+      expect(await revalidateOnlineSession()).toBe(false);
+      expect(mockFrom).not.toHaveBeenCalled();
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
     });
   });
 });

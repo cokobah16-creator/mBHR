@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { ConflictData } from "@/components/ConflictResolutionModal";
 import { namedSyncError } from "./errorCode";
+import { serverStampOf } from "./serverStamp";
 
 export type ResolutionStrategy = "keep-local" | "keep-remote" | "manual";
 
@@ -46,6 +47,26 @@ function versionMarker(
   return version === undefined ? {} : { _serverVersion: version };
 }
 
+/**
+ * The same for the server's updated_at (every record type). Without it,
+ * keeping this device's copy would raise the same conflict at every sync.
+ * `preferConflict` (keeping this device's copy, choosing field by field):
+ * the updated_at the conflict was raised on, since only the fields compared
+ * then were decided; a server change made after it (possibly to other
+ * fields) is then compared at the next upload instead of overwritten. Else
+ * (keeping the server's copy): the copy just applied, which may be newer.
+ */
+function stampMarker(
+  conflict: ConflictData,
+  remoteData: Record<string, unknown> | undefined,
+  preferConflict: boolean,
+): { _serverUpdatedAt?: string } {
+  const raised = serverStampOf(conflict.remoteTimestamp);
+  const fetched = serverStampOf(remoteData?.updated_at);
+  const stamp = preferConflict ? (raised ?? fetched) : (fetched ?? raised);
+  return stamp === undefined ? {} : { _serverUpdatedAt: stamp };
+}
+
 export async function resolveConflict(
   conflict: ConflictData,
   strategy: ResolutionStrategy,
@@ -67,6 +88,7 @@ export async function resolveConflict(
       updatedAt: new Date(),
       _syncedAt: null,
       ...versionMarker(conflict.entityType, remoteData),
+      ...stampMarker(conflict, remoteData, true),
     });
   } else if (strategy === "keep-remote") {
     if (!remoteData) {
@@ -88,6 +110,7 @@ export async function resolveConflict(
       // The copy just read from the server may be newer than the one the
       // conflict was raised on; keep its own timestamp when it has one.
       updatedAt: mappedData.updatedAt ?? new Date(conflict.remoteTimestamp),
+      ...stampMarker(conflict, remoteData, false),
     });
   } else if (strategy === "manual" && manualResolution) {
     if (!localData || !remoteData) {
@@ -116,6 +139,7 @@ export async function resolveConflict(
       updatedAt: new Date(),
       _syncedAt: null,
       ...versionMarker(conflict.entityType, remoteData),
+      ...stampMarker(conflict, remoteData, true),
     });
     // update() writes nothing when the record is not on this device; say so
     // instead of reporting the choice as applied.

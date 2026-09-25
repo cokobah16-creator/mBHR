@@ -86,6 +86,12 @@ export interface Patient {
   familyName: string;
   sex: "male" | "female" | "other";
   dob: string;
+  /**
+   * 1 when `dob` was worked out from an age given at quick registration,
+   * not a known date. Kept on this device only: it is not uploaded until
+   * the server has a column for it, so on other devices it is unknown.
+   */
+  dobEstimated?: 0 | 1;
   phone?: string | null;
   email?: string | null;
   address: string;
@@ -135,6 +141,8 @@ export interface Patient {
   _syncedAt?: string;
   /** Server row_version this device last saw (conflict detection). */
   _serverVersion?: number;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
   /** Set when the server refused the upload for permission; see SyncBlock. */
   _syncBlock?: SyncBlock;
 }
@@ -173,6 +181,8 @@ export interface Vital {
   hiddenAt?: Date;
   _dirty?: number;
   _syncedAt?: string;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
 }
 
 export interface Consultation {
@@ -194,6 +204,8 @@ export interface Consultation {
   hiddenAt?: Date;
   _dirty?: number;
   _syncedAt?: string;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
 }
 
 export interface Dispense {
@@ -212,6 +224,8 @@ export interface Dispense {
   hiddenAt?: Date;
   _dirty?: number;
   _syncedAt?: string;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
 }
 
 export interface InventoryItem {
@@ -223,6 +237,8 @@ export interface InventoryItem {
   updatedAt: Date;
   _dirty?: number;
   _syncedAt?: string;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
 }
 
 export interface Visit {
@@ -233,6 +249,8 @@ export interface Visit {
   status: "open" | "closed";
   _dirty?: number;
   _syncedAt?: string;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
 }
 
 export interface QueueItem {
@@ -282,6 +300,8 @@ export interface QueueItem {
   _syncedAt?: string;
   /** Server row_version this device last saw (conflict detection). */
   _serverVersion?: number;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
   _syncBlock?: SyncBlock;
 }
 
@@ -644,6 +664,8 @@ export interface PatientAllergy {
   createdBy: string;
   _dirty?: number;
   _syncedAt?: string;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
 }
 
 export interface PatientPreference {
@@ -661,6 +683,8 @@ export interface PatientPreference {
   updatedAt: Date;
   _dirty?: number;
   _syncedAt?: string;
+  /** Server updated_at this device last saw (conflict detection; never uploaded). */
+  _serverUpdatedAt?: string;
 }
 
 export interface ClinicalAlert {

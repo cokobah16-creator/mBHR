@@ -7,6 +7,7 @@ import { getErrorMessage } from "@/utils/errors";
 import { toAllergyActiveFlag } from "@/utils/allergyActive";
 import { mergePulledRow } from "@/sync/pullMerge";
 import { markersAfterUpload } from "@/sync/uploadMarkers";
+import { serverStampMarker } from "@/sync/serverStamp";
 import { syncErrorCode } from "@/sync/errorCode";
 import { advanceCursor, isCursorAhead } from "@/sync/cursorGuard";
 import { ENHANCED_ONLY_TABLES } from "@/features/conflicts/syncCounts";
@@ -718,8 +719,9 @@ export class EnhancedSync {
             const localRow = await table.get(incoming[key]);
             // Rows with unsent changes on this device are kept (their upload
             // is retried); others get the server row laid over the local
-            // one so device-only fields survive.
-            const decision = mergePulledRow(localRow, incoming);
+            // one so device-only fields survive, and its updated_at for the
+            // sync adapter's conflict check (src/sync/serverStamp.ts).
+            const decision = mergePulledRow(localRow, incoming, serverStampMarker(remote));
             if (decision.kind === "kept-local") {
               keptLocalEdits++;
               continue;

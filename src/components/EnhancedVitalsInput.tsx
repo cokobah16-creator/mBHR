@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useFormContext } from "react-hook-form";
 import { db, VitalsRange } from "@/db";
+import { parseMeasurement } from "@/utils/vitals";
 import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
@@ -10,8 +11,14 @@ interface EnhancedVitalsInputProps {
   name: string;
   label: string;
   unit: string;
-  metric: "hr" | "temp" | "sbp" | "dbp" | "rr" | "spo2";
-  patientAge: number;
+  /**
+   * Reference range to check the value against. Left out for a measurement
+   * with no range (height, weight) and when no range applies to the
+   * patient: the field then shows no status.
+   */
+  metric?: "hr" | "temp" | "sbp" | "dbp" | "rr" | "spo2";
+  /** Whole years, or null when unknown. */
+  patientAge: number | null;
   patientSex: "M" | "F" | "U";
   placeholder?: string;
   step?: number;
@@ -55,6 +62,11 @@ export function EnhancedVitalsInput({
   }, [value, range]);
 
   const loadVitalRange = async () => {
+    if (!metric || patientAge === null) {
+      setRange(null);
+      setLoading(false);
+      return;
+    }
     try {
       const vitalsRange = await db.vitalsRanges
         .where("metric")
@@ -155,8 +167,9 @@ export function EnhancedVitalsInput({
       <div className="relative">
         <input
           {...register(name, {
-            valueAsNumber: true,
-            required: `${label} is required`,
+            // Every measurement is optional: an empty field is undefined,
+            // never NaN.
+            setValueAs: parseMeasurement,
           })}
           id={inputId}
           type="number"

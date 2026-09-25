@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -45,7 +45,7 @@ import {
   EnvelopeIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
-import { getActiveSiteName } from "@/services/activeSite";
+import { ensureTodaysVisit } from "@/services/visits";
 import { queueManagement } from "@/services/queueManagement";
 
 const STAGE_PERMISSION: Record<FlowStage, Permission> = {
@@ -81,6 +81,9 @@ export function PatientDetail() {
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // A second tap while a visit is being started must not start another.
+  const [startingVisit, setStartingVisit] = useState(false);
+  const startingVisitRef = useRef(false);
   const { push: pushToast } = useToast();
 
   const canEdit = user && ["admin", "doctor", "nurse"].includes(user.role);
@@ -189,20 +192,16 @@ export function PatientDetail() {
     return age;
   };
 
-  const startNewVisit = async () => {
-    if (!patient) return;
+  const startNewVisit = async (skipVisitIds: readonly string[]) => {
+    if (!patient || startingVisitRef.current) return;
+    startingVisitRef.current = true;
+    setStartingVisit(true);
 
     try {
-      const visit = {
-        id: crypto.randomUUID(),
-        patientId: patient.id,
-        startedAt: new Date(),
-        siteName: await getActiveSiteName(),
-        status: "open" as const,
-        _dirty: 1,
-      };
-
-      await db.visits.add(visit);
+      // Continue today's open visit if there is one (started by a second
+      // tap or on another screen); otherwise start it. A visit whose care is
+      // all recorded is not continued: the patient starts a new one.
+      const visit = await ensureTodaysVisit(patient.id, skipVisitIds);
 
       // A newly registered patient still sits in the registration queue.
       // Finish that stage first, or saving vitals would only advance them
@@ -230,6 +229,15 @@ export function PatientDetail() {
         "Error starting visit:",
         error instanceof Error ? error.name : error,
       );
+      pushToast({
+        id: crypto.randomUUID(),
+        tone: "error",
+        title: "Visit not started",
+        body: "The visit could not be saved on this device. Try again.",
+      });
+    } finally {
+      startingVisitRef.current = false;
+      setStartingVisit(false);
     }
   };
 
@@ -336,6 +344,9 @@ export function PatientDetail() {
         state: data.state,
         lga: data.lga,
         familyId: data.familyId,
+        // A date entered here is a known date; an estimate stays marked
+        // as one until the date itself is changed.
+        ...(data.dob !== patient.dob ? { dobEstimated: 0 as const } : {}),
         updatedAt: new Date(),
         _dirty: 1,
       };
@@ -421,6 +432,9 @@ export function PatientDetail() {
       )
     : null;
   const openVisit = todaysStage ? todaysOpenVisit : undefined;
+  // Today's open visit with every stage recorded is finished care: "Start
+  // visit" then opens a new one rather than adding to it.
+  const finishedVisitIds = todaysOpenVisit && !todaysStage ? [todaysOpenVisit.id] : [];
   const role = user?.role;
   const canContinue =
     !!openVisit && !!todaysStage && !!role && can(role, STAGE_PERMISSION[todaysStage]);
@@ -470,9 +484,13 @@ export function PatientDetail() {
                 )
               ) : (
                 canStartVisit && (
-                  <button onClick={startNewVisit} className="btn-primary">
+                  <button
+                    onClick={() => startNewVisit(finishedVisitIds)}
+                    disabled={startingVisit}
+                    className="btn-primary"
+                  >
                     <PlayIcon className="h-5 w-5" aria-hidden />
-                    Start visit
+                    {startingVisit ? "Starting…" : "Start visit"}
                   </button>
                 )
               )}
@@ -566,7 +584,16 @@ export function PatientDetail() {
                   type="date"
                   className="input-field"
                   max={new Date().toISOString().split("T")[0]}
+                  aria-describedby={
+                    patient.dobEstimated === 1 ? "pd-dob-hint" : undefined
+                  }
                 />
+                {patient.dobEstimated === 1 && (
+                  <p id="pd-dob-hint" className="field-hint">
+                    Estimated from the age given at registration. Enter the
+                    real date of birth if it is known.
+                  </p>
+                )}
                 {errors.dob && (
                   <p className="field-error" role="alert">
                     {errors.dob.message}
@@ -742,7 +769,9 @@ export function PatientDetail() {
                 <dt className="section-label">Date of birth</dt>
                 <dd className="mt-0.5 flex items-center gap-1.5 text-ink">
                   <CalendarIcon className="h-4 w-4 text-ink-muted" aria-hidden />
-                  {formatNigerianDate(patient.dob)} · {getPatientAge(patient.dob)} years
+                  {formatNigerianDate(patient.dob)}
+                  {patient.dobEstimated === 1 && " (estimated)"} ·{" "}
+                  {getPatientAge(patient.dob)} years
                 </dd>
               </div>
               <div>

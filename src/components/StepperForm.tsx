@@ -17,6 +17,8 @@ interface StepperFormProps {
   }>;
   onComplete: () => void;
   onCancel?: () => void;
+  /** Saving in progress: Back and Complete wait until it has finished. */
+  busy?: boolean;
   className?: string;
 }
 
@@ -24,6 +26,7 @@ export function StepperForm({
   steps,
   onComplete,
   onCancel,
+  busy = false,
   className = "",
 }: StepperFormProps) {
   const { t, speak } = useT();
@@ -34,6 +37,7 @@ export function StepperForm({
   const currentStepData = steps[currentStep];
 
   const handleNext = async () => {
+    if (busy) return;
     if (isLastStep) {
       onComplete();
     } else {
@@ -56,7 +60,7 @@ export function StepperForm({
   };
 
   const handlePrev = () => {
-    if (canGoPrev) {
+    if (canGoPrev && !busy) {
       setCurrentStep(currentStep - 1);
     }
   };
@@ -162,7 +166,7 @@ export function StepperForm({
         <button
           type="button"
           onClick={handlePrev}
-          disabled={!canGoPrev}
+          disabled={!canGoPrev || busy}
           className="btn-secondary"
         >
           <ChevronLeftIcon className="h-5 w-5" aria-hidden />
@@ -179,10 +183,16 @@ export function StepperForm({
           <button
             type="button"
             onClick={handleNext}
-            disabled={currentStepData.isValid === false}
+            disabled={currentStepData.isValid === false || busy}
             className="btn-primary"
           >
-            <span>{isLastStep ? t("action.complete") : t("action.next")}</span>
+            <span>
+              {busy
+                ? t("status.saving")
+                : isLastStep
+                  ? t("action.complete")
+                  : t("action.next")}
+            </span>
             {!isLastStep && <ChevronRightIcon className="h-5 w-5" aria-hidden />}
           </button>
         </div>

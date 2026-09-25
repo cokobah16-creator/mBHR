@@ -1,11 +1,14 @@
 // Pure helpers for the lab work queue: lifecycle stage, filters, ordering,
-// search and staff-facing error messages. Everything here is derived from
-// fields that lab_orders / lab_results actually store; nothing is inferred
-// from reference ranges (the result's interpretation is entered by the
-// person who records it).
+// search, patient identity and staff-facing error messages. Everything here
+// is derived from fields that lab_orders / lab_results actually store;
+// nothing is inferred from reference ranges (the result's interpretation is
+// entered by the person who records it).
 
+import type { Patient } from "@/db";
 import type { LabOrder, LabResult } from "@/services/labs";
 import type { Tone } from "@/components/ui/StatusBadge";
+import { identityLine } from "@/features/pharmacy/dispensePatient";
+import { formatPatientId } from "@/utils/patient";
 
 export type LabStage =
   | "ordered"
@@ -370,6 +373,62 @@ export function matchesSearch(
   return words.every((w) => haystack.some((f) => f.includes(w)));
 }
 
+const PATIENT_NOT_LOCAL_DETAIL = "name, sex and age unknown";
+
+/**
+ * MBHR ID, sex and age of an order's patient, so two patients who share a
+ * name are told apart. The MBHR ID comes from the order itself, so it shows
+ * even when the patient's record is not on this device (the rest is then
+ * unknown, and said to be).
+ */
+export function labPatientIdentity(
+  patientId: string,
+  patient: Patient | undefined,
+  now: Date = new Date(),
+): string {
+  if (!patient) return `${formatPatientId(patientId)} · ${PATIENT_NOT_LOCAL_DETAIL}`;
+  return identityLine(patient, now);
+}
+
+/**
+ * Shown instead of "Mark collected" and "Enter result" when the patient's
+ * record is not on this device: without a name, sex and age nobody can
+ * check that the specimen or result belongs to this patient.
+ */
+export const PATIENT_NOT_LOCAL_BLOCK =
+  "This patient's record is not on this device, so they cannot be identified. Sync this device, then try again.";
+
+/** Parts of the work queue that had more rows than it reads (see getLabWorklist). */
+export interface WorklistGaps {
+  openTruncated: boolean;
+  unreviewedTruncated: boolean;
+  criticalTruncated: boolean;
+}
+
+/**
+ * What staff must be told when the work queue could not read every open
+ * order or every result waiting for review, or null when nothing is
+ * missing. `max` is the most rows the queue reads of each.
+ */
+export function worklistGapMessage(gaps: WorklistGaps, max: number): string | null {
+  const limit = max.toLocaleString("en-NG");
+  const parts: string[] = [];
+  if (gaps.openTruncated) {
+    parts.push(`There are more than ${limit} open orders; the oldest are not listed.`);
+  }
+  if (gaps.criticalTruncated) {
+    parts.push(
+      `There are more than ${limit} critical results waiting for review; some are not listed.`,
+    );
+  } else if (gaps.unreviewedTruncated) {
+    parts.push(
+      `There are more than ${limit} results waiting for review; some are not listed, but every critical one is.`,
+    );
+  }
+  if (parts.length === 0) return null;
+  return `This list is incomplete. ${parts.join(" ")} Counts and alerts on this page cover only what is listed.`;
+}
+
 /** "12.5 g/dL", or just the value when no unit is stored. */
 export function formatResultValue(
   result: Pick<LabResult, "resultValue" | "resultUnit">,
@@ -457,6 +516,9 @@ export function describeLabError(
   }
   if (code === "INVALID_INTERPRETATION") {
     return `${fallback} Choose Normal, Abnormal or Critical for this result.`;
+  }
+  if (code === "EMPTY_VALUE") {
+    return `${fallback} Enter the result.`;
   }
   if (code === "NO_ROWS") {
     return `${fallback} The record may have been changed or removed, or your account cannot change it. Refresh the list and check it.`;
