@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Patient } from "@/db";
 import { matchMedicationToAllergen } from "@/utils/allergyMatch";
-import { dispensePatientBlock, resolveDispensePatient, sexAgeLabel } from "./dispensePatient";
+import { dispensePatientBlock, identityLine, resolveDispensePatient, sexAgeLabel } from "./dispensePatient";
 
 function patient(id: string, extra: Partial<Patient> = {}): Patient {
   return {
@@ -97,5 +97,25 @@ describe("sexAgeLabel", () => {
   it("tells apart same-name patients by sex and age", () => {
     expect(sexAgeLabel({ sex: "female" }, 34)).toBe("Female · 34 years");
     expect(sexAgeLabel({ sex: "male" }, null)).toBe("Male");
+  });
+});
+
+describe("identityLine", () => {
+  const now = new Date("2026-09-25T10:00:00");
+
+  it("gives two same-name patients distinct MBHR IDs", () => {
+    const a = identityLine(patient("0f3c9a2e-0000-4000-8000-00000000a1b2", { sex: "female", dob: "1992-03-01" }), now);
+    const b = identityLine(patient("0f3c9a2e-0000-4000-8000-00000000c3d4", { sex: "female", dob: "1992-03-01" }), now);
+    expect(a).toBe("MBHR-00A1B2 · Female · 34 years");
+    expect(b).toBe("MBHR-00C3D4 · Female · 34 years");
+    expect(a).not.toBe(b);
+  });
+
+  it("says when the patient is not on this device", () => {
+    expect(identityLine(undefined)).toMatch(/Not on this device/);
+  });
+
+  it("marks a merged-away record", () => {
+    expect(identityLine(patient("p1", { mergeInto: "p2" }), now)).toMatch(/merged record$/);
   });
 });

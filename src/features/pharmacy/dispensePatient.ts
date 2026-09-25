@@ -7,6 +7,7 @@
 // later may still sit under the old id.
 
 import type { Patient } from "@/db";
+import { formatPatientId, patientAge } from "@/utils/patient";
 
 /** Longest merge chain followed; anything longer is treated as unresolved. */
 const MAX_CHAIN = 20;
@@ -71,4 +72,12 @@ export function sexAgeLabel(patient: Pick<Patient, "sex">, age: number | null): 
   return [SEX_LABEL[patient.sex] ?? patient.sex, age !== null ? `${age} years` : null]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** MBHR ID, sex and age for a list row: tells apart patients who share a name. */
+export function identityLine(patient: Patient | undefined, now: Date = new Date()): string {
+  if (!patient) return "Not on this device: cannot be identified";
+  const parts = [formatPatientId(patient.id), sexAgeLabel(patient, patientAge(patient.dob, now))];
+  if (patient.mergeInto) parts.push("merged record");
+  return parts.filter(Boolean).join(" · ");
 }

@@ -7,7 +7,7 @@ import {
   type PharmacyItem,
   type Prescription,
 } from "@/db/mbhr";
-import { db } from "@/db";
+import { db, type Patient } from "@/db";
 import { can } from "@/auth/roles";
 import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
@@ -28,7 +28,13 @@ import { PharmacySkeleton } from "@/components/ui/Skeleton";
 import { DocumentTextIcon } from "@heroicons/react/24/outline";
 import { ExclamationTriangleIcon, InformationCircleIcon } from "@heroicons/react/20/solid";
 import { isAllergyActive } from "@/utils/allergyActive";
-import { resolveDispensePatient } from "./dispensePatient";
+import {
+  dispensePatientBlock,
+  identityLine,
+  resolveDispensePatient,
+  type DispensePatient,
+} from "./dispensePatient";
+import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 
 type Line = Prescription["lines"][number];
 
@@ -46,6 +52,8 @@ interface DispenseData {
   batches: PharmacyBatch[];
   items: PharmacyItem[];
   names: Record<string, string>;
+  /** Patient records on this device, by id, to tell same-name patients apart. */
+  patients: Record<string, Patient>;
   openDiscrepancies: number;
   error?: string;
 }
@@ -83,7 +91,12 @@ async function loadDispenseData(): Promise<DispenseData> {
     const ids = [...new Set([...rxData, ...recent].flatMap((r) => [r.patientId, r.prescriberId]))];
     const [patients, users] = await Promise.all([db.patients.bulkGet(ids), db.users.bulkGet(ids)]);
     const names: Record<string, string> = {};
-    patients.forEach((p) => p && (names[p.id] = `${p.givenName} ${p.familyName}`));
+    const patientById: Record<string, Patient> = {};
+    patients.forEach((p) => {
+      if (!p) return;
+      names[p.id] = `${p.givenName} ${p.familyName}`;
+      patientById[p.id] = p;
+    });
     users.forEach((u) => u && (names[u.id] = u.fullName));
     const commandStatus: Record<string, string> = {};
     commands.forEach((c) => (commandStatus[c.id] = c.status));
@@ -94,6 +107,7 @@ async function loadDispenseData(): Promise<DispenseData> {
       batches,
       items,
       names,
+      patients: patientById,
       openDiscrepancies,
     };
   } catch (err) {
@@ -105,6 +119,7 @@ async function loadDispenseData(): Promise<DispenseData> {
       batches: [],
       items: [],
       names: {},
+      patients: {},
       openDiscrepancies: 0,
       error: "Prescriptions could not be read on this device. Reload the page; nothing has been dispensed.",
     };
@@ -144,6 +159,7 @@ export default function Dispense() {
   const [loading, setLoading] = useState<"" | "saving" | "confirming">("");
   const [error, setError] = useState("");
   const [allergyAck, setAllergyAck] = useState(false);
+  const [resolved, setResolved] = useState<DispensePatient | undefined>(undefined);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -159,6 +175,7 @@ export default function Dispense() {
   const items = useMemo(() => data?.items ?? [], [data]);
   const batches = useMemo(() => data?.batches ?? [], [data]);
   const names = data?.names ?? {};
+  const people = data?.patients ?? {};
   const chosen = rx?.find((r) => r.id === selected);
 
   // Keyed on the selection, not the loaded object: a prescription leaves
@@ -168,6 +185,7 @@ export default function Dispense() {
     setAllergyAck(false);
     setError("");
     setAllergens([]);
+    setResolved(undefined);
     if (!selectedPatientId) {
       setAllergyStatus("ready");
       return;
@@ -186,6 +204,7 @@ export default function Dispense() {
           .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
           .toArray();
         if (stale) return;
+        setResolved(who);
         setAllergens([...new Set(as.map((a) => a.allergen))]);
         setAllergyStatus("ready");
       })
@@ -223,9 +242,13 @@ export default function Dispense() {
   const mode = chosen ? dispenseMode(chosen.lines, items) : "missing";
   const mayDispense = !!currentUser && can(currentUser.role, "dispense");
   const shortLines = plans.filter((p) => p.fefo.shortfall > 0 || !p.item);
+  // Only to a patient identified on this device (following merges to the
+  // record kept), so the allergy check is about the right person.
+  const patientBlock = dispensePatientBlock(resolved);
   const canDispense =
     !!chosen &&
     mayDispense &&
+    !!resolved?.ok &&
     plans.length > 0 &&
     shortLines.length === 0 &&
     mode !== "mixed" &&
@@ -252,7 +275,9 @@ export default function Dispense() {
       setError("Your account cannot dispense medicines. Nothing was dispensed.");
       return;
     }
-    const patientName = names[chosen.patientId] ?? "Patient";
+    const patientName = resolved?.ok
+      ? `${resolved.patient.givenName} ${resolved.patient.familyName}`
+      : (names[chosen.patientId] ?? "Patient");
     const count = `${plans.length} item${plans.length === 1 ? "" : "s"}`;
     setLoading("saving");
     setError("");
@@ -425,6 +450,9 @@ export default function Dispense() {
                         <span className="block font-medium text-ink">
                           {names[r.patientId] ?? "Unknown patient"}
                         </span>
+                        <span className="block text-caption font-mono text-ink-secondary">
+                          {identityLine(people[r.patientId])}
+                        </span>
                         <span className="block text-caption text-ink-secondary">
                           {first ? `${first.medName} ${first.strength}` : "Unknown item"}
                           {r.lines.length > 1 ? ` + ${r.lines.length - 1} more` : ""}
@@ -462,6 +490,9 @@ export default function Dispense() {
                   return (
                     <li key={r.id} className="space-y-1 px-4 py-3">
                       <span className="block font-medium text-ink">{names[r.patientId] ?? "Unknown patient"}</span>
+                      <span className="block text-caption font-mono text-ink-secondary">
+                        {identityLine(people[r.patientId])}
+                      </span>
                       {r.handoverRefused === 1 ? (
                         <>
                           <StatusBadge tone="danger">Handed over, but refused by the server</StatusBadge>
@@ -492,7 +523,7 @@ export default function Dispense() {
         <section className="panel" aria-labelledby="dispense-title">
           <div className="panel-header">
             <h2 id="dispense-title" className="panel-title">
-              {chosen ? (names[chosen.patientId] ?? "Unknown patient") : "Dispense"}
+              {chosen ? "Dispense prescription" : "Dispense"}
             </h2>
             {chosen && (
               <span className="text-caption text-ink-muted">
@@ -507,6 +538,21 @@ export default function Dispense() {
             </p>
           ) : (
             <div className="panel-body space-y-4">
+              {resolved?.ok && (
+                <PatientContextHeader
+                  patientId={resolved.patient.id}
+                  patient={resolved.patient}
+                  showFlow={false}
+                />
+              )}
+
+              {patientBlock && (
+                <div className="banner banner-danger" role="alert">
+                  <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
+                  <span>{patientBlock}</span>
+                </div>
+              )}
+
               {error && (
                 <div className="banner banner-danger" role="alert">
                   <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
