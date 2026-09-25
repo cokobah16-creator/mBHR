@@ -188,6 +188,8 @@ export function documentContentType(raw: unknown): string {
 
 // Control characters, zero-width characters and bidirectional overrides
 // (which can make "report\u202Efdp.exe" display as "reportexe.pdf").
+// Matching control characters is the point here.
+// eslint-disable-next-line no-control-regex
 const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 const MAX_TITLE = 255;
 

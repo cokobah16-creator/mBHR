@@ -93,7 +93,8 @@ function failureReason(e: FhirError): string {
 /** A short digest of the resource as served: meta.versionId and the ETag. */
 async function contentVersion(resource: Resource): Promise<string> {
   const { meta, ...rest } = resource;
-  const { versionId: _ignored, ...metaRest } = meta ?? {};
+  const metaRest = { ...(meta ?? {}) };
+  delete metaRest.versionId;
   const text = JSON.stringify({ ...rest, meta: metaRest });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)]

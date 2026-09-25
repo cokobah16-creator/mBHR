@@ -872,9 +872,8 @@ describe("AllergyIntolerance read", () => {
     expect(res.headers.get("cache-control")).toBe("private, no-store");
     const a = await json(res);
     expect(res.headers.get("etag")).toBe(`W/"${a.meta.versionId}"`);
-    const { meta: _m, ...served } = a;
-    const { meta: _e, ...expected } = mapAllergy(AL_ACTIVE, MAP_CTX)!;
-    expect(served).toEqual(expected);
+    const withoutMeta = (r: object) => ({ ...r, meta: undefined });
+    expect(withoutMeta(a)).toEqual(withoutMeta(mapAllergy(AL_ACTIVE, MAP_CTX)!));
     expect(a.meta.lastUpdated).toBe("2026-05-02T10:00:00.000Z");
   });
 

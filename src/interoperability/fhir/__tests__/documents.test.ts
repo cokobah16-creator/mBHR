@@ -312,7 +312,8 @@ describe("DocumentReference mapper", () => {
 
   it("withholds a removed document, one whose state is unknown, and one whose patient does not resolve", () => {
     expect(mapDocumentReference(DOC_A_REMOVED, refs, { contentAvailable: true })).toBeNull();
-    const { deleted_at: _gone, ...unread } = DOC_A;
+    const unread: Record<string, unknown> = { ...DOC_A };
+    delete unread.deleted_at;
     expect(mapDocumentReference(unread, refs, { contentAvailable: true })).toBeNull();
     expect(mapDocumentReference(DOC_A, { patientFhirIds: new Map() }, { contentAvailable: true })).toBeNull();
     expect(mapDocumentReference({ ...DOC_A, id: null }, refs, { contentAvailable: true })).toBeNull();
