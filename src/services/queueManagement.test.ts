@@ -493,6 +493,9 @@ describe("QueueManagement", () => {
         queueItemId: "q1",
         fromStage: "registration",
         toStage: "vitals",
+        fromStatus: "in_progress",
+        // The status is the finished row's, never the next stage's.
+        toStatus: "done",
         userId: "u-nurse",
         userRole: "nurse",
         _dirty: 1,
@@ -516,6 +519,7 @@ describe("QueueManagement", () => {
         kind: "send_on",
         fromStage: "pharmacy",
         toStage: "done",
+        toStatus: "done",
       });
     });
 
