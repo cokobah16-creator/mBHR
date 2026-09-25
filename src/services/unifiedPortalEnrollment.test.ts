@@ -22,7 +22,38 @@ vi.mock("@/db", () => ({
   },
 }));
 
-import { bulkEnrollPatients } from "./unifiedPortalEnrollment";
+import {
+  bulkEnrollPatients,
+  enrollPatientInPortal,
+} from "./unifiedPortalEnrollment";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
+
+/** 1 January, ten years ago: someone under 18 whatever today's date is. */
+function childDob(): string {
+  return `${new Date().getFullYear() - 10}-01-01`;
+}
+
+describe("enrollPatientInPortal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("refuses a patient under 18 without contacting the server", async () => {
+    const result = await enrollPatientInPortal({
+      patientId: "child-1",
+      givenName: "Chidi",
+      familyName: "Obi",
+      dob: childDob(),
+      email: "parent@t.com",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: MINOR_PORTAL_ACCESS_MESSAGE,
+    });
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+});
 
 describe("bulkEnrollPatients", () => {
   beforeEach(() => {
@@ -121,5 +152,67 @@ describe("bulkEnrollPatients", () => {
     // patients lookup should be a single batch .in() call, not 3 individual .eq() calls
     expect(inSpy).toHaveBeenCalledTimes(1);
     expect(inSpy).toHaveBeenCalledWith("id", ["id1", "id2", "id3"]);
+  });
+
+  it("lists a patient under 18 as failed with the reason", async () => {
+    const rows = [
+      {
+        id: "adult",
+        given_name: "Ada",
+        family_name: "Obi",
+        dob: "1990-01-01",
+        phone: "",
+        email: "a@t.com",
+        sex: "female",
+      },
+      {
+        id: "child",
+        given_name: "Chidi",
+        family_name: "Obi",
+        dob: childDob(),
+        phone: "",
+        email: "c@t.com",
+        sex: "male",
+      },
+    ];
+    const insert = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi
+          .fn()
+          .mockResolvedValue({ data: { id: "portal-u" }, error: null }),
+      }),
+    });
+    const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    mockFrom.mockImplementation((table: string) =>
+      table === "patients"
+        ? {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: rows, error: null }),
+            }),
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null }),
+            }),
+          }
+        : {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({ maybeSingle }),
+              ilike: vi.fn().mockReturnValue({ maybeSingle }),
+            }),
+            insert,
+          },
+    );
+
+    const result = await bulkEnrollPatients(["adult", "child"]);
+
+    expect(result).toEqual({
+      success: 1,
+      failed: 1,
+      errors: [{ patientId: "child", error: MINOR_PORTAL_ACCESS_MESSAGE }],
+    });
+    // Only the adult's portal account was made.
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ patient_id: "adult" }),
+    );
   });
 });

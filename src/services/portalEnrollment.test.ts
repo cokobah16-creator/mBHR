@@ -86,6 +86,12 @@ import {
   findEligiblePatients,
 } from "./portalEnrollment";
 import type { Patient } from "@/db";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
+
+/** 1 January, ten years ago: someone under 18 whatever today's date is. */
+function childDob(): string {
+  return `${new Date().getFullYear() - 10}-01-01`;
+}
 
 function makePatient(overrides: Partial<Patient> = {}): Patient {
   return {
@@ -171,6 +177,19 @@ describe("enablePortalAccess", () => {
     const result = await enablePortalAccess("p1", { termsAccepted: true });
 
     expect(result.success).toBe(false);
+  });
+
+  it("refuses a patient under 18 and changes nothing", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ dob: childDob() }));
+
+    const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(result).toEqual({
+      success: false,
+      error: MINOR_PORTAL_ACCESS_MESSAGE,
+    });
+    expect(mockPatientsUpdate).not.toHaveBeenCalled();
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });
 
@@ -353,6 +372,25 @@ describe("portal access on the server", () => {
     expect(patients.update).toHaveBeenCalledWith({ portal_enabled: false });
   });
 
+  it("lists a patient under 18 as failed with the reason", async () => {
+    mockPatientsGet.mockImplementation(async (id: string) =>
+      makePatient(id === "child" ? { id, dob: childDob() } : { id }),
+    );
+    routeTables(
+      patientsUpdateChain({
+        data: [{ id: "adult", portal_enabled: true }],
+        error: null,
+      }),
+    );
+
+    const result = await bulkEnablePortalAccess(["adult", "child"]);
+
+    expect(result).toMatchObject({ success: 1, failed: 1, serverUpdated: 1 });
+    expect(result.errors).toEqual([
+      { patientId: "child", error: MINOR_PORTAL_ACCESS_MESSAGE },
+    ]);
+  });
+
   it("counts the bulk successes the server took", async () => {
     const patients = patientsUpdateChain(
       { data: [{ id: "p1", portal_enabled: true }], error: null },
@@ -386,6 +424,20 @@ describe("disablePortalAccess", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("still turns access off for a patient under 18", async () => {
+    mockPatientsGet.mockResolvedValue(
+      makePatient({ dob: childDob(), portalEnabled: 1 }),
+    );
+
+    const result = await disablePortalAccess("p1");
+
+    expect(result.success).toBe(true);
+    expect(mockPatientsUpdate).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ portalEnabled: 0 }),
+    );
+  });
 });
 
 describe("sendPortalInvitation", () => {
@@ -411,6 +463,21 @@ describe("sendPortalInvitation", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not enabled");
+  });
+
+  it("refuses a patient under 18 even when access is already on", async () => {
+    mockPatientsGet.mockResolvedValue(
+      makePatient({ portalEnabled: 1, dob: childDob() }),
+    );
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result).toEqual({
+      success: false,
+      error: MINOR_PORTAL_ACCESS_MESSAGE,
+    });
+    expect(mockFunctionsInvoke).not.toHaveBeenCalled();
+    expect(mockPatientsUpdate).not.toHaveBeenCalled();
   });
 
   it("sends via edge function and marks status=sent", async () => {
@@ -628,6 +695,23 @@ describe("findEligiblePatients", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("p2");
+  });
+
+  it("leaves out patients under 18", async () => {
+    const patients = [
+      makePatient({ id: "p1", dob: "1990-01-01" }),
+      makePatient({ id: "p2", dob: childDob() }),
+      makePatient({ id: "p3" }), // no date of birth: still listed
+    ];
+    mockPatientsWhere.mockReturnValue({
+      equals: vi.fn().mockReturnValue({
+        toArray: vi.fn().mockResolvedValue(patients),
+      }),
+    });
+
+    const result = await findEligiblePatients();
+
+    expect(result.map((p) => p.id)).toEqual(["p1", "p3"]);
   });
 
   it("returns empty array on db error", async () => {

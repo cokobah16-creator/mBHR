@@ -8,6 +8,8 @@
 import { db, type Patient, type PortalInvitation } from "@/db";
 import { supabase } from "@/lib/supabase";
 import { normalizePhone } from "@/utils/phone";
+import { isMinor } from "@/utils/patient";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 import * as logger from "@/lib/logger";
 import { getErrorMessage } from "@/utils/errors";
 import { safeErrorLabel } from "./logSafe";
@@ -162,6 +164,9 @@ async function writeServerPortalEnabled(
  * Turn portal access on for a patient. Saved on this device first; then,
  * when this device is online, also on the server (see
  * writeServerPortalEnabled). `server` in the result says which.
+ *
+ * Refused for a patient under 18: portal accounts are for adults. A record
+ * whose date of birth cannot be read is not refused here.
  */
 export async function enablePortalAccess(
   patientId: string,
@@ -171,6 +176,10 @@ export async function enablePortalAccess(
     const patient = await db.patients.get(patientId);
     if (!patient) {
       return { success: false, error: "Patient not found" };
+    }
+
+    if (isMinor(patient.dob) === true) {
+      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
     }
 
     // Validate contact information
@@ -267,7 +276,8 @@ export async function enablePortalAccess(
 /**
  * Turn portal access off for a patient. Saved on this device first; then,
  * when this device is online, also on the server, so a switch that can
- * turn online access on can also turn it off. `server` says which.
+ * turn online access on can also turn it off. `server` says which. Works
+ * for a patient under 18 too.
  */
 export async function disablePortalAccess(
   patientId: string,
@@ -304,7 +314,7 @@ export async function disablePortalAccess(
  * supabase.functions.invoke sends that person's access token, or the public
  * anon key when nobody is signed in online (after a PIN unlock), which the
  * server refuses. When no message is sent, the registration link is returned
- * for staff to share by hand.
+ * for staff to share by hand. Refused for a patient under 18.
  */
 export async function sendPortalInvitation(patientId: string): Promise<{
   success: boolean;
@@ -322,6 +332,11 @@ export async function sendPortalInvitation(patientId: string): Promise<{
     const patient = await db.patients.get(patientId);
     if (!patient) {
       return { success: false, error: "Patient not found" };
+    }
+
+    // A child's record can still have access on from before this rule.
+    if (isMinor(patient.dob) === true) {
+      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
     }
 
     if (!patient.portalEnabled) {
@@ -614,7 +629,8 @@ export async function linkAuthUserToPatient(
 
 /**
  * Find patients eligible for bulk portal enrollment
- * (have contact info but portal not enabled)
+ * (have contact info but portal not enabled). Patients under 18 are left
+ * out: portal accounts are for adults, and enablePortalAccess refuses them.
  */
 export async function findEligiblePatients(
   filters: {
@@ -641,6 +657,8 @@ export async function findEligiblePatients(
         return false;
       if (!hasEmail && !hasPhone) return false;
 
+      if (isMinor(p.dob) === true) return false;
+
       // Filter by date range
       if (filters.startDate && p.createdAt < filters.startDate) return false;
       if (filters.endDate && p.createdAt > filters.endDate) return false;
@@ -657,7 +675,8 @@ export async function findEligiblePatients(
 }
 
 /**
- * Bulk enable portal access for multiple patients
+ * Bulk enable portal access for multiple patients. A patient under 18 is
+ * listed as failed with the reason (see enablePortalAccess).
  */
 export async function bulkEnablePortalAccess(
   patientIds: string[],

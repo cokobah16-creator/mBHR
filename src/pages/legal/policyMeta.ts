@@ -41,6 +41,14 @@ export const UNDER_18_SIGN_UP_MESSAGE =
 export const MINOR_RECORD_LINK_MESSAGE =
   "We could not link this account to a clinic record. Please ask clinic staff to help. To add a child under 18, a parent or guardian can use People you care for in their own account.";
 
+/**
+ * Shown to staff instead of turning on portal access, sending a portal
+ * invitation or making a portal account for a patient under 18. Turning
+ * access off still works.
+ */
+export const MINOR_PORTAL_ACCESS_MESSAGE =
+  "Portal accounts are for adults. This patient is under 18, so portal access cannot be turned on for their record yet.";
+
 /** The acceptance to record for a patient who ticks the boxes now. */
 export function currentPolicyAcceptance(now: Date = new Date()): PolicyAcceptance {
   return {

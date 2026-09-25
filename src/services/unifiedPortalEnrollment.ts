@@ -7,6 +7,8 @@
 
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
+import { isMinor } from "@/utils/patient";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 import { safeErrorLabel } from "./logSafe";
 
 export interface EnrollmentResult {
@@ -42,13 +44,18 @@ function serverUnavailableReason(): string | null {
 
 /**
  * Enroll a patient in the portal (creates portal user account)
- * Called automatically when staff registers a patient with contact info
+ * Called automatically when staff registers a patient with contact info.
+ * Refused for a patient under 18: portal accounts are for adults.
  */
 export async function enrollPatientInPortal(
   data: PatientEnrollmentData,
 ): Promise<EnrollmentResult> {
   try {
     const { patientId, givenName, familyName, dob, phone, email, sex } = data;
+
+    if (isMinor(dob) === true) {
+      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
+    }
 
     if (!phone && !email) {
       return {
@@ -257,12 +264,16 @@ export async function canEnrollInPortal(patientId: string): Promise<{
   try {
     const { data: patient } = await supabase
       .from("patients")
-      .select("email, phone, portal_enabled")
+      .select("email, phone, portal_enabled, dob")
       .eq("id", patientId)
       .single();
 
     if (!patient) {
       return { canEnroll: false, reason: "Patient not found" };
+    }
+
+    if (isMinor(patient.dob) === true) {
+      return { canEnroll: false, reason: MINOR_PORTAL_ACCESS_MESSAGE };
     }
 
     if (patient.portal_enabled) {
@@ -285,7 +296,8 @@ export async function canEnrollInPortal(patientId: string): Promise<{
 
 /**
  * Bulk enroll multiple patients in portal
- * Useful for migrating existing patients
+ * Useful for migrating existing patients. A patient under 18 is listed as
+ * failed with the reason (see enrollPatientInPortal).
  */
 export async function bulkEnrollPatients(patientIds: string[]): Promise<{
   success: number;
