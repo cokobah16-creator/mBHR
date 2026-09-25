@@ -115,6 +115,12 @@ function scopeKey(actor: Actor): string {
   return [actor.kind, actor.role ?? "", [...actor.patientIds].sort().join(",")].join("|");
 }
 
+/** Binary's securityContext as the X-Security-Context header (FHIR RESTful API, Binary). */
+function securityContextHeader(resource: Resource): Record<string, string> {
+  const ctx = (resource as { securityContext?: { reference?: unknown } }).securityContext;
+  return typeof ctx?.reference === "string" ? { "X-Security-Context": ctx.reference } : {};
+}
+
 export async function handleFhirRequest(request: Request, deps: GatewayDeps): Promise<Response> {
   const now = deps.now ?? (() => new Date());
   const requestId = deps.randomId?.() ?? crypto.randomUUID();
@@ -464,6 +470,7 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
             "Content-Type": file.contentType,
             "Content-Disposition": `attachment; filename="${file.filename.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 100) || "document"}"`,
             "Content-Security-Policy": "default-src 'none'; sandbox",
+            ...securityContextHeader(resource),
             ...baseHeaders(requestId),
           },
         });

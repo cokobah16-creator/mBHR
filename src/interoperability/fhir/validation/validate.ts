@@ -154,7 +154,10 @@ function walk(value: unknown, path: string, add: AddIssue): void {
     const v = value[k];
     const p = `${path}.${k}`;
     if (v === undefined) continue;
-    if (k === "reference" && (typeof v !== "string" || !REFERENCE.test(v))) add(p, "not a relative Type/id reference");
+    // Reference.reference is a string. An element itself named "reference"
+    // that holds a Reference (Consent.provision.actor.reference) is walked
+    // as one below, so its own reference string is still checked.
+    if (k === "reference" && !isObj(v) && (typeof v !== "string" || !REFERENCE.test(v))) add(p, "not a relative Type/id reference");
     // ContactPoint.system is a code (phone, email); elsewhere system is a URI.
     else if (k === "system" && !/telecom\[\d+\]$/.test(path) && (typeof v !== "string" || !URI.test(v))) {
       add(p, "system must be an absolute URI");

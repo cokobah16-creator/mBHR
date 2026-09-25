@@ -30,7 +30,15 @@ import {
   type Consent,
   type ConsentProvisionRule,
 } from "../mappers/consent";
-import { CONSENT_COVERAGE_NOTE, consentModule, definition } from "../resources/consent";
+import {
+  ACTOR_RULES_SERVED,
+  CONSENT_COVERAGE_NOTE,
+  CONSENT_COVERAGE_NOTE_PATIENT,
+  actorRulesNote,
+  consentModule,
+  definition,
+  hasActorRule,
+} from "../resources/consent";
 import { fakeSupabase, makeToken, type FakeOptions, type FakeUser, type RpcHandler } from "./fakeSupabase";
 import { PATIENT_A, PATIENT_B } from "./fixtures";
 
@@ -191,10 +199,28 @@ const C1 = {
   patient_id: PATIENT_C.id,
   provisions: [{ ...PROVISION_PERMIT, id: "d0000000-0000-4000-8000-000000000004", actor_type: "external_system" }],
 };
+/** A patient's refusal to have their record disclosed to external systems (the rule the policy engine enforces). */
+const C2 = {
+  ...A1,
+  id: "c0a5e000-0000-4000-8000-000000000009",
+  patient_id: PATIENT_C.id,
+  provisions: [
+    {
+      ...PROVISION_DENY,
+      id: "d0000000-0000-4000-8000-000000000005",
+      actor_type: "external_system",
+      purpose: null,
+      data_class: null,
+      security_label: null,
+      effective_from: null,
+    },
+  ],
+};
 /** A patient record that does not exist (deleted, or not visible). */
 const ORPHAN = { ...A1, id: "c0a5e000-0000-4000-8000-000000000008", patient_id: "01HZZGONE00000000000000000", provisions: [] };
 
-const RECORDS = [A1, A2, A3, A_NO_POLICY, M1, B1, C1, ORPHAN];
+const RECORDS = [A1, A2, A3, A_NO_POLICY, M1, B1, C1, C2, ORPHAN];
+const PATIENTS = [PATIENT_A, PATIENT_B, PATIENT_M, PATIENT_C];
 
 const ctx = {
   patientFhirIds: new Map([
@@ -436,17 +462,62 @@ describe("Consent mapper", () => {
   });
 
   it("produces resources that pass the gateway's checks and Consent's own rules", () => {
-    for (const row of [A1, A2, A3, M1, B1, C1]) {
+    for (const row of [A1, A2, A3, M1, B1, C1, C2]) {
       const r = mapConsent(row, ctx) as Consent;
       const issues: string[] = [];
       validateConsent(r as unknown as Record<string, unknown>, (path, message) => issues.push(`${path}: ${message}`));
       expect(issues, row.id).toEqual([]);
-      // The generic checker currently reads every "reference" key as a
-      // Reference.reference string; Consent.provision.actor.reference is a
-      // Reference itself (requested as a shared change). Anything else must pass.
-      const generic = validateResource(r, validateConsent).filter((i) => !/\.actor\[\d+\]\.reference$/.test(i.path));
-      expect(generic, row.id).toEqual([]);
     }
+    // Without an actor rule, the gateway's full check passes, nothing filtered.
+    for (const row of [A1, A2, A3, M1, B1]) {
+      const r = mapConsent(row, ctx) as Consent;
+      expect(hasActorRule(r), row.id).toBe(false);
+      expect(validateResource(r, validateConsent), row.id).toEqual([]);
+    }
+  });
+
+  it("an actor rule passes the gateway's check exactly when the module serves it, and fails on nothing else", () => {
+    for (const row of [C1, C2]) {
+      const r = mapConsent(row, ctx) as Consent;
+      expect(hasActorRule(r), row.id).toBe(true);
+      const issues = validateResource(r, validateConsent);
+      // The module's own reading of the shared checker agrees with the checker.
+      expect(issues.length === 0, row.id).toBe(ACTOR_RULES_SERVED);
+      if (!ACTOR_RULES_SERVED) {
+        // The only complaint is the known one (shared change requested):
+        // the actor's Reference read as a Type/id string.
+        expect(issues, row.id).toEqual([
+          { path: "Consent.provision.provision[0].actor[0].reference", message: "not a relative Type/id reference" },
+        ]);
+      }
+    }
+  });
+
+  it("the shared checker still refuses a reference that is not a relative Type/id, at the top level and inside an actor", () => {
+    // A fix that lets the actor's Reference through must keep this check for
+    // every other reference (a bare "if false" in its place would not).
+    const base = mapConsent(A1, ctx) as unknown as Json;
+    const external = { ...base, patient: { reference: "https://elsewhere.example/Patient/01HZZINTERNALID" } };
+    expect(validateResource(external, validateConsent)).toContainEqual({
+      path: "Consent.patient.reference",
+      message: "not a relative Type/id reference",
+    });
+    // Inside an actor: a Reference whose own reference is not Type/id is
+    // still refused, whether or not the checker walks into the actor's Reference.
+    const withActor = mapConsent(C1, ctx) as unknown as Json;
+    const rule = withActor.provision.provision[0];
+    const bad = {
+      ...withActor,
+      provision: {
+        ...withActor.provision,
+        provision: [{ ...rule, actor: [{ ...rule.actor[0], reference: { reference: "https://elsewhere.example/Organization/x", display: "External system" } }] }],
+      },
+    };
+    const path = "Consent.provision.provision[0].actor[0].reference";
+    expect(validateResource(bad, validateConsent)).toContainEqual({
+      path: ACTOR_RULES_SERVED ? `${path}.reference` : path,
+      message: "not a relative Type/id reference",
+    });
   });
 
   it("validate() catches what an R4 Consent must not be", () => {
@@ -526,16 +597,31 @@ function kindOf(user: FakeUser) {
 }
 
 /**
+ * interop.patient_members: the ids plus every record merged into one of
+ * them (reverse walk, at most 10 levels), read with owner rights, so it
+ * sees merged-away records a patient cannot.
+ */
+function patientMembers(ids: string[]): string[] {
+  const out = new Set(ids);
+  for (let depth = 0; depth < 10; depth++) {
+    for (const p of PATIENTS) if (p.merged_into && out.has(String(p.merged_into))) out.add(String(p.id));
+  }
+  return [...out];
+}
+
+/**
  * public.fhir_consent_directives with the migration's rules: staff any
- * patient; a portal patient only their own (other patient ids refused,
- * consent ids limited to their own records); a selector is required;
- * ordered by id; keyset p_after; p_limit clamped 1..101.
+ * patient; a portal patient only their own records, including records
+ * merged into them (v_own = patient_members(app_portal_patient_ids()));
+ * other patient ids refused; consent ids limited to those records; a
+ * selector is required; patient ids match exactly; ordered by id; keyset
+ * p_after; p_limit clamped 1..101.
  */
 function directivesRpc(records: Record<string, unknown>[]): RpcHandler {
   return (body, user) => {
     const refuse = (code: string) => new Response(JSON.stringify({ code }), { status: code === "42501" ? 403 : 400 });
     const kind = kindOf(user);
-    const own = user.patientIds ?? [];
+    const own = patientMembers(user.patientIds ?? []);
     if (kind !== "staff" && !(kind === "patient" && own.length)) return refuse("42501");
     const pids = (body.p_patient_ids as string[] | null | undefined) ?? null;
     const cids = (body.p_consent_ids as string[] | null | undefined) ?? null;
@@ -564,7 +650,7 @@ function visible(table: string, row: Record<string, unknown>, user: FakeUser): b
 function setup(overrides: Partial<FakeOptions> = {}, env: Record<string, string> = ENV) {
   const fake = fakeSupabase({
     users: USERS,
-    tables: { patients: [PATIENT_A, PATIENT_B, PATIENT_M, PATIENT_C] },
+    tables: { patients: PATIENTS },
     visible,
     rpcs: { fhir_consent_directives: directivesRpc(RECORDS) },
     ...overrides,
@@ -739,21 +825,53 @@ describe("Consent at the gateway: ids and failures", () => {
     expect(ids((await call(`/fhir/R4/Consent?_id=${ORPHAN.id}`, DOCTOR)).json)).toEqual([]);
   });
 
-  it("a rule's actor is published with the directive or the directive is not published: never without it", async () => {
-    const { call } = setup();
-    const read = await call(`/fhir/R4/Consent/${C1.id}`, DOCTOR);
-    if (read.status === 200) {
-      expect(read.json.provision.provision[0].actor[0].role.coding[0].code).toBe("external_system");
+  it("a directive with a rule for a kind of recipient is served with that rule, or said not to be: never without it", async () => {
+    const { call, logs } = setup();
+    const actor = {
+      role: { coding: [{ system: "https://mbhr.app/codes/consent-actor-type", code: "external_system", display: "External system" }] },
+      reference: { display: "External system" },
+    };
+    const pC = `patient=Patient/${PATIENT_C.fhir_id}`;
+    const readC1 = await call(`/fhir/R4/Consent/${C1.id}`, DOCTOR);
+    const readC2 = await call(`/fhir/R4/Consent/${C2.id}`, AUDITOR);
+    const search = (await call(`/fhir/R4/Consent?${pC}`, DOCTOR)).json;
+    if (ACTOR_RULES_SERVED) {
+      // The shared checker takes the actor's Reference: served whole.
+      expect(readC1.status).toBe(200);
+      expect(readC1.json.provision.provision[0].actor).toEqual([actor]);
+      expect(readC2.status).toBe(200);
+      expect(readC2.json.provision.provision[0]).toEqual(expect.objectContaining({ type: "deny", actor: [actor] }));
+      expect(ids(search)).toEqual([C1.id, C2.id]);
+      expect(outcomes(search).filter((o) => o.severity === "warning")).toEqual([]);
     } else {
-      // The shared checker does not yet accept actor.reference (see the
-      // module notes): the read fails closed and carries no data.
-      expect(read.status).toBe(500);
-      expect(JSON.stringify(read.json)).not.toContain(C1.category);
+      // Not yet: a read fails closed and says why, with no content.
+      for (const read of [readC1, readC2]) {
+        expect(read.status).toBe(500);
+        expect(read.json.issue).toEqual([
+          expect.objectContaining({ code: "not-supported", diagnostics: expect.stringMatching(/rule for a kind of recipient/) }),
+        ]);
+        expect(JSON.stringify(read.json)).not.toMatch(/data-sharing|disclose|Patient\//);
+      }
+      // A search leaves both out and counts them in their own warning, not
+      // in the generic "could not be shown as valid FHIR" one.
+      expect(ids(search)).toEqual([]);
+      expect(outcomes(search)).toContainEqual(actorRulesNote(2));
+      expect(outcomes(search).some((o) => /valid FHIR/.test(String(o.diagnostics)))).toBe(false);
+      // The count follows the search's own filters.
+      expect(outcomes((await call(`/fhir/R4/Consent?${pC}&status=inactive`, DOCTOR)).json).filter((o) => o.severity === "warning")).toEqual([]);
+      expect(outcomes((await call(`/fhir/R4/Consent?_id=${C2.id}`, DOCTOR)).json)).toContainEqual(actorRulesNote(1));
+      // The gateway never had to hold back an invalid resource.
+      expect(logs.join("\n")).not.toContain("invalid_resource");
     }
-    const search = (await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_C.fhir_id}`, DOCTOR)).json;
-    const found = matches(search);
-    if (found.length) expect(found[0].provision.provision[0].actor).toBeDefined();
-    else expect(outcomes(search).some((o) => o.severity === "warning")).toBe(true);
+    // Never served without its actor, in any state.
+    for (const r of [readC1.json, readC2.json, ...matches(search)]) {
+      if (r?.resourceType === "Consent") expect(r.provision.provision[0].actor).toEqual([actor]);
+    }
+  });
+
+  it("says in the CapabilityStatement notes whether actor rules are served", () => {
+    const note = (definition.notes ?? []).find((n) => /kind of recipient \(for example External system\) is not served/.test(n));
+    expect(Boolean(note)).toBe(!ACTOR_RULES_SERVED);
   });
 
   it("maps database refusals to caller-safe errors without detail", async () => {
@@ -803,6 +921,42 @@ describe("Consent at the gateway: patient self-access", () => {
       expect(sent.length).toBe(1);
       expect([PATIENT_A.id, PATIENT_B.id]).toContain(sent[0]);
     }
+  });
+
+  it("does not yet show a patient the directives filed under a record merged into theirs, and says so instead of claiming completeness", async () => {
+    // The register keeps M1 under the merged-away record; the database would
+    // return it to patient A (it counts merged records as A's), but the
+    // gateway, as patient A, can neither see that record nor name it.
+    const { call } = setup();
+    const own = (await call("/fhir/R4/Consent", PAT_A)).json;
+    expect(ids(own)).not.toContain(M1.id);
+    const named = (await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}`, PAT_A)).json;
+    expect(ids(named)).not.toContain(M1.id);
+    for (const bundle of [own, named, (await call("/fhir/R4/Consent", PAT_B)).json]) {
+      const notes = outcomes(bundle);
+      expect(notes).toContainEqual(CONSENT_COVERAGE_NOTE_PATIENT);
+      expect(notes).not.toContainEqual(CONSENT_COVERAGE_NOTE);
+      for (const n of notes) expect(String(n.diagnostics)).not.toMatch(/no other directive is recorded/);
+    }
+    expect(CONSENT_COVERAGE_NOTE_PATIENT.diagnostics).toMatch(/merged into this one are not shown here/);
+    // A read is consistent with the search: not found, and nothing about it leaks.
+    const read = await call(`/fhir/R4/Consent/${M1.id}`, PAT_A);
+    expect(read.status).toBe(404);
+    expect(JSON.stringify(read.json)).not.toContain(PATIENT_M.id);
+    // Staff searching by the kept record do see it, under the kept record,
+    // with the staff note.
+    const staff = (await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}`, DOCTOR)).json;
+    expect(ids(staff)).toContain(M1.id);
+    expect(matches(staff).find((r) => r.id === M1.id)?.patient).toEqual({ reference: `Patient/${PATIENT_A.fhir_id}` });
+    expect(outcomes(staff)).toContainEqual(CONSENT_COVERAGE_NOTE);
+    expect(outcomes(staff)).not.toContainEqual(CONSENT_COVERAGE_NOTE_PATIENT);
+  });
+
+  it("never names a merged-away record in a patient's call, so the database's check is the only thing that could widen it", async () => {
+    const { call, directiveCalls } = setup();
+    await call("/fhir/R4/Consent", PAT_A);
+    await call(`/fhir/R4/Consent/${M1.id}`, PAT_A);
+    for (const c of directiveCalls()) expect((c.body as Json).p_patient_ids).toEqual([PATIENT_A.id]);
   });
 
   it("is refused when patient access is switched off", async () => {

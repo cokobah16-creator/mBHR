@@ -21,24 +21,35 @@
 //     so a directive still filed under a merged-away record is found under
 //     the kept record, and shown with the kept record as its patient)
 //
+// Known gap for patients: a directive still filed under a record that was
+// merged into the patient's own is not shown to the patient yet (staff see
+// it under the kept record, and the portal lists it). A patient cannot see
+// merged-away records under row-level security, so the gateway can neither
+// name them in the call nor resolve them to the kept record; that needs a
+// database helper (requested). Until then every patient searchset says so
+// (CONSENT_COVERAGE_NOTE_PATIENT) instead of claiming to be complete.
+//
 // status and scope are filtered after mapping, on the published values,
 // so a search always finds exactly what a read shows (a withdrawn record
 // is inactive and never matches status=active).
 
-import { errors } from "../errors/operationOutcome";
+import { FhirError, errors } from "../errors/operationOutcome";
 import type { OperationOutcomeIssue } from "../types/fhir";
 import { READ_PERMISSIONS } from "../authorization/permissions";
 import {
   CONSENT_SCOPES,
   CONSENT_SCOPE_SYSTEM,
+  LOCAL_CONSENT,
   mapConsentRecord,
   mapConsentScope,
   mapConsentStatus,
+  mapProvision,
   validateConsent,
   type Consent,
   type ConsentMapResult,
   type ConsentWithheld,
 } from "../mappers/consent";
+import { validateResource } from "../validation/validate";
 import type { Row } from "../mappers/common";
 import { CONSENT_STATE_CODES, CONSENT_STATE_SYSTEM, type ConsentState } from "../terminology/status/consent";
 import { referenceContext } from "../patients/canonical";
@@ -46,6 +57,49 @@ import { parseId, parseToken, type Cursor, type ParsedSearch } from "../search/p
 import type { Postgrest } from "../gateway/postgrest";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
 import { MAX_KEYSET_ROUNDS, UUID, checkCursorKey, one, patientNotes } from "./shared";
+
+/**
+ * Whether the gateway's generic checker (validation/validate.ts) accepts a
+ * rule's actor the way FHIR R4 has it. Consent.provision.actor.reference is
+ * itself a Reference, which mBHR fills with a display only (the kind of
+ * recipient; a specific recipient is never published). The shared checker
+ * currently reads every element named "reference" as a Type/id string and
+ * rejects it (a fix is requested as a shared change).
+ *
+ * While it does, a directive with a rule for a kind of recipient is not
+ * handed to the gateway: a read answers with an error that says why, and a
+ * searchset counts them in their own warning. Leaving the actor out
+ * instead would change the rule (a permit for one kind of recipient would
+ * read as a permit for every recipient), so that is never done.
+ *
+ * This is checked once, against the shared checker itself, with the rule
+ * shape the mapper produces, so these directives are served as soon as the
+ * checker accepts them, with no other change here.
+ */
+function actorRulesAccepted(): boolean {
+  const rule = mapProvision({ provision_type: "deny", actor_type: "external_system", action: "disclose" });
+  if (typeof rule === "symbol") return false;
+  const sample = {
+    resourceType: "Consent",
+    id: "actor-check",
+    meta: { lastUpdated: "2026-01-01T00:00:00Z" },
+    status: "active",
+    scope: { coding: [{ system: CONSENT_SCOPE_SYSTEM, code: "patient-privacy" }] },
+    category: [{ coding: [{ system: LOCAL_CONSENT.category, code: "check" }] }],
+    patient: { reference: "Patient/actor-check" },
+    policy: [{ uri: "https://mbhr.app/policies/check" }],
+    provision: { provision: [rule] },
+  };
+  return validateResource(sample, validateConsent).length === 0;
+}
+
+/** true when directives with a rule for a kind of recipient can be served (see actorRulesAccepted). */
+export const ACTOR_RULES_SERVED: boolean = actorRulesAccepted();
+
+/** Whether a published Consent has a rule naming a kind of recipient. */
+export function hasActorRule(resource: Consent): boolean {
+  return (resource.provision?.provision ?? []).some((rule) => (rule.actor?.length ?? 0) > 0);
+}
 
 export const definition: ResourceDefinition = {
   type: "Consent",
@@ -71,7 +125,7 @@ export const definition: ResourceDefinition = {
       name: "patient",
       type: "reference",
       documentation:
-        "Patient/[id]. Directives about this patient, including ones still filed under records merged into it. Required for staff unless _id is given.",
+        "Patient/[id]. Directives about this patient, including (for staff) ones still filed under records merged into it. Required for staff unless _id is given.",
     },
     {
       name: "status",
@@ -97,17 +151,53 @@ export const definition: ResourceDefinition = {
     "Who recorded, verified or withdrew a consent, the reason for a withdrawal, who signed it and its source document are never published; neither is a performer.",
     "A rule's actor names the kind of recipient recorded (for example External system), never a specific one.",
     "A consent that cites no policy (FHIR requires one) or whose rules cannot be shown without changing their meaning is not published; a searchset says how many were left out.",
-    "An empty result means no directive is recorded in mBHR's consent register, not that the patient agreed to or refused any use of their data.",
+    ...(ACTOR_RULES_SERVED
+      ? []
+      : [
+          "A consent with a rule for a kind of recipient (for example External system) is not served yet: a read answers 500 saying so, and a searchset says how many were left out. It is never served without that rule.",
+        ]),
+    "Patients do not yet see directives still filed under another record of theirs that was merged into their current one (staff see them under the kept record, and the patient portal lists them); a patient's searchset says so.",
+    "An empty result is not evidence that the patient agreed to or refused any use of their data.",
   ],
 };
 
-/** Every Consent searchset says what an empty result does and does not mean. */
+/** Every staff Consent searchset says what an empty result does and does not mean. */
 export const CONSENT_COVERAGE_NOTE: OperationOutcomeIssue = {
   severity: "information",
   code: "informational",
   diagnostics:
-    "Consent directives come from mBHR's consent register only. An empty or short result means no other directive is recorded there, not that the patient agreed to, or refused, any use of their data.",
+    "Consent directives come from mBHR's consent register only. Apart from any that a warning in this searchset says were left out, an empty or short result means no other directive is recorded there, not that the patient agreed to, or refused, any use of their data.",
 };
+
+/**
+ * The same note for a patient's own searchset. It does not claim to be
+ * complete: directives filed under a record merged into the patient's are
+ * not shown to the patient yet (see the header comment).
+ */
+export const CONSENT_COVERAGE_NOTE_PATIENT: OperationOutcomeIssue = {
+  severity: "information",
+  code: "informational",
+  diagnostics:
+    "Consent directives come from mBHR's consent register only. Directives recorded on another record of yours that was later merged into this one are not shown here yet; the privacy section of the mBHR patient portal lists them. An empty or short result does not mean that you agreed to, or refused, any use of your data.",
+};
+
+/** The searchset note for directives left out because a rule names a kind of recipient (see ACTOR_RULES_SERVED). */
+export function actorRulesNote(count: number): OperationOutcomeIssue {
+  return {
+    severity: "warning",
+    code: "incomplete",
+    diagnostics: `${count} consent record(s) were left out because they have a rule for a kind of recipient (for example External system), which this server cannot show yet. They are recorded in mBHR and may allow or refuse sharing: do not read their absence as no directive.`,
+  };
+}
+
+/** A read of such a directive: fails closed, and says why (no content). */
+function actorRulesNotServed(): FhirError {
+  return new FhirError(
+    500,
+    "not-supported",
+    "This consent record has a rule for a kind of recipient (for example External system), which this server cannot show yet. It is recorded in mBHR and may allow or refuse sharing.",
+  );
+}
 
 /** The searchset note for directives that exist but are not published. */
 export function withheldNote(count: number): OperationOutcomeIssue {
@@ -134,6 +224,12 @@ interface Selection {
  * The patients this request may cover: a patient caller's own records
  * (never anything else), narrowed to the patient a search names. null: no
  * restriction (staff, no patient named). An empty list matches nothing.
+ *
+ * A patient's own records are their current (not merged-away) records only:
+ * records merged into them are invisible to the patient under row-level
+ * security, so they cannot be named here or resolved to the kept record.
+ * Directives filed under them are therefore not shown to patients yet (see
+ * CONSENT_COVERAGE_NOTE_PATIENT and the header comment).
  */
 function coveredPatients(ctx: QueryCtx): string[] | null {
   let ids: string[] | null = null;
@@ -199,6 +295,9 @@ async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
   const rows = await fetchDirectives(ctx.db, { patientIds, consentIds: [id.toLowerCase()] }, null, 1);
   const [mapped] = await mapRecords(ctx, rows);
   if (!mapped?.resource) return emptyResult();
+  // The caller may read this record (the selection above); it is only the
+  // shared checker that cannot take its actor yet. Say so, with no content.
+  if (!ACTOR_RULES_SERVED && hasActorRule(mapped.resource)) throw actorRulesNotServed();
   return { page: { resources: [mapped.resource], next: null }, owners: [String(rows[0].patient_id)] };
 }
 
@@ -245,7 +344,8 @@ function parseFilters(search: ParsedSearch): Filters | null {
 
 async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult> {
   const notes = patientNotes(ctx);
-  const outcomes: OperationOutcomeIssue[] = [...(notes.outcomes ?? []), CONSENT_COVERAGE_NOTE];
+  const coverage = ctx.scope.kind === "patient" ? CONSENT_COVERAGE_NOTE_PATIENT : CONSENT_COVERAGE_NOTE;
+  const outcomes: OperationOutcomeIssue[] = [...(notes.outcomes ?? []), coverage];
   const none = () => emptyResult({ ...notes, outcomes });
   // A named patient that cannot match (unknown, merged away, two named): nothing.
   if (ctx.patients && ctx.patients.ids === null) return none();
@@ -272,12 +372,17 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   const batch = Math.min(Math.max(count + 1, 25), 101);
   const out: { resource: Consent; owner: string; id: string }[] = [];
   const withheld: string[] = [];
+  const actorRules: string[] = [];
   let after: string | null = search.cursor ? search.cursor.k.toLowerCase() : null;
 
   const finish = (next: Cursor | null): QueryResult => {
-    // Count only the withheld records this page covers (before the next cursor).
-    const left = next ? withheld.filter((id) => id <= next.k).length : withheld.length;
-    const pageOutcomes = left ? [...outcomes, withheldNote(left)] : outcomes;
+    // Count only the left-out records this page covers (before the next cursor).
+    const onPage = (list: string[]) => (next ? list.filter((id) => id <= next.k).length : list.length);
+    const left = onPage(withheld);
+    const actorLeft = onPage(actorRules);
+    const pageOutcomes = [...outcomes];
+    if (left) pageOutcomes.push(withheldNote(left));
+    if (actorLeft) pageOutcomes.push(actorRulesNote(actorLeft));
     return {
       page: { resources: out.map((o) => o.resource), next },
       owners: out.map((o) => o.owner),
@@ -295,8 +400,13 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
       const m = mapped[i];
       if (m.resource) {
         if (matches(m.resource, filters)) {
-          if (out.length === count) return finish({ k: out[out.length - 1].id });
-          out.push({ resource: m.resource, owner: String(row.patient_id), id });
+          if (!ACTOR_RULES_SERVED && hasActorRule(m.resource)) {
+            // Counted in its own note (see ACTOR_RULES_SERVED); never served without its actor.
+            actorRules.push(id);
+          } else {
+            if (out.length === count) return finish({ k: out[out.length - 1].id });
+            out.push({ resource: m.resource, owner: String(row.patient_id), id });
+          }
         }
       } else if (withheldMatches(row, m.withheld, filters)) {
         withheld.push(id);

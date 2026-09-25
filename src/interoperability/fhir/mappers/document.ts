@@ -233,7 +233,15 @@ export function documentTypeConcept(raw: unknown): CodeableConcept | undefined {
   if (typeof raw !== "string" || raw.trim() === "") return undefined;
   const label = DOCUMENT_TYPES.get(raw);
   if (label) return { coding: [{ system: DOCUMENT_TYPE_SYSTEM, code: raw, display: label }], text: label };
+  // Free text that names a storage location is left out rather than
+  // failing the whole document (the module refuses any storage URL).
+  if (namesStorage(raw)) return undefined;
   return { text: raw.trim() };
+}
+
+/** Text that mentions a Supabase Storage path. */
+function namesStorage(text: string): boolean {
+  return text.includes("/storage/v1/");
 }
 
 /** Who added the document, as a local code; left out for any value the table does not allow. */
@@ -270,7 +278,8 @@ export function mapDocumentReference(row: Row, ctx: MapContext, opts: DocumentMa
   const date = instant(row, "created_at");
   // The patient's own words about their upload. A clinic record's
   // description is a staff member's free-text note: never published.
-  const description = row.upload_source === "patient" ? str(row, "description") : undefined;
+  const patientText = row.upload_source === "patient" ? str(row, "description") : undefined;
+  const description = patientText !== undefined && !namesStorage(patientText) ? patientText : undefined;
 
   // Always the type the gateway will serve the file as, so the metadata
   // and the download agree.

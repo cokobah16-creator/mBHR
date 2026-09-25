@@ -338,6 +338,16 @@ describe("DocumentReference mapper", () => {
     expect(d.type).toBeUndefined();
   });
 
+  it("leaves out free text that names a storage path rather than withholding the document", () => {
+    const link = "copy of https://abc.supabase.co/storage/v1/object/public/foo/bar";
+    expect(documentTypeConcept("see /storage/v1/object")).toBeUndefined();
+    const d = mapDocumentReference({ ...DOC_A, description: link, document_type: "see /storage/v1/x" }, refs, { contentAvailable: true })!;
+    expect(d).not.toBeNull();
+    expect(d.description).toBeUndefined();
+    expect(d.type).toBeUndefined();
+    expect(JSON.stringify(d)).not.toContain("/storage/v1/");
+  });
+
   it("leaves out a category that is not one of the two recorded sources", () => {
     for (const source of ["PATIENT", "caregiver", null]) {
       const d = mapDocumentReference({ ...DOC_A, upload_source: source }, refs, { contentAvailable: true })!;
@@ -703,6 +713,7 @@ describe("patient access to documents", () => {
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
     expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("x-security-context")).toBe(`DocumentReference/${DOC_A.id}`);
     // Audited before it was served, and counted against the stricter rate limit.
     expect(audits).toEqual([
       expect.objectContaining({
@@ -792,6 +803,11 @@ describe("Binary downloads", () => {
     const { call } = setup();
     const res = await call(`/fhir/R4/Binary/${DOC_A.id}`, { token: DOCTOR, headers: { Accept: "application/fhir+json" } });
     expect(res.status).toBe(406);
+    // _format overrides Accept, so asking for JSON there is refused too.
+    for (const f of ["json", "application/fhir+json"]) {
+      const r = await call(`/fhir/R4/Binary/${DOC_A.id}?_format=${encodeURIComponent(f)}`, { token: DOCTOR });
+      expect(r.status, f).toBe(406);
+    }
   });
 });
 

@@ -11,6 +11,7 @@ import { FhirError } from "../errors/operationOutcome";
 import { keysetPage, likeLiteral } from "../resources/shared";
 import type { Postgrest } from "../gateway/postgrest";
 import type { Resource } from "../types/fhir";
+import { validateResource } from "../validation/validate";
 
 const config = readFhirConfig({
   FHIR_ENABLED: "true",
@@ -129,5 +130,29 @@ describe("likeLiteral", () => {
     expect(likeLiteral("in_progress")).toBe("in\\_progress");
     expect(likeLiteral("50%")).toBe("50\\%");
     expect(likeLiteral("a*b\\c")).toBe("ab\\\\c");
+  });
+});
+
+describe("reference checks in validateResource", () => {
+  const consent = (reference: unknown): Resource =>
+    ({
+      resourceType: "Basic",
+      id: "c1",
+      code: { text: "x" },
+      provision: { actor: [{ role: { text: "recipient" }, reference }] },
+    }) as unknown as Resource;
+  const paths = (r: Resource) => validateResource(r).map((i) => `${i.path}: ${i.message}`);
+
+  it("walks a Reference held in an element named reference (Consent.provision.actor.reference)", () => {
+    expect(paths(consent({ reference: "Organization/org-1", display: "Partner" })).filter((p) => p.includes("reference"))).toEqual([]);
+    expect(paths(consent({ reference: "https://elsewhere.example/Organization/x" }))).toEqual(
+      expect.arrayContaining([expect.stringMatching(/provision\.actor\[0\]\.reference\.reference: not a relative Type\/id reference/)]),
+    );
+  });
+
+  it("still refuses a reference string that is not Type/id", () => {
+    expect(paths(consent("https://elsewhere.example/Patient/x"))).toEqual(
+      expect.arrayContaining([expect.stringMatching(/provision\.actor\[0\]\.reference: not a relative Type\/id reference/)]),
+    );
   });
 });

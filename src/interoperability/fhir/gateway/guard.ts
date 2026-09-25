@@ -103,6 +103,11 @@ export function routeRequest(request: Request, config: FhirConfig): Route {
   if (id.startsWith("$") || id.startsWith("_")) throw errors.notSupported("Only read and search interactions are supported.");
   if (!FHIR_ID.test(id)) throw errors.badRequest("The resource id is not valid.");
   if ([...query.keys()].some((k) => k !== "_format")) throw errors.badRequest("A read takes no search parameters.");
+  // _format overrides Accept (FHIR RESTful API 3.1.0.1.6): asking for FHIR
+  // JSON explicitly cannot be answered with the file itself.
+  if (binary && query.has("_format")) {
+    throw new FhirError(406, "not-supported", "Documents are available as the file itself, not as FHIR JSON.");
+  }
   if (binary && accept !== null && accept.trim() !== "") {
     const types = acceptedTypes(accept);
     // Binary is served as the file itself; a client that accepts only the
