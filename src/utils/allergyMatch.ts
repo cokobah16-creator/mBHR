@@ -117,13 +117,46 @@ export function matchMedicationToAllergen(
   return null;
 }
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Whole words only; longest first, so "co-amoxiclav" goes before "amoxiclav". */
+const wholeWords = (terms: string[]) =>
+  new RegExp(
+    `\\b(?:${[...new Set(terms)]
+      .sort((a, b) => b.length - a.length)
+      .map(escapeRegExp)
+      .join("|")})\\b`,
+    "g",
+  );
+
+const CLASS_TERMS = wholeWords(
+  Object.values(DRUG_CLASSES).flatMap((c) => [...c.aliases, ...c.members]),
+);
+/** Words that say what kind of allergy it is without naming a drug. */
+const GENERIC_WORDS = wholeWords(["drug", "drugs", "allergy", "class", "group", "antibiotic", "antibiotics"]);
+/** Where one allergen ends and another starts in a free-text list. */
+const ALLERGEN_SEPARATORS = /[,;/&+]|\band\b|\bor\b/;
+
 /**
- * Whether the allergen names a drug or drug class in the list above, so a
- * medicine that does not match it can be cleared. Anything else (a food, a
- * drug not in the list, a spelling the list does not have) cannot.
+ * Whether the whole allergen is drugs or drug classes in the list above, so
+ * a medicine that does not match it can be cleared. Each part of a list
+ * ("Penicillin, codeine") must be only names from the list and words such as
+ * "drugs"; one other word is enough to need a check by hand. So a food, a
+ * drug not in the list, a salt name ("Quinine sulphate" is not a sulfa
+ * drug) or a spelling the list does not have is never cleared.
  */
 export function isRecognisedAllergen(allergen: string): boolean {
-  return classesForAllergen(allergen).length > 0;
+  let named = false;
+  for (const part of norm(allergen).split(ALLERGEN_SEPARATORS)) {
+    const rest = part
+      .replace(CLASS_TERMS, () => {
+        named = true;
+        return " ";
+      })
+      .replace(GENERIC_WORDS, " ");
+    // Any letter or digit left over, in any script, is something unknown.
+    if (/[\p{L}\p{N}]/u.test(rest)) return false;
+  }
+  return named;
 }
 
 /**

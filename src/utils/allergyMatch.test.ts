@@ -45,6 +45,22 @@ describe("isRecognisedAllergen", () => {
     expect(isRecognisedAllergen("Penicilin")).toBe(false);
     expect(isRecognisedAllergen("")).toBe(false);
   });
+
+  it("knows a list only when every allergen in it is on the list", () => {
+    expect(isRecognisedAllergen("Penicillin, amoxicillin")).toBe(true);
+    expect(isRecognisedAllergen("Co-amoxiclav")).toBe(true);
+    expect(isRecognisedAllergen("Penicillin group antibiotics")).toBe(true);
+    expect(isRecognisedAllergen("Penicillin, codeine")).toBe(false);
+    expect(isRecognisedAllergen("Sulfa and chloroquine")).toBe(false);
+    expect(isRecognisedAllergen("Penicillin and other antibiotics")).toBe(false);
+    expect(isRecognisedAllergen("Drugs")).toBe(false);
+  });
+
+  it("does not read a salt name as a drug class", () => {
+    expect(isRecognisedAllergen("Quinine sulphate")).toBe(false);
+    expect(isRecognisedAllergen("Salbutamol sulphate")).toBe(false);
+    expect(isRecognisedAllergen("Morphine sulfate")).toBe(false);
+  });
 });
 
 describe("uncheckedAllergens", () => {
@@ -56,6 +72,11 @@ describe("uncheckedAllergens", () => {
 
   it("asks for a check by hand for allergens that are not medicines", () => {
     expect(uncheckedAllergens(["Paracetamol 500mg"], ["Peanuts", "Latex"])).toEqual(["Peanuts", "Latex"]);
+  });
+
+  it("asks for a check by hand for a salt name or a list with an unknown allergen", () => {
+    expect(uncheckedAllergens(["Quinine 300mg"], ["Quinine sulphate"])).toEqual(["Quinine sulphate"]);
+    expect(uncheckedAllergens(["Codeine 30mg"], ["Penicillin, codeine"])).toEqual(["Penicillin, codeine"]);
   });
 
   it("clears a recognised allergen that does not match the medicine", () => {
