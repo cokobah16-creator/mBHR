@@ -85,6 +85,18 @@ describe("Login on a device with no staff account", () => {
     ).toHaveAttribute("href", "/setup");
   });
 
+  it("links to the privacy notice and the terms of use", async () => {
+    renderLogin();
+
+    expect(await screen.findByText(FRESH_DEVICE_NOTICE)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Privacy notice" }),
+    ).toHaveAttribute("href", "/privacy");
+    expect(
+      screen.getByRole("link", { name: "Terms of use" }),
+    ).toHaveAttribute("href", "/terms");
+  });
+
   it("leaves only setup when online sign-in is not built in", async () => {
     mocks.isOnlineSyncEnabled.mockReturnValue(false);
     renderLogin();

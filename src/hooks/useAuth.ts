@@ -2,7 +2,10 @@
  * useAuth – Supabase auth hook for the patient portal.
  *
  * Wraps signInWithPassword, signUp (auto-creates the patients row),
- * signOut, and exposes live user/session state.
+ * signOut, and exposes live user/session state. signUp saves the versions
+ * of the terms of use and privacy notice the patient accepted, and when,
+ * in the new account's user metadata. It refuses people under 18, and never
+ * links a new account to a clinic record for someone under 18.
  * Safe to call when Supabase is not configured — all operations no-op
  * gracefully so offline mode keeps working.
  */
@@ -10,6 +13,14 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import type { Session, User } from "@/lib/supabaseClient";
 import { normalizePhone } from "@/utils/phone";
+import { isMinor } from "@/utils/patient";
+import {
+  ACCEPTANCE_REQUIRED_MESSAGE,
+  MINOR_RECORD_LINK_MESSAGE,
+  UNDER_18_SIGN_UP_MESSAGE,
+  isCompleteAcceptance,
+  type PolicyAcceptance,
+} from "@/pages/legal/policyMeta";
 
 export interface AuthError {
   message: string;
@@ -21,7 +32,13 @@ export interface SignUpData {
   givenName: string;
   familyName: string;
   phone?: string;
-  dob?: string;
+  /** YYYY-MM-DD. Required: sign-up is refused for anyone under 18. */
+  dob: string;
+  /**
+   * What the patient ticked on the sign-up form. Saved with the account;
+   * sign-up is refused without it.
+   */
+  acceptance: PolicyAcceptance;
 }
 
 export interface UseAuthReturn {
@@ -88,13 +105,31 @@ export function useAuth(): UseAuthReturn {
           message: "Supabase is not configured — running in offline mode.",
         };
 
-      // 1. Create the Supabase auth user
+      if (!isCompleteAcceptance(data.acceptance)) {
+        return { message: ACCEPTANCE_REQUIRED_MESSAGE };
+      }
+
+      // Portal accounts are for adults. Check before any account is made.
+      const minor = isMinor(data.dob);
+      if (minor === null) {
+        return { message: "Please enter a real date of birth." };
+      }
+      if (minor) return { message: UNDER_18_SIGN_UP_MESSAGE };
+
+      // 1. Create the Supabase auth user. The accepted versions go in the
+      //    user metadata, so they are recorded with the account even when
+      //    there is no session yet (email confirmation still pending).
       const { data: authData, error: signUpError } = await supabase.auth.signUp(
         {
           email: data.email,
           password: data.password,
           options: {
-            data: { full_name: `${data.givenName} ${data.familyName}`.trim() },
+            data: {
+              full_name: `${data.givenName} ${data.familyName}`.trim(),
+              terms_version: data.acceptance.termsVersion,
+              privacy_version: data.acceptance.privacyVersion,
+              accepted_at: data.acceptance.acceptedAt,
+            },
           },
         },
       );
@@ -159,6 +194,13 @@ export function useAuth(): UseAuthReturn {
           existingPatient.dob === data.dob;
         const canLinkPatient = matchedByEmail || (matchedByPhone && dobMatches);
 
+        // Never link a new account to a child's record, even when the email
+        // matches: it is often a parent's email on their child's record.
+        // A record with no date of birth still links, as before.
+        if (canLinkPatient && isMinor(existingPatient.dob) === true) {
+          return { message: MINOR_RECORD_LINK_MESSAGE };
+        }
+
         if (canLinkPatient) {
           // Conditional update: only succeeds if auth_uid is still NULL (race safety).
           const { error: linkError } = await supabase
@@ -181,7 +223,7 @@ export function useAuth(): UseAuthReturn {
         family_name: data.familyName,
         email: data.email,
         phone: data.phone ?? null,
-        dob: data.dob ?? null,
+        dob: data.dob,
         sex: "other",
         address: "",
         state: "",

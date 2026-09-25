@@ -2,13 +2,18 @@
  * Portal Status Card Component
  *
  * Displays patient portal enrollment status with:
- * - Enable/disable switch (turning access off asks for confirmation)
+ * - Enable/disable switch. Turning access on asks staff to tick that the
+ *   patient has agreed; turning it off asks for confirmation.
  * - Verification status
  * - Last login date
  * - Invitation history
  * - Send/resend invitation button with rate limiting, and an honest
  *   message when no email or SMS could be sent (including when the server
  *   refused because nobody is signed in online)
+ *
+ * The switch saves on this device, and also on the server when the device
+ * is online and the server takes the change (the online portal checks the
+ * server). The toast says which happened.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -24,6 +29,7 @@ import {
   enablePortalAccess,
   disablePortalAccess,
   type PortalStatusInfo,
+  type ServerPortalWrite,
 } from "@/services/portalEnrollment";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useToast } from "@/stores/toast";
@@ -74,6 +80,35 @@ function notSentReasonText(
     : "The server does not let your staff account send email. It may not be active, or its role on the server may not allow it. Ask an administrator to check your account.";
 }
 
+/** Toast text after the switch: where the change was saved. */
+function savedWhere(
+  enable: boolean,
+  server: ServerPortalWrite | undefined,
+): string {
+  switch (server) {
+    case "updated":
+      return enable
+        ? "Saved on this device and on the server, which the online portal checks."
+        : "Turned off on this device and on the server, which the online portal checks.";
+    case "no-server":
+      return "Saved on this device only: no server is connected.";
+    case "offline":
+      return enable
+        ? "Saved on this device only. This device is offline, so the server was not updated."
+        : "Turned off on this device only. This device is offline, so the server was not updated and an online portal account may still work.";
+    case "not-signed-in":
+      return enable
+        ? `Saved on this device only. You are not signed in online, so the server was not updated. ${ONLINE_SIGN_IN_HINT}`
+        : `Turned off on this device only. You are not signed in online, so the server was not updated and an online portal account may still work. ${ONLINE_SIGN_IN_HINT}`;
+    case "not-updated":
+      return enable
+        ? "Saved on this device only. The server did not take the change: the patient's record may not be uploaded yet. Once it is, turn access off and on again."
+        : "Turned off on this device only. The server did not take the change, so an online portal account may still work.";
+    default:
+      return enable ? "Saved on this device." : "Turned off on this device.";
+  }
+}
+
 const formatCountdown = (seconds: number): string => {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
@@ -100,6 +135,9 @@ export function PortalStatusCard({
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const [confirmEnable, setConfirmEnable] = useState(false);
+  // Staff attestation for turning access on. Starts unticked every time.
+  const [patientAgreed, setPatientAgreed] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
   const [inviteLink, setInviteLink] = useState<{
     url: string;
@@ -147,8 +185,17 @@ export function PortalStatusCard({
     }
   }, [countdown]);
 
+  const closeEnableDialog = () => {
+    setConfirmEnable(false);
+    setPatientAgreed(false);
+  };
+
   const setPortalAccess = async (enable: boolean) => {
+    // Access is turned on only after staff tick that the patient agreed.
+    const agreed = patientAgreed;
+    if (enable && !agreed) return;
     setConfirmDisable(false);
+    closeEnableDialog();
     if (!status) return;
     if (!canEdit) {
       pushToast({
@@ -163,7 +210,7 @@ export function PortalStatusCard({
     setToggling(true);
     try {
       const result = enable
-        ? await enablePortalAccess(patientId, { termsAccepted: true })
+        ? await enablePortalAccess(patientId, { termsAccepted: agreed })
         : await disablePortalAccess(patientId);
 
       if (result.success) {
@@ -171,12 +218,7 @@ export function PortalStatusCard({
           id: generateId(),
           tone: "success",
           title: enable ? "Portal access turned on" : "Portal access turned off",
-          body:
-            server.state === "not-configured"
-              ? "Saved on this device only: no server is connected."
-              : enable
-                ? "Saved on this device."
-                : "Turned off on this device. Portal access settings are not synced, so an online portal account is not blocked by this.",
+          body: savedWhere(enable, result.server),
         });
         await loadStatus();
         onStatusChange?.();
@@ -202,8 +244,12 @@ export function PortalStatusCard({
 
   const handleSwitch = () => {
     if (!status) return;
-    if (status.enabled) setConfirmDisable(true);
-    else setPortalAccess(true);
+    if (status.enabled) {
+      setConfirmDisable(true);
+    } else {
+      setPatientAgreed(false);
+      setConfirmEnable(true);
+    }
   };
 
   const handleSendInvitation = async () => {
@@ -562,11 +608,47 @@ export function PortalStatusCard({
         {/* Enable Portal Prompt */}
         {!status.enabled && (
           <p className="text-body text-ink-secondary">
-            Turning on portal access lets {firstName} view their medical
-            records, request appointments and message the clinic online.
+            Turning on portal access lets {firstName} use the patient portal
+            to see their records, request appointments and message the
+            clinic.
           </p>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmEnable}
+        title={`Turn on portal access for ${firstName}?`}
+        confirmLabel="Turn on access"
+        confirmDisabled={!patientAgreed}
+        busy={toggling}
+        busyLabel="Turning on…"
+        onConfirm={() => setPortalAccess(true)}
+        onCancel={closeEnableDialog}
+      >
+        <p>
+          Portal access lets {firstName} use the patient portal to see their
+          records, request appointments and message the clinic.
+        </p>
+        <p>
+          {server.state === "available"
+            ? "It is saved on this device and sent to the server, which the online portal checks. If the server does not take it, for example because the patient's record is not uploaded yet, only this device changes. You will see which."
+            : server.state === "offline"
+              ? "This device is offline, so it is saved on this device only. The online portal is not changed."
+              : "No server is connected, so it is saved on this device only."}
+        </p>
+        <label className="flex items-start gap-3 rounded-md border border-line bg-surface-sunken p-3">
+          <input
+            type="checkbox"
+            id={`${titleId}-agreed`}
+            checked={patientAgreed}
+            onChange={(e) => setPatientAgreed(e.target.checked)}
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
+          />
+          <span className="text-body text-ink">
+            {firstName} has agreed to use the patient portal.
+          </span>
+        </label>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={confirmDisable}
@@ -579,9 +661,11 @@ export function PortalStatusCard({
         onCancel={() => setConfirmDisable(false)}
       >
         <p>
-          {server.state === "not-configured"
-            ? "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."
-            : `Portal access will be turned off on this device. This setting is not synced, so it does not block ${firstName}'s online portal account if they have one.`}{" "}
+          {server.state === "available"
+            ? "Portal access will be turned off on this device and the change sent to the server, which the online portal checks. If the server does not take it, only this device changes. You will see which."
+            : server.state === "offline"
+              ? `This device is offline, so portal access will be turned off on this device only. It does not block ${firstName}'s online portal account if they have one.`
+              : "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."}{" "}
           Their records are not deleted.
         </p>
         <p>You can turn access back on later.</p>

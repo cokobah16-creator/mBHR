@@ -26,6 +26,7 @@ export interface PatientPortalUser {
   consentGivenAt?: Date;
   termsAcceptedVersion?: string;
   termsAcceptedAt?: Date;
+  privacyAcceptedVersion?: string;
   createdAt: Date;
   updatedAt: Date;
 }

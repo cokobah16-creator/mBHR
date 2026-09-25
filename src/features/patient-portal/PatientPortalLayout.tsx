@@ -25,6 +25,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { EmergencyHelp } from "./EmergencyHelp";
+import { LegalLinks } from "@/pages/legal/LegalLinks";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { PortalSkeleton } from "@/components/ui/Skeleton";
 import { useT } from "@/hooks/useT";
@@ -540,36 +541,39 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
 
       <div className="mx-auto flex max-w-6xl">
         <aside className="hidden w-60 shrink-0 border-r border-line md:block">
-          <nav
-            aria-label={t("portal.nav.menuLabel")}
-            className="sticky top-16 max-h-[calc(100vh-4rem)] overflow-y-auto px-3 py-4"
-          >
-            <ul className="space-y-0.5">
-              {PRIMARY_NAV.map((item) => (
-                <li key={item.path}>
-                  <NavRow
-                    item={item}
-                    label={t(item.labelKey)}
-                    active={isActivePath(location.pathname, item)}
-                  />
-                </li>
-              ))}
-            </ul>
-            <p className="section-label mb-1 mt-6 px-3">
-              {t("portal.nav.otherServices")}
-            </p>
-            <ul className="space-y-0.5">
-              {OTHER_NAV.map((item) => (
-                <li key={item.path}>
-                  <NavRow
-                    item={item}
-                    label={t(item.labelKey)}
-                    active={isActivePath(location.pathname, item)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </nav>
+          <div className="sticky top-16 max-h-[calc(100vh-4rem)] overflow-y-auto px-3 py-4">
+            <nav aria-label={t("portal.nav.menuLabel")}>
+              <ul className="space-y-0.5">
+                {PRIMARY_NAV.map((item) => (
+                  <li key={item.path}>
+                    <NavRow
+                      item={item}
+                      label={t(item.labelKey)}
+                      active={isActivePath(location.pathname, item)}
+                    />
+                  </li>
+                ))}
+              </ul>
+              <p className="section-label mb-1 mt-6 px-3">
+                {t("portal.nav.otherServices")}
+              </p>
+              <ul className="space-y-0.5">
+                {OTHER_NAV.map((item) => (
+                  <li key={item.path}>
+                    <NavRow
+                      item={item}
+                      label={t(item.labelKey)}
+                      active={isActivePath(location.pathname, item)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </nav>
+            <LegalLinks
+              align="start"
+              className="mt-6 border-t border-line px-1 pt-3"
+            />
+          </div>
         </aside>
 
         <main
@@ -732,6 +736,8 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                     : t("portal.nav.logout")}
                 </button>
               </div>
+
+              <LegalLinks />
             </div>
           </div>
         </div>

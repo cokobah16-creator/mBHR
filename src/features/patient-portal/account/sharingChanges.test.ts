@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   choiceLabel,
+  DEFAULT_SHARING_FLAGS,
   diffSharing,
   purposeLabel,
   SHARING_OPTIONS,
@@ -50,6 +51,19 @@ describe("SHARING_OPTIONS", () => {
       "allow_payment_access",
       "allow_treatment_access",
     ]);
+  });
+});
+
+describe("DEFAULT_SHARING_FLAGS", () => {
+  it("starts with treatment, payment and quality-check sharing off", () => {
+    // The privacy notice lists these values. Change it with them.
+    expect(DEFAULT_SHARING_FLAGS).toEqual({
+      allow_ias_access: true,
+      allow_treatment_access: false,
+      allow_payment_access: false,
+      allow_operations_access: false,
+      require_notification: true,
+    });
   });
 });
 
