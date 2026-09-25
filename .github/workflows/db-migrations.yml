@@ -114,7 +114,7 @@ jobs:
           # Move the migrations aside so `supabase start` applies none of them.
           mkdir -p "$RUNNER_TEMP/migrations"
           mv supabase/migrations/*.sql "$RUNNER_TEMP/migrations/"
-          supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor,realtime,postgres-meta
+          supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor,realtime,postgres-meta
           mv "$RUNNER_TEMP/migrations/"*.sql supabase/migrations/
 
       - name: Load production's schema into the local stack
