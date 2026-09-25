@@ -771,6 +771,69 @@ export const normPhone = (s: string) => s.replace(/\D/g, "");
 export const nameKeyOf = (first: string, last: string) =>
   `${metaphone(first || "")}-${metaphone(last || "")}`;
 
+/** Epoch day of a Date or date string, or undefined when it is not a date. */
+function dayKeyOf(value: unknown): number | undefined {
+  const d =
+    value instanceof Date
+      ? value
+      : typeof value === "string" && value
+        ? new Date(value)
+        : null;
+  if (!d || Number.isNaN(d.getTime())) return undefined;
+  return epochDay(d);
+}
+
+export interface PatientSearchKeys {
+  phoneN?: string;
+  nameKey?: string;
+  dobDay?: number;
+  createdDay?: number;
+  updatedDay?: number;
+}
+
+/**
+ * The duplicate-check keys a patient row should carry (phoneN, nameKey,
+ * dobDay, createdDay, updatedDay), computed with the same helpers the
+ * duplicate lookups use. A field that is not plain text (for example an
+ * encrypted value) gives no key.
+ */
+export function patientSearchKeys(p: Record<string, unknown>): PatientSearchKeys {
+  const out: PatientSearchKeys = {};
+  const phone = p.phone ?? "";
+  if (typeof phone === "string") out.phoneN = normPhone(phone);
+  const given = p.givenName ?? "";
+  const family = p.familyName ?? "";
+  if (typeof given === "string" && typeof family === "string") {
+    out.nameKey = nameKeyOf(given, family);
+  }
+  const dobDay = dayKeyOf(p.dob);
+  if (dobDay !== undefined) out.dobDay = dobDay;
+  const createdDay = dayKeyOf(p.createdAt);
+  if (createdDay !== undefined) out.createdDay = createdDay;
+  const updatedDay = dayKeyOf(p.updatedAt);
+  if (updatedDay !== undefined) out.updatedDay = updatedDay;
+  return out;
+}
+
+/**
+ * Key changes needed so a patient row, after `mods` are applied to
+ * `current`, carries keys that match its name, phone and dates. Empty when
+ * the keys are already right. Used by the patients table hooks and the key
+ * backfill.
+ */
+export function patientKeyChanges(
+  mods: Record<string, unknown>,
+  current: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...current, ...mods };
+  const keys = patientSearchKeys(next);
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(keys)) {
+    if (next[key] !== value) out[key] = value;
+  }
+  return out;
+}
+
 // Outreach site registry for admins to predefine sites used in visits/reports.
 export interface Site {
   id: string;
@@ -1578,6 +1641,20 @@ export class MBHRDatabase extends Dexie {
         "id, patientId, stage, position, status, updatedAt, _dirty, _syncedAt, ticketId, serviceDate, siteKey",
       patientMerges: "id, winnerId, loserId, createdDay, status, commandId",
     });
+
+    // Every patient write (registration, edits, downloads, portal linking)
+    // keeps the duplicate-check keys in step with name, phone and dates.
+    this.patients.hook("creating", (_primKey, obj) => {
+      const row = obj as unknown as Record<string, unknown>;
+      Object.assign(row, patientKeyChanges({}, row));
+    });
+    this.patients.hook("updating", (mods, _primKey, obj) => {
+      const changes = patientKeyChanges(
+        mods as Record<string, unknown>,
+        obj as unknown as Record<string, unknown>,
+      );
+      return Object.keys(changes).length > 0 ? changes : undefined;
+    });
   }
 }
 
@@ -1619,6 +1696,13 @@ export const createPatientDraft = async (p: {
     createdAt: now,
     updatedAt: now,
     _dirty: 1,
+    // The same keys the lookups below use, so later registrations and the
+    // duplicate scan can find this record.
+    phoneN,
+    nameKey,
+    dobDay,
+    createdDay: epochDay(now),
+    updatedDay: epochDay(now),
   };
 
   // Find potential duplicates
