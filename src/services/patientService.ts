@@ -104,11 +104,14 @@ export async function getPatientProfile(
 }
 
 /**
- * Fetch a patient by email (RLS allows access when auth.email() matches).
- * Used as a fallback when auth_uid is not yet set on the patient row.
- * If found, links the row to the auth account by setting auth_uid. A row
- * not yet linked that belongs to someone under 18 is neither linked nor
- * returned: it is often a parent's email on their child's record.
+ * Fetch a patient by email. Used as a fallback when auth_uid is not yet set
+ * on the patient row. Under RLS (patients_select) a portal account reads
+ * only records already linked to it (by auth_uid or through its
+ * patient_portal_users row) that have portal access on, so no other record
+ * is found here. If the row found has no auth_uid, this tries to set it
+ * (best-effort). A row not yet linked that belongs to someone under 18 is
+ * neither linked nor returned: it is often a parent's email on their
+ * child's record.
  */
 export async function getPatientProfileByEmail(
   authUid: string,

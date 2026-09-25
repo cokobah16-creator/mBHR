@@ -680,7 +680,7 @@ This change adds no data flow, so the privacy notice does not need to change.
 - Step 4 holds in effect: the auto-enrolment trigger is kept but switched off by its setting (item 9).
 - The privacy notice has a "Children" section.
 
-A record with no date of birth still links, and existing links and existing access are unchanged. Everything to do with guardians waits on the guardian decision: steps 2 to 4, 6 to 11, 13, 16, 17 and 19 to 21, and the terms wording in step 22.
+A record with no date of birth is not linked (the server, offline registration and the date-of-birth login link a record only when its date of birth matches; staff add the date of birth first), and existing links and existing access are unchanged. Everything to do with guardians waits on the guardian decision: steps 2 to 4, 6 to 11, 13, 16, 17 and 19 to 21, and the terms wording in step 22.
 
 **How to check it.**
 - `npm run test:run` with new cases: 17 years 364 days and exactly 18 (`src/utils/patient.test.ts`), a minor without a guardian (`src/validation/schemas.test.ts`), and a blocked minor (`src/services/autoEnrollment.test.ts`, `src/features/patient-portal/PatientRegister.test.tsx`).

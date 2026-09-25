@@ -74,9 +74,12 @@ child's record and never creates a record for an under-18 date of birth
 signed out. The email lookup at portal sign-in (`src/services/patientService.ts`)
 and the offline registration and date-of-birth login
 (`src/services/patientPortalAuth.ts`) refuse a child's record too. A record
-with no date of birth still links, and accounts already linked to a child's
-record are not changed. The refusal messages send a parent or guardian to
-clinic staff about access to a child's record.
+with no date of birth is not refused as a child's, but it is not linked
+either: the server, offline registration and the date-of-birth login link a
+record only when its date of birth matches the one given, so staff add the
+date of birth first. Accounts already linked to a child's record are not
+changed. The refusal messages send a parent or guardian to clinic staff
+about access to a child's record.
 
 Staff cannot turn on portal access for a child's record in the app:
 `enablePortalAccess`, `sendPortalInvitation`, `enrollPatientInPortal` and
