@@ -5,8 +5,7 @@
  * signOut, and exposes live user/session state. signUp saves the versions
  * of the terms of use and privacy notice the patient accepted, and when,
  * in the new account's user metadata. It refuses people under 18, and never
- * links a new account to a clinic record for someone under 18: it makes the
- * adult's own record instead, as when no clinic record matches.
+ * links a new account to a clinic record for someone under 18.
  * Safe to call when Supabase is not configured — all operations no-op
  * gracefully so offline mode keeps working.
  */
@@ -17,6 +16,7 @@ import { normalizePhone } from "@/utils/phone";
 import { isMinor } from "@/utils/patient";
 import {
   ACCEPTANCE_REQUIRED_MESSAGE,
+  MINOR_RECORD_LINK_MESSAGE,
   UNDER_18_SIGN_UP_MESSAGE,
   isCompleteAcceptance,
   type PolicyAcceptance,
@@ -196,11 +196,12 @@ export function useAuth(): UseAuthReturn {
 
         // Never link a new account to a child's record, even when the email
         // matches: it is often a parent's email on their child's record.
-        // Skip it and make the adult's own record below, as when nothing
-        // matches. A record with no date of birth still links, as before.
-        const childRecord = isMinor(existingPatient.dob) === true;
+        // A record with no date of birth still links, as before.
+        if (canLinkPatient && isMinor(existingPatient.dob) === true) {
+          return { message: MINOR_RECORD_LINK_MESSAGE };
+        }
 
-        if (canLinkPatient && !childRecord) {
+        if (canLinkPatient) {
           // Conditional update: only succeeds if auth_uid is still NULL (race safety).
           const { error: linkError } = await supabase
             .from("patients")
@@ -214,9 +215,7 @@ export function useAuth(): UseAuthReturn {
         }
       }
 
-      // 3. No clinic record was linked above (for example none matched, or
-      //    only a child's did) — create a fresh patient row for
-      //    self-registered users.
+      // 3. No existing clinic record — create a fresh patient row for self-registered users.
       const { error: insertError } = await supabase.from("patients").insert({
         id: crypto.randomUUID(),
         auth_uid: authData.user.id,

@@ -26,6 +26,7 @@ vi.mock("@/utils/phone", () => ({
 import { useAuth, type SignUpData } from "./useAuth";
 import {
   ACCEPTANCE_REQUIRED_MESSAGE,
+  MINOR_RECORD_LINK_MESSAGE,
   UNDER_18_SIGN_UP_MESSAGE,
 } from "@/pages/legal/policyMeta";
 
@@ -134,7 +135,7 @@ describe("useAuth signup: linking to a clinic record", () => {
     });
   });
 
-  it("makes the adult's own record instead of linking a child's record matched by email", async () => {
+  it("refuses to link a new account to a child's record matched by email", async () => {
     const alreadyLinked = query({ data: [], error: null });
     const lookup = query({
       data: {
@@ -146,27 +147,13 @@ describe("useAuth signup: linking to a clinic record", () => {
       },
       error: null,
     });
-    const create = query({ error: null });
-    mockFrom
-      .mockReturnValueOnce(alreadyLinked)
-      .mockReturnValueOnce(lookup)
-      .mockReturnValueOnce(create);
+    mockFrom.mockReturnValueOnce(alreadyLinked).mockReturnValueOnce(lookup);
 
     const error = await signup(SIGN_UP);
 
-    expect(error).toBeNull();
-    // The two lookups, then a new record: the child's record is not linked.
-    expect(mockFrom).toHaveBeenCalledTimes(3);
-    expect(create.update).not.toHaveBeenCalled();
-    expect(create.insert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        auth_uid: "auth-1",
-        given_name: "Ada",
-        family_name: "Obi",
-        email: "ada@test.com",
-        dob: "1990-01-01",
-      }),
-    );
+    expect(error?.message).toBe(MINOR_RECORD_LINK_MESSAGE);
+    // Only the two lookups ran: no update to link, no new record.
+    expect(mockFrom).toHaveBeenCalledTimes(2);
   });
 
   it("still links an adult's record matched by email", async () => {
