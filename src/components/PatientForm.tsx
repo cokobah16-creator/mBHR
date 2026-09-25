@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -32,9 +32,6 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   // One registration at a time: a double tap must not create two patients
   // and tickets. Left set after a success, when the page moves on.
   const savingRef = useRef(false);
-  // Set once staff tick or untick portal access themselves; entering contact
-  // details then no longer ticks it for them.
-  const portalChoiceMade = useRef(false);
   const [submitError, setSubmitError] = useState("");
   const { push: pushToast } = useToast();
   const [photo, setPhoto] = useState<string | null>(null);
@@ -59,7 +56,6 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
 
   const watchedState = watch("state");
   const availableLGAs = LGAS_BY_STATE[watchedState] || [];
-  const portalField = register("portalEnabled");
 
   // Portal access starts unticked. Staff tick it only when the patient
   // agrees; typing a phone or email does not tick it.
