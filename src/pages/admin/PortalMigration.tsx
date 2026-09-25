@@ -268,7 +268,8 @@ export function PortalMigration() {
             Which patients
           </h2>
           <span className="text-caption text-ink-muted">
-            Patients without portal access who have a phone number or email
+            Patients without portal access who have a phone number or email.
+            Patients under 18 are not listed: portal accounts are for adults.
           </span>
         </div>
         <div className="panel-body grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -542,7 +543,7 @@ export function PortalMigration() {
           <EmptyState
             icon={UserGroupIcon}
             title="No eligible patients"
-            description="Every patient matching these filters already has portal access or has no phone number or email. Change the filters or add contact details on a patient's record."
+            description="Every patient matching these filters already has portal access, has no phone number or email, or is under 18. Change the filters or add contact details on a patient's record."
           />
         ) : (
           <div className="overflow-x-auto">

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -10,6 +10,8 @@ import { AudioButton } from "@/components/AudioButton";
 import { PhotoCapture } from "@/components/PhotoCapture";
 import { NIGERIAN_STATES, LGAS_BY_STATE } from "@/utils/nigeria";
 import { normalizePhone } from "@/utils/phone";
+import { isMinor } from "@/utils/patient";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 import { patientSchema, PatientFormData } from "@/validation/schemas";
 import { CameraIcon, UserIcon } from "@heroicons/react/24/outline";
 import { enrollPatientInPortal } from "@/services/unifiedPortalEnrollment";
@@ -54,6 +56,13 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
   // agrees; typing a phone or email does not tick it.
   const portalEnabledField = register("portalEnabled");
 
+  // Portal accounts are for adults. For a child the box is unticked and
+  // cannot be ticked.
+  const dobIsMinor = isMinor(watch("dob")) === true;
+  useEffect(() => {
+    if (dobIsMinor) setValue("portalEnabled", false);
+  }, [dobIsMinor, setValue]);
+
   const handlePhotoCapture = (photoDataUrl: string) => {
     setPhoto(photoDataUrl);
     setShowPhotoCapture(false);
@@ -92,8 +101,13 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
       const patientId = await addPatient(patientData);
 
 
-      // Enrol in the portal only when staff ticked portal access.
-      if ((normalizedPhone || data.email) && data.portalEnabled === true) {
+      // Enrol in the portal only when staff ticked portal access, and never
+      // a child (enrollPatientInPortal refuses one too).
+      if (
+        (normalizedPhone || data.email) &&
+        data.portalEnabled === true &&
+        isMinor(data.dob) !== true
+      ) {
         const portalResult = await enrollPatientInPortal({
           patientId,
           givenName: data.givenName || "",
@@ -576,7 +590,8 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                     {...portalEnabledField}
                     type="checkbox"
                     id="portalEnabled"
-                    className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary"
+                    disabled={dobIsMinor}
+                    className="mt-1 h-5 w-5 text-primary border-line-strong rounded focus:ring-primary disabled:opacity-50"
                     onChange={(e) => {
                       // Portal access needs a phone or email for the login
                       // details. Without one, the box stays unticked.
@@ -599,8 +614,14 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                       Enable patient portal access
                     </span>
                     <span className="text-ink-muted block mt-1">
-                      Patient will receive login instructions via{" "}
-                      {watch("email") ? "email" : "SMS"}
+                      {dobIsMinor ? (
+                        MINOR_PORTAL_ACCESS_MESSAGE
+                      ) : (
+                        <>
+                          Patient will receive login instructions via{" "}
+                          {watch("email") ? "email" : "SMS"}
+                        </>
+                      )}
                     </span>
                   </label>
                 </div>

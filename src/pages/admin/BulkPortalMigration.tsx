@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { bulkEnrollPatients } from "@/services/unifiedPortalEnrollment";
 import { useAuthStore } from "@/stores/auth";
 import { formatNigerianDate } from "@/utils/dateFormat";
+import { isMinor } from "@/utils/patient";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -88,7 +89,10 @@ export function BulkPortalMigration() {
         .limit(SERVER_LIMIT);
 
       if (error) throw error;
-      setPatients((data as ServerPatientRow[] | null) || []);
+      // Portal accounts are for adults: children are not listed, and
+      // bulkEnrollPatients refuses them.
+      const rows = (data as ServerPatientRow[] | null) || [];
+      setPatients(rows.filter((p) => isMinor(p.dob) !== true));
       setLoaded(true);
     } catch (error) {
       console.error(
@@ -338,7 +342,7 @@ export function BulkPortalMigration() {
           <EmptyState
             icon={UserPlusIcon}
             title="No patients waiting for a portal account"
-            description="Every patient on the server with an email or phone number already has portal access."
+            description="Every patient on the server with an email or phone number already has portal access or is under 18."
           />
         ) : (
           <ul className="divide-y divide-line">
@@ -397,6 +401,9 @@ export function BulkPortalMigration() {
             code.
           </li>
           <li>Only patients with an email or phone number can be enrolled.</li>
+          <li>
+            Patients under 18 are not listed: portal accounts are for adults.
+          </li>
           <li>
             Patients whose email or phone number is already registered in the
             portal are skipped and listed as failed.

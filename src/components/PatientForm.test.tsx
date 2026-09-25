@@ -64,12 +64,32 @@ vi.mock("@/components/AudioButton", () => ({
 }));
 
 import { PatientForm } from "./PatientForm";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 
 const byId = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
 function portalBox() {
   return byId<HTMLInputElement>("portalEnabled");
+}
+
+/** 1 January, ten years ago: someone under 18 whatever today's date is. */
+function childDob(): string {
+  return `${new Date().getFullYear() - 10}-01-01`;
+}
+
+async function fillRequiredFields(dob: string) {
+  fireEvent.change(byId("givenName"), { target: { value: "Ada" } });
+  fireEvent.change(byId("familyName"), { target: { value: "Obi" } });
+  fireEvent.change(byId("sex"), { target: { value: "female" } });
+  fireEvent.change(byId("dob"), { target: { value: dob } });
+  fireEvent.change(byId("phone"), { target: { value: "08012345678" } });
+  fireEvent.change(byId("address"), { target: { value: "1 Market Road" } });
+  fireEvent.change(byId("state"), { target: { value: "Lagos" } });
+  await waitFor(() =>
+    expect(byId<HTMLSelectElement>("lga").disabled).toBe(false),
+  );
+  fireEvent.change(byId("lga"), { target: { value: "Ikeja" } });
 }
 
 describe("PatientForm portal access", () => {
@@ -104,17 +124,39 @@ describe("PatientForm portal access", () => {
 
   it("does not enrol the patient in the portal when the box is left unticked", async () => {
     render(<PatientForm />);
-    fireEvent.change(byId("givenName"), { target: { value: "Ada" } });
-    fireEvent.change(byId("familyName"), { target: { value: "Obi" } });
-    fireEvent.change(byId("sex"), { target: { value: "female" } });
-    fireEvent.change(byId("dob"), { target: { value: "1990-01-01" } });
+    await fillRequiredFields("1990-01-01");
+
+    fireEvent.submit(byId<HTMLInputElement>("givenName").form!);
+
+    await waitFor(() => expect(mocks.addPatient).toHaveBeenCalledTimes(1));
+    expect(mocks.enrollPatientInPortal).not.toHaveBeenCalled();
+  });
+
+  it("turns the box off and says why for a patient under 18", async () => {
+    render(<PatientForm />);
     fireEvent.change(byId("phone"), { target: { value: "08012345678" } });
-    fireEvent.change(byId("address"), { target: { value: "1 Market Road" } });
-    fireEvent.change(byId("state"), { target: { value: "Lagos" } });
-    await waitFor(() =>
-      expect(byId<HTMLSelectElement>("lga").disabled).toBe(false),
+    fireEvent.click(portalBox());
+    expect(portalBox().checked).toBe(true);
+
+    fireEvent.change(byId("dob"), { target: { value: childDob() } });
+
+    await waitFor(() => expect(portalBox().disabled).toBe(true));
+    expect(portalBox().checked).toBe(false);
+    expect(screen.getByText(MINOR_PORTAL_ACCESS_MESSAGE)).toBeTruthy();
+    expect(
+      screen.queryByLabelText(/explained portal access terms/i),
+    ).toBeNull();
+  });
+
+  it("registers a patient under 18 without enrolling them in the portal", async () => {
+    render(<PatientForm />);
+    fireEvent.change(byId("phone"), { target: { value: "08012345678" } });
+    fireEvent.click(portalBox());
+    fireEvent.click(
+      await screen.findByLabelText(/explained portal access terms/i),
     );
-    fireEvent.change(byId("lga"), { target: { value: "Ikeja" } });
+    await fillRequiredFields(childDob());
+    await waitFor(() => expect(portalBox().disabled).toBe(true));
 
     fireEvent.submit(byId<HTMLInputElement>("givenName").form!);
 
