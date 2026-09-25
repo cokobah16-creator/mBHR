@@ -128,6 +128,16 @@ describe("PrivacyPolicy", () => {
     );
   });
 
+  it("tells patients to ask clinic staff to stop text-message reminders", () => {
+    // Staff turn reminders off in the patient's preferences, which the
+    // senders read. The portal's own reminder switch is not read by any
+    // sender yet.
+    renderNotice();
+    expect(noticeText()).toContain(
+      "You can stop text-message reminders at any time by telling clinic staff.",
+    );
+  });
+
   it("says portal accounts are for adults and accepted versions are recorded", () => {
     renderNotice();
     expect(noticeText()).toContain(

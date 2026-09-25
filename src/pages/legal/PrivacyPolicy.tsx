@@ -187,9 +187,9 @@ export default function PrivacyPolicy() {
         <p>
           You can ask to see, correct or delete the information we hold about
           you, and you can download your own record from the patient portal.
-          You can withdraw from text-message reminders at any time. To make a
-          request, speak to the outreach team or contact the Dr. Isioma Okobah
-          Foundation.
+          You can stop text-message reminders at any time by telling clinic
+          staff. To make a request, speak to the outreach team or contact the
+          Dr. Isioma Okobah Foundation.
         </p>
       </LegalSection>
     </LegalPage>
