@@ -18,11 +18,13 @@ The findings were produced by reading the code, then checked a second time by op
 | Three separate sign-up boxes, with the accepted versions kept | 6, 2 | Lane mA, merge `ef67701` |
 | Portal sign-up and linking for adults only, in the app and on the server | 17 | Lane mA, merge `ef67701`; `441eac3` |
 | Privacy notice names every processor, has a Children section, and is linked from staff sign-in and the portal | 1 | Lane mA, merge `ef67701`; `458b0b9` |
+| Children's records refused portal access, invitations and enrolment by staff and admin tools; one opt-out rule for reminder settings on every screen; no SMS invitation is promised | 17, 9, 18 | `2bbc676` to `011da0d` |
 
 Still to do by the Foundation:
 - Revoke the old Resend key.
 - Decide whether patients who were enrolled automatically keep portal access. Nothing was reversed.
 - The decisions under [Before you start](#before-you-start): the controller and contacts, retention periods, the "AI training" purpose, guardian verification, and two-way SMS.
+- Have a native speaker check the new Hausa, Yoruba, Igbo and Pidgin labels for the legal links (`legal.links.*` in `src/i18n/locales`).
 
 Unit tests, the type check and the build could not run where this work was done, because the npm registry was blocked. CI runs them on a pull request.
 
@@ -414,7 +416,7 @@ The browser Termii gateway has been deleted (`src/services/messaging.ts:23-28`).
 - Migration `000200` drops `trigger_auto_enrollment` and `check_auto_enrollment()`, and sets both settings to `false`.
 - It defaults `allow_treatment_access` to false. `DataSharingPreferences` starts it unticked.
 - `reminderSkipReason` now treats a pulled `false` as an opt-out (lane mC).
-- `ScheduleReminderForm` checks the same opt-out rule (`isReminderOptedOut`) before it schedules.
+- `ScheduleReminderForm`, `PreferenceManager` and `src/services/preferences.ts` read reminder settings with that same rule (`isReminderOptedOut`). A setting pulled as `true` shows as On and is saved as 1. It is no longer read as Off, and saving no longer silently opts the patient out.
 
 Step 2 is not done, and deliberately so: whether patients who were enrolled automatically keep access is the Foundation's decision. Step 3's reminder and alert defaults, and steps 4, 5, 7 to 11, 13, 14 and 17, are still open. The auto-enrolment trigger is gone, so a new patient's server access now changes only through the steps listed in the migration header.
 
@@ -672,9 +674,10 @@ This change adds no data flow, so the privacy notice does not need to change.
 - Portal sign-up requires a date of birth, online and offline, and refuses anyone under 18.
 - Sign-up, login and the email lookup never link an account to a child's record.
 - The server's `portal_link_patient_record` refuses the same cases (migration `000210`).
+- Staff cannot turn on portal access, send an invitation or enrol a child's record (`enablePortalAccess`, `sendPortalInvitation`, `enrollPatientInPortal`). The registration form and both admin pages leave children out, and the bulk server page filters them before its 100-row limit. Turning access off still works for a child. This covers steps 12 and 18.
 - The privacy notice has a "Children" section.
 
-A record with no date of birth still links, and existing links are unchanged. Everything to do with guardians waits on the guardian decision: steps 2 to 4, 6 to 13, 16 to 21, and the terms wording in step 22.
+A record with no date of birth still links, and existing links and existing access are unchanged. Everything to do with guardians waits on the guardian decision: steps 2 to 4, 6 to 11, 13, 16, 17 and 19 to 21, and the terms wording in step 22.
 
 **How to check it.**
 - `npm run test:run` with new cases: 17 years 364 days and exactly 18 (`src/utils/patient.test.ts`), a minor without a guardian (`src/validation/schemas.test.ts`), and a blocked minor (`src/services/autoEnrollment.test.ts`, `src/features/patient-portal/PatientRegister.test.tsx`).
