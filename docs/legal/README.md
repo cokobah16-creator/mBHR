@@ -67,9 +67,10 @@ clinic record whose date of birth shows the person is under 18: the online
 sign-up and email lookup (`src/hooks/useAuth.ts`,
 `src/services/patientService.ts`) and the offline registration and
 date-of-birth login (`src/services/patientPortalAuth.ts`) all refuse to
-link it. When the only record matching an online sign-up is a child's, the sign-up
-leaves it unlinked and makes the adult's own record, as when nothing
-matches. The server refuses too: `portal_link_patient_record`, which any
+link it. When the only record matching an online sign-up is a child's, the
+sign-up account is created but not linked, and the person is told to ask
+clinic staff. A record of their own cannot be made there, because the
+database allows one patient record per email address. The server refuses too: `portal_link_patient_record`, which any
 signed-in account can call, refuses a child's record and never creates one
 for an under-18 date of birth (`20260926000210_portal_link_adults_only.sql`).
 A record with no date of birth still links, and accounts already linked to
