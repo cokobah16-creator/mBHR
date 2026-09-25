@@ -40,7 +40,9 @@ import {
 //   email address and records who sent the invitation; the outcome is
 //   recorded after Resend answers (public.portal_invitation_finish). The
 //   subject, text and link are built here from the patient record: the
-//   caller cannot choose the address or the words.
+//   caller cannot choose the address or the words. Neither checks the
+//   patient's age yet: the app refuses an invitation for a patient under 18
+//   (src/services/portalEnrollment.ts).
 // - A verification code { email, otp }: a 4 to 8 digit code in a fixed
 //   template. Only a signed-in administrator (OTP_SENDER_ROLES in
 //   ../_shared/security/emailRequest.ts), checked before the address or the
