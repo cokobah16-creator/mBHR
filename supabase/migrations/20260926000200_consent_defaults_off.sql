@@ -7,46 +7,41 @@
   now on. It does not change any existing patient's portal access or any
   sharing choice a patient has saved.
 
+  Portal access is decided by the server
+  (20260925100100_portal_access_authoritative.sql). Staff ask for a change
+  with set_patient_portal_access, queued on the device and sent under their
+  online sign-in, and the patients guard trigger puts back portal_enabled
+  when an API write tries to change it. The auto-enrolment trigger
+  (trigger_auto_enrollment, check_auto_enrollment()) runs on INSERT only. It
+  never touches an existing record, a record with a recorded decision, a
+  patient who opted out or whose access was turned off before, and it turns
+  portal access on only while the auto_enrollment_enabled setting is true.
+  So this migration keeps the trigger (supabase/tests/portal_access.test.sql
+  expects it) and switches auto-enrolment off with that setting.
+
   ## Changes
-  1. patients
-     - Drops trigger_auto_enrollment and its function check_auto_enrollment()
-       (20260115072241_add_portal_enhancements_v3). On every insert or update
-       of a patient with a phone or email, the trigger set portal_enabled,
-       auto_enrolled and auto_enrolled_at unless portal_opt_out was set.
-       After this, a new patient's portal_enabled stays false (the column
-       default) until something sets it. From the app that is:
-       - enablePortalAccess (src/services/portalEnrollment.ts), used by the
-         record page switch (PortalStatusCard) and the PortalMigration
-         admin page. It saves on the device, then updates portal_enabled
-         here only when the device is online, this row already exists (the
-         record has been uploaded) and the online sign-in holds 'register'
-         (app_guard_patient_identity). Otherwise only the device changes,
-         and nothing retries it. disablePortalAccess works the same way.
-       - enrollPatientInPortal (src/services/unifiedPortalEnrollment.ts),
-         used by PatientForm and BulkPortalMigration. It sets portal_enabled
-         only after inserting a patient_portal_users row. That insert also
-         sends given_name, family_name, dob and sex, which the table does
-         not have in these migrations, so on a server built from them it
-         fails and sets nothing (checklist item 2, step 9).
-       - portal_link_patient_record sets it for a record it creates for a
-         self-registered account, but nothing in src calls it yet.
-       The planned set_patient_portal_access command is meant to replace
-       these direct writes (checklist item 9).
-  2. portal_enrollment_settings (setting_value is jsonb)
+  1. portal_enrollment_settings (setting_value is jsonb)
      - auto_enrollment_enabled and send_welcome_notification are set to
-       'false'::jsonb, and inserted with that value if missing. Both are
+       'false'::jsonb, and inserted with that value if missing. With
+       auto_enrollment_enabled false, check_auto_enrollment() leaves a new
+       patient's portal access off until staff ask for it. Both settings are
        also read by src/services/autoEnrollment.ts.
-  3. patient_data_sharing_preferences
+  2. patient_data_sharing_preferences
      - allow_treatment_access defaults to false for rows created from now
        on. Stored rows keep the value the patient saved.
      - allow_ias_access is not changed: whether it stays on by default is a
        separate decision (checklist item 9).
 
   ## Not changed
+  - trigger_auto_enrollment, trigger_auto_enrollment_log and their
+    functions (20260925100100).
   - portal_enabled, auto_enrolled and auto_enrolled_at on existing patients.
     Whether patients who were enrolled automatically keep access is a
     decision for the Foundation (checklist item 9).
   - Any existing patient_data_sharing_preferences row.
+
+  Every statement can be run again: the upsert only writes a setting that
+  differs, and setting a column default twice gives the same default.
 
   ## Rollback
     ALTER TABLE public.patient_data_sharing_preferences
@@ -54,23 +49,9 @@
     UPDATE public.portal_enrollment_settings
        SET setting_value = 'true'::jsonb, updated_at = now()
      WHERE setting_key IN ('auto_enrollment_enabled', 'send_welcome_notification');
-    -- Then re-run the "AUTO-ENROLLMENT TRIGGER" section of
-    -- 20260115072241_add_portal_enhancements_v3.sql: CREATE OR REPLACE
-    -- FUNCTION check_auto_enrollment() and CREATE TRIGGER
-    -- trigger_auto_enrollment BEFORE INSERT OR UPDATE ON patients.
 */
 
--- 1. Stop enrolling patients in the portal automatically.
-DO $$
-BEGIN
-  IF to_regclass('public.patients') IS NOT NULL THEN
-    DROP TRIGGER IF EXISTS trigger_auto_enrollment ON public.patients;
-  END IF;
-END $$;
-
-DROP FUNCTION IF EXISTS public.check_auto_enrollment();
-
--- 2. Turn the auto-enrolment and welcome-message settings off.
+-- 1. Turn the auto-enrolment and welcome-message settings off.
 DO $$
 BEGIN
   IF to_regclass('public.portal_enrollment_settings') IS NOT NULL THEN
@@ -88,7 +69,7 @@ BEGIN
   END IF;
 END $$;
 
--- 3. Sharing with other treating providers starts off for new rows only.
+-- 2. Sharing with other treating providers starts off for new rows only.
 DO $$
 BEGIN
   IF EXISTS (
