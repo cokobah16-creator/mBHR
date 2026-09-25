@@ -1,0 +1,152 @@
+name: Database migrations
+
+# Two jobs:
+#
+# verify     - Applies every migration in supabase/migrations to a throwaway
+#              local Supabase stack, then runs the pgTAP tests in
+#              supabase/tests. Runs on pull requests that touch supabase/ and on
+#              demand. It never connects to the hosted project.
+#
+# production - Manual only (Actions > Database migrations > Run workflow).
+#              "status" lists which migrations production has applied,
+#              "dry-run" shows what would be applied, and "apply" applies them
+#              and redeploys the edge functions that depend on them. "apply"
+#              also requires typing "apply to production" in the confirm box.
+#
+# The migrate-prod job in build.yml only runs for pushes to `main`, and this
+# repository deploys from `mainone`, so production migrations are applied here,
+# deliberately and by hand, never as a side effect of a merge.
+
+on:
+  pull_request:
+    paths:
+      - "supabase/**"
+      - ".github/workflows/db-migrations.yml"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "verify = throwaway database only; production = the live Supabase project"
+        type: choice
+        options:
+          - verify
+          - production
+        default: verify
+      action:
+        description: "Production only: status, dry-run or apply"
+        type: choice
+        options:
+          - status
+          - dry-run
+          - apply
+        default: status
+      confirm:
+        description: 'Production apply only: type "apply to production"'
+        type: string
+        default: ""
+      functions:
+        description: "Production apply only: edge functions to redeploy afterwards (space-separated)"
+        type: string
+        default: "send-sms-reminder send-otp-email"
+
+concurrency:
+  group: db-migrations-${{ github.event.inputs.target || 'verify' }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify migrations on a throwaway database
+    if: github.event_name == 'pull_request' || github.event.inputs.target == 'verify'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # `supabase start` applies every migration in order. Auth and storage
+      # stay on because the migrations reference auth.users and storage.objects.
+      - name: Start local Supabase and apply every migration
+        run: >
+          supabase start
+          -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor,realtime,postgres-meta
+
+      - name: Apply every migration again from scratch
+        run: supabase db reset
+
+      - name: Run pgTAP tests
+        run: supabase test db
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup
+
+  production:
+    name: Production (${{ github.event.inputs.action }})
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'production'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Refuse apply without the confirmation phrase
+        if: github.event.inputs.action == 'apply' && github.event.inputs.confirm != 'apply to production'
+        run: |
+          echo "::error::To apply migrations to production, type exactly: apply to production"
+          exit 1
+
+      - name: Refuse to run from a branch other than mainone
+        if: github.ref != 'refs/heads/mainone'
+        run: |
+          echo "::error::Run this from mainone, the branch production is deployed from (got ${GITHUB_REF})."
+          exit 1
+
+      - name: Check the Supabase secrets are set
+        run: |
+          missing=""
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN"
+          [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD"
+          [ -n "$SUPABASE_PROJECT_REF" ] || missing="$missing SUPABASE_PROJECT_REF"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets in the production environment:$missing"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Migrations applied on production
+        run: supabase migration list --linked
+
+      - name: What would be applied
+        if: github.event.inputs.action != 'status'
+        run: supabase db push --linked --dry-run
+
+      - name: Apply migrations
+        if: github.event.inputs.action == 'apply'
+        run: supabase db push --linked
+
+      - name: Redeploy edge functions
+        if: github.event.inputs.action == 'apply' && github.event.inputs.functions != ''
+        env:
+          FUNCTIONS: ${{ github.event.inputs.functions }}
+        run: |
+          for fn in $FUNCTIONS; do
+            supabase functions deploy "$fn" --project-ref "$SUPABASE_PROJECT_REF"
+          done
+
+      - name: Migrations applied on production afterwards
+        if: github.event.inputs.action == 'apply'
+        run: supabase migration list --linked

@@ -171,6 +171,9 @@ jobs:
   # `production` GitHub Environment so a human approves before either
   # the migrate or the deploy runs.
   # ------------------------------------------------------------------
+  # Only runs for `main`. Production deploys from `mainone`, so production
+  # migrations are applied by hand with the "Database migrations" workflow
+  # (db-migrations.yml) instead.
   migrate-prod:
     name: Apply DB migrations (prod)
     needs: build
