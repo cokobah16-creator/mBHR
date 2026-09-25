@@ -13,8 +13,9 @@
  *   a patient with no email the button makes a registration link to share.
  *
  * The switch saves on this device, and also on the server when the device
- * is online and the server takes the change (the online portal checks the
- * server). The toast says which happened.
+ * is online, someone is signed in online, and the server takes the change
+ * (the online portal checks the server). The dialog says which to expect
+ * and the toast says which happened.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -635,11 +636,13 @@ export function PortalStatusCard({
           records, request appointments and message the clinic.
         </p>
         <p>
-          {server.state === "available"
-            ? "It is saved on this device and sent to the server, which the online portal checks. If the server does not take it, for example because the patient's record is not uploaded yet, only this device changes. You will see which."
-            : server.state === "offline"
-              ? "This device is offline, so it is saved on this device only. The online portal is not changed."
-              : "No server is connected, so it is saved on this device only."}
+          {server.state === "available" && notSignedInOnline
+            ? `You are not signed in online, so it is saved on this device only. The online portal is not changed. To send it to the server, sign in online. ${ONLINE_SIGN_IN_HINT}`
+            : server.state === "available"
+              ? "It is saved on this device and sent to the server, which the online portal checks. If the server does not take it, for example because the patient's record is not uploaded yet, only this device changes. You will see which."
+              : server.state === "offline"
+                ? "This device is offline, so it is saved on this device only. The online portal is not changed."
+                : "No server is connected, so it is saved on this device only."}
         </p>
         <label className="flex items-start gap-3 rounded-md border border-line bg-surface-sunken p-3">
           <input
@@ -666,11 +669,13 @@ export function PortalStatusCard({
         onCancel={() => setConfirmDisable(false)}
       >
         <p>
-          {server.state === "available"
-            ? "Portal access will be turned off on this device and the change sent to the server, which the online portal checks. If the server does not take it, only this device changes. You will see which."
-            : server.state === "offline"
-              ? `This device is offline, so portal access will be turned off on this device only. It does not block ${firstName}'s online portal account if they have one.`
-              : "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."}{" "}
+          {server.state === "available" && notSignedInOnline
+            ? `You are not signed in online, so portal access will be turned off on this device only. It does not block ${firstName}'s online portal account if they have one. To send the change to the server, sign in online. ${ONLINE_SIGN_IN_HINT}`
+            : server.state === "available"
+              ? "Portal access will be turned off on this device and the change sent to the server, which the online portal checks. If the server does not take it, only this device changes. You will see which."
+              : server.state === "offline"
+                ? `This device is offline, so portal access will be turned off on this device only. It does not block ${firstName}'s online portal account if they have one.`
+                : "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."}{" "}
           Their records are not deleted.
         </p>
         <p>You can turn access back on later.</p>

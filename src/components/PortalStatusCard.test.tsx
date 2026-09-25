@@ -15,6 +15,7 @@ const { mocks } = vi.hoisted(() => ({
     disablePortalAccess: vi.fn(),
     pushToast: vi.fn(),
     serverState: "available" as "available" | "offline" | "not-configured",
+    cloudSession: "signed_in" as "unknown" | "signed_in" | "signed_out",
   },
 }));
 
@@ -50,7 +51,18 @@ vi.mock("@/features/admin/useServerStatus", () => ({
   }),
 }));
 
+vi.mock("@/lib/cloudSession", () => ({
+  ONLINE_SIGN_IN_HINT:
+    "On the sign-in screen, choose Online and use your email and password.",
+  useCloudSession: () => mocks.cloudSession,
+}));
+
 import { PortalStatusCard } from "./PortalStatusCard";
+
+beforeEach(() => {
+  // Signed in online unless a test says otherwise.
+  mocks.cloudSession = "signed_in";
+});
 
 const disabledStatus = {
   enabled: false,
@@ -163,6 +175,30 @@ describe("PortalStatusCard says where portal access was saved", () => {
     const dialog = await openEnableDialog();
 
     expect(dialog.textContent).toMatch(/saved on this device only/i);
+    expect(dialog.textContent).not.toMatch(/sent to the server/i);
+  });
+
+  it("says the change stays on this device when nobody is signed in online", async () => {
+    mocks.cloudSession = "signed_out";
+    const dialog = await openEnableDialog();
+
+    expect(dialog.textContent).toMatch(
+      /not signed in online, so it is saved on this device only/i,
+    );
+    expect(dialog.textContent).toMatch(/sign in online/i);
+    expect(dialog.textContent).not.toMatch(/sent to the server/i);
+  });
+
+  it("says turning access off stays on this device when nobody is signed in online", async () => {
+    mocks.cloudSession = "signed_out";
+    mocks.getPortalStatus.mockResolvedValue({ ...disabledStatus, enabled: true });
+    renderCard();
+    fireEvent.click(await screen.findByRole("switch"));
+    const dialog = screen.getByRole("alertdialog");
+
+    expect(dialog.textContent).toMatch(
+      /not signed in online, so portal access will be turned off on this device only/i,
+    );
     expect(dialog.textContent).not.toMatch(/sent to the server/i);
   });
 
