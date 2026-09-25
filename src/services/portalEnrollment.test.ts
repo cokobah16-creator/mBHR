@@ -539,6 +539,22 @@ describe("sendPortalInvitation", () => {
     expect(result.demoOTP).toBeDefined();
   });
 
+  it("does not count an email as sent when the email function is in demo mode", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ portalEnabled: 1 }));
+    // send-otp-email without RESEND_API_KEY: HTTP 200, but nothing is sent.
+    mockFunctionsInvoke.mockResolvedValue({
+      data: { success: true, demo: true },
+      error: null,
+    });
+
+    const result = await sendPortalInvitation("p1");
+
+    expect(result.success).toBe(true);
+    expect(result.notSentReason).toBe("email_not_configured");
+    expect(result.demoOTP).toMatch(/no email was sent/i);
+    expect(result.registrationUrl).toContain("/patient/register?email=");
+  });
+
   it("sends no SMS to a patient with no email, and returns the link to share", async () => {
     mockPatientsGet.mockResolvedValue(
       makePatient({ portalEnabled: 1, email: "" }),

@@ -307,3 +307,37 @@ describe("PortalStatusCard invitation for a patient with no email", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("PortalStatusCard invitation when the server cannot send email", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.serverState = "available";
+    mocks.getPortalStatus.mockResolvedValue({
+      ...disabledStatus,
+      enabled: true,
+      contactMethod: "email",
+    });
+    mocks.sendPortalInvitation.mockResolvedValue({
+      success: true,
+      registrationUrl: "https://mbhr.test/patient/register?email=ada%40example.com",
+      demoOTP: "No email was sent.",
+      notSentReason: "email_not_configured",
+    });
+  });
+
+  it("says no email was sent, not that the invitation was sent", async () => {
+    renderCard();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /send portal invitation/i }),
+    );
+
+    const title = await screen.findByText("No email was sent");
+    const panel = title.closest('[role="status"]') as HTMLElement;
+    expect(
+      within(panel).getByText(/not set up to send email/i),
+    ).toBeInTheDocument();
+    expect(panel.textContent).not.toMatch(/invitation sent by email/i);
+    expect(panel.textContent).not.toMatch(/staff account/i);
+  });
+});

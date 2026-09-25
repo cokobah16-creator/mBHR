@@ -314,8 +314,13 @@ export async function disablePortalAccess(
  *   HTTP 403).
  * - "sms_not_available": the patient has no email. Invitations cannot go by
  *   SMS yet: send-otp-sms sends only one-time codes.
+ * - "email_not_configured": the email function answered in demo mode (no
+ *   RESEND_API_KEY on the server), so it sent nothing.
  */
-export type InvitationNotSentReason = StaffAuthRefusal | "sms_not_available";
+export type InvitationNotSentReason =
+  | StaffAuthRefusal
+  | "sms_not_available"
+  | "email_not_configured";
 
 /**
  * Send portal invitation to a patient.
@@ -400,7 +405,7 @@ export async function sendPortalInvitation(patientId: string): Promise<{
     if (supabase) {
       try {
         if (patient.email) {
-          const { error: fnError } = await supabase.functions.invoke(
+          const { data, error: fnError } = await supabase.functions.invoke(
             "send-otp-email",
             {
               body: {
@@ -418,7 +423,9 @@ export async function sendPortalInvitation(patientId: string): Promise<{
             },
           );
 
-          if (!fnError) {
+          // In demo mode the function answers success but sends nothing.
+          const demo = (data as { demo?: unknown } | null)?.demo === true;
+          if (!fnError && !demo) {
             await db.patients.update(patientId, {
               portalInvitation: { ...invitation, lastStatus: "sent" },
               _dirty: 1,
@@ -426,8 +433,15 @@ export async function sendPortalInvitation(patientId: string): Promise<{
             logger.info("Portal invitation email accepted by the server");
             return { success: true, registrationUrl };
           }
-          logger.warn("Edge function email failed:", safeErrorLabel(fnError));
-          notSentReason = staffAuthRefusal(fnError);
+          if (fnError) {
+            logger.warn("Edge function email failed:", safeErrorLabel(fnError));
+            notSentReason = staffAuthRefusal(fnError);
+          } else {
+            logger.warn(
+              "Email function is in demo mode (RESEND_API_KEY not set); no email was sent",
+            );
+            notSentReason = "email_not_configured";
+          }
         }
       } catch (edgeFnError) {
         logger.warn(
@@ -437,7 +451,8 @@ export async function sendPortalInvitation(patientId: string): Promise<{
       }
     }
 
-    // --- Fallback: no message was sent (offline, refused, or no email).
+    // --- Fallback: no message was sent (offline, refused, email not set up
+    // on the server, or no email).
     // Record it as "sent" (the screen labels this "Sent or link shared") and
     // return the pre-filled registration link for staff to share.
     await db.patients.update(patientId, {
