@@ -29,6 +29,7 @@ import { mapLocation, mapOrganization, mapPractitioner, mapPractitionerRole } fr
 import { mapConsent } from "../mappers/consent";
 import { mapDocumentUploadEvent, mapLabReleaseEvent, mapMergeEvent, type LabEventLinks } from "../mappers/provenance";
 import { mapAuditEvent } from "../mappers/auditEvent";
+import type { MapContext } from "../mappers/common";
 
 const PATIENT = {
   id: "01HZZEXAMPLEPATIENT000000",
@@ -504,13 +505,13 @@ const MERGE_EVENT = {
   created_at: "2026-06-01T10:00:00.5+00:00",
 };
 
-/** Rows as public.fhir_access_audit_events returns them. */
+/** Rows as public.fhir_access_audit_events returns them. A doctor's read of the HbA1c report. */
 const AUDIT_READ_PERMIT = {
   id: "a0d17000-0000-4000-8000-000000000001",
   occurred_at: "2026-09-20T10:15:00.123456+00:00",
   action: "read",
-  resource_type: "Patient",
-  resource_id: PATIENT.fhir_id,
+  resource_type: "DiagnosticReport",
+  resource_id: LAB_ORDER_HBA1C.id,
   patient_ids: [PATIENT.id],
   actor_user_id: DOCTOR_ACCOUNT,
   actor_role: "doctor",
@@ -598,7 +599,7 @@ export function conformanceExamples(): Record<string, Resource> {
 }
 
 /** Every Phase 2 type, from the rows above, mapped the way its resource module maps it. */
-function phase2Examples(ctx: { patientFhirIds: ReadonlyMap<string, string> }): Record<string, Resource> {
+function phase2Examples(ctx: MapContext): Record<string, Resource> {
   const out: Record<string, Resource> = {};
   const add = (name: string, resource: Resource | null) => {
     if (!resource) throw new Error(`conformance example ${name}: the mapper withheld it`);
