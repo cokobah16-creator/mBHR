@@ -30,7 +30,7 @@
 -- without row-level security, and only reveal facts about the caller. Their
 -- bodies are left as production has them.
 --
--- This drops both policies and makes sure the lockdown's other two scoped
+-- This drops both policies and, before Wave A, makes sure the lockdown's other two scoped
 -- policies (20260520000000) are there:
 --   app_users_select_staff  staff (any non-guest role) read the directory
 --   app_users_admin_write   admins insert, update and delete
@@ -58,8 +58,15 @@ REVOKE EXECUTE ON FUNCTION public.has_role(text[]) FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.is_staff()       TO authenticated, service_role;
 GRANT  EXECUTE ON FUNCTION public.has_role(text[]) TO authenticated, service_role;
 
+-- Only before Wave A: once 20260924110000 has run (app_current_role()
+-- exists), 20260924110200 owns every app_users policy, so a database rebuilt
+-- in filename order must not get these back.
 DO $$
 BEGIN
+  IF to_regprocedure('public.app_current_role()') IS NOT NULL THEN
+    RETURN;
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_policies
                   WHERE schemaname = 'public' AND tablename = 'app_users'
                     AND policyname = 'app_users_select_staff') THEN
