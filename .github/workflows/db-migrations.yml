@@ -125,6 +125,17 @@ jobs:
           echo "== Every migration production has, by name =="
           python3 .github/scripts/migration_history.py "$RUNNER_TEMP/migration-history.sql" "$RUNNER_TEMP/remote_all.txt" | grep -v '^    '
 
+      - name: Compare production with the repo (names and numbers, no SQL)
+        if: inputs.action == 'status'
+        run: |
+          # Schema only (no rows). Stays on the runner; only the report is printed.
+          supabase db dump --linked -f "$RUNNER_TEMP/prod-schema.sql"
+          python3 .github/scripts/reconcile_report.py \
+            --history "$RUNNER_TEMP/migration-history.sql" \
+            --schema "$RUNNER_TEMP/prod-schema.sql" \
+            --pending "$RUNNER_TEMP/pending.txt" \
+            --remote "$RUNNER_TEMP/remote_only.txt"
+
       # ---- rehearse ---------------------------------------------------------
 
       - name: Copy production's schema (no rows)
