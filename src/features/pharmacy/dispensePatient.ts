@@ -8,6 +8,7 @@
 
 import type { Patient } from "@/db";
 import { formatPatientId, patientAge } from "@/utils/patient";
+import { formatNigerianDate } from "@/utils/dateFormat";
 
 /** Longest merge chain followed; anything longer is treated as unresolved. */
 const MAX_CHAIN = 20;
@@ -83,4 +84,58 @@ export function identityLine(patient: Patient | undefined, now: Date = new Date(
   const parts = [formatPatientId(patient.id), sexAgeLabel(patient, patientAge(patient.dob, now))];
   if (patient.mergeInto) parts.push("merged record");
   return parts.filter(Boolean).join(" · ");
+}
+
+/**
+ * Recorded allergens with the same allergy listed once: the same allergen
+ * recorded on two records of a merge chain, or with different case or
+ * spacing, shows as one warning. The first spelling is kept.
+ */
+export function uniqueAllergens(allergens: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of allergens) {
+    const shown = raw.trim().replace(/\s+/g, " ");
+    const key = shown.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(shown);
+  }
+  return out;
+}
+
+export type SecondIdentifierKind = "dob" | "mbhr_id" | "ticket";
+
+export interface SecondIdentifier {
+  kind: SecondIdentifierKind;
+  label: string;
+  /** How the identifier reads inside a sentence. */
+  spoken: string;
+  /** What the patient or caregiver should say, as recorded. */
+  value: string;
+}
+
+/**
+ * The identifiers the pharmacist can ask for besides the patient's name,
+ * before handing medicine over: date of birth or MBHR ID, or the outreach
+ * ticket number when a date of birth can't reliably be given. Only
+ * identifiers recorded for this patient are offered.
+ */
+export function secondIdentifierOptions(
+  patient: Pick<Patient, "id" | "dob">,
+  ticket?: string | number | null,
+): SecondIdentifier[] {
+  const options: SecondIdentifier[] = [];
+  const dob = patient.dob ? formatNigerianDate(patient.dob) : "";
+  if (dob) options.push({ kind: "dob", label: "Date of birth", spoken: "date of birth", value: dob });
+  options.push({ kind: "mbhr_id", label: "MBHR ID", spoken: "MBHR ID", value: formatPatientId(patient.id) });
+  if (ticket !== undefined && ticket !== null && String(ticket).trim()) {
+    options.push({
+      kind: "ticket",
+      label: "Ticket number (when a date of birth can't be given)",
+      spoken: "ticket number",
+      value: String(ticket).trim(),
+    });
+  }
+  return options;
 }

@@ -21,6 +21,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PatientDetailSkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
+import { MergeProvenance } from "@/components/patient/MergeProvenance";
 import {
   derivePatientFlow,
   currentFlowStage,
@@ -401,6 +402,7 @@ export function PatientDetail() {
             </Link>
           }
         />
+        <MergeProvenance patient={patient} />
       </div>
     );
   }

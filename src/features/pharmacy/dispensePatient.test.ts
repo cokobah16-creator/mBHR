@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
 import type { Patient } from "@/db";
 import { matchMedicationToAllergen } from "@/utils/allergyMatch";
-import { dispensePatientBlock, identityLine, resolveDispensePatient, sexAgeLabel } from "./dispensePatient";
+import {
+  dispensePatientBlock,
+  identityLine,
+  resolveDispensePatient,
+  secondIdentifierOptions,
+  sexAgeLabel,
+  uniqueAllergens,
+} from "./dispensePatient";
 
 function patient(id: string, extra: Partial<Patient> = {}): Patient {
   return {
@@ -117,5 +124,33 @@ describe("identityLine", () => {
 
   it("marks a merged-away record", () => {
     expect(identityLine(patient("p1", { mergeInto: "p2" }), now)).toMatch(/merged record$/);
+  });
+});
+
+describe("uniqueAllergens", () => {
+  it("lists the same allergy once whatever its case or spacing", () => {
+    expect(uniqueAllergens(["Penicillin", "penicillin ", "  Sulfa  drugs", "sulfa drugs", "Aspirin"])).toEqual([
+      "Penicillin",
+      "Sulfa drugs",
+      "Aspirin",
+    ]);
+  });
+
+  it("drops blank entries", () => {
+    expect(uniqueAllergens(["", "  "])).toEqual([]);
+  });
+});
+
+describe("secondIdentifierOptions", () => {
+  it("offers date of birth and MBHR ID, and the ticket only when there is one", () => {
+    const kinds = secondIdentifierOptions(patient("p1")).map((o) => o.kind);
+    expect(kinds).toEqual(["dob", "mbhr_id"]);
+    const withTicket = secondIdentifierOptions(patient("p1"), "A-012");
+    expect(withTicket.map((o) => o.kind)).toEqual(["dob", "mbhr_id", "ticket"]);
+    expect(withTicket[2].value).toBe("A-012");
+  });
+
+  it("leaves out date of birth when none is recorded", () => {
+    expect(secondIdentifierOptions(patient("p1", { dob: "" })).map((o) => o.kind)).toEqual(["mbhr_id"]);
   });
 });
