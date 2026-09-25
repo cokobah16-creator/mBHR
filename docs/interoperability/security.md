@@ -396,7 +396,7 @@ changed by this work.
 | F5 | Medium | Supabase sign-up is enabled (`supabase/config.toml`; production's setting is not visible from the repository **(inferred to match)**). Any person can obtain an `authenticated` token. | Handled here by never treating `authenticated` as authorised. Owner to decide whether public sign-up is needed at all (portal patients may need it). |
 | F6 | Medium | Clinical tables have no tenant (organisation / site) column; visits have only a free-text `site_name`. | Recorded for the data-model plan; the gateway cannot scope what the data does not record. |
 | F7 | Low | The role helpers compare ids as text (`au.id::text = auth.uid()::text`) because production ids may be uuid where the migrations say text. It works, but hides the type drift and defeats indexes. | New interop code compares uuid to uuid. Fixing the helpers belongs to the reconciliation. |
-| F8 | Info | `patients.fhir_id` (`20260503010000`) and `rate_limits` (`20260520000004`) may be missing on production **(inferred)**. | The gateway fails closed without them. Check with the Database migrations → status workflow. |
+| F8 | Info | `patients.fhir_id` (`20260503010000`) is not on production: the file is deferred with the interop migrations. `rate_limits` is on production (recorded as `20260517153407`, the file formerly `20260520000004`). | The gateway fails closed without `fhir_id`. It goes live with the interop migrations, re-versioned (`supabase/migrations-deferred/README.md`). |
 
 Not a finding for this gateway but relevant to the public repository: two
 Resend API keys remain in git history (known; rotation is with the owner).

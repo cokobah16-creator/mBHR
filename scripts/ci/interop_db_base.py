@@ -3,12 +3,12 @@
 
 The repository's migration history cannot replay on an empty database (see
 docs/interoperability/testing.md), so the interop CI job builds only what
-20260926110000_interop_foundation.sql and 20260926130000_interop_phase2.sql
-depend on: the Supabase API roles, an auth.uid() and auth.jwt() that read
-request.jwt.claims (as Supabase's do), minimal stand-ins for the tables the
-functions read (only the columns they use), and the real definitions of the
-helper functions, copied from the migration files that define them (the
-latest definition wins).
+supabase/migrations-deferred/20260926110000_interop_foundation.sql and
+supabase/migrations-deferred/20260926130000_interop_phase2.sql depend on: the
+Supabase API roles, an auth.uid() and auth.jwt() that read request.jwt.claims
+(as Supabase's do), minimal stand-ins for the tables the functions read (only
+the columns they use), and the real definitions of the helper functions,
+copied from the migration files that define them (the latest definition wins).
 
 Phase 1 part: app_users, rate limits, app_current_role, app_role_has_permission,
 app_is_staff. Phase 2 part: patients (fhir_id, merge and portal columns, the
@@ -133,7 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_patient ON public.patient_documents (pa
 """
 
 PHASE2_FUNCTIONS = [
-    ("20260520000000_lockdown_rls_and_definer.sql", "current_portal_user_id"),
+    ("20260517152556_lockdown_rls_and_definer.sql", "current_portal_user_id"),
     ("20260925100000_sync_authority_foundation.sql", "app_portal_patient_ids"),
 ]
 
@@ -163,7 +163,7 @@ def function_sql(file: str, name: str) -> str:
 
 
 def main() -> None:
-    parts = [PRELUDE, (MIGRATIONS / "20260520000004_generic_rate_limits.sql").read_text()]
+    parts = [PRELUDE, (MIGRATIONS / "20260517153407_generic_rate_limits.sql").read_text()]
     parts += [function_sql(f, n) for f, n in FUNCTIONS]
     parts.append(
         "GRANT EXECUTE ON FUNCTION public.app_current_role(), "

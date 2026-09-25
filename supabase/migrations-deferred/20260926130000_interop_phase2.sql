@@ -11,7 +11,8 @@
 --   20260926110000  schema interop: resource_links, consent_records,
 --                   consent_provisions, access_audit, refuse_change(),
 --                   touch_updated_at(), and the three Phase 1 functions
---   20260520000004  public.check_and_increment_rate_limit()
+--   20260517153407  public.check_and_increment_rate_limit() (the file was
+--                   20260520000004 before it took production's version)
 --   20260924110000  public.app_current_role()
 --   20260925100000  public.app_portal_patient_ids() (excludes merged-away
 --                   records), patients.merged_into / merged_at

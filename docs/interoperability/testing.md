@@ -161,7 +161,7 @@ the two interop migrations depend on:
 
 | File | Plan | Covers |
 | --- | --- | --- |
-| `supabase/tests/interop_foundation.test.sql` | 42 | Phase 1: the `interop` schema is closed to API roles; anon is refused; role and permissions come from the database; the audit actor is `auth.uid()`; argument checks; non-staff get no role; the rate limit; the audit trail is append-only; consent deletion and withdrawal rules; terminology review rules |
+| `supabase/migrations-deferred/tests/interop_foundation.test.sql` | 42 | Phase 1: the `interop` schema is closed to API roles; anon is refused; role and permissions come from the database; the audit actor is `auth.uid()`; argument checks; non-staff get no role; the rate limit; the audit trail is append-only; consent deletion and withdrawal rules; terminology review rules |
 | `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 272 | Phase 2, in ten sections (below) |
 
 Sections of `interop_phase2.test.sql`:
@@ -229,10 +229,10 @@ python3 scripts/ci/interop_db_base.py > /tmp/base.sql
 createdb interop_t
 psql -d interop_t -c 'ALTER DATABASE interop_t SET search_path = public, extensions'
 psql -v ON_ERROR_STOP=1 -d interop_t -f /tmp/base.sql
-psql -v ON_ERROR_STOP=1 -d interop_t -f supabase/migrations/20260926110000_interop_foundation.sql
+psql -v ON_ERROR_STOP=1 -d interop_t -f supabase/migrations-deferred/20260926110000_interop_foundation.sql
 psql -v ON_ERROR_STOP=1 -d interop_t -f supabase/migrations-deferred/20260926130000_interop_phase2.sql
 psql -d interop_t -c 'CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions'
-pg_prove -d interop_t supabase/tests/interop_foundation.test.sql supabase/migrations-deferred/tests/interop_phase2.test.sql
+pg_prove -d interop_t supabase/migrations-deferred/tests/interop_foundation.test.sql supabase/migrations-deferred/tests/interop_phase2.test.sql
 ```
 
 Never run these against production or any database with real patients.

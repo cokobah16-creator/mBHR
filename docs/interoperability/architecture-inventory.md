@@ -100,15 +100,18 @@ is a later decision. See [README.md](README.md#where-the-gateway-runs).
 
 ## 5. Production database
 
-- 62 repository migrations are **not applied** to production, including the
-  Sept 24 permission helpers and Wave A/B. The migration history cannot
-  replay on an empty database. The HRIS transformation thread owns the
-  reconciliation; production changes need the owner's go-ahead.
-- Whether `patients.fhir_id` (`20260503010000`) and
-  `rate_limits` (`20260520000004`) exist on production is known only
-  through the "Database migrations → status" workflow **(inferred: the May
-  lockdown files that include `20260520000004` are applied under other
-  timestamps)**.
+- Update, 25 September 2026 (22:49 UTC): production now has every file in
+  `supabase/migrations/` (51 recorded versions, newest `20260926120100`),
+  including the Sept 24 permission helpers, Wave A/B and the rate limits
+  (the file `20260520000004` was renamed to production's recorded version
+  `20260517153407`). The HRIS transformation thread owns production
+  database changes; they need the owner's go-ahead.
+- Not on production, by design: the TEFCA/FHIR files moved to
+  `supabase/migrations-deferred/`, among them `20260503010000`
+  (`patients.fhir_id`) and `20260503010200` (dispense FHIR columns), and
+  both interop migrations (`20260926110000`, `20260926130000`). They are
+  re-versioned above production's newest when the owner decides FHIR goes
+  live (`supabase/migrations-deferred/README.md`).
 - Consequence: the gateway's database functions depend on migrations that
   production does not have yet. With `FHIR_ENABLED` off this changes
   nothing; switched on against such a database, the gateway fails closed

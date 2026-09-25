@@ -26,12 +26,11 @@ meaning to.
       A `supabase db push` from a folder linked to it changes production. Link
       the staging project explicitly (section 2.1) and check the linked
       project before every push.
-- [ ] **CI applies migrations to production on a push to `main`**
-      (`migrate-prod` in `.github/workflows/build.yml`, gated by the
-      `production` GitHub Environment). Do not approve a `production`
-      environment run until section 6 is signed. (At the time of writing the
-      default branch is `mainone` and there is no `main` branch, so this job
-      does not run; check again before release.)
+- [ ] **Production migrations are applied only through Actions > Database
+      migrations** (`.github/workflows/db-migrations.yml`, gated by the
+      `production` GitHub Environment; build.yml's `migrate-prod` job is
+      disabled). Do not approve a `production` environment run until
+      section 6 is signed.
 - [ ] **Vercel deploys its production branch on every push.** Check which
       branch is set as Production Branch in the Vercel project settings. A
       merge into that branch ships the new app to production, possibly before

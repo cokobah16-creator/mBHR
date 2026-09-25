@@ -187,10 +187,10 @@ review").
 - [ ] **Update every device before applying `20260925100200`.** A device on
       an app version from before Wave A cannot change queue status on the
       server once it is applied (uploads can no longer change status).
-      Merging to `main` applies every pending migration in CI (`migrate-prod`,
-      `supabase db push --linked`) as soon as someone approves the
-      `production` environment, before the new app is deployed; do not
-      approve it until the devices are updated. *Who: site leads, with the
+      Production migrations are applied only by hand, through Actions >
+      Database migrations (`.github/workflows/db-migrations.yml`, `apply`);
+      build.yml's `migrate-prod` job is disabled (`if: false`). Do not run
+      that apply until the devices are updated. *Who: site leads, with the
       release owner.*
 - [ ] **Queue numbers on upgrade day.** Older versions numbered tickets per
       device (every device had a `Q-001`). On upgrade day the server gives
@@ -405,7 +405,7 @@ review").
 | ------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | CI: preview deploy job (per PR)                         | ✅     | `.github/workflows/build.yml` `deploy-preview` job — needs `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` repo secrets to actually run |
 | CI: smoke test against the deployed preview URL         | ✅     | `smoke-test` job runs `e2e/login.spec.ts` with `PLAYWRIGHT_BASE_URL`                                                                         |
-| CI: production deploy gated by `production` Environment | ✅     | `migrate-prod` + `deploy-prod` jobs                                                                                                          |
+| CI: production deploy gated by `production` Environment | ✅     | `migrate-prod` + `deploy-prod` are disabled (`if: false`); migrations go through `db-migrations.yml`, the app through Vercel's mainone deploy                                                                                                          |
 | CI: DB migrations applied on prod deploy                | ✅     | `supabase/setup-cli` + `supabase db push --linked`; needs `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD`            |
 | Sticky PR comment with preview URL                      | ✅     | `marocchino/sticky-pull-request-comment@v2`                                                                                                  |
 | Centralised Supabase call wrapper                       | ✅     | `src/services/supabaseQuery.ts` + 7 unit tests                                                                                               |
@@ -415,8 +415,9 @@ review").
 ## Phase B — Manual / dashboard items
 
 - [ ] **Create the `production` GitHub Environment** with required reviewer(s)
-      before merging anything to `main` — otherwise `migrate-prod` + `deploy-prod`
-      will run automatically.
+      before running Actions > Database migrations (`db-migrations.yml`); every
+      run of it waits for that approval. (`migrate-prod` and `deploy-prod` in
+      build.yml are disabled.)
 - [ ] **Add the following GitHub Action secrets** to the repository:
       `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`,
       `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF` (use

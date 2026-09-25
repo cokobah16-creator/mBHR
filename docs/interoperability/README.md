@@ -174,9 +174,9 @@ src/interoperability/fhir/
                  the handler
   conformance/   synthetic examples validated by the HL7 validator in CI
 src/interoperability/smart/              SMART scope helpers (not wired in)
-supabase/migrations/20260926110000_interop_foundation.sql   Phase 1
+supabase/migrations-deferred/20260926110000_interop_foundation.sql   Phase 1 (deferred)
 supabase/migrations-deferred/20260926130000_interop_phase2.sql   Phase 2 (deferred)
-supabase/tests/interop_foundation.test.sql
+supabase/migrations-deferred/tests/interop_foundation.test.sql
 supabase/migrations-deferred/tests/interop_phase2.test.sql
 ```
 
@@ -280,18 +280,24 @@ re-run it on production without a reason.
 Before enabling anywhere with real data:
 
 1. The database has the migrations the gateway and its modules read
-   through. The Phase 2 migration names its own: `20260520000004` (rate
-   limits), `20260924110000` and `20260925100600` (role and permission
-   helpers), `20260925100000` (portal patient ids, merge columns) and
-   `20260925100500` (lab result release). The package work also found
-   `20260503010000` (`patients.fhir_id`), `20260925100300` (server-side
-   merges), `20260925100700` (document ownership), `20260925100400`,
-   `20260503010200`, `20260420000000` and `20260115072241` (pharmacy and
-   dispense columns), and `20251028120000` / `20251028170413`
-   (organisations and sites). Production does not have all of them
-   ([inventory, section 5](architecture-inventory.md#5-production-database));
-   which ones it has is not verified. Without them the affected requests
-   fail closed (503); nothing falls back.
+   through. Production has every file in `supabase/migrations/` since
+   25 September 2026 (22:49 UTC), which covers the ones the Phase 2
+   migration names: `20260517153407` (rate limits; the file was
+   `20260520000004`), `20260924110000` and `20260925100600` (role and
+   permission helpers), `20260925100000` (portal patient ids, merge
+   columns) and `20260925100500` (lab result release), plus
+   `20260925100300` (server-side merges), `20260925100400` (stock ledger)
+   and `20260925100700` (document ownership). Still missing, because they
+   are deferred with the interop migrations: `20260503010000`
+   (`patients.fhir_id`), `20260503010200` (dispense FHIR columns),
+   `20260926110000` and `20260926130000`. Each is re-versioned above
+   production's newest and fixed as `supabase/migrations-deferred/README.md`
+   says before it is applied. The pharmacy, dispense and organisation
+   columns the package work traced to `20260420000000`, `20260115072241`
+   and `20251028120000` come from other versions on production (those
+   files are in `supabase/migrations-superseded/`); that every column the
+   modules read exists there has not been checked. Without them the
+   affected requests fail closed (503); nothing falls back.
 2. **Nobody can make themselves staff.** The gateway takes every caller's
    role from `public.app_users`, so that table must refuse writes from
    ordinary accounts: `20260925160000_hotfix_app_users_public_write.sql`

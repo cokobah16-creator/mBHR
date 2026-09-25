@@ -7,7 +7,8 @@
 --
 -- Depends on (earlier migrations; resolved when the functions run, not when
 -- they are created):
---   20260520000004  public.check_and_increment_rate_limit()
+--   20260517153407  public.check_and_increment_rate_limit() (the file was
+--                   20260520000004 before it took production's version)
 --   20260924110000  public.app_current_role(), public.app_is_staff()
 --   20260925100600  public.app_role_has_permission() (latest matrix)
 -- Nothing in this file depends on the clinical tables.
