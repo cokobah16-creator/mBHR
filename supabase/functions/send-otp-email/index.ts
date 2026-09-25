@@ -59,8 +59,9 @@ import {
 // Content: every value placed in an HTML body (the code, the patient's
 // name) is escaped with ../_shared/security/html.ts. Text bodies stay plain.
 //
-// Requests: POST only (405 otherwise); 10 a minute per IP address, checked
-// before sign-in (JSON 429 with Retry-After).
+// Requests: POST only (a CORS preflight OPTIONS gets an empty 200, anything
+// else 405); 10 a minute per IP address, checked before sign-in (JSON 429
+// with Retry-After).
 //
 // Logs never contain an email address (in full or masked), a code, an
 // invitation's text, or the caller's user id or role.

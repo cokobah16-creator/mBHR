@@ -39,7 +39,7 @@ The function answers:
 - **403 `not_permitted`:** the role may not send this email, or the account is deactivated or missing from `app_users`.
 - **400:** the body is not a JSON object, the purpose is unknown, the old free-text mode was used, `email` is not one plain address, `otp` is not 4 to 8 digits, or an invitation has no valid `patientId`.
 - **404, 409, 422:** the invitation was refused: the patient is not on the server, was merged away, has portal access off, or has no email address.
-- **405:** anything but POST.
+- **405:** any method other than POST or OPTIONS. A CORS preflight (OPTIONS) gets an empty 200 with the CORS headers.
 - **429 `rate_limited`:** more than 10 requests in a minute from one IP address, or too many invitations from one account or to one patient.
 
 Every value placed in the HTML email (the code, the patient's name) is escaped, so it shows as text and cannot add HTML such as link tags, images or scripts. The plain-text part is sent as written.
