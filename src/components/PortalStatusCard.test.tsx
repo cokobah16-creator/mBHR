@@ -341,3 +341,49 @@ describe("PortalStatusCard invitation when the server cannot send email", () => 
     expect(panel.textContent).not.toMatch(/staff account/i);
   });
 });
+
+describe("PortalStatusCard for a patient under 18", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.serverState = "available";
+  });
+
+  it("says a child's record cannot be used for the portal and offers no invitation", async () => {
+    mocks.getPortalStatus.mockResolvedValue({
+      ...disabledStatus,
+      enabled: true,
+      minor: true,
+      inviteCount: 1,
+    });
+    renderCard();
+
+    expect(
+      await screen.findByText(/portal accounts are for adults.*cannot register/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/can register and sign in/i)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /send portal invitation/i }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /create registration link/i }),
+    ).toBeNull();
+    expect(screen.queryByText("What to tell the patient")).toBeNull();
+
+    // Turning access off still works.
+    fireEvent.click(screen.getByRole("switch"));
+    expect(
+      screen.getByRole("button", { name: /turn off access/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not open the turn-on dialog for a child's record", async () => {
+    mocks.getPortalStatus.mockResolvedValue({ ...disabledStatus, minor: true });
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("switch"));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(lastToastBody()).toMatch(/under 18/i);
+    expect(mocks.enablePortalAccess).not.toHaveBeenCalled();
+  });
+});

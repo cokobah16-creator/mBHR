@@ -32,6 +32,8 @@ export interface PortalStatusInfo {
   contactMethod?: "email" | "phone";
   canResend: boolean;
   nextResendTime?: Date;
+  /** Under 18 by date of birth: portal access cannot be turned on. */
+  minor?: boolean;
 }
 
 /**
@@ -557,6 +559,7 @@ export async function getPortalStatus(
       nextResendTime: rateLimit.waitMs
         ? new Date(Date.now() + rateLimit.waitMs)
         : undefined,
+      minor: isMinor(patient.dob) === true,
     };
   } catch (error) {
     logger.error("Error getting portal status:", safeErrorLabel(error));

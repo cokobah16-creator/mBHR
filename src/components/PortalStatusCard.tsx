@@ -11,6 +11,8 @@
  *   message when no email could be sent (including when the server refused
  *   because nobody is signed in online). Invitations go by email only: for
  *   a patient with no email the button makes a registration link to share.
+ * - For a patient under 18 the switch can only turn access off, and no
+ *   invitation or link is offered: portal accounts are for adults.
  *
  * The switch saves on this device, and also on the server when the device
  * is online, someone is signed in online, and the server takes the change
@@ -45,6 +47,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
 import { useServerStatus } from "@/features/admin/useServerStatus";
 import { ONLINE_SIGN_IN_HINT, useCloudSession } from "@/lib/cloudSession";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 
 interface PortalStatusCardProps {
   patientId: string;
@@ -246,6 +249,14 @@ export function PortalStatusCard({
     if (!status) return;
     if (status.enabled) {
       setConfirmDisable(true);
+    } else if (status.minor) {
+      // Do not ask staff to confirm agreement for a change that is refused.
+      pushToast({
+        id: generateId(),
+        tone: "error",
+        title: "Portal access not changed",
+        body: MINOR_PORTAL_ACCESS_MESSAGE,
+      });
     } else {
       setPatientAgreed(false);
       setConfirmEnable(true);
@@ -354,6 +365,10 @@ export function PortalStatusCard({
     );
   }
 
+  // A child's record can still have access on from before portal accounts
+  // were limited to adults. Staff can only turn it off.
+  const minor = status.minor === true;
+
   const statusBadge = !status.enabled ? (
     <StatusBadge tone="neutral" icon>
       Not enabled
@@ -404,9 +419,13 @@ export function PortalStatusCard({
             </p>
             <p className="text-caption text-ink-muted">
               {canEdit
-                ? status.enabled
-                  ? "The patient can register and sign in to the portal."
-                  : "Turn on only after the patient agrees to use the portal."
+                ? minor
+                  ? status.enabled
+                    ? "Portal accounts are for adults. This patient is under 18, so they cannot register or be linked to this record. Turn access off."
+                    : MINOR_PORTAL_ACCESS_MESSAGE
+                  : status.enabled
+                    ? "The patient can register and sign in to the portal."
+                    : "Turn on only after the patient agrees to use the portal."
                 : "Your role cannot change portal access."}
             </p>
           </div>
@@ -548,7 +567,7 @@ export function PortalStatusCard({
         )}
 
         {/* Send/Resend Button */}
-        {status.enabled && (
+        {status.enabled && !minor && (
           <div className="space-y-3 border-t border-line pt-4">
             {status.contactMethod ? (
               canEdit && (
@@ -620,7 +639,7 @@ export function PortalStatusCard({
         )}
 
         {/* Enable Portal Prompt */}
-        {!status.enabled && (
+        {!status.enabled && !minor && (
           <p className="text-body text-ink-secondary">
             Turning on portal access lets {firstName} use the patient portal
             to see their records, request appointments and message the

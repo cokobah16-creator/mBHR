@@ -639,6 +639,25 @@ describe("getPortalStatus", () => {
 
     expect(status!.canResend).toBe(false);
   });
+
+  it("marks a patient under 18, even with access already on", async () => {
+    mockPatientsGet.mockResolvedValue(
+      makePatient({ portalEnabled: 1, dob: childDob() }),
+    );
+
+    const status = await getPortalStatus("p1");
+
+    expect(status!.enabled).toBe(true);
+    expect(status!.minor).toBe(true);
+  });
+
+  it("does not mark an adult or a record with no date of birth", async () => {
+    mockPatientsGet.mockResolvedValue(makePatient({ dob: "1990-01-01" }));
+    expect((await getPortalStatus("p1"))!.minor).toBe(false);
+
+    mockPatientsGet.mockResolvedValue(makePatient({ dob: undefined }));
+    expect((await getPortalStatus("p1"))!.minor).toBe(false);
+  });
 });
 
 describe("linkAuthUserToPatient", () => {
