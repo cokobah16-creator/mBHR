@@ -10,6 +10,7 @@ import {
   classifyPulse,
   classifySpO2,
   classifyTemperature,
+  isAbnormalVitalFlag,
 } from "@/utils/vitals";
 import { findTodaysOpenVisit, ensureTodaysVisit } from "@/services/visits";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -302,7 +303,9 @@ export function DoctorDashboard() {
     await openConsultation(item);
   };
 
-  const isAbnormal = (v?: Vital) => !!v && Array.isArray(v.flags) && v.flags.length > 0;
+  // The paediatric-chart prompt alone does not make a reading abnormal.
+  const isAbnormal = (v?: Vital) =>
+    !!v && Array.isArray(v.flags) && v.flags.some(isAbnormalVitalFlag);
 
   if (loading) {
     return (

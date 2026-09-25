@@ -9,6 +9,7 @@ import {
   getFlagLabel,
   getFlagTone,
   hasVitalsEntries,
+  isAbnormalVitalFlag,
   PAEDIATRIC_CHECK_FLAG,
   parseMeasurement,
 } from "./vitals";
@@ -354,6 +355,63 @@ describe("adult thresholds and the patient's age", () => {
     expect(assessVitals({ pulseBpm: 72 }, { adultRanges: false }).flags).toEqual([
       PAEDIATRIC_CHECK_FLAG,
     ]);
+  });
+
+  it("still flags a child's low oxygen with the unchanged threshold", () => {
+    const { flags } = assessVitals({ spo2: 82 }, { adultRanges: false });
+    expect(flags).toContain("low_spo2");
+    expect(flags).toContain(PAEDIATRIC_CHECK_FLAG);
+    expect(flags.filter(isAbnormalVitalFlag)).toEqual(["low_spo2"]);
+    expect(assessVitals({ spo2: 95 }, { adultRanges: false }).flags).toEqual([
+      PAEDIATRIC_CHECK_FLAG,
+    ]);
+  });
+
+  it("still flags a child's fever and low temperature with the unchanged thresholds", () => {
+    expect(assessVitals({ spo2: 82, tempC: 40 }, { adultRanges: false }).flags).toEqual([
+      "high_temp",
+      "low_spo2",
+      PAEDIATRIC_CHECK_FLAG,
+    ]);
+    expect(assessVitals({ tempC: 34.5 }, { adultRanges: false }).flags).toEqual([
+      "low_temp",
+      PAEDIATRIC_CHECK_FLAG,
+    ]);
+    expect(assessVitals({ tempC: 37.9 }, { adultRanges: false }).flags).toEqual([
+      PAEDIATRIC_CHECK_FLAG,
+    ]);
+  });
+
+  it("drops only the adult heart-rate, blood-pressure and BMI flags for a child", () => {
+    const reading = {
+      pulseBpm: 150,
+      systolic: 150,
+      diastolic: 95,
+      heightCm: 100,
+      weightKg: 40,
+      spo2: 90,
+      tempC: 38.5,
+    };
+    expect(assessVitals(reading).flags).toEqual([
+      "high_bp",
+      "high_temp",
+      "high_pulse",
+      "low_spo2",
+      "high_bmi",
+    ]);
+    expect(assessVitals(reading, { adultRanges: false }).flags).toEqual([
+      "high_temp",
+      "low_spo2",
+      PAEDIATRIC_CHECK_FLAG,
+    ]);
+  });
+
+  it("does not count the paediatric check on its own as abnormal", () => {
+    expect(isAbnormalVitalFlag(PAEDIATRIC_CHECK_FLAG)).toBe(false);
+    expect([PAEDIATRIC_CHECK_FLAG].some(isAbnormalVitalFlag)).toBe(false);
+    for (const flag of ["high_bp", "low_bp", "high_temp", "low_temp", "high_pulse", "low_pulse", "low_spo2", "low_bmi", "high_bmi"]) {
+      expect(isAbnormalVitalFlag(flag)).toBe(true);
+    }
   });
 
   it("adds no flag to a child's record without a reading to check", () => {

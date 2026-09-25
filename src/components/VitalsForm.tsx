@@ -22,6 +22,7 @@ import {
   getFlagLabel,
   getFlagTone,
   hasVitalsEntries,
+  isAbnormalVitalFlag,
 } from "@/utils/vitals";
 import { patientAge } from "@/utils/patient";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -209,11 +210,14 @@ export function VitalsForm({
 
   const age = patientAge(patient.dob);
   // Adult thresholds do not apply under 18 or when the age is unknown. The
-  // form then shows no adult ranges, categories or flags, and asks for a
-  // check against a paediatric chart instead.
+  // form then shows no adult ranges or categories and no heart-rate,
+  // blood-pressure or BMI flags, and asks for a check against a paediatric
+  // chart instead. Low oxygen, fever and low temperature flags still show.
   const adultRanges = adultVitalRangesApply(patient.dob);
   const entered = enteredMeasurements(watchedValues);
   const { bmi, flags } = assessVitals(entered, { adultRanges });
+  // The paediatric-chart prompt is in the banner above, not a finding.
+  const abnormalFlags = flags.filter(isAbnormalVitalFlag);
   const bmiClass = adultRanges ? classifyBMI(bmi) : null;
   const bpClass =
     adultRanges && entered.systolic && entered.diastolic
@@ -242,9 +246,10 @@ export function VitalsForm({
             <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
             <span>
               {age === null
-                ? "This patient's age is not known, so the readings are not flagged here. Check each reading by hand against the chart for their age"
-                : "This patient is under 18, so the adult ranges do not apply and the readings are not flagged here. Check each reading against a paediatric chart"}{" "}
+                ? "This patient's age is not known, so heart rate, blood pressure and BMI are not flagged here. Check each reading by hand against the chart for their age"
+                : "This patient is under 18, so the adult ranges for heart rate, blood pressure and BMI do not apply and those readings are not flagged here. Check each reading against a paediatric chart"}{" "}
               and tell the clinician about any concern before the consultation.
+              Low oxygen, fever and low temperature are still flagged.
             </span>
           </div>
         )}
@@ -356,8 +361,8 @@ export function VitalsForm({
               placeholder="98"
             />
 
-            {/* Flags Display (adult thresholds only) */}
-            {adultRanges && flags.length > 0 && (
+            {/* Flags Display */}
+            {abnormalFlags.length > 0 && (
               <div
                 className="rounded-md border border-warning-line bg-warning-soft p-4"
                 role="alert"
@@ -370,7 +375,7 @@ export function VitalsForm({
                   className="flex flex-wrap gap-2"
                   aria-label="Abnormal vital signs"
                 >
-                  {flags.map((flag) => (
+                  {abnormalFlags.map((flag) => (
                     <li key={flag}>
                       <StatusBadge tone={getFlagTone(flag)}>
                         {getFlagLabel(flag)}

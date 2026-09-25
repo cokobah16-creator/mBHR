@@ -45,12 +45,14 @@ export function PatientContextHeader({
     const [patient, allergies, vitals, visit, consultations, dispenses, queue] =
       await Promise.all([
         providedPatient ? Promise.resolve(providedPatient) : db.patients.get(patientId),
+        // null when the read fails, so a failure never shows as "no known
+        // allergies".
         db.patientAllergies
           .where("patientId")
           .equals(patientId)
           .filter((a) => isAllergyActive(a))
           .toArray()
-          .catch(() => []),
+          .catch(() => null),
         db.vitals.where("patientId").equals(patientId).toArray(),
         visitId
           ? db.visits.get(visitId)
@@ -122,15 +124,16 @@ export function PatientContextHeader({
   const name = `${patient.givenName} ${patient.familyName}`.trim();
   const age = patientAge(patient.dob);
   const stage = currentFlowStage(steps);
-  // Adult categories are not valid for a reading taken under 18 (or at an
-  // unknown age): that reading gets a paediatric-chart prompt instead.
+  // Adult blood-pressure categories are not valid for a reading taken under
+  // 18 (or at an unknown age): that reading gets a paediatric-chart prompt
+  // instead. Temperature and SpO2 alerts show at every age.
   const adultVitals =
     !latestVital || adultVitalRangesApply(patient.dob, latestVital.takenAt);
   const bp = adultVitals
     ? classifyBloodPressure(latestVital?.systolic, latestVital?.diastolic)
     : null;
-  const temp = adultVitals ? classifyTemperature(latestVital?.tempC) : null;
-  const spo2 = adultVitals ? classifySpO2(latestVital?.spo2) : null;
+  const temp = classifyTemperature(latestVital?.tempC);
+  const spo2 = classifySpO2(latestVital?.spo2);
   const location = [patient.lga, patient.state].filter(Boolean).join(", ");
 
   return (
@@ -177,7 +180,13 @@ export function PatientContextHeader({
                 </Link>
               </li>
             )}
-            {allergies.length === 0 ? (
+            {allergies === null ? (
+              <li>
+                <StatusBadge tone="danger">
+                  Allergies could not be read: check by hand
+                </StatusBadge>
+              </li>
+            ) : allergies.length === 0 ? (
               !patient.mergeInto && (
                 <li>
                   <StatusBadge tone="neutral">No known allergies recorded</StatusBadge>

@@ -11,17 +11,38 @@ export interface VitalFlags {
 }
 
 // ---------------------------------------------------------------------------
-// Age. Every threshold in this file (flagVitals, classify*) is an adult one.
-// A child's normal ranges depend on age and none have been agreed with the
-// clinical team yet, so a reading taken before 18, or when the age is not
-// known, is marked for a check against a paediatric chart instead.
+// Age. The heart-rate, blood-pressure and BMI thresholds in this file are
+// adult ones. A child's normal ranges depend on age and none have been agreed
+// with the clinical team yet, so for a reading taken before 18, or when the
+// age is not known, those flags are left out and the reading is marked for a
+// check against a paediatric chart instead.
 // ---------------------------------------------------------------------------
 
 /** Age from which the adult thresholds in this file apply. */
 export const ADULT_VITALS_MIN_AGE = 18
 
-/** Flag stored instead of adult flags when adult thresholds do not apply. */
+/** Flag stored in place of the adult-only flags when adult thresholds do not apply. */
 export const PAEDIATRIC_CHECK_FLAG = 'check_paediatric_chart'
+
+/**
+ * flagVitals flags still raised when adult thresholds do not apply: low
+ * oxygen saturation, fever and low temperature, with unchanged thresholds.
+ * They were raised at every age before, and the range table in
+ * db/seedVitalsRanges uses one SpO2 range for every age and puts both
+ * temperature limits at or beyond the edge of every age band. Keeping them
+ * means a child's critical reading is never reduced to a prompt. Awaiting
+ * clinical confirmation (docs/clinical/CLINICAL_LOGIC_CHANGES.md).
+ */
+export const FLAGS_FOR_ALL_AGES: readonly string[] = ['low_spo2', 'high_temp', 'low_temp']
+
+/**
+ * Whether a stored flag marks an abnormal reading. The paediatric-chart
+ * prompt does not: every child's reading carries it, whatever the values, so
+ * counts of abnormal or high-risk readings must leave it out.
+ */
+export function isAbnormalVitalFlag(flag: string): boolean {
+  return flag !== PAEDIATRIC_CHECK_FLAG
+}
 
 /**
  * Whether adult thresholds apply to a reading: the patient was 18 or over
@@ -238,8 +259,9 @@ export function getFlagTone(flag: string): ClinicalTone {
  * (height and weight swapped; tempC/pulseBpm/spo2 never reaching the flags).
  *
  * Pass adultRanges: false for a patient under 18 or of unknown age (see
- * adultVitalRangesApply). The adult flags are then left out and a reading
- * is marked PAEDIATRIC_CHECK_FLAG, so it never reads as normal.
+ * adultVitalRangesApply). Only the FLAGS_FOR_ALL_AGES flags are then kept
+ * (heart-rate, blood-pressure and BMI flags are left out), and a reading is
+ * also marked PAEDIATRIC_CHECK_FLAG, so it never reads as normal.
  */
 export function assessVitals(
   v: {
@@ -257,10 +279,6 @@ export function assessVitals(
     v.heightCm && v.weightKg && v.heightCm > 0 && v.weightKg > 0
       ? calculateBMI(v.weightKg, v.heightCm)
       : null
-  if (opts.adultRanges === false) {
-    const hasReading = !!(v.systolic || v.diastolic || v.tempC || v.pulseBpm || v.spo2 || bmi)
-    return { bmi, flags: hasReading ? [PAEDIATRIC_CHECK_FLAG] : [] }
-  }
   const flags = flagVitals({
     systolic: v.systolic ?? undefined,
     diastolic: v.diastolic ?? undefined,
@@ -269,6 +287,11 @@ export function assessVitals(
     spo2: v.spo2 ?? undefined,
     bmi: bmi ?? undefined,
   })
+  if (opts.adultRanges === false) {
+    const kept = flags.filter((flag) => FLAGS_FOR_ALL_AGES.includes(flag))
+    const hasReading = !!(v.systolic || v.diastolic || v.tempC || v.pulseBpm || v.spo2 || bmi)
+    return { bmi, flags: hasReading ? [...kept, PAEDIATRIC_CHECK_FLAG] : kept }
+  }
   return { bmi, flags }
 }
 
