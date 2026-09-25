@@ -305,6 +305,17 @@ async function readServerStaffAccount(authUserId: string): Promise<ServerStaffAc
   }
 }
 
+/** The online account requests go out as right now, or null. Never throws. */
+async function signedInCloudUserId(): Promise<string | null> {
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Records a sign-in event in this device's audit log. Never records a PIN or
  * password. Best effort: never throws.
@@ -982,7 +993,9 @@ export async function endSessionIfRevoked(): Promise<boolean> {
  * here; a later staff directory download that lists them again switches it
  * back on. Runs after every sync (src/sync/staffRosterSync.ts), so it repeats
  * while the device is online. A lookup that fails changes nothing: work
- * carries on offline. Returns true when the session was ended. Never throws.
+ * carries on offline. An empty or non-staff answer counts only when the
+ * server gave it to this person (see below). Returns true when the session
+ * was ended. Never throws.
  */
 export async function revalidateOnlineSession(): Promise<boolean> {
   const { isAuthenticated, currentUser, currentSession, authMode, cloudUserId } =
@@ -995,12 +1008,18 @@ export async function revalidateOnlineSession(): Promise<boolean> {
   if (account.status === "found" && !account.deactivated && isStaffRole(account.role)) {
     return false;
   }
+  const deactivated = account.status === "found" && account.deactivated;
+  // The server shows a staff record to its owner (and to other staff) only,
+  // so a request sent without this person's online sign-in (a token refresh
+  // that failed mid-sync, or another account signed in in this browser)
+  // also comes back empty. Such an answer changes nothing; a record marked
+  // switched off counts whoever asked.
+  if (!deactivated && (await signedInCloudUserId()) !== cloudUserId) return false;
   // Signed out, or another session opened, while the server was asked.
   if (useAuthStore.getState().currentSession?.id !== currentSession?.id) return false;
 
   // Same scope as sign-in: a switched-off account's record is switched off
   // here; without a staff record, only a record under the same online id.
-  const deactivated = account.status === "found" && account.deactivated;
   if (deactivated || currentUser.id === cloudUserId) {
     try {
       await db.users.update(currentUser.id, { isActive: 0, updatedAt: new Date() });

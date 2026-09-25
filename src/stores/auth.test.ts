@@ -30,6 +30,10 @@ const { mockDbUsers, mockDbSessions, mockSupabase, mockFrom } = vi.hoisted(() =>
       auth: {
         signInWithPassword: vi.fn(),
         signOut: vi.fn().mockResolvedValue({ error: null }),
+        // Requests go out as the signed-in staff member (AUTH_USER below).
+        getSession: vi
+          .fn()
+          .mockResolvedValue({ data: { session: { user: { id: "auth-uid-1" } } }, error: null }),
       },
       from: mockFrom,
     },
@@ -925,6 +929,28 @@ describe("useAuthStore", () => {
 
       expect(await revalidateOnlineSession()).toBe(true);
       expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      // A record marked switched off counts whoever the server answered.
+      expect(mockSupabase.auth.getSession).not.toHaveBeenCalled();
+    });
+
+    it("changes nothing when the server answered someone other than this person", async () => {
+      signedInOnline();
+      mockSupabase.auth.getSession
+        // The online sign-in was lost mid-sync: the request went out without it.
+        .mockResolvedValueOnce({ data: { session: null }, error: null })
+        // Another account signed in in this browser.
+        .mockResolvedValueOnce({ data: { session: { user: { id: "portal-uid" } } }, error: null })
+        .mockRejectedValueOnce(new Error("storage unavailable"));
+
+      appUsersLookup({ data: null, error: null });
+      expect(await revalidateOnlineSession()).toBe(false);
+      expect(await revalidateOnlineSession()).toBe(false);
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "patient" }, error: null });
+      expect(await revalidateOnlineSession()).toBe(false);
+
+      expect(mockSupabase.auth.getSession).toHaveBeenCalledTimes(3);
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
+      expect(mockDbUsers.update).not.toHaveBeenCalled();
     });
 
     it("keeps the session for active staff, and when the server cannot be asked", async () => {
