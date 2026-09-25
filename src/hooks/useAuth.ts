@@ -3,7 +3,12 @@
  *
  * Wraps signInWithPassword, signUp (then links the clinic record on the
  * server with portal_link_patient_record), signOut, and exposes live
- * user/session state.
+ * user/session state. signUp saves the versions of the terms of use and
+ * privacy notice the patient accepted, and when, in the new account's user
+ * metadata. Before any account is made it refuses a sign-up without all
+ * three boxes ticked, and anyone under 18. The server refuses to link a
+ * child's clinic record or to create a record for an under-18 date of birth
+ * (20260926000210_portal_link_adults_only.sql).
  * Safe to call when Supabase is not configured — all operations no-op
  * gracefully so offline mode keeps working.
  */
@@ -12,7 +17,14 @@ import { supabase } from "@/lib/supabaseClient";
 import type { Session, User } from "@/lib/supabaseClient";
 import { clearStoredSupabaseAuth } from "@/lib/supabaseAuthStorage";
 import { normalizePhone } from "@/utils/phone";
+import { isMinor } from "@/utils/patient";
 import { linkPortalAccount } from "@/services/portalSignIn";
+import {
+  ACCEPTANCE_REQUIRED_MESSAGE,
+  UNDER_18_SIGN_UP_MESSAGE,
+  isCompleteAcceptance,
+  type PolicyAcceptance,
+} from "@/pages/legal/policyMeta";
 
 export interface AuthError {
   message: string;
@@ -31,7 +43,13 @@ export interface SignUpData {
   givenName: string;
   familyName: string;
   phone?: string;
-  dob?: string;
+  /** YYYY-MM-DD. Required: sign-up is refused for anyone under 18. */
+  dob: string;
+  /**
+   * What the patient ticked on the sign-up form. Saved with the account;
+   * sign-up is refused without it.
+   */
+  acceptance: PolicyAcceptance;
 }
 
 export interface UseAuthReturn {
@@ -98,11 +116,24 @@ export function useAuth(): UseAuthReturn {
           message: "Supabase is not configured — running in offline mode.",
         };
 
+      if (!isCompleteAcceptance(data.acceptance)) {
+        return { message: ACCEPTANCE_REQUIRED_MESSAGE };
+      }
+
+      // Portal accounts are for adults. Check before any account is made.
+      const minor = isMinor(data.dob);
+      if (minor === null) {
+        return { message: "Please enter a real date of birth." };
+      }
+      if (minor) return { message: UNDER_18_SIGN_UP_MESSAGE };
+
       const phone = data.phone ? normalizePhone(data.phone) || data.phone.trim() : null;
 
       // 1. Create the Supabase auth user. The registration details are kept
       //    on the account so the clinic record can be linked at the first
-      //    sign-in when the email address must be confirmed first.
+      //    sign-in when the email address must be confirmed first. The
+      //    accepted versions are kept there too, so they are recorded with
+      //    the account even when there is no session yet.
       const { data: authData, error: signUpError } = await supabase.auth.signUp(
         {
           email: data.email,
@@ -112,8 +143,11 @@ export function useAuth(): UseAuthReturn {
               full_name: `${data.givenName} ${data.familyName}`.trim(),
               given_name: data.givenName,
               family_name: data.familyName,
-              dob: data.dob ?? null,
+              dob: data.dob,
               phone,
+              terms_version: data.acceptance.termsVersion,
+              privacy_version: data.acceptance.privacyVersion,
+              accepted_at: data.acceptance.acceptedAt,
             },
           },
         },
@@ -136,8 +170,10 @@ export function useAuth(): UseAuthReturn {
       // 2. Link the clinic record on the server (or create a self-registered
       //    one). The server matches only verified contact details and the
       //    date of birth; the device never reads or writes patients here.
+      //    A child's record, or an under-18 date of birth, comes back as
+      //    needs_staff_verification (see portalLinkOutcome).
       const outcome = await linkPortalAccount(supabase, {
-        dob: data.dob ?? null,
+        dob: data.dob,
         givenName: data.givenName,
         familyName: data.familyName,
         phone,

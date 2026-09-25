@@ -548,6 +548,7 @@ describe("patientPortalAuth", () => {
         "Ada",
         "Obi",
         "123456",
+        ACCEPTED,
       );
 
       expect(r.success).toBe(false);
