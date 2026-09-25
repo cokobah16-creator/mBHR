@@ -3,7 +3,9 @@
  *
  * - Filter patients who have a phone number or email by registration date,
  *   state and contact method
- * - Select patients, confirm, and enable access (optionally sending invitations)
+ * - Select patients, confirm, and enable access (optionally sending invitations;
+ *   that needs an online sign-in, because the server sends email and SMS only
+ *   for staff signed in online)
  * - Honest progress and a result summary with each failure's reason
  * - Download a CSV report of the run
  */
@@ -30,6 +32,7 @@ import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
 import { canManagePortalEnrollment } from "@/features/admin/adminSections";
 import { useServerStatus } from "@/features/admin/useServerStatus";
 import type { ServerState } from "@/features/admin/serverStatus";
+import { ONLINE_SIGN_IN_HINT, useCloudSession } from "@/lib/cloudSession";
 import {
   buildRunCsv,
   groupFailureReasons,
@@ -88,6 +91,10 @@ export function PortalMigration() {
   const role = useAuthStore((s) => s.currentUser?.role);
   const canRun = canManagePortalEnrollment(role);
   const server = useServerStatus();
+  // After a PIN unlock there is no online sign-in. The server then refuses to
+  // send any email or SMS, so a bulk invitation run would send nothing.
+  const notSignedInOnline = useCloudSession() === "signed_out";
+  const canSendInvitations = server.available && !notSignedInOnline;
 
   const [filters, setFilters] = useState<MigrationFilters>({
     contactMethod: "any",
@@ -161,6 +168,8 @@ export function PortalMigration() {
   const handleStartMigration = async (sendInvitations: boolean) => {
     setConfirming(null);
     if (!canRun) return;
+    // The note beside "Invitations" says why; the server would refuse.
+    if (sendInvitations && !canSendInvitations) return;
     const targets: BulkRunTarget[] = eligiblePatients
       .filter((p) => selectedPatients.has(p.id))
       .map((p) => ({ id: p.id, name: patientName(p) }));
@@ -338,10 +347,18 @@ export function PortalMigration() {
         <StatusBadge tone={SERVER_TONE[server.state]} icon>
           {server.label}
         </StatusBadge>
-        <span className="text-caption text-ink-muted">
-          {server.available
-            ? "Invitations are sent by email, or by SMS when a patient has no email."
-            : "Invitations need the server and an internet connection. You can still enable access now and send invitations later from each patient's record."}
+        <span
+          className={`text-caption ${
+            server.available && notSignedInOnline
+              ? "text-warning-fg"
+              : "text-ink-muted"
+          }`}
+        >
+          {!server.available
+            ? "Invitations need the server and an internet connection. You can still enable access now and send invitations later from each patient's record."
+            : notSignedInOnline
+              ? `You are not signed in online, so the server will not send invitations. You can still enable access now and share a registration link from each patient's record. To send invitations, sign in online. ${ONLINE_SIGN_IN_HINT}`
+              : "Invitations are sent by email, or by SMS when a patient has no email. Sending needs an online sign-in: a PIN unlock is not enough."}
         </span>
       </div>
 
@@ -417,7 +434,7 @@ export function PortalMigration() {
               {run.sendInvitations && (
                 <p className="text-body text-ink-secondary">
                   {run.serverAvailable
-                    ? "An invitation was requested for each enabled patient. Where the email or SMS service did not respond, no message went out; open that patient's record to send it again or share a registration link."
+                    ? "An invitation was requested for each enabled patient. The server sends at most 10 a minute from one internet connection, and none if you are not signed in online. Where it did not send one, no message went out. Open that patient's record to send it again or share a registration link."
                     : "The server could not be reached when this ran, so no email or SMS was sent. Send invitations from each patient's record when the device is online."}
                 </p>
               )}
@@ -483,7 +500,10 @@ export function PortalMigration() {
               type="button"
               onClick={() => setConfirming({ sendInvitations: true })}
               disabled={
-                !canRun || selectedCount === 0 || running || !server.available
+                !canRun ||
+                selectedCount === 0 ||
+                running ||
+                !canSendInvitations
               }
               className="btn-primary"
             >
@@ -616,9 +636,13 @@ export function PortalMigration() {
         </p>
         {confirming?.sendInvitations && (
           <p>
-            Each patient is sent an invitation with a registration link: by
-            email, or by SMS if they have no email. Patients invited very
-            recently are not sent another and are listed as failed.
+            An invitation with a registration link is requested for each
+            patient: by email, or by SMS if they have no email. The server
+            sends at most 10 a minute from one internet connection, so in a
+            bigger run only about 10 are sent. Where the server does not send
+            one, no message goes out: open that patient's record to send it
+            again or share the link. Patients invited very recently are not
+            sent another and are listed as failed.
           </p>
         )}
         <p className="font-medium text-ink">

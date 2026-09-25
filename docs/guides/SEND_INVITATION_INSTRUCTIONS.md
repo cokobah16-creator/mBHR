@@ -2,7 +2,7 @@
 
 ## Method 1: Using the Patient Detail Page (Easiest)
 
-1. **Log into mBHR** as an admin user
+1. **Sign in online to mBHR** as an admin user, with your email and password. After a PIN unlock the server sends no email; you get a link to share instead.
 2. **Navigate to:** `/patients`
 3. **Search for:** "Kristopher"
 4. **Click** on his patient card
@@ -15,7 +15,7 @@
 
 ## Method 2: Using Email Diagnostics Tool
 
-1. **Navigate to:** `/admin/email-diagnostics`
+1. **Sign in online** as an admin, then **navigate to:** `/admin/email-diagnostics`
 2. **Enter email:** `cokobah16@gmail.com`
 3. **Click:** "Send Test Email"
 4. This sends a test OTP (123456) to verify the email system works
@@ -40,7 +40,8 @@ const result = await sendPortalInvitation("test_patient_001");
 if (result.success) {
   console.log("✅ Invitation sent successfully!");
   if (result.demoOTP) {
-    console.log("🔧 Demo OTP:", result.demoOTP);
+    // No email or SMS went out; this holds the link to share by hand.
+    console.warn(result.demoOTP);
   }
 } else {
   console.error("❌ Failed to send invitation:", result.error);
@@ -56,19 +57,14 @@ if (result.success) {
    - Patient has email address ✅
    - Rate limiting allows sending ✅
 
-2. **OTP Generation:**
-   - 6-digit random code generated
-   - Hashed and stored in database
-   - Expires in 10 minutes
-
-3. **Email Delivery:**
+2. **Email Delivery:** the app asks the `send-otp-email` function to send an invitation with a registration link. It contains no code. The function sends it only for staff signed in online.
    - **With API Key:** Email sent via Resend to `cokobah16@gmail.com`
-   - **Without API Key (Demo):** OTP logged to Supabase Edge Function logs
+   - **Without API Key (Demo):** no email is sent, and the logs say only that it ran in demo mode
+   - **Not signed in online:** the function refuses. The patient record shows the registration link to share instead, and says why.
 
-4. **Database Updated:**
-   - `last_otp_sent_at` timestamp recorded
+3. **Record Updated (on this device):**
    - Invitation count incremented
-   - Status set to "queued" or "sent"
+   - Status set to "queued", then "sent" (also when no message went out and the link was shown to share)
 
 ---
 
@@ -87,15 +83,15 @@ if (result.success) {
 
 1. Open email client for `cokobah16@gmail.com`
 2. Look for email from "mBHR Patient Portal"
-3. Subject: "Your mBHR Verification Code"
+3. Subject: "Your mBHR Patient Portal is Ready" (the test on `/admin/email-diagnostics` uses "Your mBHR Verification Code")
 4. **Check spam folder if not in inbox!**
 
 ### Check Supabase Logs (If in Demo Mode)
 
 1. Go to: [Supabase Dashboard](https://supabase.com/dashboard/project/dlogqxzejroeyivfmgcv/functions/send-otp-email/logs)
 2. Look for recent function invocations
-3. Find log entry showing: `OTP for cokobah16@gmail.com: [6-digit code]`
-4. Copy the OTP code to test login
+3. A demo-mode entry says only that no email was sent. The logs never contain the address or any code.
+4. Share the registration link shown on the patient record instead
 
 ### Check Resend Dashboard (If API Key Configured)
 
@@ -106,21 +102,14 @@ if (result.success) {
 
 ---
 
-## Testing the Login Flow
+## Testing Registration and Login
 
 Once invitation is sent:
 
-1. **Open** `/patient/login` in a browser
-2. **Enter email:** `cokobah16@gmail.com`
-3. **Click** "Continue"
-4. **System will:**
-   - Check if account exists ✅
-   - Generate new OTP
-   - Send email (or log to console in demo mode)
-5. **Check email** for OTP code
-6. **Enter OTP** in the verification form
-7. **Click** "Verify"
-8. **Should redirect** to `/patient/dashboard`
+1. **Open** the registration link from the email (or the link shown on the patient record). The email address is pre-filled.
+2. **Enter** full name, date of birth and a password, then register
+3. **Open** `/patient/login` and log in with the email and password
+4. Patient login does not use an emailed code
 
 ---
 
@@ -198,7 +187,7 @@ You'll know everything is working when:
 1. ✅ Email Diagnostics shows "Email Sent Successfully"
 2. ✅ Test email arrives in inbox
 3. ✅ Portal invitation email arrives for Kristopher
-4. ✅ Kristopher can login with OTP from email
+4. ✅ Kristopher registers from the invitation link, then logs in with his email and password
 5. ✅ Kristopher sees patient dashboard after login
 
 ---

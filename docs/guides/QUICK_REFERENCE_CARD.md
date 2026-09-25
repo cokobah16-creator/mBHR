@@ -12,15 +12,19 @@
 
 **Fix:** Add API key to Supabase Edge Functions
 **Time:** 2 minutes
-**Result:** Real OTP emails sent to patients
+**Result:** Portal invitation emails are sent when a staff member signed in online sends them
 
 ---
 
 ## 🔑 Your Resend API Key
 
 ```
-re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu
+re_your_api_key
 ```
+
+This is a placeholder. Use the key from your Resend dashboard, and never
+commit a real key to this repository. `scripts/set-resend-key.sh` asks for
+the key without showing it.
 
 **Where to add it:**
 https://supabase.com/dashboard/project/dlogqxzejroeyivfmgcv/settings/edge-functions
@@ -41,14 +45,15 @@ https://supabase.com/dashboard/project/dlogqxzejroeyivfmgcv/settings/edge-functi
 ### Add API Key (Enable Email)
 
 1. Go to Supabase dashboard → Edge Functions → Secrets
-2. Add secret: `RESEND_API_KEY` = `re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu`
+2. Add secret: `RESEND_API_KEY` = `re_your_api_key`
 3. Wait 60 seconds
 4. Test at `/admin/email-diagnostics`
 
 ### Or Use CLI
 
 ```bash
-npx supabase secrets set RESEND_API_KEY=re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu --project-ref dlogqxzejroeyivfmgcv
+# Asks for the key without showing it (or reads RESEND_API_KEY from the environment)
+./scripts/set-resend-key.sh
 ```
 
 ---
@@ -63,16 +68,17 @@ npx supabase secrets set RESEND_API_KEY=re_YFFHp3sb_M2aWRcQfak5dsr9MsvU1UPJu --p
 
 ### Email Test
 
-1. Go to `/admin/email-diagnostics`
-2. Send test email
-3. ✅ Check inbox (and spam!)
+1. Sign in online as an administrator (email and password; a PIN unlock is not enough)
+2. Go to `/admin/email-diagnostics`
+3. Send test email
+4. ✅ Check inbox (and spam!)
 
 ### Patient Portal Test
 
-1. Go to `/patient/login`
-2. Enter email
-3. ✅ Receive OTP code
-4. Enter code
+1. Signed in online, open a patient record with an email, turn on portal access and send a portal invitation
+2. ✅ The patient receives an email with a registration link
+3. The patient opens the link and registers with their date of birth and a password
+4. The patient logs in at `/patient/login` with their email and password (no emailed code)
 5. ✅ Access dashboard
 
 ---
@@ -145,7 +151,7 @@ npx supabase secrets list --project-ref dlogqxzejroeyivfmgcv
 **Email Working:**
 
 - No "demo mode" warnings in UI
-- OTP codes received via email
+- Portal invitation emails arrive
 - Test emails arrive in inbox
 - Resend dashboard shows deliveries
 

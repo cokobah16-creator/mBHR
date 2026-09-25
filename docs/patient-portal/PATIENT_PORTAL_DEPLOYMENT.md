@@ -144,9 +144,12 @@ curl -X POST https://YOUR_PROJECT_REF.supabase.co/functions/v1/send-otp-sms \
 
 **Test Email Function:**
 
+`send-otp-email` refuses the anon key (401). Use the access token of an admin signed in online. See `docs/deployment/EMAIL_SETUP_GUIDE.md` for who may call it.
+
 ```bash
 curl -X POST https://YOUR_PROJECT_REF.supabase.co/functions/v1/send-otp-email \
-  -H "Authorization: Bearer YOUR_ANON_KEY" \
+  -H "Authorization: Bearer ADMIN_USER_ACCESS_TOKEN" \
+  -H "apikey: YOUR_ANON_KEY" \
   -H "Content-Type: application/json" \
   -d '{"email": "test@example.com", "otp": "123456"}'
 ```
