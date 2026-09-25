@@ -29,20 +29,21 @@ What exists in this repository:
   chip and a read-only Interoperability panel for admins
   ([consent.md](consent.md)).
 - Two migrations: Phase 1 `20260926110000_interop_foundation.sql` and
-  Phase 2 `20260926130000_interop_phase2.sql`, with pgTAP tests. Phase 2
-  and its test live in `supabase/migrations-deferred/`, which the Supabase
-  CLI does not read, so no migration push (including the production
-  reconciliation) can apply it by accident. It stays there until the owner
-  decides FHIR goes live; it is then given a version above production's
-  newest and moved into `supabase/migrations/`.
+  Phase 2 `20260926130000_interop_phase2.sql`, with pgTAP tests. Both live
+  in `supabase/migrations-deferred/`, which the Supabase CLI does not read,
+  so no migration push (including the Supabase GitHub integration, which
+  applies `supabase/migrations/` on every merge to `mainone`) can apply
+  them. They stay there until the owner decides FHIR goes live; they are
+  then given versions above production's newest and moved into
+  `supabase/migrations/` ([the folder's README](../../supabase/migrations-deferred/README.md)).
 
 What is not true yet:
 
 - **The gateway is off.** `FHIR_ENABLED` is not set on any deployment.
-- **Neither migration is applied to production** (or, as far as this
-  repository records, to any shared database). Production has not been
-  reconciled with the repository's migrations
-  ([security.md, finding F3](security.md#findings)).
+- **Neither interop migration is applied to production** (or, as far as
+  this repository records, to any shared database), nor is
+  `patients.fhir_id` (`20260503010000`, also deferred). Production has
+  every file in `supabase/migrations/` since 25 September 2026.
 - The representation rules still need clinical sign-off
   (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7).
 
@@ -251,9 +252,12 @@ work with the other phase's counterpart:
 So, for any database the gateway will use, with the owner's go-ahead:
 
 1. Deploy the code with `FHIR_ENABLED` unset (the gateway stays inert).
-2. Apply `20260926110000_interop_foundation.sql`, then
-   `20260926130000_interop_phase2.sql`. Phase 2 refuses to apply without
-   Phase 1.
+2. Apply `20260503010000_add_patient_fhir_id.sql`,
+   `20260926110000_interop_foundation.sql`, then
+   `20260926130000_interop_phase2.sql`, each re-versioned above the
+   database's newest migration and moved out of
+   `supabase/migrations-deferred/` in that order. Phase 2 refuses to apply
+   without Phase 1.
 3. Only then set `FHIR_ENABLED` on that environment.
 
 Applying Phase 2 briefly holds up writes to `public.patients`. The file
@@ -271,7 +275,7 @@ re-run it on production without a reason.
 | Step | State |
 | --- | --- |
 | Code, tests and CI | in review on this branch |
-| Phase 1 and Phase 2 migrations applied anywhere shared | **not applied**; production reconciliation is owned by the HRIS transformation work, and production changes need the owner's go-ahead |
+| Phase 1 and Phase 2 migrations applied anywhere shared | **not applied**; both are deferred (`supabase/migrations-deferred/`). Production database changes are owned by the HRIS transformation work and need the owner's go-ahead |
 | `FHIR_ENABLED` on a preview deployment | not set |
 | `FHIR_ENABLED` in production | not set; do not set until the conditions below hold |
 | `FHIR_PATIENT_ACCESS_ENABLED` anywhere | not set |

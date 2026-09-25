@@ -113,7 +113,7 @@ is a later decision. See [README.md](README.md#where-the-gateway-runs).
   re-versioned above production's newest when the owner decides FHIR goes
   live (`supabase/migrations-deferred/README.md`).
 - Consequence: the gateway's database functions depend on migrations that
-  production does not have yet. With `FHIR_ENABLED` off this changes
+  production does not have yet (the deferred ones). With `FHIR_ENABLED` off this changes
   nothing; switched on against such a database, the gateway fails closed
   (503), it does not fall back to anything weaker.
 

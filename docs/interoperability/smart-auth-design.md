@@ -518,7 +518,7 @@ does.
 | # | Blocker | Why |
 | --- | --- | --- |
 | B1 | Findings F1 to F4 in [security.md](security.md#findings) resolved, and the TEFCA functions (`tefca-oauth`, `tefca-ias`, `tefca-bulk`) undeployed or rebuilt on this gateway | `tefca-oauth` has its own `/.well-known/smart-configuration` and token endpoint backed by the service role (and its deployed copy runs older code, F1); two authorization servers for the same data cannot both be governed |
-| B2 | Production database reconciled with the migrations (F3), including Phase 2 | every rule above relies on the helpers, the role matrix and row-level security as written |
+| B2 | Production database reconciled with the migrations (F3; done 25 September 2026), and the deferred Phase 1, Phase 2 and `patients.fhir_id` files applied (re-versioned) | every rule above relies on the helpers, the role matrix and row-level security as written |
 | B3 | A decision on how the gateway reads as the person under row-level security when the caller holds a SMART token (section 2) | the current design forwards a Supabase token the app must never have |
 | B4 | Decision: extend or replace the `oauth_*` tables (section 5), and the client registry, approval functions and revocation list built | no client can exist without them |
 | B5 | Signing key custody and a rotation runbook in place (section 10) | a leaked key is a leaked gateway |
