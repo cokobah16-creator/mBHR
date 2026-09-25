@@ -9,6 +9,10 @@
  * - Invitation history
  * - Send/resend invitation button with rate limiting, and an honest
  *   message when no email or SMS could be sent
+ *
+ * The switch saves on this device, and also on the server when the device
+ * is online and the server takes the change (the online portal checks the
+ * server). The toast says which happened.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -24,6 +28,7 @@ import {
   enablePortalAccess,
   disablePortalAccess,
   type PortalStatusInfo,
+  type ServerPortalWrite,
 } from "@/services/portalEnrollment";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { useToast } from "@/stores/toast";
@@ -53,6 +58,31 @@ const INVITE_STATUS: Record<
   delivered: { label: "Delivered", tone: "success" },
   failed: { label: "Failed", tone: "danger" },
 };
+
+/** Toast text after the switch: where the change was saved. */
+function savedWhere(
+  enable: boolean,
+  server: ServerPortalWrite | undefined,
+): string {
+  switch (server) {
+    case "updated":
+      return enable
+        ? "Saved on this device and on the server, which the online portal checks."
+        : "Turned off on this device and on the server, which the online portal checks.";
+    case "no-server":
+      return "Saved on this device only: no server is connected.";
+    case "offline":
+      return enable
+        ? "Saved on this device only. This device is offline, so the server was not updated."
+        : "Turned off on this device only. This device is offline, so the server was not updated and an online portal account may still work.";
+    case "not-updated":
+      return enable
+        ? "Saved on this device only. The server did not take the change: the patient's record may not be uploaded yet. Once it is, turn access off and on again."
+        : "Turned off on this device only. The server did not take the change, so an online portal account may still work.";
+    default:
+      return enable ? "Saved on this device." : "Turned off on this device.";
+  }
+}
 
 const formatCountdown = (seconds: number): string => {
   const mins = Math.floor(seconds / 60);
@@ -159,12 +189,7 @@ export function PortalStatusCard({
           id: generateId(),
           tone: "success",
           title: enable ? "Portal access turned on" : "Portal access turned off",
-          body:
-            server.state === "not-configured"
-              ? "Saved on this device only: no server is connected."
-              : enable
-                ? "Saved on this device."
-                : "Turned off on this device. Portal access settings are not synced, so an online portal account is not blocked by this.",
+          body: savedWhere(enable, result.server),
         });
         await loadStatus();
         onStatusChange?.();
@@ -538,8 +563,9 @@ export function PortalStatusCard({
         {/* Enable Portal Prompt */}
         {!status.enabled && (
           <p className="text-body text-ink-secondary">
-            Turning on portal access lets {firstName} view their medical
-            records, request appointments and message the clinic online.
+            Turning on portal access lets {firstName} use the patient portal
+            to see their records, request appointments and message the
+            clinic.
           </p>
         )}
       </div>
@@ -555,8 +581,15 @@ export function PortalStatusCard({
         onCancel={closeEnableDialog}
       >
         <p>
-          Turning on portal access lets {firstName} view their medical
-          records, request appointments and message the clinic online.
+          Portal access lets {firstName} use the patient portal to see their
+          records, request appointments and message the clinic.
+        </p>
+        <p>
+          {server.state === "available"
+            ? "It is saved on this device and sent to the server, which the online portal checks. If the server does not take it, for example because the patient's record is not uploaded yet, only this device changes. You will see which."
+            : server.state === "offline"
+              ? "This device is offline, so it is saved on this device only. The online portal is not changed."
+              : "No server is connected, so it is saved on this device only."}
         </p>
         <label className="flex items-start gap-3 rounded-md border border-line bg-surface-sunken p-3">
           <input
@@ -583,9 +616,11 @@ export function PortalStatusCard({
         onCancel={() => setConfirmDisable(false)}
       >
         <p>
-          {server.state === "not-configured"
-            ? "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."
-            : `Portal access will be turned off on this device. This setting is not synced, so it does not block ${firstName}'s online portal account if they have one.`}{" "}
+          {server.state === "available"
+            ? "Portal access will be turned off on this device and the change sent to the server, which the online portal checks. If the server does not take it, only this device changes. You will see which."
+            : server.state === "offline"
+              ? `This device is offline, so portal access will be turned off on this device only. It does not block ${firstName}'s online portal account if they have one.`
+              : "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."}{" "}
           Their records are not deleted.
         </p>
         <p>You can turn access back on later.</p>

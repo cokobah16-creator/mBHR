@@ -32,12 +32,131 @@ export interface PortalStatusInfo {
 }
 
 /**
- * Enable portal access for a patient
+ * What happened on the server when portal access was changed on this
+ * device. The online portal checks patients.portal_enabled on the server.
+ * - "updated": the server's patients.portal_enabled now has the new value.
+ * - "no-server": no server is set up on this device.
+ * - "offline": this device is offline, so nothing was sent.
+ * - "not-updated": the server was asked but its row did not change. One
+ *   reason is a record not uploaded yet; a sign-in that may not change the
+ *   column, or a failed request, gets the same answer.
+ */
+export type ServerPortalWrite =
+  | "updated"
+  | "no-server"
+  | "offline"
+  | "not-updated";
+
+export interface PortalAccessResult {
+  success: boolean;
+  error?: string;
+  /** Set once the change is saved on this device. */
+  server?: ServerPortalWrite;
+}
+
+function isMissingColumn(error: unknown): boolean {
+  const code =
+    error && typeof error === "object"
+      ? (error as { code?: unknown }).code
+      : undefined;
+  return code === "PGRST204" || code === "42703";
+}
+
+/**
+ * The server adds one to row_version on every write. When this portal
+ * write is the only change since this device last saw the row, keep the
+ * new version, so the next upload of other edits made here is not reported
+ * as a sync conflict (detectConflict in src/sync/adapter.ts).
+ */
+async function adoptServerVersion(
+  patientId: string,
+  version: unknown,
+): Promise<void> {
+  const next = Number(version);
+  if (version === null || version === undefined || !Number.isFinite(next)) {
+    return;
+  }
+  try {
+    const current = await db.patients.get(patientId);
+    if (current && current._serverVersion === next - 1) {
+      await db.patients.update(patientId, { _serverVersion: next });
+    }
+  } catch (error) {
+    // Harmless: at worst the next upload asks staff to review the record.
+    logger.warn("Could not keep the server version:", safeErrorLabel(error));
+  }
+}
+
+/**
+ * Write patients.portal_enabled on the server, as enrollPatientInPortal
+ * does. Staff with the "register" permission may change this column
+ * (app_guard_patient_identity). This is a stopgap until the
+ * set_patient_portal_access command exists: nothing retries a failed
+ * write, and portal_enabled_changed_at stays empty (only server code sets
+ * it), so other staff devices keep their own value (transformPulled in
+ * src/sync/adapter.ts).
+ */
+async function writeServerPortalEnabled(
+  patientId: string,
+  enabled: boolean,
+): Promise<ServerPortalWrite> {
+  const client = supabase;
+  if (!client) return "no-server";
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return "offline";
+  }
+  try {
+    let result: { data: unknown; error: unknown } = await client
+      .from("patients")
+      .update({ portal_enabled: enabled })
+      .eq("id", patientId)
+      .select("id, portal_enabled, row_version");
+    if (result.error && isMissingColumn(result.error)) {
+      // A server without the sync foundation migration has no row_version.
+      result = await client
+        .from("patients")
+        .update({ portal_enabled: enabled })
+        .eq("id", patientId)
+        .select("id, portal_enabled");
+    }
+    const { data, error } = result;
+    if (error) {
+      logger.warn(
+        "Portal access not changed on the server:",
+        safeErrorLabel(error),
+      );
+      return "not-updated";
+    }
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { portal_enabled?: unknown; row_version?: unknown }
+      | null
+      | undefined;
+    if (!row || row.portal_enabled !== enabled) {
+      // No row came back (the record is not on the server yet, or this
+      // sign-in may not change it), or the server kept its old value.
+      logger.warn("Portal access not changed on the server: no row updated");
+      return "not-updated";
+    }
+    await adoptServerVersion(patientId, row.row_version);
+    return "updated";
+  } catch (error) {
+    logger.warn(
+      "Portal access not changed on the server:",
+      safeErrorLabel(error),
+    );
+    return "not-updated";
+  }
+}
+
+/**
+ * Turn portal access on for a patient. Saved on this device first; then,
+ * when this device is online, also on the server (see
+ * writeServerPortalEnabled). `server` in the result says which.
  */
 export async function enablePortalAccess(
   patientId: string,
   options: PortalEnrollmentOptions = {},
-): Promise<{ success: boolean; error?: string }> {
+): Promise<PortalAccessResult> {
   try {
     const patient = await db.patients.get(patientId);
     if (!patient) {
@@ -63,6 +182,9 @@ export async function enablePortalAccess(
       updatedAt: new Date(),
       _dirty: 1,
     });
+
+    // The online portal checks the server's copy, which starts off.
+    const server = await writeServerPortalEnabled(patientId, true);
 
     // Create patient portal user account in Supabase
     try {
@@ -110,15 +232,19 @@ export async function enablePortalAccess(
       // Don't fail the operation: the local change stands
     }
 
-    logger.info("Portal access enabled on this device");
+    logger.info(
+      server === "updated"
+        ? "Portal access enabled on this device and on the server"
+        : "Portal access enabled on this device only",
+    );
 
     // Send invitation if requested
     if (options.sendInviteNow) {
-      return await sendPortalInvitation(patientId);
+      return { ...(await sendPortalInvitation(patientId)), server };
     }
 
-    return { success: true };
-     
+    return { success: true, server };
+
   } catch (error: unknown) {
     logger.error("Error enabling portal access:", safeErrorLabel(error));
     return {
@@ -129,11 +255,13 @@ export async function enablePortalAccess(
 }
 
 /**
- * Disable portal access for a patient
+ * Turn portal access off for a patient. Saved on this device first; then,
+ * when this device is online, also on the server, so a switch that can
+ * turn online access on can also turn it off. `server` says which.
  */
 export async function disablePortalAccess(
   patientId: string,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<PortalAccessResult> {
   try {
     await db.patients.update(patientId, {
       portalEnabled: 0,
@@ -141,8 +269,14 @@ export async function disablePortalAccess(
       _dirty: 1,
     });
 
-    logger.info("Portal access disabled on this device");
-    return { success: true };
+    const server = await writeServerPortalEnabled(patientId, false);
+
+    logger.info(
+      server === "updated"
+        ? "Portal access disabled on this device and on the server"
+        : "Portal access disabled on this device only",
+    );
+    return { success: true, server };
      
   } catch (error: unknown) {
     logger.error("Error disabling portal access:", safeErrorLabel(error));
@@ -508,12 +642,15 @@ export async function bulkEnablePortalAccess(
 ): Promise<{
   success: number;
   failed: number;
+  /** Successes that were also saved on the server (server: "updated"). */
+  serverUpdated: number;
   errors: Array<{ patientId: string; error: string }>;
 }> {
   const batchSize = options.batchSize || 50;
   const results = {
     success: 0,
     failed: 0,
+    serverUpdated: 0,
     errors: [] as Array<{ patientId: string; error: string }>,
   };
 
@@ -530,6 +667,7 @@ export async function bulkEnablePortalAccess(
 
           if (result.success) {
             results.success++;
+            if (result.server === "updated") results.serverUpdated++;
           } else {
             results.failed++;
             results.errors.push({

@@ -4,7 +4,9 @@
  * - Filter patients who have a phone number or email by registration date,
  *   state and contact method
  * - Select patients, confirm, and enable access (optionally sending invitations)
- * - Honest progress and a result summary with each failure's reason
+ * - Honest progress and a result summary with each failure's reason, and
+ *   how many patients were also turned on on the server (the online portal
+ *   checks the server; see enablePortalAccess)
  * - Download a CSV report of the run
  */
 
@@ -53,6 +55,8 @@ interface MigrationRun {
   serverAvailable: boolean;
   completed: number;
   successful: number;
+  /** Successful patients also turned on on the server. */
+  serverUpdated: number;
   failed: number;
   errors: BulkRunError[];
   status: "running" | "done" | "error";
@@ -172,6 +176,7 @@ export function PortalMigration() {
       serverAvailable: server.available,
       completed: 0,
       successful: 0,
+      serverUpdated: 0,
       failed: 0,
       errors: [],
       status: "running",
@@ -194,6 +199,7 @@ export function PortalMigration() {
               ...prev,
               completed: result.success + result.failed,
               successful: result.success,
+              serverUpdated: result.serverUpdated,
               failed: result.failed,
               errors: result.errors,
               status: "done",
@@ -408,7 +414,12 @@ export function PortalMigration() {
                   {run.failed > 0 && ` ${run.failed} failed.`}{" "}
                   {server.state === "not-configured"
                     ? "Saved on this device only: no server is connected."
-                    : "Saved on this device. Portal access settings are not synced to other devices."}
+                    : run.successful > 0 &&
+                      `Also saved on the server, which the online portal checks, for ${run.serverUpdated} of them.${
+                        run.serverUpdated < run.successful
+                          ? " The rest are saved on this device only: the device was offline, or the server did not take the change, for example because the record is not uploaded yet."
+                          : ""
+                      } Other staff devices are not changed.`}
                   {run.sendInvitations &&
                     run.failed > 0 &&
                     " A patient whose invitation failed may still have portal access turned on."}
@@ -611,8 +622,8 @@ export function PortalMigration() {
           Portal access is turned on for {plural(selectedCount, "patient")} on
           this device
           {server.state === "not-configured"
-            ? ". No server is connected, so nothing is uploaded and patients cannot use the portal until one is."
-            : ". This setting is not synced to other devices. Patients can see their records in the patient portal once they register."}
+            ? ". No server is connected, so it is saved on this device only."
+            : ". It is also sent to the server, which the online portal checks, when this device is online. The server does not take it for a patient whose record is not uploaded yet. Other staff devices are not changed."}
         </p>
         {confirming?.sendInvitations && (
           <p>

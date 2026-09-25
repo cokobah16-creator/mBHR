@@ -13,9 +13,25 @@
        (20260115072241_add_portal_enhancements_v3). On every insert or update
        of a patient with a phone or email, the trigger set portal_enabled,
        auto_enrolled and auto_enrolled_at unless portal_opt_out was set.
-       Portal access is now turned on only by staff (PortalStatusCard,
-       PatientForm) or, for a self-registered account, by
-       portal_link_patient_record, which sets portal_enabled itself.
+       After this, a new patient's portal_enabled stays false (the column
+       default) until something sets it. From the app that is:
+       - enablePortalAccess (src/services/portalEnrollment.ts), used by the
+         record page switch (PortalStatusCard) and the PortalMigration
+         admin page. It saves on the device, then updates portal_enabled
+         here only when the device is online, this row already exists (the
+         record has been uploaded) and the online sign-in holds 'register'
+         (app_guard_patient_identity). Otherwise only the device changes,
+         and nothing retries it. disablePortalAccess works the same way.
+       - enrollPatientInPortal (src/services/unifiedPortalEnrollment.ts),
+         used by PatientForm and BulkPortalMigration. It sets portal_enabled
+         only after inserting a patient_portal_users row. That insert also
+         sends given_name, family_name, dob and sex, which the table does
+         not have in these migrations, so on a server built from them it
+         fails and sets nothing (checklist item 2, step 9).
+       - portal_link_patient_record sets it for a record it creates for a
+         self-registered account, but nothing in src calls it yet.
+       The planned set_patient_portal_access command is meant to replace
+       these direct writes (checklist item 9).
   2. portal_enrollment_settings (setting_value is jsonb)
      - auto_enrollment_enabled and send_welcome_notification are set to
        'false'::jsonb, and inserted with that value if missing. Both are

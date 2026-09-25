@@ -1,14 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockSupabase, mockFrom, mockFunctionsInvoke } = vi.hoisted(() => {
-  const mockFrom = vi.fn();
-  const mockFunctionsInvoke = vi.fn().mockResolvedValue({ error: null });
-  const mockSupabase = {
-    from: mockFrom,
-    functions: { invoke: mockFunctionsInvoke },
-  };
-  return { mockSupabase, mockFrom, mockFunctionsInvoke };
-});
+const { mockSupabase, mockFrom, mockFunctionsInvoke, supabaseHolder } =
+  vi.hoisted(() => {
+    const mockFrom = vi.fn();
+    const mockFunctionsInvoke = vi.fn().mockResolvedValue({ error: null });
+    const mockSupabase = {
+      from: mockFrom,
+      functions: { invoke: mockFunctionsInvoke },
+    };
+    // Set client to null to test a device with no server set up.
+    const supabaseHolder: { client: typeof mockSupabase | null } = {
+      client: mockSupabase,
+    };
+    return { mockSupabase, mockFrom, mockFunctionsInvoke, supabaseHolder };
+  });
 
 const { mockPatientsGet, mockPatientsUpdate, mockPatientsWhere } = vi.hoisted(
   () => {
@@ -29,7 +34,11 @@ const { mockPatientsGet, mockPatientsUpdate, mockPatientsWhere } = vi.hoisted(
   },
 );
 
-vi.mock("@/lib/supabase", () => ({ supabase: mockSupabase }));
+vi.mock("@/lib/supabase", () => ({
+  get supabase() {
+    return supabaseHolder.client;
+  },
+}));
 vi.mock("@/db", () => ({
   db: {
     patients: {
@@ -54,6 +63,7 @@ vi.mock("@/lib/logger", () => ({
 import {
   enablePortalAccess,
   disablePortalAccess,
+  bulkEnablePortalAccess,
   sendPortalInvitation,
   getPortalStatus,
   linkAuthUserToPatient,
@@ -145,6 +155,181 @@ describe("enablePortalAccess", () => {
     const result = await enablePortalAccess("p1", { termsAccepted: true });
 
     expect(result.success).toBe(false);
+  });
+});
+
+/**
+ * The server side of a portal access change: update(...).eq(...).select(...)
+ * on patients resolves to each of `results` in turn.
+ */
+function patientsUpdateChain(
+  ...results: Array<{ data: unknown; error: unknown }>
+) {
+  const select = vi.fn();
+  for (const r of results) select.mockResolvedValueOnce(r);
+  const chain = { update: vi.fn(), eq: vi.fn(), select };
+  chain.update.mockReturnValue(chain);
+  chain.eq.mockReturnValue(chain);
+  return chain;
+}
+
+function routeTables(patients: ReturnType<typeof patientsUpdateChain>) {
+  const portalUsers = makeChain(null, null);
+  mockFrom.mockImplementation((table: string) =>
+    table === "patients" ? patients : portalUsers,
+  );
+}
+
+describe("portal access on the server", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    supabaseHolder.client = mockSupabase;
+    mockPatientsGet.mockResolvedValue(makePatient({ _serverVersion: 3 }));
+  });
+
+  it("turns portal_enabled on on the server and says so", async () => {
+    const patients = patientsUpdateChain({
+      data: [{ id: "p1", portal_enabled: true, row_version: 4 }],
+      error: null,
+    });
+    routeTables(patients);
+
+    const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(result).toMatchObject({ success: true, server: "updated" });
+    expect(patients.update).toHaveBeenCalledWith({ portal_enabled: true });
+    expect(patients.eq).toHaveBeenCalledWith("id", "p1");
+    // The device's own copy is saved first.
+    expect(mockPatientsUpdate).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ portalEnabled: 1 }),
+    );
+  });
+
+  it("keeps the next server version so the next upload is not a conflict", async () => {
+    routeTables(
+      patientsUpdateChain({
+        data: [{ id: "p1", portal_enabled: true, row_version: 4 }],
+        error: null,
+      }),
+    );
+
+    await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(mockPatientsUpdate).toHaveBeenCalledWith("p1", {
+      _serverVersion: 4,
+    });
+  });
+
+  it("does not keep a server version that skipped someone else's edit", async () => {
+    routeTables(
+      patientsUpdateChain({
+        data: [{ id: "p1", portal_enabled: true, row_version: 6 }],
+        error: null,
+      }),
+    );
+
+    await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(mockPatientsUpdate).not.toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ _serverVersion: expect.anything() }),
+    );
+  });
+
+  it("says only this device changed when no server row was updated", async () => {
+    // The record has not been uploaded yet: the update matches no row.
+    routeTables(patientsUpdateChain({ data: [], error: null }));
+
+    const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(result).toMatchObject({ success: true, server: "not-updated" });
+    expect(mockPatientsUpdate).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ portalEnabled: 1 }),
+    );
+  });
+
+  it("says only this device changed when the server refuses", async () => {
+    routeTables(
+      patientsUpdateChain({ data: null, error: { code: "42501" } }),
+    );
+
+    const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(result).toMatchObject({ success: true, server: "not-updated" });
+  });
+
+  it("retries without row_version on a server that lacks it", async () => {
+    const patients = patientsUpdateChain(
+      { data: null, error: { code: "42703" } },
+      { data: [{ id: "p1", portal_enabled: true }], error: null },
+    );
+    routeTables(patients);
+
+    const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+    expect(result.server).toBe("updated");
+    expect(patients.select).toHaveBeenNthCalledWith(
+      1,
+      "id, portal_enabled, row_version",
+    );
+    expect(patients.select).toHaveBeenNthCalledWith(2, "id, portal_enabled");
+  });
+
+  it("does not contact the server while offline", async () => {
+    const onLine = vi
+      .spyOn(window.navigator, "onLine", "get")
+      .mockReturnValue(false);
+    const patients = patientsUpdateChain();
+    routeTables(patients);
+
+    try {
+      const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+      expect(result).toMatchObject({ success: true, server: "offline" });
+      expect(patients.update).not.toHaveBeenCalled();
+    } finally {
+      onLine.mockRestore();
+    }
+  });
+
+  it("says no server is set up when there is none", async () => {
+    supabaseHolder.client = null;
+
+    try {
+      const result = await enablePortalAccess("p1", { termsAccepted: true });
+
+      expect(result).toMatchObject({ success: true, server: "no-server" });
+      expect(mockFrom).not.toHaveBeenCalled();
+    } finally {
+      supabaseHolder.client = mockSupabase;
+    }
+  });
+
+  it("turns portal_enabled off on the server too", async () => {
+    const patients = patientsUpdateChain({
+      data: [{ id: "p1", portal_enabled: false, row_version: 4 }],
+      error: null,
+    });
+    routeTables(patients);
+
+    const result = await disablePortalAccess("p1");
+
+    expect(result).toMatchObject({ success: true, server: "updated" });
+    expect(patients.update).toHaveBeenCalledWith({ portal_enabled: false });
+  });
+
+  it("counts the bulk successes the server took", async () => {
+    const patients = patientsUpdateChain(
+      { data: [{ id: "p1", portal_enabled: true }], error: null },
+      { data: [], error: null },
+    );
+    routeTables(patients);
+
+    const result = await bulkEnablePortalAccess(["p1", "p2"]);
+
+    expect(result).toMatchObject({ success: 2, failed: 0, serverUpdated: 1 });
   });
 });
 

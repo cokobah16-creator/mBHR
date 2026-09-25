@@ -16,14 +16,38 @@ with the account on the device. Nothing is written to
 
 Not every portal account comes from sign-up. Staff can turn on portal
 access for one patient after ticking that the patient agreed
-(`src/components/PortalStatusCard.tsx`), and administrators can turn it on
+(`src/components/PortalStatusCard.tsx`), and administrators have two pages
 for many patients at once (`src/pages/admin/PortalMigration.tsx`,
-`src/pages/admin/BulkPortalMigration.tsx`). Neither stores a record of the
-patient's agreement. Such a patient can then log in on a device with their
-phone or email and date of birth, which creates an account there without
-the three boxes (`loginPatientPortal` in
+`src/pages/admin/BulkPortalMigration.tsx`). None of these stores a record
+of the patient's agreement. Such a patient can then log in on a device with
+their phone or email and date of birth, which creates an account there
+without the three boxes (`loginPatientPortal` in
 `src/services/patientPortalAuth.ts`). No terms or privacy version is
 recorded for these accounts.
+
+Where access is saved matters. The online portal checks
+`patients.portal_enabled` on the server. The trigger that set it for every
+patient with a phone or email is dropped
+(`supabase/migrations/20260926000200_consent_defaults_off.sql`), so it
+stays off for a new patient until something turns it on:
+
+- The record page switch and PortalMigration (`enablePortalAccess` and
+  `disablePortalAccess` in `src/services/portalEnrollment.ts`) save the
+  change on the device. When the device is online they also send it to the
+  server. The server takes it only if the patient's record has been
+  uploaded and the online sign-in holds the `register` permission.
+  Otherwise only that device changes, nothing retries it, and the message
+  says so.
+- The registration form's portal box and BulkPortalMigration use
+  `enrollPatientInPortal` (`src/services/unifiedPortalEnrollment.ts`). It
+  sets `portal_enabled` only after creating a `patient_portal_users` row.
+  That insert sends columns the table does not have in
+  `supabase/migrations`, so on a server built from them it fails and turns
+  nothing on (checklist item 2).
+- Other staff devices do not receive the change. They apply the server's
+  value only once `portal_enabled_changed_at` is set. The app cannot set
+  it; the planned `set_patient_portal_access` command will (checklist
+  item 9).
 
 Portal accounts are for adults. Sign-up asks for a date of birth, online
 and offline, and refuses anyone under 18 (`isMinor` in
