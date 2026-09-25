@@ -34,6 +34,23 @@ export type {
   FHIRServiceRequest,
 };
 
+/**
+ * A stored date as an ISO string. Records downloaded by sync hold ISO
+ * strings, records made on this device hold Date objects; both are
+ * accepted. Undefined when missing or not a valid date: a clinical time is
+ * never replaced by the export time.
+ */
+export function toIso(value: unknown): string | undefined {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  }
+  return undefined;
+}
+
 const SYSTEM_IDENTIFIERS = {
   MBHR: "urn:oid:2.16.840.1.113883.3.9999.1",
   LOINC: "http://loinc.org",
@@ -154,11 +171,9 @@ export function adaptDexieVital(
   patientName?: string,
 ): FHIRObservation[] {
   const observations: FHIRObservation[] = [];
-  const effectiveDateTime =
-    vital.takenAt instanceof Date
-      ? vital.takenAt.toISOString()
-      : new Date().toISOString();
-  const lastUpdated = vital._syncedAt || effectiveDateTime;
+  const effectiveDateTime = toIso(vital.takenAt);
+  const lastUpdated =
+    vital._syncedAt || effectiveDateTime || new Date().toISOString();
 
   if (vital.systolic !== undefined && vital.diastolic !== undefined) {
     const bpObservation: FHIRObservation = {
@@ -316,11 +331,9 @@ export function adaptDexieDispense(
   dispense: Dispense,
   patientName?: string,
 ): FHIRMedicationRequest {
-  const dispensedAt =
-    dispense.dispensedAt instanceof Date
-      ? dispense.dispensedAt.toISOString()
-      : new Date().toISOString();
-  const lastUpdated = dispense._syncedAt || dispensedAt;
+  const dispensedAt = toIso(dispense.dispensedAt);
+  const lastUpdated =
+    dispense._syncedAt || dispensedAt || new Date().toISOString();
 
   return {
     resourceType: "MedicationRequest",
@@ -370,11 +383,9 @@ export function adaptDexieVisit(
   visit: Visit,
   patientName?: string,
 ): FHIREncounter {
-  const startedAt =
-    visit.startedAt instanceof Date
-      ? visit.startedAt.toISOString()
-      : new Date().toISOString();
-  const lastUpdated = visit._syncedAt || startedAt;
+  const startedAt = toIso(visit.startedAt);
+  const lastUpdated =
+    visit._syncedAt || startedAt || new Date().toISOString();
 
   let status: FHIREncounter["status"] = "unknown";
   if (visit.status === "open") {
@@ -426,11 +437,9 @@ export function adaptDexieConsultation(
   consultation: Consultation,
   patientName?: string,
 ): FHIRDiagnosticReport {
-  const createdAt =
-    consultation.createdAt instanceof Date
-      ? consultation.createdAt.toISOString()
-      : new Date().toISOString();
-  const lastUpdated = consultation._syncedAt || createdAt;
+  const createdAt = toIso(consultation.createdAt);
+  const lastUpdated =
+    consultation._syncedAt || createdAt || new Date().toISOString();
 
   const soapContent = [
     consultation.soapSubjective && `Subjective: ${consultation.soapSubjective}`,
@@ -503,12 +512,11 @@ export function adaptDexieAllergy(
   allergy: PatientAllergy,
   patientName?: string,
 ): FHIRAllergyIntolerance {
-  const createdAt =
-    allergy.createdAt instanceof Date
-      ? allergy.createdAt.toISOString()
-      : new Date().toISOString();
   const lastUpdated =
-    allergy._syncedAt || allergy.updatedAt?.toISOString?.() || createdAt;
+    allergy._syncedAt ||
+    toIso(allergy.updatedAt) ||
+    toIso(allergy.createdAt) ||
+    new Date().toISOString();
 
   const categoryMap: Record<
     string,
@@ -574,10 +582,7 @@ export function adaptDexieAllergy(
       reference: `Patient/${allergy.patientId}`,
       display: patientName,
     },
-    onsetDateTime:
-      allergy.onsetDate instanceof Date
-        ? allergy.onsetDate.toISOString()
-        : undefined,
+    onsetDateTime: toIso(allergy.onsetDate),
     reaction: allergy.reaction
       ? [
           {

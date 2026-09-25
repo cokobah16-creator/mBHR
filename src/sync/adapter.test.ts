@@ -290,6 +290,37 @@ describe("Sync Adapter - Operations Queue Integration", () => {
         value: "2024-01-02T00:00:00.000Z",
       });
     });
+
+    it("stores a downloaded clinical time as a Date", async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      const vitals = db.vitals as unknown as { get: MockFn; put: MockFn };
+      vitals.get.mockResolvedValue(undefined);
+      vitals.put.mockClear();
+      mockFrom.mockImplementation((table: string) =>
+        selectChain(
+          table === "vitals"
+            ? [
+                {
+                  id: "v1",
+                  patient_id: "p1",
+                  taken_at: "2026-03-14T09:30:00+00:00",
+                  updated_at: "2026-03-14T09:31:00+00:00",
+                },
+              ]
+            : [],
+        ),
+      );
+
+      const { pullChanges } = await import("./adapter");
+      await pullChanges();
+
+      expect(vitals.put).toHaveBeenCalledTimes(1);
+      const stored = vitals.put.mock.calls[0][0] as { takenAt: unknown };
+      expect(stored.takenAt).toBeInstanceOf(Date);
+      expect((stored.takenAt as Date).toISOString()).toBe("2026-03-14T09:30:00.000Z");
+    });
   });
 
   // ── Server-authoritative foundation ───────────────────────────────────────

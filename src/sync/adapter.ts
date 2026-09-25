@@ -339,12 +339,32 @@ const QUEUE_KEEP_WHEN_EMPTY = [
   "assignedName",
 ];
 
+/**
+ * Clinical times the server sends as ISO text. They are stored as Date
+ * objects, like records made on this device, so exports and date queries
+ * read the recorded time.
+ */
+const PULLED_DATE_FIELDS: Partial<Record<Tbl, string[]>> = {
+  visits: ["startedAt"],
+  vitals: ["takenAt"],
+  consultations: ["createdAt"],
+  dispenses: ["dispensedAt"],
+  patient_allergies: ["onsetDate", "createdAt"],
+};
+
 /** Server row -> this device's shape, including server-only rules. */
 function transformPulled(t: Tbl, raw: Row, mapped: Row): Row {
   if (t === "app_users") {
     // Identity, role and active status only: the device-only PIN fields are
     // never part of a staff download (see src/sync/staffRoster.ts).
     return { ...staffFromServerRow(raw) };
+  }
+  for (const field of PULLED_DATE_FIELDS[t] ?? []) {
+    const value = mapped[field];
+    if (typeof value !== "string" || value === "") continue;
+    const date = new Date(value);
+    // An unreadable value is left as it came rather than invented.
+    if (!Number.isNaN(date.getTime())) mapped[field] = date;
   }
   if (t === "patients") {
     // Portal access counts as a server decision only once the server has
