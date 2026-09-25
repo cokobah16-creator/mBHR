@@ -39,21 +39,29 @@ const PAGE_SIZE = 500;
 async function loadConsentedPatientIds(
   supabase: SupabaseLike,
 ): Promise<Set<string>> {
+  // Rows arrive newest first per patient; the first one seen for a patient
+  // is their current decision (a later "no" overrides an earlier "yes").
+  const decided = new Set<string>();
   const ids = new Set<string>();
   let from = 0;
   for (;;) {
     const { data, error } = await supabase
       .from("patient_consent_records")
-      .select("patient_id")
+      .select("patient_id, consent_given")
       .eq("consent_type", "data_sharing")
-      .eq("consented", true)
       .is("revoked_at", null)
       .order("patient_id", { ascending: true })
+      .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`consent query: ${error.message}`);
     if (!data || data.length === 0) break;
-    for (const r of data as { patient_id: string | null }[]) {
-      if (r.patient_id) ids.add(r.patient_id);
+    for (const r of data as {
+      patient_id: string | null;
+      consent_given: boolean | null;
+    }[]) {
+      if (!r.patient_id || decided.has(r.patient_id)) continue;
+      decided.add(r.patient_id);
+      if (r.consent_given === true) ids.add(r.patient_id);
     }
     if (data.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
