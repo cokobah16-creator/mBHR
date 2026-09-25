@@ -147,7 +147,8 @@ export async function authenticateStaff(
 
   const record = row as Record<string, unknown>;
   const role = typeof record.role === "string" ? record.role : "";
-  if (!role || isDeactivated(record)) {
+  // A guest row is not staff: a disabled account is demoted to guest.
+  if (!role || role === "guest" || isDeactivated(record)) {
     return NOT_PERMITTED;
   }
 

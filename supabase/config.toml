@@ -78,5 +78,13 @@ enable_signup = false
 [edge_runtime]
 enabled = true
 
+# Staff account setup for administrators (supabase/functions/staff-admin).
+# The gateway must check the caller's JWT: never deploy it with
+# --no-verify-jwt. The function then checks the caller's staff record itself.
+# See docs/deployment/STAFF_ADMIN_FUNCTION.md.
+[functions.staff-admin]
+enabled = true
+verify_jwt = true
+
 [analytics]
 enabled = false
