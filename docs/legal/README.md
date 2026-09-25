@@ -52,20 +52,50 @@ stays off for a new patient until something turns it on:
   it; the planned `set_patient_portal_access` command will (checklist
   item 9).
 
+Portal invitations go by email only (`sendPortalInvitation` in
+`src/services/portalEnrollment.ts`), and the server sends them only for
+staff signed in online. A patient with no email gets no message:
+`send-otp-sms` sends only one-time codes, so SMS invitations are not
+available yet, and the record page gives staff the registration link to
+share instead. The registration form's portal box and BulkPortalMigration
+send no invitation at all.
+
 Portal accounts are for adults. Sign-up asks for a date of birth, online
 and offline, and refuses anyone under 18 (`isMinor` in
 `src/utils/patient.ts`). Sign-up and login never link an account to a
 clinic record whose date of birth shows the person is under 18: the online
 sign-up and email lookup (`src/hooks/useAuth.ts`,
 `src/services/patientService.ts`) and the offline registration and
-date-of-birth login (`src/services/patientPortalAuth.ts`) all refuse. So
-does the server: `portal_link_patient_record`, which any signed-in account
-can call, refuses a child's record and never creates one for an under-18
-date of birth (`20260926000210_portal_link_adults_only.sql`). A record
-with no date of birth still links, and accounts already linked to a
-child's record are not changed. Staff can still turn on portal access for a
-child's record, and there is no guardian record or guardian consent yet
-(checklist item 17).
+date-of-birth login (`src/services/patientPortalAuth.ts`) all refuse to
+link it. When the only record matching an online sign-up is a child's, the sign-up
+leaves it unlinked and makes the adult's own record, as when nothing
+matches. The server refuses too: `portal_link_patient_record`, which any
+signed-in account can call, refuses a child's record and never creates one
+for an under-18 date of birth (`20260926000210_portal_link_adults_only.sql`).
+A record with no date of birth still links, and accounts already linked to
+a child's record are not changed. The refusal messages send a parent or
+guardian to clinic staff about access to a child's record.
+
+Staff cannot turn on portal access for a child's record in the app:
+`enablePortalAccess`, `sendPortalInvitation` and `enrollPatientInPortal`
+refuse a patient under 18, the registration form's portal box is off for a
+child, and PortalMigration and BulkPortalMigration leave children out.
+Turning access off still works. This is checked in the app only: the server
+lets a sign-in with the `register` permission set `portal_enabled` on any
+record, and a child's record that already has access on (for example from
+the dropped trigger) keeps it until staff turn it off. There is no guardian
+record or guardian consent yet (checklist item 17).
+
+Patients stop text-message reminders by telling clinic staff, as the
+privacy notice says. Staff turn appointment or medication reminders off in
+the patient's preferences (`src/components/PreferenceManager.tsx`), and the
+senders skip a reminder that is off. Every screen and helper that reads the
+setting uses one rule (`isReminderOptedOut` in
+`src/services/reminderEligibility.ts`): 0 or false is off; 1, true, an
+empty setting or no record is not an opt-out. This device writes 1 or 0; a
+setting pulled from the server can hold true or false. The portal's own
+"Text message reminders" switch (`src/features/patient-portal/ManageAccount.tsx`)
+is saved, but no sender reads it yet.
 
 Both were written to describe what the code actually does. **Neither has
 been reviewed by a lawyer.** Before relying on them, have a qualified
