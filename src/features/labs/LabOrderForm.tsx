@@ -13,11 +13,13 @@ import { StatusBadge } from '@/components/ui/StatusBadge'
 import { formatNigerianDateTime } from '@/utils/dateFormat'
 import {
   createLabOrder,
+  getLabResultsForOrders,
   getPatientLabOrders,
   resolveLabActorId,
   type LabOrder,
+  type LabResult,
 } from '@/services/labs'
-import { describeLabError, ORDER_STATUS_META, PRIORITY_LABEL } from './labWorklist'
+import { describeLabError, orderOutcomeMeta, PRIORITY_LABEL } from './labWorklist'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 
 const labOrderSchema = z.object({
@@ -82,6 +84,10 @@ export function LabOrderForm({ patientId, visitId, orderedBy, onSuccess, onCance
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
   const [existing, setExisting] = useState<LabOrder[]>([])
+  // Results for the listed orders, so a recorded result (and a critical one
+  // above all) shows here, not only on the Labs page. null: not loaded.
+  const [results, setResults] = useState<LabResult[] | null>(null)
+  const [resultsFailed, setResultsFailed] = useState(false)
   const [ordersState, setOrdersState] = useState<OrdersState>('idle')
   const requestRef = useRef(0)
 
@@ -117,8 +123,23 @@ export function LabOrderForm({ patientId, visitId, orderedBy, onSuccess, onCance
     try {
       const all = await getPatientLabOrders(patientId)
       if (request !== requestRef.current) return
-      setExisting(visitId ? all.filter((o) => o.visitId === visitId) : all.slice(0, 5))
+      const listed = visitId ? all.filter((o) => o.visitId === visitId) : all.slice(0, 5)
+      setExisting(listed)
       setOrdersState('ready')
+      setResults(null)
+      setResultsFailed(false)
+      try {
+        const ids = listed.flatMap((o) => (o.id ? [o.id] : []))
+        const found = await getLabResultsForOrders(ids)
+        if (request === requestRef.current) setResults(found)
+      } catch (error) {
+        if (request !== requestRef.current) return
+        console.error(
+          '[labs] Could not load results for these lab orders:',
+          error instanceof Error ? error.name : error,
+        )
+        setResultsFailed(true)
+      }
     } catch (error) {
       if (request !== requestRef.current) return
       console.error(
@@ -399,7 +420,12 @@ export function LabOrderForm({ patientId, visitId, orderedBy, onSuccess, onCance
                 )}
                 <ul className="mt-1 divide-y divide-line">
                   {existing.map((o) => {
-                    const meta = ORDER_STATUS_META[o.status] ?? { label: o.status, tone: 'neutral' as const }
+                    const meta =
+                      results === null && o.status === 'completed'
+                        ? resultsFailed
+                          ? { label: 'Result not loaded: check the Labs page', tone: 'warning' as const }
+                          : { label: 'Completed · loading result', tone: 'neutral' as const }
+                        : orderOutcomeMeta(o, (results ?? []).filter((r) => r.orderId === o.id))
                     return (
                       <li key={o.id} className="flex items-center justify-between gap-3 py-2">
                         <span className="min-w-0">

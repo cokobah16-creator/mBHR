@@ -378,6 +378,37 @@ export function formatResultValue(
   return unit ? `${result.resultValue} ${unit}` : result.resultValue;
 }
 
+type OutcomeResult = Pick<LabResult, "resultValue" | "resultUnit" | "reviewedAt"> & {
+  interpretation?: unknown;
+  supersededBy?: string;
+};
+
+/**
+ * Badge for an order in a patient's order list. Once a result is recorded
+ * it shows the most severe current result (interpretation and value) and
+ * whether it still awaits review, so a critical result never reads as a
+ * plain "Completed". Without results it shows the order's status.
+ */
+export function orderOutcomeMeta(
+  order: Pick<LabOrder, "status">,
+  results: readonly OutcomeResult[],
+): { label: string; tone: Tone } {
+  const current = results.filter((r) => !r.supersededBy);
+  const shown = current.length > 0 ? current : results;
+  const worst = worstInterpretation(shown);
+  const worstResult =
+    worst === null ? undefined : shown.find((r) => severityOf(r.interpretation) === worst);
+  if (!worstResult) {
+    return ORDER_STATUS_META[order.status] ?? { label: order.status, tone: "neutral" };
+  }
+  const meta = interpretationMeta(worstResult.interpretation);
+  const pending = shown.some((r) => !r.reviewedAt) ? " · not reviewed" : "";
+  return {
+    label: `${meta.label}: ${formatResultValue(worstResult)}${pending}`,
+    tone: meta.tone,
+  };
+}
+
 const REJECTION_TEXT: Record<string, string> = {
   not_reviewed: "The result has not been reviewed yet. Review it first.",
   superseded: "A newer result replaces this one. Refresh the list.",
