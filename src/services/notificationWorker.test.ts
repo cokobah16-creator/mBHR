@@ -136,6 +136,51 @@ vi.mock("@/lib/cloudSession", () => ({
 // Every update the worker tries on a server table.
 const mockTableUpdates: { table: string; values: unknown }[] = [];
 
+/** Chain the worker builds for due server reminders. */
+interface MockReminderQuery {
+  eq: () => MockReminderQuery;
+  lte: () => MockReminderQuery;
+  or: (expr: string) => MockReminderQuery;
+  order: () => MockReminderQuery;
+  limit: (n: number) => Promise<{ data: unknown[]; error: null }>;
+}
+
+/**
+ * The worker's due-reminder query: pending rows, oldest first (scheduled_at,
+ * then id), after the keyset cursor it passes to `.or()`, `limit` at a time.
+ */
+function mockReminderQuery(): MockReminderQuery {
+  let after: { at: string; id: string } | null = null;
+  const key = (r: { scheduled_at?: string; id?: string }): [string, string] => [
+    String(r.scheduled_at ?? ""),
+    String(r.id ?? ""),
+  ];
+  const compare = (a: [string, string], b: [string, string]) =>
+    a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+  const builder: MockReminderQuery = {
+    eq: vi.fn(() => builder),
+    lte: vi.fn(() => builder),
+    or: vi.fn((expr: string) => {
+      const m =
+        /^scheduled_at\.gt\."([^"]*)",and\(scheduled_at\.eq\."([^"]*)",id\.gt\."([^"]*)"\)$/.exec(
+          expr,
+        );
+      if (m && m[1] === m[2]) after = { at: m[1], id: m[3] };
+      return builder;
+    }),
+    order: vi.fn(() => builder),
+    limit: vi.fn((n: number) => {
+      const rows = mockMedicationReminders
+        .filter((r) => r.status === "pending")
+        .filter((r) => !after || compare(key(r), [after.at, after.id]) > 0)
+        .sort((a, b) => compare(key(a), key(b)))
+        .slice(0, n);
+      return Promise.resolve({ data: rows, error: null });
+    }),
+  };
+  return builder;
+}
+
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     auth: {
@@ -144,15 +189,7 @@ vi.mock("@/lib/supabase", () => ({
       ),
     },
     from: vi.fn((table: string) => ({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          lte: vi.fn(() => ({
-            limit: vi.fn(() =>
-              Promise.resolve({ data: mockMedicationReminders, error: null }),
-            ),
-          })),
-        })),
-      })),
+      select: vi.fn(() => mockReminderQuery()),
       update: vi.fn((values: unknown) => {
         mockTableUpdates.push({ table, values });
         return { eq: vi.fn(() => Promise.resolve({ error: null })) };
@@ -526,6 +563,42 @@ describe("notificationWorker", () => {
       // pending on the server and is checked again next run.
       expect(mockTableUpdates).toEqual([]);
       expect(result.reminders).toBe(0);
+      // Counted as not sent, so the run summary does not say "Nothing was due".
+      expect(result.failed).toBe(1);
+    });
+
+    it("pages past opted-out server reminders to send another patient's due reminder", async () => {
+      // More opted-out rows than one request returns, all due before the
+      // other patient's reminder. None is ever written, so they stay first.
+      const base = Date.now() - 24 * 60 * 60_000;
+      for (let i = 0; i < 60; i++) {
+        mockMedicationReminders.push({
+          id: `rem-out-${String(i).padStart(2, "0")}`,
+          patient_id: "patient-out",
+          message: "Take Amoxicillin 500 mg now.",
+          status: "pending",
+          scheduled_at: new Date(base + i * 60_000).toISOString(),
+        });
+      }
+      mockMedicationReminders.push({
+        id: "rem-in",
+        patient_id: "patient-in",
+        message: "Take Metformin 500 mg now.",
+        status: "pending",
+        scheduled_at: new Date(base + 120 * 60_000).toISOString(),
+      });
+      mockPreferences.set("patient-out", { patientId: "patient-out", medicationReminders: 0 });
+      mockPreferences.set("patient-in", { patientId: "patient-in", medicationReminders: 1 });
+
+      const { processNow } = await import("./notificationWorker");
+      const result = await processNow();
+
+      expect(fetchMock()).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock().mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body)).reminderId).toBe("rem-in");
+      expect(result.reminders).toBe(1);
+      expect(result.failed).toBe(60);
+      expect(mockTableUpdates.filter((u) => u.table === "medication_reminders")).toEqual([]);
     });
 
     it("does not send now for a patient who opted out, and writes nothing", async () => {
