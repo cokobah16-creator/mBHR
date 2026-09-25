@@ -28,6 +28,7 @@ import { PharmacySkeleton } from "@/components/ui/Skeleton";
 import { DocumentTextIcon } from "@heroicons/react/24/outline";
 import { ExclamationTriangleIcon, InformationCircleIcon } from "@heroicons/react/20/solid";
 import { isAllergyActive } from "@/utils/allergyActive";
+import { resolveDispensePatient } from "./dispensePatient";
 
 type Line = Prescription["lines"][number];
 
@@ -169,16 +170,19 @@ export default function Dispense() {
     }
     // Dispensing stays blocked until this patient's allergies are known;
     // a failed lookup must never read as "no allergies".
+    // The prescription may name a record merged into another on this
+    // device: check the allergies of every record in the merge chain.
     setAllergyStatus("loading");
     let stale = false;
-    db.patientAllergies
-      .where("patientId")
-      .equals(selectedPatientId)
-      .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
-      .toArray()
-      .then((as) => {
+    resolveDispensePatient({ get: (id) => db.patients.get(id) }, selectedPatientId)
+      .then(async (who) => {
+        const as = await db.patientAllergies
+          .where("patientId")
+          .anyOf(who.chain)
+          .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
+          .toArray();
         if (stale) return;
-        setAllergens(as.map((a) => a.allergen));
+        setAllergens([...new Set(as.map((a) => a.allergen))]);
         setAllergyStatus("ready");
       })
       .catch(() => {
