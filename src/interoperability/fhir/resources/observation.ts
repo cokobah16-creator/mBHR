@@ -29,7 +29,7 @@ import {
   scopeFilter,
   type Filters,
 } from "./shared";
-import { LAB_OBSERVATION_PREFIX, labObservationSource } from "./labObservation";
+import { LAB_OBSERVATION_PREFIX, labObservationSource, validateLabObservation } from "./labObservation";
 
 export const observationDefinition: ResourceDefinition = {
   type: "Observation",
@@ -255,4 +255,4 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   return { page: { resources, next }, owners, ...notes };
 }
 
-export const observationModule: ResourceModule = { definition: observationDefinition, read, search };
+export const observationModule: ResourceModule = { definition: observationDefinition, read, search, validate: validateLabObservation };

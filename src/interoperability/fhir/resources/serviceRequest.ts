@@ -60,7 +60,7 @@ export const definition: ResourceDefinition = {
     {
       name: "authored",
       type: "date",
-      documentation: "When ordered (lab_orders.ordered_at). A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
+      documentation: "When the test was ordered. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
       maxRepeats: 2,
     },
     {

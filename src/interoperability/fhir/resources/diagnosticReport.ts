@@ -81,7 +81,7 @@ export const definition: ResourceDefinition = {
       name: "date",
       type: "date",
       documentation:
-        "Specimen collection time (lab_orders.collected_at). Reports without a recorded collection time never match. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
+        "When the specimen was collected. Reports without a recorded collection time never match. A date without a time is a clinic day in Africa/Lagos. Up to two bounds.",
       maxRepeats: 2,
     },
   ],

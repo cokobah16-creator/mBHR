@@ -255,6 +255,10 @@ export function fakeSupabase(opts: FakeOptions) {
       const ids = (body.p_patient_ids as string[]) ?? [];
       return (opts.consentDirectives ?? []).filter((d) => ids.includes(String(d.patient_id)));
     },
+    // public.fhir_patient_lab_results: portal patients only (staff are
+    // refused). Tests that need lab rows pass their own handler in opts.rpcs.
+    fhir_patient_lab_results: (_body, user) =>
+      kindOf(user) === "patient" ? [] : new Response(JSON.stringify({ code: "42501" }), { status: 403 }),
     fhir_terminology_lookup: (body) => {
       const codes: string[] = (body.p_codes as string[]) ?? [];
       return (opts.terminology ?? []).filter((t) => codes.includes(t.local_code));

@@ -386,7 +386,7 @@ describe("metadata and flags", () => {
     const body = await json(res);
     expect(body.implementation.description).toMatch(/patients reading their own records/);
     // Unauthenticated: no table, schema or database function names.
-    expect(JSON.stringify(body)).not.toMatch(/public\.|interop\.|fhir_[a-z_]+\(|app_users|patient_documents|pharmacy_items/);
+    expect(JSON.stringify(body)).not.toMatch(/public\.|interop\.|fhir_[a-z_]+|app_users|patient_documents|pharmacy_items|lab_orders|lab_results|[a-z]\.[a-z]+_at\b|\b[a-z]+_at\)/);
   });
 
   it("refuses to start with write, SMART or external access switched on", async () => {
