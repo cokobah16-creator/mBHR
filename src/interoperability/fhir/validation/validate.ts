@@ -2,10 +2,12 @@
 //
 // This is a guard against mapper bugs, not a full FHIR validator: it checks
 // the rules this module's resources can break (ids, required elements,
-// status codes, reference and date formats). Full conformance is checked in
-// CI with the HL7 FHIR Validator (see .github/workflows/interop-fhir.yml and
-// docs/interoperability/testing.md). A resource that fails here is never
-// sent: the request fails closed with a 500 OperationOutcome.
+// status codes, reference and date formats, no empty elements). Each
+// resource module adds its own type's rules (ResourceModule.validate). Full
+// conformance is checked in CI with the HL7 FHIR Validator (see
+// .github/workflows/interop-fhir.yml and docs/interoperability/testing.md).
+// A resource that fails here is never sent: a read fails closed with a 500
+// OperationOutcome, and a search leaves the record out and says so.
 
 import { FHIR_ID } from "../search/params";
 
@@ -14,11 +16,56 @@ export interface ValidationIssue {
   message: string;
 }
 
-const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
-const DATE = /^\d{4}(-\d{2}(-\d{2})?)?$/;
-const DATETIME = new RegExp(`(${DATE.source.slice(1, -1)})|(${INSTANT.source.slice(1, -1)})`);
-const REFERENCE = /^(Patient|Encounter|Observation|Condition|Practitioner|Organization|Location)\/[A-Za-z0-9\-.]{1,64}$/;
+export type AddIssue = (path: string, message: string) => void;
+
+export const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+export const DATE = /^\d{4}(-\d{2}(-\d{2})?)?$/;
+export const DATETIME = /^(\d{4}(-\d{2}(-\d{2})?)?|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2}))$/;
+
+/** Every type a published resource may reference. */
+export const REFERENCE_TYPES = [
+  "Patient",
+  "Encounter",
+  "Observation",
+  "Condition",
+  "AllergyIntolerance",
+  "Medication",
+  "MedicationRequest",
+  "MedicationDispense",
+  "ServiceRequest",
+  "DiagnosticReport",
+  "DocumentReference",
+  "Binary",
+  "Consent",
+  "Practitioner",
+  "PractitionerRole",
+  "Organization",
+  "Location",
+  "Provenance",
+  "AuditEvent",
+];
+const REFERENCE = new RegExp(`^(${REFERENCE_TYPES.join("|")})/[A-Za-z0-9\\-.]{1,64}$`);
 const URI = /^[a-z][a-z0-9+.-]*:\S+$/i;
+
+/** Elements typed dateTime (or date/instant, which dateTime also accepts) wherever they appear. */
+const DATETIME_KEYS = [
+  "effectiveDateTime",
+  "onsetDateTime",
+  "abatementDateTime",
+  "recordedDate",
+  "start",
+  "end",
+  "authoredOn",
+  "whenPrepared",
+  "whenHandedOver",
+  "occurrenceDateTime",
+  "occurredDateTime",
+  "dateTime",
+  "lastOccurrence",
+  "date",
+];
+/** Elements typed instant. */
+const INSTANT_KEYS = ["issued", "recorded", "lastUpdated", "timestamp", "creation"];
 
 const STATUS: Record<string, string[]> = {
   Encounter: ["planned", "arrived", "triaged", "in-progress", "onleave", "finished", "cancelled", "entered-in-error", "unknown"],
@@ -27,13 +74,13 @@ const STATUS: Record<string, string[]> = {
 
 type Json = Record<string, unknown>;
 
-function isObj(v: unknown): v is Json {
+export function isObj(v: unknown): v is Json {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-export function validateResource(resource: unknown): ValidationIssue[] {
+export function validateResource(resource: unknown, extra?: (resource: Json, add: AddIssue) => void): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const add = (path: string, message: string) => issues.push({ path, message });
+  const add: AddIssue = (path, message) => issues.push({ path, message });
   if (!isObj(resource)) return [{ path: "", message: "not a JSON object" }];
   const type = resource.resourceType;
   if (typeof type !== "string") return [{ path: "resourceType", message: "missing" }];
@@ -67,8 +114,13 @@ export function validateResource(resource: unknown): ValidationIssue[] {
     case "Observation":
       if (!STATUS.Observation.includes(resource.status as string)) add("status", "invalid");
       if (!isObj(resource.code)) add("code", "required");
-      if (resource.valueQuantity === undefined && resource.component === undefined) {
-        add("value[x]", "an Observation needs a value or components");
+      if (
+        resource.valueQuantity === undefined &&
+        resource.valueString === undefined &&
+        resource.component === undefined &&
+        resource.dataAbsentReason === undefined
+      ) {
+        add("value[x]", "an Observation needs a value, components or a dataAbsentReason");
       }
       break;
     case "Condition":
@@ -81,11 +133,12 @@ export function validateResource(resource: unknown): ValidationIssue[] {
     default:
       break;
   }
+  if (extra) extra(resource, add);
   return issues;
 }
 
 /** Generic element rules: references, codings, dates, no empty values. */
-function walk(value: unknown, path: string, add: (p: string, m: string) => void): void {
+function walk(value: unknown, path: string, add: AddIssue): void {
   if (Array.isArray(value)) {
     if (value.length === 0) add(path, "empty array (FHIR forbids empty elements)");
     value.forEach((v, i) => walk(v, `${path}[${i}]`, add));
@@ -105,12 +158,10 @@ function walk(value: unknown, path: string, add: (p: string, m: string) => void)
     // ContactPoint.system is a code (phone, email); elsewhere system is a URI.
     else if (k === "system" && !/telecom\[\d+\]$/.test(path) && (typeof v !== "string" || !URI.test(v))) {
       add(p, "system must be an absolute URI");
-    }
-    else if (
-      ["effectiveDateTime", "onsetDateTime", "abatementDateTime", "recordedDate", "start", "end"].includes(k) &&
-      (typeof v !== "string" || !DATETIME.test(v))
-    ) {
+    } else if (DATETIME_KEYS.includes(k) && typeof v !== "object" && (typeof v !== "string" || !DATETIME.test(v))) {
       add(p, "not a FHIR dateTime");
+    } else if (INSTANT_KEYS.includes(k) && (typeof v !== "string" || !INSTANT.test(v))) {
+      add(p, "not a FHIR instant");
     } else if (k === "value" && path.endsWith("Quantity") && (typeof v !== "number" || !Number.isFinite(v))) {
       add(p, "quantity value must be a number");
     } else walk(v, p, add);

@@ -25,14 +25,15 @@ describe("Patient mapper", () => {
   });
 
   it("maps name, telecom, gender, birth date and address", () => {
-    expect(p.name).toEqual([{ use: "official", family: "Okafor", given: ["Ada", "Chioma"], text: "Ada Chioma Okafor" }]);
+    // No name.use, telecom use or address use: mBHR does not record them (not guessed).
+    expect(p.name).toEqual([{ family: "Okafor", given: ["Ada", "Chioma"], text: "Ada Chioma Okafor" }]);
     expect(p.telecom).toEqual([
-      { system: "phone", value: "08000000001", use: "mobile" },
+      { system: "phone", value: "08000000001" },
       { system: "email", value: "ada@example.org" },
     ]);
     expect(p.gender).toBe("female");
     expect(p.birthDate).toBe("1984-03-02");
-    expect(p.address).toEqual([{ use: "home", text: "12 Example Street", district: "Oshimili South", state: "Delta" }]);
+    expect(p.address).toEqual([{ text: "12 Example Street", district: "Oshimili South", state: "Delta" }]);
   });
 
   it("does not assert active for an ordinary record, and marks a merged one replaced", () => {
@@ -55,7 +56,8 @@ describe("Patient mapper", () => {
   it("maps local sex values without guessing", () => {
     expect(mapGender("M")).toBe("male");
     expect(mapGender("f")).toBe("female");
-    expect(mapGender("other")).toBe("other");
+    // "other" is also the app's default when nothing was chosen: not an assertion.
+    expect(mapGender("other")).toBeUndefined();
     expect(mapGender("intersex?")).toBe("unknown");
     expect(mapGender(undefined)).toBeUndefined();
   });

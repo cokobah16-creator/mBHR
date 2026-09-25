@@ -1,28 +1,39 @@
 // The /fhir/R4 gateway, independent of where it is hosted: a function from a
 // Web Request to a Web Response. api/fhir.ts adapts it to a Vercel function.
 //
-//   request -> flags -> route -> authenticate -> load actor (+ rate limit)
-//           -> canAccessFHIRResource -> retrieve (as the caller, under RLS)
-//           -> map -> validate -> audit -> respond
+//   request -> flags -> routeRequest (the single routing guard)
+//           -> authenticate -> load actor (+ rate limits)
+//           -> parse the search, resolve the named patient (identity only)
+//           -> authorizeFhirRequest (the single access decision)
+//           -> resource module: read as the caller, under row-level security
+//           -> ownership check -> validate -> audit -> respond
 //
-// Nothing clinical is read before the access decision, nothing is returned
+// No clinical row is read before the access decision, nothing is returned
 // before the audit record is written, and every failure is an
-// OperationOutcome with a fixed, caller-safe message.
+// OperationOutcome with a fixed, caller-safe message. Every response carries
+// Cache-Control: private, no-store.
 
-import { readFhirConfig, FhirConfigError, type Env, type FhirConfig } from "../config/config";
+import { readFhirConfig, flagsHeader, FhirConfigError, type Env, type FhirConfig } from "../config/config";
 import { errors, FhirError, operationOutcome, toFhirError } from "../errors/operationOutcome";
-import { FHIR_JSON, type Resource } from "../types/fhir";
+import { FHIR_JSON, type OperationOutcomeIssue, type Resource } from "../types/fhir";
 import { capabilityStatement } from "../capability/capabilityStatement";
-import { isPublishedType, RESOURCE_DEFINITIONS } from "../mappers/registry";
-import { FHIR_ID, parseSearch, RESULT_PARAMS } from "../search/params";
+import { MODULES } from "../resources/registry";
+import { PATIENT_PARAMS, type AccessScope, type QueryCtx, type QueryResult } from "../resources/module";
+import { assertNarrowed } from "../resources/shared";
+import { cursorBinding, parseSearch, RESULT_PARAMS, type ParsedSearch } from "../search/params";
 import { searchsetBundle } from "../search/bundle";
 import { validateResource } from "../validation/validate";
-import { canAccessFHIRResource } from "../authorization/policy";
+import { authorizeFhirRequest, type Actor, type FhirAuthorizationDecision } from "../authorization/authorize";
 import { parsePurposeOfUse } from "../consent/policy";
+import { parseDirectives } from "../consent/evaluateConsent";
 import { hashIp, logLine, recordAccess, type AuditRecord } from "../audit/audit";
+import { resolvePatients, resolvePatientSearch, type PatientSearchContext } from "../patients/canonical";
 import { authenticate, bearerToken, loadActor } from "./auth";
+import { routeRequest, type Route } from "./guard";
 import { Postgrest, type FetchLike } from "./postgrest";
-import { READERS, SEARCHERS, type QueryResult } from "./queries";
+import { SupabaseStorage } from "./storage";
+
+export { fhirPath } from "./guard";
 
 export interface GatewayDeps {
   env: Env;
@@ -32,19 +43,22 @@ export interface GatewayDeps {
   log?: (line: string) => void;
 }
 
-const MAX_URL_LENGTH = 4096;
-const PREFIX = "/fhir/R4";
+/** Headers on every response. Patient data must never sit in a shared or browser cache. */
+function baseHeaders(requestId: string): Record<string, string> {
+  return {
+    "Cache-Control": "private, no-store",
+    Pragma: "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    "X-Request-Id": requestId,
+  };
+}
 
 function respond(status: number, body: unknown, headers: Record<string, string>, requestId: string): Response {
   return new Response(body === null ? null : JSON.stringify(body), {
     status,
     headers: {
       "Content-Type": `${FHIR_JSON}; charset=utf-8`,
-      // Patient data must never sit in a shared or browser cache.
-      "Cache-Control": "no-store",
-      Pragma: "no-cache",
-      "X-Content-Type-Options": "nosniff",
-      "X-Request-Id": requestId,
+      ...baseHeaders(requestId),
       ...headers,
     },
   });
@@ -54,21 +68,51 @@ function errorResponse(e: FhirError, requestId: string): Response {
   return respond(e.status, operationOutcome(e.code, e.message), e.headers, requestId);
 }
 
-/** The FHIR path segments after /fhir/R4, from the original or rewritten URL. */
-export function fhirPath(url: URL): string[] {
-  const rewritten = url.searchParams.get("__fhir_path");
-  let path: string;
-  if (rewritten !== null) path = rewritten;
-  else if (url.pathname === PREFIX || url.pathname.startsWith(`${PREFIX}/`)) path = url.pathname.slice(PREFIX.length);
-  else path = "";
-  return path.split("/").filter(Boolean);
+/** Audit denial reason for a failure after the caller is known. */
+function failureReason(e: FhirError): string {
+  switch (e.status) {
+    case 400:
+    case 406:
+    case 414:
+      return "invalid_request";
+    case 401:
+      return "unauthenticated";
+    case 403:
+      return "forbidden";
+    case 404:
+      return "not_found";
+    case 429:
+      return "rate_limited";
+    case 500:
+      return "server_error";
+    default:
+      return "unavailable";
+  }
 }
 
-/** The client's query, minus the rewrite's own parameter. */
-function clientQuery(url: URL): URLSearchParams {
-  const q = new URLSearchParams(url.search);
-  q.delete("__fhir_path");
-  return q;
+/** A short digest of the resource as served: meta.versionId and the ETag. */
+async function contentVersion(resource: Resource): Promise<string> {
+  const { meta, ...rest } = resource;
+  const { versionId: _ignored, ...metaRest } = meta ?? {};
+  const text = JSON.stringify({ ...rest, meta: metaRest });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)]
+    .slice(0, 12)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function etagMatches(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  return header
+    .split(",")
+    .map((t) => t.trim())
+    .some((t) => t === "*" || t === etag || t === etag.slice(2));
+}
+
+/** The caller's scope, as a stable string for cursor binding. */
+function scopeKey(actor: Actor): string {
+  return [actor.kind, actor.role ?? "", [...actor.patientIds].sort().join(",")].join("|");
 }
 
 export async function handleFhirRequest(request: Request, deps: GatewayDeps): Promise<Response> {
@@ -91,41 +135,29 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
   }
 
   let resourceTypeForLog: string | undefined;
+  // Set once the caller is known: failures from then on are audited too.
+  let auditFailure: ((e: FhirError) => Promise<void>) | null = null;
   try {
-    if (request.url.length > MAX_URL_LENGTH) throw new FhirError(414, "too-costly", "The request URL is too long.");
-    if (request.method !== "GET") throw errors.methodNotAllowed();
-    const len = request.headers.get("content-length");
-    if ((len && len !== "0") || request.headers.get("transfer-encoding")) {
-      throw errors.badRequest("A read or search request has no body.");
-    }
-
-    const url = new URL(request.url);
-    const segments = fhirPath(url);
-    const query = clientQuery(url);
+    const route: Route = routeRequest(request, config);
     const baseUrl = config.baseUrl as string;
 
-    if (segments.length === 1 && segments[0] === "metadata") {
-      return respond(200, capabilityStatement(baseUrl), { "Cache-Control": "no-cache" }, requestId);
+    if (route.kind === "metadata") {
+      return respond(
+        200,
+        capabilityStatement(baseUrl, undefined, {
+          patientAccessEnabled: config.patientAccessEnabled,
+          readEnabled: config.readEnabled,
+        }),
+        { "X-MBHR-FHIR-Flags": flagsHeader(config) },
+        requestId,
+      );
     }
-    if (segments.length === 0) throw errors.notSupported("Whole-system search is not supported.");
-    if (segments.length > 2) throw errors.notSupported("Only read and search interactions are supported.");
-    const [type, id] = segments;
-    if (!isPublishedType(type)) {
-      throw new FhirError(404, "not-supported", "This resource type is not available.");
-    }
+    const type = route.type;
     resourceTypeForLog = type;
-    if (id !== undefined) {
-      // $operations and _history/_search are not supported; anything else
-      // that is not a FHIR id cannot name a record (checked before any
-      // database call, and keeps audit rows within their bounds).
-      if (id.startsWith("$") || id.startsWith("_")) throw errors.notSupported("Only read and search interactions are supported.");
-      if (!FHIR_ID.test(id)) throw errors.badRequest("The resource id is not valid.");
-    }
-    if (id !== undefined && query.toString() !== "" && [...query.keys()].some((k) => k !== "_format")) {
-      throw errors.badRequest("A read takes no search parameters.");
-    }
+    const module = MODULES[type];
+    const def = module.definition;
 
-    // 1-2. Authentication.
+    // Authentication: a Supabase session for this project.
     const token = bearerToken(request.headers.get("authorization"));
     if (!token) throw errors.unauthenticated();
     const userId = await authenticate(token, {
@@ -134,31 +166,54 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       fetchImpl,
       nowMs: now().getTime(),
     });
-    const db = new Postgrest({
+    const connection = {
       supabaseUrl: config.supabaseUrl as string,
       anonKey: config.supabaseAnonKey as string,
       accessToken: token,
       fetchImpl,
+    };
+    const db = new Postgrest(connection);
+
+    // Who the caller is to mBHR, and the rate limits (a stricter one for
+    // searches on sensitive types and for document downloads).
+    const sensitive = (route.kind === "search" && def.sensitiveSearch) || type === "Binary";
+    const loaded = await loadActor(db, userId, {
+      perMinute: config.rateLimitPerMinute,
+      sensitivePerMinute: config.sensitiveRateLimitPerMinute,
+      sensitive,
     });
+    const actor = loaded.actor;
 
-    // Role, permissions and rate limit, from the database for this account.
-    const actor = await loadActor(db, userId, config.rateLimitPerMinute);
-
-    const action = id === undefined ? "search" : "read";
-    const rawPurpose = request.headers.get("x-purpose-of-use");
-    const purpose = parsePurposeOfUse(rawPurpose);
-    const audit: Omit<AuditRecord, "decision" | "denialReason" | "resultCount" | "patientIds"> = {
+    const interaction = route.kind;
+    const resourceId = route.kind === "read" ? route.id : null;
+    const query = route.query;
+    const purpose = parsePurposeOfUse(
+      request.headers.get("x-purpose-of-use"),
+      actor.kind === "patient" ? "PATRQT" : "TREAT",
+    );
+    const audit: Omit<
+      AuditRecord,
+      | "decision"
+      | "denialReason"
+      | "resultCount"
+      | "patientIds"
+      | "httpStatus"
+      | "consentDecision"
+      | "consentId"
+      | "provisionId"
+      | "restrictions"
+    > = {
       requestId,
-      action,
+      interaction,
       resourceType: type,
-      resourceId: id ?? null,
+      resourceId,
       purpose: purpose ?? "invalid",
       // Parameter names only, never values. A name the type does not
       // support is recorded as "unsupported": names are client text too.
       searchParams: [
         ...new Set(
           [...query.keys()].map((k) =>
-            RESULT_PARAMS.has(k) || RESOURCE_DEFINITIONS[type].searchParams.some((d) => d.name === k) ? k : "unsupported",
+            RESULT_PARAMS.has(k) || def.searchParams.some((d) => d.name === k) ? k : "unsupported",
           ),
         ),
       ].sort(),
@@ -167,71 +222,278 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
         (request.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || null,
         config.auditIpSecret,
       ),
+      actorKind: actor.kind,
+    };
+    let decision: FhirAuthorizationDecision | null = null;
+    let requestedPatientIds: string[] = [];
+    auditFailure = async (e: FhirError) => {
+      await recordAccess(db, {
+        ...audit,
+        decision: "deny",
+        denialReason: failureReason(e),
+        resultCount: 0,
+        patientIds: requestedPatientIds,
+        httpStatus: e.status,
+        consentDecision: decision?.consent?.decision ?? null,
+        consentId: decision?.consent?.consentId ?? null,
+        provisionId: decision?.consent?.provisionId ?? null,
+        restrictions: decision?.restrictions ?? [],
+      });
     };
 
-    // 3-10. The access decision.
-    const decision = purpose
-      ? canAccessFHIRResource({ actor, action, resourceType: type, purposeOfUse: purpose })
-      : ({ permit: false, status: 403, reason: "purpose_invalid" } as const);
-    if (decision.permit === false) {
-      await recordAccess(db, { ...audit, decision: "deny", denialReason: decision.reason, resultCount: 0, patientIds: [] });
+    if (loaded.retryAfter !== null) throw errors.tooMany(loaded.retryAfter);
+
+    // The search, bound to this caller and scope, and the patient it names
+    // (resolved server-side; a patient id in the URL never grants access).
+    let search: ParsedSearch | null = null;
+    let patients: PatientSearchContext | undefined;
+    let binding = "";
+    let namedPatients: string[] | null | undefined;
+    // A malformed search is reported only after the access decision, so a
+    // caller who may not read the type learns nothing about its parameters.
+    let searchError: unknown = null;
+    if (route.kind === "search") {
+      binding = await cursorBinding({ resourceType: type, query, userId, scope: scopeKey(actor) });
+      try {
+        search = parseSearch(query, def.searchParams, {
+          defaultCount: config.defaultPageSize,
+          maxCount: config.maxPageSize,
+          cursorBinding: binding,
+        });
+      } catch (e) {
+        searchError = e;
+      }
+      if (search) {
+        const params = PATIENT_PARAMS.filter((p) => def.searchParams.some((d) => d.name === p));
+        try {
+          patients = await resolvePatientSearch(db, search, params);
+        } catch (e) {
+          // A patient reference that is not a Patient/[id] is a bad request.
+          searchError = e;
+          search = null;
+        }
+      }
+      if (patients) {
+        requestedPatientIds = patients.requested;
+        namedPatients = patients.requested.length ? patients.requested : null;
+      }
+    } else if (type === "Patient" && actor.kind === "patient") {
+      // A patient reading a Patient names that patient: it must be their own.
+      const [res] = await resolvePatients(db, { fhirIds: [route.id] });
+      namedPatients = res ? [res.id] : null;
+      if (res) requestedPatientIds = [res.id];
+    }
+
+    decision = await authorizeFhirRequest(
+      {
+        actor,
+        client: null,
+        interaction,
+        resourceType: type,
+        resourceId,
+        patientIds: namedPatients,
+        requestedScopes: [],
+        purposeOfUse: purpose,
+        dataClass: def.consentClass,
+      },
+      {
+        config,
+        now: now(),
+        loadDirectives: async (ids) =>
+          parseDirectives(
+            await db.rpc<unknown>("fhir_consent_directives", {
+              p_patient_ids: ids,
+              p_consent_ids: null,
+              p_after: null,
+              p_limit: 100,
+            }),
+          ),
+      },
+    );
+    if (!decision.allowed) {
+      const denied = decision;
+      auditFailure = null;
+      // A refusal is returned even when it cannot be recorded (no data leaves).
+      await recordAccess(db, {
+        ...audit,
+        decision: "deny",
+        denialReason: denied.reason,
+        resultCount: 0,
+        patientIds: requestedPatientIds,
+        httpStatus: denied.status,
+        consentDecision: denied.consent?.decision ?? null,
+        consentId: denied.consent?.consentId ?? null,
+        provisionId: denied.consent?.provisionId ?? null,
+        restrictions: denied.restrictions,
+      }).catch(() => logLine(log, { requestId, status: denied.status, outcome: "audit_failed_on_error", resourceType: type }));
+      if (denied.status === 401) throw errors.unauthenticated();
+      if (denied.status === 404) throw errors.notFound("Read and search are not enabled.");
       throw errors.forbidden();
     }
+    const allowed = decision;
+    if (searchError) throw searchError;
 
-    // Retrieve and map, as the caller.
-    let result: QueryResult<Resource>;
-    let search = null;
-    if (id !== undefined) {
-      result = await READERS[type](db, id);
-    } else {
-      search = parseSearch(query, RESOURCE_DEFINITIONS[type].searchParams, {
-        defaultCount: config.defaultPageSize,
-        maxCount: config.maxPageSize,
-      });
-      result = await SEARCHERS[type](db, search);
+    // Staff searches must name a specific record (anti-enumeration).
+    if (search && actor.kind === "staff") {
+      try {
+        assertNarrowed(def, search);
+      } catch (e) {
+        auditFailure = null;
+        await recordAccess(db, {
+          ...audit,
+          decision: "deny",
+          denialReason: "search_not_narrowed",
+          resultCount: 0,
+          patientIds: requestedPatientIds,
+          httpStatus: 403,
+          consentDecision: allowed.consent?.decision ?? null,
+          consentId: allowed.consent?.consentId ?? null,
+          provisionId: allowed.consent?.provisionId ?? null,
+          restrictions: allowed.restrictions,
+        }).catch(() => logLine(log, { requestId, status: 403, outcome: "audit_failed_on_error", resourceType: type }));
+        throw e;
+      }
     }
 
-    for (const resource of result.page.resources) {
-      const issues = validateResource(resource);
-      if (issues.length) {
-        logLine(log, { requestId, status: 500, outcome: "invalid_resource", resourceType: type });
+    const scope: AccessScope =
+      actor.kind === "patient" ? { kind: "patient", patientIds: actor.patientIds } : { kind: "staff", patientIds: null };
+    const ctx: QueryCtx = {
+      db,
+      scope,
+      permissions: actor.permissions,
+      restrictions: new Set(allowed.restrictions),
+      baseUrl,
+      cursorBinding: binding,
+      storage: new SupabaseStorage(connection),
+      patients,
+    };
+
+    let result: QueryResult;
+    if (route.kind === "read") {
+      result = await module.read(ctx, route.id);
+      if (result.page.resources.length > 1) {
+        logLine(log, { requestId, status: 500, outcome: "read_returned_many", resourceType: type });
+        throw errors.internal();
+      }
+    } else {
+      if (!module.search) throw errors.notSupported(`${type} is read by id only.`);
+      result = await module.search(ctx, search as ParsedSearch);
+    }
+    if (result.requestedPatientIds?.length) {
+      requestedPatientIds = [...new Set([...requestedPatientIds, ...result.requestedPatientIds])];
+    }
+
+    // Ownership: every resource must belong to a patient the caller may see
+    // (patients: their own records; any search naming a patient: that
+    // patient). A mismatch is a server fault and releases nothing.
+    const resources = result.page.resources;
+    if (result.owners.length !== resources.length) {
+      logLine(log, { requestId, status: 500, outcome: "owners_mismatch", resourceType: type });
+      throw errors.internal();
+    }
+    const named = patients?.ids ?? null;
+    for (const owner of result.owners) {
+      const outsideSelf = actor.kind === "patient" && (owner === null || !actor.patientIds.has(owner));
+      const outsideNamed = named !== null && owner !== null && !named.includes(owner);
+      if (outsideSelf || outsideNamed) {
+        logLine(log, { requestId, status: 500, outcome: "scope_violation", resourceType: type });
         throw errors.internal();
       }
     }
 
-    // Audit before release.
+    // Validate before release. A read fails closed; a search leaves the
+    // record out and says so.
+    const released: Resource[] = [];
+    const releasedOwners: (string | null)[] = [];
+    let withheld = 0;
+    for (let i = 0; i < resources.length; i++) {
+      const issues = validateResource(resources[i], module.validate?.bind(module));
+      if (issues.length) {
+        withheld++;
+        continue;
+      }
+      released.push(resources[i]);
+      releasedOwners.push(result.owners[i]);
+    }
+    if (withheld) {
+      logLine(log, { requestId, status: route.kind === "read" ? 500 : 200, outcome: `invalid_resource:${withheld}`, resourceType: type });
+      if (route.kind === "read") throw errors.internal();
+    }
+    for (const r of released) r.meta = { ...r.meta, versionId: await contentVersion(r) };
+
+    // Audit before release. A patient's permit names their own records: the
+    // ones returned or named, or (nothing matched) the records the query
+    // was confined to.
+    let auditIds = [
+      ...new Set([...releasedOwners.filter((o): o is string => o !== null), ...requestedPatientIds]),
+    ];
+    if (actor.kind === "patient" && !auditIds.length) auditIds = [...actor.patientIds];
+    const found = route.kind === "search" || released.length > 0;
+    auditFailure = null;
     try {
       await recordAccess(db, {
         ...audit,
         decision: "permit",
         denialReason: null,
-        resultCount: result.page.resources.length,
-        patientIds: result.patientIds,
+        resultCount: released.length,
+        patientIds: auditIds,
+        httpStatus: found ? 200 : 404,
+        consentDecision: allowed.consent?.decision ?? null,
+        consentId: allowed.consent?.consentId ?? null,
+        provisionId: allowed.consent?.provisionId ?? null,
+        restrictions: allowed.restrictions,
       });
     } catch {
       logLine(log, { requestId, status: 503, outcome: "audit_failed", resourceType: type });
       throw errors.unavailable();
     }
 
-    if (id !== undefined) {
-      const resource = result.page.resources[0];
+    if (route.kind === "read") {
+      const resource = released[0];
       if (!resource) throw errors.notFound();
-      const version = resource.meta?.versionId ?? "0";
-      const etag = `W/"${version}"`;
+      if (type === "Binary") {
+        const file = result.binary;
+        if (!file) {
+          logLine(log, { requestId, status: 500, outcome: "binary_missing", resourceType: type });
+          throw errors.internal();
+        }
+        logLine(log, { requestId, status: 200, outcome: "read", resourceType: type, ms: now().getTime() - started });
+        return new Response(file.body, {
+          status: 200,
+          headers: {
+            "Content-Type": file.contentType,
+            "Content-Disposition": `attachment; filename="${file.filename.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 100) || "document"}"`,
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            ...baseHeaders(requestId),
+          },
+        });
+      }
+      const etag = `W/"${resource.meta?.versionId}"`;
       const headers: Record<string, string> = { ETag: etag };
       if (resource.meta?.lastUpdated) headers["Last-Modified"] = new Date(resource.meta.lastUpdated).toUTCString();
       logLine(log, { requestId, status: 200, outcome: "read", resourceType: type, ms: now().getTime() - started });
-      if (request.headers.get("if-none-match") === etag) return respond(304, null, headers, requestId);
+      if (etagMatches(request.headers.get("if-none-match"), etag)) return respond(304, null, headers, requestId);
       return respond(200, resource, headers, requestId);
     }
 
+    const outcomes: OperationOutcomeIssue[] = [...(result.outcomes ?? [])];
+    if (withheld) {
+      outcomes.push({
+        severity: "warning",
+        code: "processing",
+        diagnostics: `${withheld} matching record(s) were left out because they could not be shown as valid FHIR. Quote the X-Request-Id header when reporting this.`,
+      });
+    }
     const bundle = searchsetBundle({
       baseUrl,
       resourceType: type,
       query,
-      count: search!.count,
-      page: result.page,
+      count: (search as ParsedSearch).count,
+      page: { resources: released, next: result.page.next },
       now: now(),
+      cursorBinding: binding,
+      outcomes,
+      newId: deps.randomId,
     });
     logLine(log, { requestId, status: 200, outcome: "search", resourceType: type, ms: now().getTime() - started });
     return respond(200, bundle, {}, requestId);
@@ -243,6 +505,14 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       logLine(log, { requestId, status: 500, outcome: `unexpected:${(err as Error)?.name ?? "unknown"}`, resourceType: resourceTypeForLog });
     } else {
       logLine(log, { requestId, status: e.status, outcome: e.code, resourceType: resourceTypeForLog });
+    }
+    if (auditFailure) {
+      // Best effort: the refusal is still returned if it cannot be recorded.
+      try {
+        await auditFailure(e);
+      } catch {
+        logLine(log, { requestId, status: e.status, outcome: "audit_failed_on_error", resourceType: resourceTypeForLog });
+      }
     }
     return errorResponse(e, requestId);
   }

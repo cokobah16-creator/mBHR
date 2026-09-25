@@ -20,6 +20,8 @@
   "rewrites": [
     { "source": "/fhir/R4", "destination": "/api/fhir?__fhir_path=" },
     { "source": "/fhir/R4/:path*", "destination": "/api/fhir?__fhir_path=:path*" },
+    { "source": "/fhir", "destination": "/api/fhir?__fhir_path=__not_fhir_r4__" },
+    { "source": "/fhir/:path*", "destination": "/api/fhir?__fhir_path=__not_fhir_r4__" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [

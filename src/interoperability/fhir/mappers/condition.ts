@@ -110,8 +110,15 @@ export function mapCondition(
 
   const onset = calendarDate(row, "onset_date");
   if (onset) condition.onsetDateTime = onset;
+  // R4 invariant con-4: an abated condition is not active. When the record
+  // says both (active, recurrence or relapse, and an abatement date), the
+  // clinical status is the recorder's primary statement: it is kept and the
+  // contradicting abatement date is left out rather than guessed between.
   const abatement = calendarDate(row, "abatement_date");
-  if (abatement) condition.abatementDateTime = abatement;
+  const stillActive = ["active", "recurrence", "relapse"].includes(
+    condition.clinicalStatus?.coding?.[0]?.code ?? "",
+  );
+  if (abatement && !stillActive) condition.abatementDateTime = abatement;
   const recorded = instant(row, "created_at");
   if (recorded) condition.recordedDate = recorded;
   return condition;

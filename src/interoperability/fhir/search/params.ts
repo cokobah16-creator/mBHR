@@ -40,6 +40,14 @@ export interface Cursor {
   k: string;
   /** For sources that expand to several resources: last sub-index emitted. */
   s?: number;
+  /** For searches over several sources: which source the page stopped in. */
+  p?: string;
+  /**
+   * Binding: a digest of the resource type, the search parameters, the
+   * caller and their scope. A cursor only continues the search it came
+   * from; it never carries filters, so it cannot widen what a search sees.
+   */
+  b?: string;
 }
 
 /** FHIR R4 id: 1-64 of [A-Za-z0-9-.]. */
@@ -51,7 +59,7 @@ export const RESULT_PARAMS: ReadonlySet<string> = new Set(["_count", "_cursor", 
 export function parseSearch(
   query: URLSearchParams,
   defs: SearchParamDef[],
-  paging: { defaultCount: number; maxCount: number },
+  paging: { defaultCount: number; maxCount: number; cursorBinding?: string },
 ): ParsedSearch {
   const byName = new Map(defs.map((d) => [d.name, d]));
   const values = new Map<string, string[]>();
@@ -72,7 +80,7 @@ export function parseSearch(
       }
       seenResultParams.add(rawName);
       if (rawName === "_count") count = parseCount(rawValue, paging.maxCount);
-      else if (rawName === "_cursor") cursor = decodeCursor(rawValue);
+      else if (rawName === "_cursor") cursor = decodeCursor(rawValue, paging.cursorBinding);
       else if (!["json", "application/json", "application/fhir+json"].includes(rawValue)) {
         throw errors.notSupported("Only the JSON format is supported.");
       }
@@ -109,26 +117,75 @@ function parseCount(raw: string, max: number): number {
   return Math.min(n, max);
 }
 
-export function encodeCursor(c: Cursor): string {
-  const json = JSON.stringify(c.s === undefined ? { k: c.k } : { k: c.k, s: c.s });
-  return base64UrlEncode(json);
+export function encodeCursor(c: Cursor, binding?: string): string {
+  const out: Cursor = { k: c.k };
+  if (c.s !== undefined) out.s = c.s;
+  if (c.p !== undefined) out.p = c.p;
+  const b = binding ?? c.b;
+  if (b !== undefined) out.b = b;
+  return base64UrlEncode(JSON.stringify(out));
 }
 
-export function decodeCursor(raw: string): Cursor {
+const CURSOR_KEY = /^[A-Za-z0-9\-._:|]{1,160}$/;
+
+/**
+ * Decode a _cursor. With a binding, a cursor issued for another search,
+ * another caller or another scope is refused (400), as is anything that
+ * is not a cursor this server wrote.
+ */
+export function decodeCursor(raw: string, binding?: string): Cursor {
   const bad = () => errors.badRequest("_cursor is not valid. Start the search again.");
-  if (!/^[A-Za-z0-9_-]{1,400}$/.test(raw)) throw bad();
+  if (!/^[A-Za-z0-9_-]{1,512}$/.test(raw)) throw bad();
   let parsed: unknown;
   try {
     parsed = JSON.parse(base64UrlDecode(raw));
   } catch {
     throw bad();
   }
-  if (!parsed || typeof parsed !== "object") throw bad();
-  const { k, s } = parsed as { k?: unknown; s?: unknown };
-  if (typeof k !== "string" || !/^[A-Za-z0-9\-._]{1,128}$/.test(k)) throw bad();
-  if (s === undefined) return { k };
-  if (typeof s !== "number" || !Number.isInteger(s) || s < 0 || s > 64) throw bad();
-  return { k, s };
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw bad();
+  const { k, s, p, b, ...rest } = parsed as { k?: unknown; s?: unknown; p?: unknown; b?: unknown };
+  if (Object.keys(rest).length) throw bad();
+  if (typeof k !== "string" || !CURSOR_KEY.test(k)) throw bad();
+  const out: Cursor = { k };
+  if (s !== undefined) {
+    if (typeof s !== "number" || !Number.isInteger(s) || s < 0 || s > 64) throw bad();
+    out.s = s;
+  }
+  if (p !== undefined) {
+    if (typeof p !== "string" || !/^[a-z]{1,8}$/.test(p)) throw bad();
+    out.p = p;
+  }
+  if (b !== undefined) {
+    if (typeof b !== "string" || !/^[0-9a-f]{16,64}$/.test(b)) throw bad();
+    out.b = b;
+  }
+  if (binding !== undefined && out.b !== binding) throw bad();
+  return out;
+}
+
+/**
+ * The cursor binding for a search: the first 32 hex digits of SHA-256 over
+ * the resource type, the search parameters (sorted, without paging), the
+ * caller's account and their scope. It is not a secret: filters are always
+ * re-applied from the request, so the binding keeps a cursor with its own
+ * search rather than guarding data.
+ */
+export async function cursorBinding(input: {
+  resourceType: string;
+  query: URLSearchParams;
+  userId: string;
+  scope: string;
+}): Promise<string> {
+  const params = [...input.query.entries()]
+    .filter(([k]) => k !== "_cursor" && k !== "_count" && k !== "_format")
+    .map(([k, v]) => `${k}=${v}`)
+    .sort();
+  const text = [input.resourceType, params.join("&"), input.userId, input.scope].join("\n");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)]
+    .slice(0, 16)
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function base64UrlEncode(text: string): string {
@@ -184,9 +241,27 @@ const DATE_RE =
   /^(eq|ge|le|gt|lt)?(\d{4})(?:-(\d{2})(?:-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2}))?)?)?$/;
 
 /**
+ * mBHR clinics run on West Africa Time (Africa/Lagos, UTC+01:00, no
+ * daylight saving). A date without a time (date=2026-09-25) means that
+ * clinic day, 00:00 to 24:00 in Lagos, not a UTC day: otherwise a visit at
+ * 00:30 in Lagos would fall on the previous date.
+ */
+export const CLINIC_TIME_ZONE = "Africa/Lagos";
+export const CLINIC_UTC_OFFSET_MINUTES = 60;
+
+/** Midnight in the clinic time zone at the start of y-m-d (any year, including < 100). */
+function clinicMidnight(year: number, monthIndex: number, day: number): Date {
+  const t = new Date(0);
+  t.setUTCFullYear(year, monthIndex, day);
+  t.setUTCHours(0, 0, 0, 0);
+  return new Date(t.getTime() - CLINIC_UTC_OFFSET_MINUTES * 60_000);
+}
+
+/**
  * Parse a FHIR date search value (prefixes eq, ge, le, gt, lt) into a
- * half-open [from, to) range over instants. A value without a time zone is
- * read in UTC; a dateTime must carry a zone, so no local-time guess is made.
+ * half-open [from, to) range over instants. A date without a time is a
+ * clinic day (Africa/Lagos); a dateTime must carry a zone, so no local-time
+ * guess is made for it.
  */
 export function parseDateSearch(raw: string, name: string): DateBound {
   const m = DATE_RE.exec(raw);
@@ -208,15 +283,17 @@ export function parseDateSearch(raw: string, name: string): DateBound {
     if (Number.isNaN(start.getTime())) throw errors.badRequest(`${name} is not a valid date.`);
     end = new Date(start.getTime() + (ss === undefined ? 60_000 : 1000));
   } else if (day !== null && month !== null) {
-    start = new Date(Date.UTC(year, month - 1, day));
-    if (start.getUTCMonth() !== month - 1) throw errors.badRequest(`${name} is not a valid date.`);
-    end = new Date(Date.UTC(year, month - 1, day + 1));
+    const check = new Date(0);
+    check.setUTCFullYear(year, month - 1, day);
+    if (check.getUTCMonth() !== month - 1) throw errors.badRequest(`${name} is not a valid date.`);
+    start = clinicMidnight(year, month - 1, day);
+    end = clinicMidnight(year, month - 1, day + 1);
   } else if (month !== null) {
-    start = new Date(Date.UTC(year, month - 1, 1));
-    end = new Date(Date.UTC(year, month, 1));
+    start = clinicMidnight(year, month - 1, 1);
+    end = clinicMidnight(year, month, 1);
   } else {
-    start = new Date(Date.UTC(year, 0, 1));
-    end = new Date(Date.UTC(year + 1, 0, 1));
+    start = clinicMidnight(year, 0, 1);
+    end = clinicMidnight(year + 1, 0, 1);
   }
   const s = start.toISOString();
   const e = end.toISOString();

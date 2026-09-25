@@ -5,6 +5,22 @@
 // photo (photo_url), portal and sync columns, auth_uid, family links and
 // every administrative flag. mBHR records no MRN or national id, so the
 // only identifier is the mBHR FHIR identity itself.
+//
+// Unknown stays unknown:
+//   - name, telecom and address carry no "use": mBHR does not record
+//     whether a name is official or a phone is a mobile.
+//   - sex "other" is also what registration stores when nothing was chosen
+//     (portal self-registration, the staff form's fallback), so it cannot
+//     be told apart from a real "other": gender is left out.
+//   - the birth date is published as recorded. Whether it was estimated is
+//     kept only on the recording tablet, so it cannot be flagged here
+//     (docs/interoperability/resource-mapping.md, known limitations).
+//
+// A merged-away record (merged_into set, or merged_at set with its kept
+// record gone) is published as a tombstone: id, identifier, name,
+// active=false and, when the kept record is known, a replaced-by link.
+// Contact details, gender, birth date and address are not repeated on it;
+// the staff app shows only the name and a pointer for such a record.
 
 import type { ContactPoint, HumanName, Patient } from "../types/fhir";
 import { LOCAL } from "../terminology/codeSystems";
@@ -24,6 +40,7 @@ export const PATIENT_COLUMNS = [
   "lga",
   "state",
   "merged_into",
+  "merged_at",
   "created_at",
   "updated_at",
 ] as const;
@@ -38,7 +55,8 @@ export function mapGender(sex: string | undefined): Patient["gender"] | undefine
     case "female":
       return "female";
     case "other":
-      return "other";
+      // Also the default when no sex was chosen: not an assertion.
+      return undefined;
     case "unknown":
       return "unknown";
     default:
@@ -47,9 +65,14 @@ export function mapGender(sex: string | undefined): Patient["gender"] | undefine
   }
 }
 
+/** A merged-away record: merged into another, or marked merged with its kept record gone. */
+export function isMergedRecord(row: Row): boolean {
+  return str(row, "merged_into") !== undefined || str(row, "merged_at") !== undefined;
+}
+
 /**
- * @param survivorFhirId for a merged record, the fhir_id of the record it
- *   was merged into (when the caller may see it).
+ * @param survivorFhirId for a merged record, the fhir_id of the canonical
+ *   record at the end of its merge chain (when the caller may see it).
  */
 export function mapPatient(row: Row, survivorFhirId?: string | null): Patient {
   const fhirId = str(row, "fhir_id");
@@ -60,24 +83,13 @@ export function mapPatient(row: Row, survivorFhirId?: string | null): Patient {
   const names: HumanName[] = [];
   if (given || family) {
     names.push({
-      use: "official",
       ...(family ? { family } : {}),
       ...(given ? { given: given.split(/\s+/) } : {}),
       text: [given, family].filter(Boolean).join(" "),
     });
   }
 
-  const telecom: ContactPoint[] = [];
-  const phone = str(row, "phone");
-  const email = str(row, "email");
-  if (phone) telecom.push({ system: "phone", value: phone, use: "mobile" });
-  if (email) telecom.push({ system: "email", value: email });
-
-  const address = str(row, "address");
-  const lga = str(row, "lga");
-  const state = str(row, "state");
-
-  const merged = str(row, "merged_into") !== undefined;
+  const merged = isMergedRecord(row);
   const patient: Patient = {
     resourceType: "Patient",
     id: fhirId,
@@ -88,6 +100,20 @@ export function mapPatient(row: Row, survivorFhirId?: string | null): Patient {
   // other record the element is left out rather than asserted.
   if (merged) patient.active = false;
   if (names.length) patient.name = names;
+  if (merged) {
+    if (survivorFhirId) patient.link = [{ other: { reference: `Patient/${survivorFhirId}` }, type: "replaced-by" }];
+    return patient;
+  }
+
+  const telecom: ContactPoint[] = [];
+  const phone = str(row, "phone");
+  const email = str(row, "email");
+  if (phone) telecom.push({ system: "phone", value: phone });
+  if (email) telecom.push({ system: "email", value: email });
+
+  const address = str(row, "address");
+  const lga = str(row, "lga");
+  const state = str(row, "state");
   if (telecom.length) patient.telecom = telecom;
   const gender = mapGender(str(row, "sex"));
   if (gender) patient.gender = gender;
@@ -96,15 +122,11 @@ export function mapPatient(row: Row, survivorFhirId?: string | null): Patient {
   if (address || lga || state) {
     patient.address = [
       {
-        use: "home",
         ...(address ? { text: address } : {}),
         ...(lga ? { district: lga } : {}),
         ...(state ? { state } : {}),
       },
     ];
-  }
-  if (merged && survivorFhirId) {
-    patient.link = [{ other: { reference: `Patient/${survivorFhirId}` }, type: "replaced-by" }];
   }
   return patient;
 }
