@@ -103,7 +103,7 @@ export const definition: ResourceDefinition = {
     "FHIR gateway reads and searches only: activity in the mBHR app itself is not in this trail.",
     "Never published: account ids, IP address hashes, user agents, request ids, search values and search parameter names.",
     "A patient whose record was deleted, or whose merge chain does not end, is left out of entity rather than named by an internal id.",
-    "A refusal record is kept even when the account made it itself through the database function; a permitted access is recorded only for staff and for the patient's own portal account.",
+    "A refusal record is kept even when the account made it itself through the database function; a permitted access is recorded only for staff, or for a portal account about its own records.",
     "Reading AuditEvents is itself recorded against every patient the served events name. One response names at most 100 patients: a page may come back short, with a next link. A single event naming more patients than that (possible only at the 100-patient limit of one request) lists the first ones.",
     "Staff with audit_access only; not available to patients.",
   ],

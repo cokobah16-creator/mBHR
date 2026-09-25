@@ -28,8 +28,8 @@ Locally, where `npm install` is not possible, the same files run under Bun:
 bun test src/interoperability
 ```
 
-With Bun this is 17 files and 620 tests. Vitest is what CI uses; the
-Bun run is a local convenience.
+With Bun this is 19 files and 670 tests (670 pass, 0 fail). Vitest is
+what CI uses; the Bun run is a local convenience.
 
 Files in `src/interoperability/fhir/__tests__/` (plus
 `src/interoperability/smart/__tests__/scopes.test.ts`):
@@ -45,7 +45,7 @@ Files in `src/interoperability/fhir/__tests__/` (plus
 | `consentDirectiveLoader.test.ts` | The consent step's directive lookup: the named patient's merge family, directives read as the named patient's, more than 100 refused (503) |
 | `framework.test.ts` | Configuration and flags, search parameter parsing, the access decision, the CapabilityStatement |
 | `mappers.test.ts` | Patient, Encounter, vital-sign Observation and Condition mapping; the structural validator; the conformance examples |
-| `laboratory.test.ts` | Lab status maps, test codes, values, interpretation, review state; laboratory Observation, DiagnosticReport and ServiceRequest; staff and patient access; merged patients; what is never published |
+| `laboratory.test.ts` | Lab status maps, test codes, values, interpretation, review state; laboratory Observation, DiagnosticReport and ServiceRequest; staff and patient access, including staff without consult or lab_review (a note on every search that could include laboratory results; a 403 read audited as `missing_permission`); status tokens in their own code system; merged patients; what is never published |
 | `allergy.test.ts` | AllergyIntolerance mapping, status tables, validation, access, enumeration, search, read, recorder, what is never published |
 | `medication.test.ts` | Medication, MedicationRequest and MedicationDispense: status maps, mappers, who may read, ids, gateway behaviour |
 | `documents.test.ts` | DocumentReference and Binary: mapping, stored paths, staff and patient access, downloads, merged patients, search |
@@ -53,7 +53,8 @@ Files in `src/interoperability/fhir/__tests__/` (plus
 | `provenanceAudit.test.ts` | Provenance and AuditEvent: activity and outcome maps, ids, mapping, gateway behaviour |
 | `statusMaps.test.ts` | Every status map against the owner's rules: unknown stays unknown, and no status is promoted |
 | `vercelRouting.test.ts` | `vercel.json` sends `/fhir/R4` and everything under it to the function, before the app catch-all |
-| `smart/__tests__/scopes.test.ts` | SMART scope parsing and intersection (design code; SMART is not enabled) |
+| `reviewFixes.gateway.test.ts` | Fixes from the Phase 2 final review, end to end: an Encounter date search never matches a visit published without a period (including across pages); a searchset with nothing to list has no `entry`; a padded visit status is `unknown`; status tokens in another code system match nothing; Observation `code=` matches only what `Observation.code` carries; a 304 read is audited as 304; a module's refusal is audited with the reason it names; Binary declares no versioning and no conditional read; nothing in the CapabilityStatement, search parameters included, describes patients while patient access is off |
+| `smart/__tests__/scopes.test.ts` | SMART scope parsing and intersection, including constraints that are refused (`_include`, `_revinclude` and every other `_` parameter except `_id`) (design code; SMART is not enabled) |
 
 Helpers: `fakeSupabase.ts` (an in-memory Auth and PostgREST with a
 row-level security hook) and `fixtures.ts` (synthetic rows).
@@ -125,9 +126,10 @@ Document and consent cases are in `documents.test.ts` and
 The `gateway` job, after the unit tests:
 
 1. writes the gateway's own output for synthetic data with
-   `npx tsx scripts/fhir-r4-examples.ts fhir-examples` (the published
-   resource shapes, a searchset Bundle, an OperationOutcome and the
-   CapabilityStatement);
+   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 53 examples from
+   `src/interoperability/fhir/conformance/examples.ts` (the published
+   resource shapes, searchset Bundles including one with no match and so
+   no `entry`, an OperationOutcome and the CapabilityStatement);
 2. installs Java 21 and downloads the official HL7 validator 6.10.4, with
    its SHA-256 checksum pinned in the workflow;
 3. runs it with `-version 4.0.1`, writing `validation.json`. The
@@ -160,19 +162,25 @@ the two interop migrations depend on:
 | File | Plan | Covers |
 | --- | --- | --- |
 | `supabase/tests/interop_foundation.test.sql` | 42 | Phase 1: the `interop` schema is closed to API roles; anon is refused; role and permissions come from the database; the audit actor is `auth.uid()`; argument checks; non-staff get no role; the rate limit; the audit trail is append-only; consent deletion and withdrawal rules; terminology review rules |
-| `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 227 | Phase 2, in ten sections (below) |
+| `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 272 | Phase 2, in ten sections (below) |
 
 Sections of `interop_phase2.test.sql`:
 
 1. Structure, grants, Phase 1 fixes and indexes.
 2. `anon` can call no function.
 3. A doctor: gateway context, `fhir_record_access_v2`, patient resolution,
-   staff directory, link ids, consent management, and the functions a
-   doctor is refused.
-4. A pharmacist: rate buckets; consent functions refused.
+   staff directory, link ids, consent management (including the staff
+   chip's `sharing_state` and `sharing_reason` for each kind of record),
+   and the functions a doctor is refused.
+4. A pharmacist: rate buckets and the link functions; consent functions
+   refused. A nurse and a volunteer cannot use the link functions.
 5. A signed-in account that is neither staff nor a portal patient.
-6. Portal patient A: own lab results, refused for patient B, consent on a
-   merged-away record.
+6. Portal patient A: own lab results, refused for patient B (and for a
+   malformed or another patient's `p_patient_id`), consent on a
+   merged-away record. What a patient may withdraw: only a permission to
+   share, never a refusal, a treatment consent or an advance directive.
+   One sign-in linked to two people: each page lists and withdraws only
+   its own patient's records.
 7. Consent history, audit rows and the consent guards.
 8. `patients.fhir_id` is kept once set.
 9. The audit rate bucket.

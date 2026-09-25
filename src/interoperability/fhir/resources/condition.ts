@@ -18,7 +18,7 @@ export const conditionDefinition: ResourceDefinition = {
   idStrategy: "conditions.id (uuid)",
   fields: [
     "clinicalStatus",
-    "verificationStatus",
+    "verificationStatus (the stored code; left out when it is 'confirmed', the column's default)",
     "category",
     "severity",
     "code (local + verified mappings)",
@@ -44,6 +44,7 @@ export const conditionDefinition: ResourceDefinition = {
   sensitiveSearch: false,
   notes: [
     "Diagnoses written in consultation notes are not published yet: an empty result does not mean the patient has no conditions.",
+    "verificationStatus is left out when the stored value is 'confirmed'. That is the database default, so it may just mean that nobody recorded one; the two cannot be told apart. A missing verificationStatus does not mean the diagnosis is unconfirmed.",
   ],
 };
 

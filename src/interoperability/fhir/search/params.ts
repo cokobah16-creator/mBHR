@@ -12,6 +12,13 @@ export interface SearchParamDef {
   name: string;
   type: SearchParamType;
   documentation: string;
+  /**
+   * What the parameter does for a patient reading their own records.
+   * Published after `documentation` only while patient access is on
+   * (FHIR_PATIENT_ACCESS_ENABLED), like ResourceDefinition.patientAccessNotes,
+   * so `documentation` itself must not describe patients.
+   */
+  patientDocumentation?: string;
   /** Up to this many occurrences (default 1). Used for date ranges. */
   maxRepeats?: number;
 }

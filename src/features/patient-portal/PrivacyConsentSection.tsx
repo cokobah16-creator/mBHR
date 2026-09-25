@@ -19,11 +19,9 @@ import {
 import { ConfirmDialog } from "./account/ConfirmDialog";
 import {
   PRIVACY_COPY as COPY,
-  PURPOSE_LABEL,
-  REFUSAL_LABEL,
   STATE_LABEL,
-  TOPIC_LABEL,
-  UNCLEAR_LABEL,
+  consentNote,
+  consentTitle,
 } from "./privacyCopy";
 
 type ListState =
@@ -45,24 +43,17 @@ function unavailableMessage(reason: RpcFailure | "invalid"): string {
   return COPY.failed;
 }
 
-/** The row's title: what the record says, with the purposes it names. */
-function itemTitle(item: PatientConsentItem): string {
-  if (item.kind === "unclear") return UNCLEAR_LABEL[item.topic];
-  const label = item.kind === "refusal" ? REFUSAL_LABEL[item.topic] : TOPIC_LABEL[item.topic];
-  const named = item.kind === "refusal" ? item.refuses : item.permits;
-  const purposes = named.map((p) => PURPOSE_LABEL[p]).join(", ");
-  return purposes ? `${label} (${purposes})` : label;
-}
-
 /**
  * "Privacy and data sharing": what mBHR does with the patient's records,
  * and the sharing choices recorded for the page's patient in mBHR's
- * consent register (scopes patient-privacy and research only; a treatment
+ * consent records (scopes patient-privacy and research only; a treatment
  * consent or an advance care directive is not listed here).
- * - A permission has a Withdraw button.
+ * - A permission has a Withdraw button. Withdrawing names the page's
+ *   patient, so a sign-in linked to two people changes only this one.
  * - A refusal (any "do not" rule) has none: withdrawing it could allow
  *   sharing, so the patient is told to ask clinic staff (the server
- *   refuses it too).
+ *   refuses it too). It is named as the patient's refusal to share outside
+ *   mBHR only when a rule is for someone outside mBHR (see consentTitle).
  * - A record with no rules says so, and has no button.
  *
  * Separate from the sharing choices on the rest of the page
@@ -102,7 +93,7 @@ export function PrivacyConsentSection({ patientId, client }: Props) {
     if (!pending) return;
     setBusy(true);
     setDialogError(null);
-    const result = await withdrawConsent(rpcClient, pending.id, reason, isOnline);
+    const result = await withdrawConsent(rpcClient, pending.id, patientId, reason, isOnline);
     setBusy(false);
     if (result.status === "withdrawn" || result.status === "already_withdrawn") {
       setPending(null);
@@ -176,7 +167,8 @@ export function PrivacyConsentSection({ patientId, client }: Props) {
           {list.kind === "ready" && list.items.length > 0 && (
             <ul className="mt-2 divide-y divide-line rounded-md border border-line">
               {list.items.map((item) => {
-                const title = itemTitle(item);
+                const title = consentTitle(item);
+                const note = consentNote(item);
                 return (
                   <li
                     key={item.id}
@@ -194,15 +186,7 @@ export function PrivacyConsentSection({ patientId, client }: Props) {
                           ? ` · ${COPY.until} ${formatNigerianDate(item.until)}`
                           : ""}
                       </p>
-                      {item.kind === "refusal" && (
-                        <p className="text-caption text-ink-secondary">
-                          {item.alsoPermits ? `${COPY.alsoAllows} ` : ""}
-                          {COPY.askStaff}
-                        </p>
-                      )}
-                      {item.kind === "unclear" && (
-                        <p className="text-caption text-ink-secondary">{COPY.unclear}</p>
-                      )}
+                      {note && <p className="text-caption text-ink-secondary">{note}</p>}
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusBadge tone={item.state === "in_place" ? "info" : "neutral"} icon>
@@ -242,7 +226,7 @@ export function PrivacyConsentSection({ patientId, client }: Props) {
           if (!busy) setPending(null);
         }}
       >
-        {pending && <p className="font-medium text-ink">{itemTitle(pending)}</p>}
+        {pending && <p className="font-medium text-ink">{consentTitle(pending)}</p>}
         {COPY.withdrawBody.map((line) => (
           <p key={line}>{line}</p>
         ))}

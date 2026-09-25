@@ -23,23 +23,34 @@ export type IssueCode =
   | "exception"
   | "processing";
 
+/**
+ * Audit denial reasons a module may name when the HTTP status alone would
+ * record a vaguer one. missing_permission: the account lacks an mBHR
+ * permission the request needs, recorded as the permission step records it.
+ */
+export type AuditReason = "missing_permission";
+
 export class FhirError extends Error {
   readonly status: number;
   readonly code: IssueCode;
   /** Extra response headers (e.g. Retry-After, WWW-Authenticate). */
   readonly headers: Record<string, string>;
+  /** The audit denial reason, when it is more specific than the status says. Never sent to the caller. */
+  readonly auditReason: AuditReason | undefined;
 
   constructor(
     status: number,
     code: IssueCode,
     diagnostics: string,
     headers: Record<string, string> = {},
+    auditReason?: AuditReason,
   ) {
     super(diagnostics);
     this.name = "FhirError";
     this.status = status;
     this.code = code;
     this.headers = headers;
+    this.auditReason = auditReason;
   }
 }
 
@@ -47,8 +58,8 @@ export const errors = {
   badRequest: (d: string) => new FhirError(400, "invalid", d),
   unauthenticated: (d = "Authentication is required.") =>
     new FhirError(401, "login", d, { "WWW-Authenticate": 'Bearer realm="mBHR FHIR"' }),
-  forbidden: (d = "The requested resource is not available to this client.") =>
-    new FhirError(403, "forbidden", d),
+  forbidden: (d = "The requested resource is not available to this client.", opts: { auditReason?: AuditReason } = {}) =>
+    new FhirError(403, "forbidden", d, {}, opts.auditReason),
   notFound: (d = "The requested resource was not found.") => new FhirError(404, "not-found", d),
   methodNotAllowed: () =>
     new FhirError(405, "not-supported", "Only read and search interactions are supported.", {

@@ -86,8 +86,9 @@ export type SmartScopeParseError =
   | "invalid_permissions"
   | "permissions_out_of_order"
   | "invalid_query"
-  /** A well-formed query whose parameter is not a search filter
-   *  (`_include`, `_revinclude`, `_elements`, `_summary`, `_count`, …). */
+  /** A well-formed query whose parameter is not accepted as a constraint
+   *  (only resource search parameters and `_id` are): `_include`,
+   *  `_revinclude`, `_elements`, `_summary`, `_count`, `_security`, … */
   | "unsupported_constraint"
   | "query_not_allowed_in_v1"
   | "unsupported_launch_context";

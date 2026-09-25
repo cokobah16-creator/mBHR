@@ -125,7 +125,9 @@ export const definition: ResourceDefinition = {
       name: "patient",
       type: "reference",
       documentation:
-        "Patient/[id]. Directives about this patient, including (for staff) ones still filed under records merged into it. Required for staff unless _id is given.",
+        "Patient/[id]. Directives about this patient, including ones still filed under records merged into it. Required unless _id is given.",
+      patientDocumentation:
+        "A patient gets only directives filed under their own current record, not ones filed under records merged into it, and need not give patient.",
     },
     {
       name: "status",

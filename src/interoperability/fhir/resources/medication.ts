@@ -5,7 +5,8 @@
 //
 // A Medication's id is a random uuid the server keeps for each catalogue
 // row (interop.resource_links, through public.fhir_link_ids /
-// fhir_link_sources, which only staff may call). The row id itself is never
+// fhir_link_sources, which only staff holding consult, dispense or
+// inventory may call for Medication). The row id itself is never
 // published: seeded ids run past the 64 characters a FHIR id allows, and a
 // medicine registered twice is merged under one of them.
 

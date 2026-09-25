@@ -12,7 +12,8 @@ export const SOFTWARE = { name: "mBHR FHIR gateway", version: "0.2.0" } as const
 export interface CapabilityOptions {
   /**
    * FHIR_PATIENT_ACCESS_ENABLED: say so in the descriptions, and publish
-   * what patients get (each type's patientAccessNotes) only when it is on.
+   * what patients get (each type's patientAccessNotes and each search
+   * parameter's patientDocumentation) only when it is on.
    */
   patientAccessEnabled?: boolean;
   /** FHIR_READ_ENABLED: when off, no resource type is listed (only /metadata answers). */
@@ -73,7 +74,10 @@ function resources(patientAccessEnabled: boolean) {
             searchParam: def.searchParams.map((p) => ({
               name: p.name,
               type: p.type,
-              documentation: p.documentation,
+              documentation:
+                patientAccessEnabled && p.patientDocumentation
+                  ? `${p.documentation} ${p.patientDocumentation}`
+                  : p.documentation,
             })),
           }
         : {}),

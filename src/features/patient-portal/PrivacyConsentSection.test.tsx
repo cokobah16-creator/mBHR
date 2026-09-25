@@ -15,6 +15,9 @@ const ID_DENY = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c02";
 const ID_MIXED = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c03";
 const ID_ADR = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c04";
 const ID_TREAT = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c05";
+const ID_CARE = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c06";
+const ID_ASK = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c07";
+const ID_RESEARCH = "0b6f3c1e-8f7a-4c1d-9a55-2d7f1e3b4c08";
 const PATIENT = "01HXPAGEPATIENT";
 
 const activeRecord = {
@@ -44,6 +47,24 @@ const mixedRecord = {
   ],
 };
 const adrRecord = { ...activeRecord, id: ID_ADR, scope: "adr", provisions: [] };
+/** A "do not" rule for the care team only: not a refusal to share outside mBHR. */
+const careTeamDenyRecord = {
+  ...activeRecord,
+  id: ID_CARE,
+  provisions: [{ provision_type: "deny", actor_type: "care_team", purpose: null }],
+};
+/** A "do not" rule about requests the patient makes. */
+const askDenyRecord = {
+  ...activeRecord,
+  id: ID_ASK,
+  provisions: [{ provision_type: "deny", actor_type: "external_system", purpose: "PATRQT" }],
+};
+const researchDenyRecord = {
+  ...activeRecord,
+  id: ID_RESEARCH,
+  scope: "research",
+  provisions: [{ provision_type: "deny", actor_type: "organization", purpose: "HRESCH" }],
+};
 const treatmentRecord = {
   ...activeRecord,
   id: ID_TREAT,
@@ -112,6 +133,27 @@ describe("PrivacyConsentSection", () => {
     expect(screen.getByText(/This choice also allows some sharing\./)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Withdraw/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/^Sharing your records outside mBHR/)).not.toBeInTheDocument();
+  });
+
+  it("names a refusal only when it is for someone outside mBHR, in plain words", async () => {
+    const { client } = makeClient({
+      interop_my_consents: () => ({
+        data: [careTeamDenyRecord, askDenyRecord, researchDenyRecord],
+        error: null,
+      }),
+    });
+    render(<PrivacyConsentSection patientId={PATIENT} client={client} />);
+    expect(
+      await screen.findByText("You asked us not to use your records for research"),
+    ).toBeInTheDocument();
+    // The care team rule and the rule about requests the patient makes are
+    // not named as a refusal to share outside mBHR.
+    expect(screen.getAllByText("A choice about how your records are shared")).toHaveLength(2);
+    expect(screen.getAllByText("Ask clinic staff about it.")).toHaveLength(2);
+    expect(screen.getAllByText("Ask clinic staff if you want to change this.")).toHaveLength(1);
+    expect(screen.queryByText(/outside mBHR/)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/when you ask for it|for research \(for research\)/);
+    expect(screen.queryByRole("button", { name: /^Withdraw/ })).not.toBeInTheDocument();
   });
 
   it("never shows a record with no rules as a permission", async () => {
@@ -195,9 +237,12 @@ describe("PrivacyConsentSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Withdraw permission" }));
 
     expect(await screen.findByText("Your permission was withdrawn.")).toBeInTheDocument();
+    // The page's patient is named, so a sign-in linked to two people
+    // withdraws only for the person on this page.
     expect(rpc).toHaveBeenCalledWith("interop_withdraw_consent", {
       p_consent_id: ID,
       p_reason: "No longer needed",
+      p_patient_id: PATIENT,
     });
     await waitFor(() => expect(screen.getByText("Withdrawn")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /^Withdraw:/ })).not.toBeInTheDocument();

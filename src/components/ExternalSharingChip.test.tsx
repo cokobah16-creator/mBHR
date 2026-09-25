@@ -44,6 +44,7 @@ describe("ExternalSharingChip", () => {
       "Restricted",
       "The patient asked us not to share their records outside mBHR.",
     ],
+    ["restricted", "refused_partly", "Restricted", "The patient refused some sharing outside mBHR."],
     [
       "restricted",
       "limited",
@@ -51,12 +52,7 @@ describe("ExternalSharingChip", () => {
       "The patient's permission covers only some records or uses.",
     ],
     ["restricted", "no_permission", "Restricted", "No permission to share outside mBHR is in force."],
-    [
-      "withdrawn",
-      "withdrawn",
-      "Withdrawn",
-      "The patient withdrew their permission to share outside mBHR.",
-    ],
+    ["withdrawn", "withdrawn", "Withdrawn", "A permission to share outside mBHR was withdrawn."],
   ])("shows %s (%s) with the reason and a note that care is not affected", async (value, reason, word, why) => {
     const { client, rpc } = makeClient({
       data: { sharing_state: value, sharing_reason: reason, external_sharing: "allowed" },

@@ -66,6 +66,13 @@ Step 9 restrictions:
   `own_consents_only`.
 - **Staff:** Observation gets `no_lab_rows` without consult or
   lab_review; Provenance gets `lab_events_only` without audit_access.
+  Under `no_lab_rows`, laboratory results are left out of Observation
+  searches, and every search that could include them carries a note
+  saying so (issue code `suppressed`). A read of a laboratory Observation
+  (`Observation/lab-[id]`) is refused with 403 from the id alone, before
+  any lookup, so it says nothing about whether the result exists. It is
+  audited with denial reason `missing_permission`, the same reason as a
+  DiagnosticReport or ServiceRequest read refused at step 5.
 
 Step 10 in practice: no purpose the surface accepts today (staff `TREAT`,
 patient `PATRQT`) is governed by stored consent, so the directive lookup
@@ -284,7 +291,8 @@ Each row holds:
 - the **internal** ids of the patients whose data was returned or named,
   at most 100 (a response that would name more is refused with 500
   instead of being served partly unaudited);
-- purpose, decision, denial reason, result count, HTTP status;
+- purpose, decision, denial reason, result count, HTTP status (a read
+  answered 304 Not Modified is recorded as 304);
 - consent decision, consent id and provision id, and restriction codes
   (at most 12);
 - search parameter **names** only (never values; a name the type does not
@@ -370,6 +378,8 @@ by the gateway; several are also in the CapabilityStatement notes.
 | Forged refusal rows | The Phase 1 recording function accepted any signed-in caller, so older deny rows may have been written by the account itself. | Kept (a refusal grants nothing); forged permit rows are withheld from AuditEvent. |
 | Audit retention | No period is set and no job deletes or archives rows; a rollback drops the trail. | Owner decision; export before any rollback. |
 | Directory searches write | A Practitioner name or PractitionerRole role search can mint `resource_links` rows (a GET with a write side effect). | By design: it keeps published ids stable. No clinical data. |
+| **Older FHIR exports do not follow these rules** | Two older FHIR mappers publish values this gateway leaves out. The app's client-side export (`src/services/fhir/`: `resourceMapper.ts` and `dexieAdapters.ts`, used by the admin bulk export and the portal's health data exports) sends every allergy with `verificationStatus` "confirmed" and type "allergy", the form's pre-selected "medication" as a category and its pre-selected "mild" as criticality "low", "biologic" for "other" or an unknown type, and "unable-to-assess" for an unknown severity; a diagnosis without a status becomes "active" and "confirmed". The TEFCA edge functions' mapper (`supabase/functions/_shared/fhir/mappers.ts`) does the same, and also treats an allergy with no active flag as active. | Separate from the gateway and not changed by Phase 2. They break "unknown stays unknown" and "never invent codes". Fixing or retiring them is later work (TEFCA: F1, F2). |
+| **Consent withdrawal and shared sign-ins** | One sign-in can be linked to several people (for example a shared phone). A direct call of `interop_withdraw_consent()` without `p_patient_id` can withdraw a sharing permission of any of them. | The portal always names the page's patient, and the database then refuses a record of anyone else (42501). A patient can withdraw only a permission to share, never a refusal ([consent.md](consent.md#consent-functions-phase-2)). |
 
 ## Findings
 

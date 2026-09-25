@@ -9,6 +9,9 @@
 //   L10 a status token in another code system matches nothing
 //   L11 code= matches only the codings Observation.code carries
 //   L12 a read answered 304 is audited as 304
+//       and a module's refusal is audited with the reason it names
+//       (a laboratory Observation read without the permission:
+//       missing_permission, as DiagnosticReport)
 //   L16 what patients get is published only while patient access is on
 // C1 (laboratory results withheld from nurses) is in laboratory.test.ts,
 // Binary's conditional read in documents.test.ts, and the laboratory status
@@ -17,6 +20,7 @@
 
 import { describe, expect, it } from "vitest";
 import { handleFhirRequest } from "../gateway/handler";
+import { errors } from "../errors/operationOutcome";
 import { capabilityStatement } from "../capability/capabilityStatement";
 import { conformanceExamples } from "../conformance/examples";
 import { mapEncounter, mapVisitStatus } from "../mappers/encounter";
@@ -288,6 +292,34 @@ describe("L12: conditional reads in the access record", () => {
   });
 });
 
+describe("Audit reasons for a refusal from a resource module", () => {
+  it("records the reason the error names, else one from the status, and never sends it to the caller", async () => {
+    expect(errors.forbidden().auditReason).toBeUndefined();
+    expect(errors.forbidden("x", { auditReason: "missing_permission" })).toMatchObject({ status: 403, code: "forbidden", auditReason: "missing_permission" });
+
+    // A 403 that names no reason (here: a Patient name search without a birth date) stays "forbidden".
+    const { call, audits } = setup();
+    const r = await call(`/fhir/R4/Patient?_id=${PATIENT_A.fhir_id}&name=Ada`, { token: DOCTOR });
+    expect(r.status).toBe(403);
+    expect(audits.at(-1)).toMatchObject({ p_decision: "deny", p_denial_reason: "forbidden", p_http_status: 403 });
+    // A laboratory Observation read without consult or lab_review is recorded as missing_permission
+    // (laboratory.test.ts checks it for nurses and volunteers); the caller sees only the refusal.
+    const lab = await call("/fhir/R4/Observation/lab-00000000-0000-4000-8000-0000000000ff", { token: NURSE });
+    expect(lab.status).toBe(403);
+    expect(audits.at(-1)).toMatchObject({ p_decision: "deny", p_denial_reason: "missing_permission", p_http_status: 403 });
+    expect(await lab.text()).not.toMatch(/missing_permission/);
+  });
+});
+
+/**
+ * Wording that describes what a patient gets or does ("Patients see",
+ * "A patient gets", "a patient's view", "for a patient", "patients reading",
+ * "a patient account", "the patient's own"). Not "Patient" as a resource
+ * type or a parameter name (Patient/[id], patient=), and not "this
+ * patient's records" about the record a search names.
+ */
+const PATIENT_WORDING = /\bpatients?(?:'s)? (?:account|caller|view|see|sees|get|gets|reading|own)|\ba patient's\b|\bfor a patient\b/i;
+
 describe("L9 and L16: the CapabilityStatement", () => {
   const byType = (cs: Json): Record<string, Json> => Object.fromEntries((cs.rest[0].resource as Json[]).map((r) => [r.type, r]));
 
@@ -319,16 +351,68 @@ describe("L9 and L16: the CapabilityStatement", () => {
       // The staff notes are published either way.
       for (const sentence of RESOURCE_DEFINITIONS[t].notes ?? []) expect(offTypes[t].documentation, t).toContain(sentence);
     }
-    const offText = JSON.stringify(off);
-    expect(offText).not.toMatch(/Patients see|A patient gets|patient's searchset|for a patient account|patients reading/);
+    // Nothing anywhere in the statement describes what a patient gets or does
+    // while patient access is off: not the descriptions, not the resource
+    // notes, not a search parameter. "Patient" as a type or a parameter name
+    // (Patient/[id], patient=) is not patient wording.
+    expect(JSON.stringify(off)).not.toMatch(PATIENT_WORDING);
+    expect(JSON.stringify(on)).toMatch(PATIENT_WORDING);
     expect(JSON.stringify(on)).toMatch(/Patients see their closed visits only/);
     expect(on.rest[0].security.description).toMatch(/the patient's own records for a patient account/);
+    // The regex does catch every patient sentence the definitions hold.
+    for (const t of PUBLISHED_TYPES) {
+      for (const sentence of RESOURCE_DEFINITIONS[t].patientAccessNotes ?? []) expect(sentence, t).toMatch(PATIENT_WORDING);
+      for (const p of RESOURCE_DEFINITIONS[t].searchParams) {
+        if (p.patientDocumentation) expect(p.patientDocumentation, `${t}.${p.name}`).toMatch(PATIENT_WORDING);
+      }
+    }
 
     // The same through /metadata, from the flag.
     const { call } = setup({}, { ...ENV, FHIR_PATIENT_ACCESS_ENABLED: "false" });
     const metadataOff = await json(await call("/fhir/R4/metadata"));
+    expect(JSON.stringify(metadataOff)).not.toMatch(PATIENT_WORDING);
     expect(byType(metadataOff).Encounter.documentation).not.toMatch(/Patients see/);
     const metadataOn = await json(await setup().call("/fhir/R4/metadata"));
     expect(byType(metadataOn).Encounter.documentation).toMatch(/Patients see their closed visits only/);
+  });
+
+  it("says what a search parameter does for a patient only while patient access is on", async () => {
+    const withPatientDocs = PUBLISHED_TYPES.flatMap((t) =>
+      RESOURCE_DEFINITIONS[t].searchParams.filter((p) => p.patientDocumentation).map((p) => `${t}.${p.name}`),
+    );
+    expect(withPatientDocs).toEqual(expect.arrayContaining(["DiagnosticReport.status", "MedicationDispense.prescription", "Consent.patient"]));
+    for (const t of PUBLISHED_TYPES) {
+      for (const p of RESOURCE_DEFINITIONS[t].searchParams) {
+        // The text published either way never describes patients.
+        expect(p.documentation, `${t}.${p.name}`).not.toMatch(PATIENT_WORDING);
+        // Only types a patient may read at all describe what a patient gets.
+        if (p.patientDocumentation) expect(RESOURCE_DEFINITIONS[t].patientAccess, `${t}.${p.name}`).toBe(true);
+      }
+    }
+
+    const param = (cs: Json, type: string, name: string): string =>
+      (byType(cs)[type].searchParam as Json[]).find((p) => p.name === name)?.documentation;
+    const off = capabilityStatement(BASE, undefined, { patientAccessEnabled: false });
+    const on = capabilityStatement(BASE, undefined, { patientAccessEnabled: true });
+    for (const t of PUBLISHED_TYPES) {
+      for (const p of RESOURCE_DEFINITIONS[t].searchParams) {
+        expect(param(off, t, p.name), `${t}.${p.name}`).toBe(p.documentation);
+        expect(param(on, t, p.name), `${t}.${p.name}`).toBe(
+          p.patientDocumentation ? `${p.documentation} ${p.patientDocumentation}` : p.documentation,
+        );
+      }
+    }
+    expect(param(off, "DiagnosticReport", "status")).not.toMatch(/never final/);
+    expect(param(on, "DiagnosticReport", "status")).toMatch(/A patient's reports are never final, so status=final finds none for a patient\.$/);
+    expect(param(off, "MedicationDispense", "prescription")).not.toMatch(/patient|Staff only/i);
+    expect(param(on, "MedicationDispense", "prescription")).toMatch(/Staff only: a patient's view carries no authorizingPrescription\.$/);
+    expect(param(off, "Consent", "patient")).not.toMatch(/staff|own current record/i);
+    expect(param(on, "Consent", "patient")).toMatch(/A patient gets only directives filed under their own current record/);
+
+    // The same through /metadata, from the flag.
+    const metadataOff = await json(await setup({}, { ...ENV, FHIR_PATIENT_ACCESS_ENABLED: "false" }).call("/fhir/R4/metadata"));
+    expect(param(metadataOff, "DiagnosticReport", "status")).not.toMatch(/patient/i);
+    const metadataOn = await json(await setup().call("/fhir/R4/metadata"));
+    expect(param(metadataOn, "DiagnosticReport", "status")).toMatch(/A patient's reports are never final/);
   });
 });

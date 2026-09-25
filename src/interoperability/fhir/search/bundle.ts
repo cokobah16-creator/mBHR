@@ -21,9 +21,6 @@ export interface SearchPage<T extends Resource> {
   next: Cursor | null;
 }
 
-/** A searchset Bundle: Bundle.entry is 0..*, and left out when there is none. */
-export type SearchsetBundle = Omit<Bundle, "entry"> & { entry?: BundleEntry[] };
-
 export function searchsetBundle<T extends Resource>(opts: {
   baseUrl: string;
   resourceType: string;
@@ -36,7 +33,7 @@ export function searchsetBundle<T extends Resource>(opts: {
   outcomes?: OperationOutcomeIssue[];
   /** A fresh uuid for the outcome entry's fullUrl. */
   newId?: () => string;
-}): SearchsetBundle {
+}): Bundle {
   const { baseUrl, resourceType, query, count, page } = opts;
   const link: Bundle["link"] = [
     { relation: "self", url: pageUrl(baseUrl, resourceType, query, count, undefined) },

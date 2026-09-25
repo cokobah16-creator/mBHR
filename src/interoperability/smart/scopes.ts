@@ -55,10 +55,12 @@ const PARAM_VALUE = /^[^&#?=]{1,256}$/;
  * with the search, so it must be a filter that can only narrow it. The
  * other "_" parameters are not: _include, _revinclude and _contained add
  * resources to a result; _elements, _summary, _count, _sort and _total
- * change what is returned, not which records; _has, _query, _filter and
- * the rest depend on other resources or on server-defined queries. They
- * are refused, never ignored. Names without "_" are resource search
- * parameters, which are filters.
+ * change what is returned, not which records; _has, _query and _filter
+ * depend on other resources or on server-defined queries. The rest
+ * (_lastUpdated, _tag, _security, _profile, ...) are filters, but are not
+ * accepted yet: add one here, with a test, when an enforcer can check it.
+ * All of them are refused, never ignored. Names without "_" are resource
+ * search parameters, which are filters.
  */
 const FILTER_PARAMS_WITH_UNDERSCORE: ReadonlySet<string> = new Set(["_id"]);
 

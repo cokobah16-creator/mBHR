@@ -78,6 +78,7 @@ describe("parseMyConsents", () => {
       topic: "sharing",
       kind: "permission",
       permits: ["your_request"],
+      refusesOutside: false,
       refuses: [],
       alsoPermits: false,
       state: "in_place",
@@ -95,6 +96,7 @@ describe("parseMyConsents", () => {
       NOW,
     );
     expect(item.kind).toBe("refusal");
+    expect(item.refusesOutside).toBe(true);
     expect(item.permits).toStrictEqual([]);
     expect(item.refuses).toStrictEqual([]);
     expect(item.alsoPermits).toBe(false);
@@ -115,10 +117,56 @@ describe("parseMyConsents", () => {
       NOW,
     );
     expect(item.kind).toBe("refusal");
+    expect(item.refusesOutside).toBe(true);
     expect(item.refuses).toStrictEqual(["research"]);
     expect(item.permits).toStrictEqual(["your_request"]);
     expect(item.alsoPermits).toBe(true);
     expect(item.canWithdraw).toBe(false);
+  });
+
+  it("says whether a refusal is for someone outside mBHR, and lists only those purposes", () => {
+    const outside = (actor: unknown) =>
+      parseMyConsents(
+        [record({ provisions: [{ provision_type: "deny", actor_type: actor }] })],
+        NOW,
+      )[0].refusesOutside;
+    expect(outside("external_system")).toBe(true);
+    expect(outside("organization")).toBe(true);
+    expect(outside("any")).toBe(true);
+    expect(outside(null)).toBe(true);
+    expect(outside(undefined)).toBe(true);
+    expect(outside("care_team")).toBe(false);
+    expect(outside("practitioner")).toBe(false);
+    expect(outside("patient_portal")).toBe(false);
+    expect(outside("something-new")).toBe(false);
+
+    const [internal] = parseMyConsents(
+      [
+        record({
+          provisions: [{ provision_type: "deny", actor_type: "care_team", purpose: "HRESCH" }],
+        }),
+      ],
+      NOW,
+    );
+    // Still a refusal: never offered for withdrawal.
+    expect(internal.kind).toBe("refusal");
+    expect(internal.refuses).toStrictEqual([]);
+    expect(internal.canWithdraw).toBe(false);
+
+    // A care team rule with no purpose does not widen the outside refusal.
+    const [both] = parseMyConsents(
+      [
+        record({
+          provisions: [
+            { provision_type: "deny", actor_type: "organization", purpose: "HRESCH" },
+            { provision_type: "deny", actor_type: "care_team", purpose: null },
+          ],
+        }),
+      ],
+      NOW,
+    );
+    expect(both.refusesOutside).toBe(true);
+    expect(both.refuses).toStrictEqual(["research"]);
   });
 
   it("leaves out treatment consents, advance care wishes and unknown scopes", () => {
@@ -216,11 +264,12 @@ describe("loadMyConsents", () => {
 });
 
 describe("withdrawConsent", () => {
-  it("sends the id and a cleaned reason", async () => {
+  it("sends the id, a cleaned reason and the page's patient", async () => {
     const calls: { fn: string; args?: Record<string, unknown> }[] = [];
     const out = await withdrawConsent(
       fakeClient({ data: true, error: null }, calls),
       ID_A,
+      "01HXP",
       "  changed my mind  ",
       true,
     );
@@ -228,21 +277,28 @@ describe("withdrawConsent", () => {
     expect(calls).toEqual([
       {
         fn: "interop_withdraw_consent",
-        args: { p_consent_id: ID_A, p_reason: "changed my mind" },
+        args: { p_consent_id: ID_A, p_reason: "changed my mind", p_patient_id: "01HXP" },
       },
     ]);
   });
 
-  it("reports an earlier withdrawal, a bad id and a missing function", async () => {
-    expect(await withdrawConsent(fakeClient({ data: false, error: null }), ID_A, "", true)).toEqual({
-      status: "already_withdrawn",
-    });
-    expect(await withdrawConsent(fakeClient({ data: true, error: null }), "x", "", true)).toEqual({
-      status: "invalid",
-    });
+  it("never calls without a valid record id and patient id", async () => {
+    const calls: { fn: string; args?: Record<string, unknown> }[] = [];
+    const client = fakeClient({ data: true, error: null }, calls);
+    expect(await withdrawConsent(client, "x", "01HXP", "", true)).toEqual({ status: "invalid" });
+    expect(await withdrawConsent(client, ID_A, "", "", true)).toEqual({ status: "invalid" });
+    expect(await withdrawConsent(client, ID_A, "bad id!", "", true)).toEqual({ status: "invalid" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("reports an earlier withdrawal, a refusal and a missing function", async () => {
     expect(
-      await withdrawConsent(fakeClient({ data: null, error: { code: "42883" } }), ID_A, null, true),
-    ).toEqual({ status: "missing" });
+      await withdrawConsent(fakeClient({ data: false, error: null }), ID_A, "01HXP", "", true),
+    ).toEqual({ status: "already_withdrawn" });
+    const denied = fakeClient({ data: null, error: { code: "42501" } });
+    expect(await withdrawConsent(denied, ID_A, "01HXP", "", true)).toEqual({ status: "denied" });
+    const missing = fakeClient({ data: null, error: { code: "42883" } });
+    expect(await withdrawConsent(missing, ID_A, "01HXP", null, true)).toEqual({ status: "missing" });
   });
 
   it("limits the reason to 500 characters", () => {
@@ -263,7 +319,14 @@ describe("consent summary", () => {
   });
 
   it("says Restricted, never Allowed, for a refusal, a limit, no check, no start or no record", () => {
-    for (const reason of ["refused", "limited", "pending_verification", "not_started", "no_permission"]) {
+    for (const reason of [
+      "refused",
+      "refused_partly",
+      "limited",
+      "pending_verification",
+      "not_started",
+      "no_permission",
+    ]) {
       expect(chipFor("restricted", reason)?.label).toBe("External sharing: Restricted");
     }
   });
@@ -274,6 +337,12 @@ describe("consent summary", () => {
         "External access is off in this release, so this is not used to share records yet. " +
         "It does not affect care.",
     );
+    expect(chipFor("restricted", "refused_partly")?.hint).toBe(
+      `The patient refused some sharing outside mBHR. ${EXTERNAL_SHARING_NOTE}`,
+    );
+    expect(
+      parseConsentSummary({ sharing_state: "restricted", sharing_reason: "refused_partly" })?.reason,
+    ).toBe("refused_partly");
     expect(chipFor("restricted", "limited")?.hint).toContain(
       "The patient's permission covers only some records or uses.",
     );
@@ -281,7 +350,11 @@ describe("consent summary", () => {
     expect(chipFor("restricted", "not_started")?.hint).toContain("it has not started yet");
     expect(chipFor("restricted", "no_permission")?.hint).toContain("No permission to share");
     expect(chipFor("allowed", "permitted")?.hint).toContain("with no limits");
-    expect(chipFor("withdrawn", "withdrawn")?.hint).toContain("withdrew their permission");
+    // Neutral about who withdrew it: staff may have made the change.
+    expect(chipFor("withdrawn", "withdrawn")?.hint).toBe(
+      `A permission to share outside mBHR was withdrawn. ${EXTERNAL_SHARING_NOTE}`,
+    );
+    expect(chipFor("withdrawn", "withdrawn")?.hint).not.toMatch(/the patient withdrew/i);
     expect(chipFor("restricted", "mystery")?.hint).toBe(
       `The reason is not known. ${EXTERNAL_SHARING_NOTE}`,
     );

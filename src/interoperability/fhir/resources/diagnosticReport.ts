@@ -68,7 +68,8 @@ export const definition: ResourceDefinition = {
       name: "status",
       type: "token",
       documentation:
-        "A diagnostic-report-status code: registered, partial, final, cancelled or unknown (the published status). It is worked out from the results after they are read, so a page can hold fewer matches than _count and still link to a next page. A patient's reports are never final, so status=final finds none for a patient.",
+        "A diagnostic-report-status code: registered, partial, final, cancelled or unknown (the published status). It is worked out from the results after they are read, so a page can hold fewer matches than _count and still link to a next page.",
+      patientDocumentation: "A patient's reports are never final, so status=final finds none for a patient.",
     },
     { name: "category", type: "token", documentation: "LAB (http://terminology.hl7.org/CodeSystem/v2-0074): every report here is a laboratory report." },
     {

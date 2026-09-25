@@ -84,7 +84,8 @@ export const definition: ResourceDefinition = {
       name: "prescription",
       type: "reference",
       documentation:
-        "MedicationRequest/[id]: dispenses whose authorizingPrescription is that prescription line (only those where the line is exactly identified). Staff only: a patient's view carries no authorizingPrescription.",
+        "MedicationRequest/[id]: dispenses whose authorizingPrescription is that prescription line (only those where the line is exactly identified).",
+      patientDocumentation: "Staff only: a patient's view carries no authorizingPrescription.",
     },
   ],
   requiredSearch: [["_id"], ["patient"], ["subject"], ["prescription"]],

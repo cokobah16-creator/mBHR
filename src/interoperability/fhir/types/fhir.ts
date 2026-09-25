@@ -189,5 +189,6 @@ export interface Bundle extends Resource {
   timestamp?: string;
   total?: number;
   link: BundleLink[];
-  entry: BundleEntry[];
+  /** 0..*: left out when there is nothing to list (FHIR JSON forbids empty arrays). */
+  entry?: BundleEntry[];
 }

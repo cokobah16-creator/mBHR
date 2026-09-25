@@ -293,9 +293,20 @@ rules:
 - `*` is accepted only as a whole resource type (`patient/*.rs`) or as the
   v1 permission (`.*`). Any other wildcard is malformed.
 - `patient/` is narrower than `user/`; `system/` never mixes with either.
-- Granular v2 scopes (`?category=...`) are kept and combined with AND. The
-  gateway must refuse to serve a type whose scope carries a constraint it
-  cannot evaluate (fail closed), rather than ignore the constraint.
+- Granular v2 scopes (`?category=...`) are kept and combined with AND.
+  Only search filters are accepted as constraints: a resource search
+  parameter (with an optional modifier) or `_id`. Any other parameter
+  starting with `_` makes the scope malformed (`unsupported_constraint`),
+  so it is refused when the scope is read, never ignored. `_include`,
+  `_revinclude` and `_contained` would add resources to a result;
+  `_elements`, `_summary`, `_count`, `_sort` and `_total` would change
+  what is returned rather than which records; `_has`, `_query` and
+  `_filter` depend on other resources or on server-defined queries. The
+  rest (`_lastUpdated`, `_tag`, `_security`, `_profile`, and so on) are
+  filters, but are not accepted yet: one can be added, with a test, once
+  an enforcer can check it. The gateway must refuse to serve a type whose
+  scope carries a constraint it cannot evaluate (fail closed), rather than
+  ignore the constraint.
 - `openid`, `fhirUser`, `profile`, `launch`, `launch/patient`,
   `launch/encounter`, `offline_access`, `online_access` must appear in all
   sets exactly.

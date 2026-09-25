@@ -117,9 +117,13 @@ functions directly from the browser with the person's own session; the
 gateway is not involved. What crosses:
 
 - **Summary** (`interop_consent_summary`, staff or the patient themself):
-  external sharing allowed / not allowed / withdrawn, record counts, last
-  change time. No provision details, no staff identities.
-- **Records** (`interop_my_consents`, the patient's own; and the Consent
+  `external_sharing` (allowed, not allowed or withdrawn, as the evaluator
+  reads it), and for the staff chip `sharing_state` (allowed, restricted
+  or withdrawn) with `sharing_reason` (for example `refused_partly`),
+  record counts, last change time. No provision details, no staff
+  identities.
+- **Records** (`interop_my_consents(p_patient_id)`: one of the patient's
+  own portal records and the records merged into it; and the Consent
   resource through the gateway, from `fhir_consent_directives()`): status,
   scope, category, periods, verification state, withdrawal state and
   provisions. Never returned:
@@ -127,10 +131,12 @@ gateway is not involved. What crosses:
   `withdrawal_reason`, `granted_by`, `source_document_id` or
   `actor_reference`.
 - **Changes** (`interop_record_consent`, `interop_verify_consent`,
-  `interop_withdraw_consent`): the arguments go to the database; each
-  change writes one row in the append-only `interop.consent_record_history`
-  and one `consent_change` row in `interop.access_audit` whose metadata is
-  the event name only, never the record's content.
+  `interop_withdraw_consent`): the arguments go to the database (for a
+  withdrawal: the consent id, an optional reason and the page's patient
+  id, `p_patient_id`); each change writes one row in the append-only
+  `interop.consent_record_history` and one `consent_change` row in
+  `interop.access_audit` whose metadata is the event name only, never the
+  record's content.
 
 ## 3. What is logged
 
@@ -158,7 +164,8 @@ Nothing that holds patient data:
   resource content), and `Last-Modified` only when the resource has
   `meta.lastUpdated`. `If-None-Match` with the current tag gets a 304 with
   no body, and only after authentication, the access decision and the audit
-  record, exactly like a 200.
+  record, exactly like a 200 (the audit row records 304). A Binary
+  download carries no ETag and ignores `If-None-Match`.
 - The service worker never answers `/fhir/` with the app shell
   (`navigateFallbackDenylist` in `vite.config.ts`), `/fhir/` is not in its
   precache, and no runtime-caching rule matches it; Supabase responses are

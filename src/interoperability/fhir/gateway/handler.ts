@@ -99,8 +99,13 @@ function errorResponse(e: FhirError, requestId: string): Response {
   return respond(e.status, operationOutcome(e.code, e.message), e.headers, requestId);
 }
 
-/** Audit denial reason for a failure after the caller is known. */
+/**
+ * Audit denial reason for a failure after the caller is known: the one the
+ * error names (e.g. missing_permission, as the permission step records it),
+ * otherwise one from the status.
+ */
 function failureReason(e: FhirError): string {
+  if (e.auditReason) return e.auditReason;
   switch (e.status) {
     case 400:
     case 406:

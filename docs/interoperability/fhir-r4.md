@@ -37,11 +37,19 @@ The CapabilityStatement: status `draft`, kind `instance`, software
 "mBHR FHIR gateway" 0.2.0, format `application/fhir+json`,
 `security.cors` false. For each type it lists the interactions, the search
 parameters with their documentation, and the type's notes as
-`documentation`. It names no database table, function or policy. Each
-type is `versioning: versioned`, `readHistory: false`,
-`updateCreate: false`, `conditionalRead: not-match`. It claims no profile
-and no SMART or OAuth service.
+`documentation`. It names no database table, function or policy. Every
+type is `readHistory: false` and `updateCreate: false`. Every type except
+Binary is `versioning: versioned` and `conditionalRead: not-match`. Binary
+is `versioning: no-version` and `conditionalRead: not-supported`: a
+download carries no ETag. It claims no profile and no SMART or OAuth
+service.
 
+- What patients get is published only while `FHIR_PATIENT_ACCESS_ENABLED`
+  is on. That covers each type's patient notes, the patient part of a
+  search parameter's documentation (DiagnosticReport `status`,
+  MedicationDispense `prescription`, Consent `patient`), and the patient
+  part of the implementation and security descriptions. With it off,
+  nothing in the statement describes what a patient gets.
 - It takes no parameters other than `_format` (anything else is 400).
 - With `FHIR_READ_ENABLED=false` it is still served, but lists no resource
   types.
@@ -74,7 +82,7 @@ call:
 | --- | --- |
 | `Authorization: Bearer <token>` | Required except for `metadata`. The caller's Supabase access token from signing in to mBHR. A token in the URL is never accepted. |
 | `X-Purpose-Of-Use` | Optional HL7 v3 PurposeOfUse code. Absent means `TREAT` for staff and `PATRQT` for a patient, the only purpose each may state. `ETREAT` gets 403 `break_glass_not_enabled`; `HOPERAT`, `HRESCH`, `PUBHLTH`, or the other kind's purpose, get 403 `purpose_not_supported`; an unknown value gets 403 `purpose_invalid` ([consent.md](consent.md)). |
-| `If-None-Match` | On a read, `W/"<versionId>"` (or `*`) returns 304 when unchanged. The request is still authenticated, decided and audited first. |
+| `If-None-Match` | On a read, `W/"<versionId>"` (or `*`) returns 304 when unchanged. The request is still authenticated, decided and audited first, and the audit row records 304. Binary sends no ETag and ignores this header. |
 | `Accept` | Must allow JSON: absent, `*/*`, `application/*`, `application/json` or `application/fhir+json`. Anything else: 406. For Binary, an `Accept` that lists only `application/fhir+json` or `application/json` is 406 (the file is not available as FHIR JSON). |
 | `_format` (query) | `json`, `application/json` or `application/fhir+json`; anything else is 406; more than once is 400. On Binary any `_format` is 406. |
 
@@ -98,8 +106,8 @@ call:
   twice (a range). More is 400.
 - A value longer than 256 characters, or empty, is 400.
 - A search that cannot match (an unknown status, a malformed id, a foreign
-  code system) returns an empty Bundle, not an error. For staff, a
-  `patient` that cannot be resolved also returns an empty Bundle.
+  code system) returns a Bundle with no matches, not an error. For staff,
+  a `patient` that cannot be resolved does the same.
 - A malformed search from a caller who may not read the type is refused
   as forbidden first, so it learns nothing about the type's parameters.
 
@@ -173,23 +181,30 @@ Extra conditions on top of the required groups:
   - A time must carry a zone (`Z` or `±hh:mm`); without one it is 400.
   - Two values are combined as AND
     (`date=ge2026-01-01&date=lt2026-02-01`).
-- Tokens: `code` or `system|code`. For most token parameters a system
-  other than the one the type publishes makes the search match nothing.
-  Encounter `status` and Condition `clinical-status` compare the code
-  only. Condition `code` with another system is 400.
+  - Encounter `date` matches `Encounter.period.start`. A visit published
+    without a period never matches a date search: a visit whose site is
+    "Portal entry" (any case, spaces around it ignored), or one with no
+    usable start time.
+- Tokens: `code` or `system|code`. The system must be the one the element
+  uses. Another system, or an empty one (`|code`), makes the search match
+  nothing. This holds for every status parameter, Encounter `status` and
+  Condition `clinical-status` included. Three kinds are refused with 400
+  instead: Condition `code` with another system; AuditEvent `outcome`,
+  `action` or `subtype` with another system; and Practitioner `active`
+  with any system.
 
 Token values per type:
 
 | Type | Parameter | Values |
 | --- | --- | --- |
-| Encounter | `status` | `in-progress`, `finished`, `cancelled`, `unknown` |
+| Encounter | `status` | `in-progress`, `finished`, `cancelled`, `unknown`. Only the values the app writes are recognised, in any case; anything else, including a value with spaces around it (" closed"), is `unknown` |
 | Observation | `category` | `vital-signs`, `laboratory` (system optional: HL7 observation-category) |
-| Observation | `code` | a vital-signs LOINC code (for example `http://loinc.org|8867-4`), an mBHR vitals column code (`https://mbhr.app/codes/vitals|pulse_bpm`), or an mBHR lab-test code (`https://mbhr.app/codes/lab-test|CBC`) |
+| Observation | `code` | a code the Observation's own `code` carries: a vital-signs LOINC code (for example `http://loinc.org|8867-4`), an mBHR vitals column code (`https://mbhr.app/codes/vitals|pulse_bpm`), or an mBHR lab-test code (`https://mbhr.app/codes/lab-test|CBC`). A blood pressure matches on its panel code `85354-9` only: the systolic and diastolic codes (`8480-6`, `8462-4`, `systolic`, `diastolic`) are on its components and match nothing |
 | Observation | `status` | `final`, `preliminary` |
 | Condition | `clinical-status` | a condition-clinical code; records whose verification status is `entered-in-error` never match |
 | Condition | `code` | an mBHR condition code, with or without `https://mbhr.app/codes/condition` |
 | AllergyIntolerance | `clinical-status` | `active`, `inactive` (`resolved` matches nothing) |
-| AllergyIntolerance | `category` | `medication`, `food`, `environment` (`biologic` matches nothing) |
+| AllergyIntolerance | `category` | `food`, `environment` (`medication` and `biologic` match nothing: the allergy form pre-selects "medication", so no category is published for it) |
 | AllergyIntolerance | `criticality` | `high` (`low`, `unable-to-assess` match nothing) |
 | MedicationRequest | `status` | `active`, `completed`, `cancelled`, `unknown` match; other codes match nothing |
 | MedicationDispense | `status` | the published status; almost every record is `unknown`, and `completed` matches nothing |
@@ -218,8 +233,16 @@ Practitioner `identifier`, `telecom`, `email`; Location `status`,
 ### Notes in a searchset
 
 Some searchsets carry one OperationOutcome entry (`search.mode: outcome`)
-after the matches:
+after the matches. A searchset with no match and no note has no `entry`
+element at all (FHIR JSON allows no empty arrays).
 
+- Observation, for staff without consult or lab_review: every search that
+  could include laboratory results says, with issue code `suppressed`,
+  that laboratory results are not included and that an empty or short
+  result does not mean the patient has none. It depends only on the
+  caller's permissions and the query, never on whether a result exists. A
+  search that can match vital signs only (for example
+  `category=vital-signs`) carries no such note.
 - Condition: every searchset says that diagnoses in consultation notes are
   not published.
 - AllergyIntolerance: every searchset says that mBHR does not record "no
@@ -294,9 +317,12 @@ X-Content-Type-Options: nosniff
 X-Request-Id: <uuid>
 ```
 
-A file over 25 MB is refused with 503. A removed document, a missing file,
-a file Storage refuses and a stored path outside the patient's folder all
-answer 404. See [security.md](security.md#documents).
+There is no ETag, so `If-None-Match` is ignored: a download that succeeds
+is a 200 with the file (the CapabilityStatement says `conditionalRead:
+not-supported`). A file over 25 MB is refused with 503. A removed
+document, a missing file, a file Storage refuses and a stored path outside
+the patient's folder all answer 404. See
+[security.md](security.md#documents).
 
 ### Errors
 
@@ -310,7 +336,7 @@ traces or other patients' identifiers.
 | 400 | `not-supported` | unsupported parameter, modifier, OR list, interaction or path; `_count=0`; Binary search |
 | 400 | `too-costly` | a laboratory search that matches more results than one page can gather (narrow it, for example with `based-on` or `_id`) |
 | 401 | `login` | no token, or an invalid, expired or wrong-audience session. Header `WWW-Authenticate: Bearer realm="mBHR FHIR"` |
-| 403 | `forbidden` | no staff role or linked record, missing permission, patient access off, type not available to patients, another patient named, purpose refused, search not narrowed |
+| 403 | `forbidden` | no staff role or linked record, missing permission (including a read of a laboratory Observation, `Observation/lab-<id>`, without consult or lab_review, decided from the id before any lookup), patient access off, type not available to patients, another patient named, purpose refused, search not narrowed |
 | 404 | `not-found` | no such record **or a record the caller may not see** (indistinguishable); reads switched off; the interface disabled |
 | 404 | `not-supported` | a type that is not published |
 | 405 | `not-supported` | a method other than GET (`Allow: GET`) |

@@ -46,10 +46,10 @@ const CLINICAL = ["active", "recurrence", "relapse", "inactive", "remission", "r
  * The verification codes published as stored. "confirmed" is not one of
  * them: public.conditions.verification_status has DEFAULT 'confirmed'
  * (20260125091822_add_immunizations_conditions_sdoh.sql), so a stored
- * 'confirmed' may only mean that nobody recorded a verification status.
- * It is left out, never published as a confirmed diagnosis. Condition
- * search offers no verification-status parameter, so search cannot
- * disagree with this.
+ * 'confirmed' may just mean that nobody recorded a verification status;
+ * the two cannot be told apart. It is left out, never published as a
+ * confirmed diagnosis. Condition search offers no verification-status
+ * parameter, so search cannot disagree with this.
  */
 const VERIFICATION = [
   "unconfirmed",

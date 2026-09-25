@@ -111,6 +111,20 @@
 --     a verified, in-force permit with no limit (no purpose, action,
 --     resource type, data class or security label) and no refusal;
 --     'withdrawn'; otherwise 'restricted', with the reason.
+--   - The chip counts a refusal only where the gateway's evaluator would
+--     apply it: an external-actor deny on an active, started, not
+--     withdrawn, not ended patient-privacy record, in its own period. A
+--     deny on a draft or proposed record, or one that has not started yet,
+--     is not counted (the evaluator ignores it too), so the chip can read
+--     Allowed beside it until it is active and started. A refusal limited
+--     by purpose, action, resource type, data class or security label is
+--     'refused_partly', and a verified full permit beside it is not
+--     'allowed'.
+--   - 'withdrawn' (sharing_reason and the older external_sharing key) only
+--     when a withdrawn patient-privacy record had a permit for an external
+--     actor and no deny: a withdrawn refusal, an empty record or a care
+--     team permit does not make the chip say Withdrawn. A permit waiting
+--     for staff to check it ranks above an older withdrawal.
 --   - interop_my_consents(p_patient_id): the page's patient (one of the
 --     caller's portal records) and the records merged into it, not every
 --     record linked to the sign-in (a shared phone can link several
@@ -119,7 +133,14 @@
 --     permission to share (scope patient-privacy or research, no deny
 --     provision). A refusal, a treatment consent or an advance directive is
 --     changed with clinic staff (42501 for the patient); staff are not
---     limited.
+--     limited. The optional p_patient_id names the page's patient: the
+--     record must then be that patient's (or of a record merged into it),
+--     for staff too, and a patient must name one of their own portal
+--     records (42501 otherwise). The portal always passes it, so a sign-in
+--     linked to two people (a shared phone) withdraws only for the person
+--     the page shows. Without it a patient may still withdraw a record of
+--     any person linked to the sign-in (the linkage model): it narrows the
+--     request, it is not the ownership check.
 --   - fhir_link_ids / fhir_link_sources: staff holding consult, dispense or
 --     inventory only (pharmacy_items_select): other staff cannot read the
 --     catalogue, so they may not mint or resolve its published ids either.
@@ -158,7 +179,7 @@
 --   DROP FUNCTION IF EXISTS public.fhir_patient_lab_results(uuid[], uuid[], uuid, integer);
 --   DROP FUNCTION IF EXISTS public.interop_record_consent(text, text, text, text, text, text, timestamptz, timestamptz, jsonb);
 --   DROP FUNCTION IF EXISTS public.interop_verify_consent(uuid);
---   DROP FUNCTION IF EXISTS public.interop_withdraw_consent(uuid, text);
+--   DROP FUNCTION IF EXISTS public.interop_withdraw_consent(uuid, text, text);
 --   DROP FUNCTION IF EXISTS public.interop_my_consents(text);
 --   DROP FUNCTION IF EXISTS public.interop_consent_summary(text);
 --   DROP TRIGGER IF EXISTS consent_records_history ON interop.consent_records;
@@ -1447,7 +1468,20 @@ COMMENT ON FUNCTION public.interop_verify_consent(uuid) IS
 -- could allow sharing, and a treatment consent or an advance directive is
 -- not a sharing choice. Those are changed with clinic staff (42501 for the
 -- patient, whatever their status); staff are not limited.
-CREATE OR REPLACE FUNCTION public.interop_withdraw_consent(p_consent_id uuid, p_reason text DEFAULT NULL)
+-- p_patient_id (optional) is the page's patient. When given, the consent
+-- must be that record's or of a record merged into it (42501 otherwise,
+-- staff included), and a patient must name one of their own portal
+-- records (public.app_portal_patient_ids(), 42501 otherwise): one sign-in
+-- can be linked to several people (a shared phone), and the portal page
+-- withdraws only for the person it shows. A malformed id is refused
+-- (22023). An earlier draft of this file had no p_patient_id: that version
+-- is dropped first, so it cannot stay callable beside this one.
+DROP FUNCTION IF EXISTS public.interop_withdraw_consent(uuid, text);
+CREATE OR REPLACE FUNCTION public.interop_withdraw_consent(
+  p_consent_id  uuid,
+  p_reason      text DEFAULT NULL,
+  p_patient_id  text DEFAULT NULL
+)
 RETURNS boolean
 LANGUAGE plpgsql
 VOLATILE
@@ -1457,6 +1491,7 @@ AS $$
 DECLARE
   v_uid    uuid := (SELECT auth.uid());
   v_staff  boolean;
+  v_own    text[];
   v_rec    interop.consent_records%ROWTYPE;
 BEGIN
   IF v_uid IS NULL THEN
@@ -1465,16 +1500,32 @@ BEGIN
   IF length(COALESCE(p_reason, '')) > 500 THEN
     RAISE EXCEPTION 'the reason is limited to 500 characters' USING ERRCODE = '22023';
   END IF;
+  IF p_patient_id IS NOT NULL AND p_patient_id !~ '^[A-Za-z0-9._-]{1,128}$' THEN
+    RAISE EXCEPTION 'invalid patient id' USING ERRCODE = '22023';
+  END IF;
   v_staff := COALESCE(public.app_is_staff(), false)
          AND interop.caller_has_any(ARRAY['portal_manage', 'consult']);
+  IF NOT v_staff AND p_patient_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.app_portal_patient_ids() AS x WHERE x = p_patient_id) THEN
+    RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501';
+  END IF;
+  -- The records the consent must belong to: the named page patient's
+  -- family; else, for a patient, every portal record of the sign-in; else
+  -- (staff, no patient named) NULL = not limited.
+  v_own := CASE
+             WHEN p_patient_id IS NOT NULL THEN interop.patient_members(ARRAY[p_patient_id])
+             WHEN NOT v_staff THEN interop.patient_members(ARRAY(SELECT public.app_portal_patient_ids()))
+           END;
 
   SELECT * INTO v_rec FROM interop.consent_records WHERE id = p_consent_id FOR UPDATE;
-  IF NOT v_staff AND (NOT FOUND OR NOT (v_rec.patient_id = ANY (
-       interop.patient_members(ARRAY(SELECT public.app_portal_patient_ids()))))) THEN
+  IF NOT v_staff AND (NOT FOUND OR NOT (v_rec.patient_id = ANY (v_own))) THEN
     RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501';
   END IF;
   IF v_rec.id IS NULL THEN
     RAISE EXCEPTION 'unknown consent' USING ERRCODE = '22023';
+  END IF;
+  IF v_own IS NOT NULL AND NOT (v_rec.patient_id = ANY (v_own)) THEN
+    RAISE EXCEPTION 'not allowed: this consent is not the named patient''s' USING ERRCODE = '42501';
   END IF;
   IF NOT v_staff
      AND (v_rec.scope NOT IN ('patient-privacy', 'research')
@@ -1496,10 +1547,12 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION public.interop_withdraw_consent(uuid, text) IS
+COMMENT ON FUNCTION public.interop_withdraw_consent(uuid, text, text) IS
   'Consent management: withdraw a consent (staff holding portal_manage or consult, or the '
   'portal patient whose record it is; a patient only a permission to share: scope '
-  'patient-privacy or research, no deny provision). Final: a withdrawn consent cannot be '
+  'patient-privacy or research, no deny provision). p_patient_id (optional, the page''s '
+  'patient): the consent must be that record''s or of a record merged into it, and a '
+  'patient must name one of their own portal records. Final: a withdrawn consent cannot be '
   're-activated.';
 
 -- One portal patient's consent directives (same shape as
@@ -1561,25 +1614,35 @@ COMMENT ON FUNCTION public.interop_my_consents(text) IS
 --     refusal counts before it is verified, and it wins over permits);
 --   'allowed' when a counted permit provision is on a verified record (the
 --     evaluator ignores unverified permits);
---   'withdrawn' when neither, and a patient-privacy record was withdrawn;
+--   'withdrawn' when neither, and a withdrawn permission exists (below);
 --   'not_allowed' otherwise.
 -- pending_verification: a counted permit exists only on unverified records.
 -- sharing_state / sharing_reason: the staff chip's stricter reading, over
 -- patient-privacy records that are draft, proposed or active, not withdrawn
 -- and not ended, and their provisions for an external actor
--- (external_system, organization, any or unset) that have not ended:
---   'restricted' / 'refused'   any such deny provision (verified or not,
---                              started or not, limited or not);
---   'allowed' / 'permitted'    a permit on a verified, active record, in
---                              force now, with no limit: no purpose, action,
---                              resource type, data class or security label;
---   'restricted' / 'limited'   only such permits with a limit;
---   'withdrawn' / 'withdrawn'  none of those, and a patient-privacy record
---                              was withdrawn;
+-- (external_system, organization, any or unset) that have not ended. A
+-- provision is "in force" when its record is active and started and the
+-- provision has started. "Limited": it names a purpose, action, resource
+-- type, data class or security label. First match wins:
+--   'restricted' / 'refused'          a deny in force with no limit;
+--   'restricted' / 'refused_partly'   a deny in force with a limit (a
+--                                     verified full permit beside it is
+--                                     therefore not 'allowed');
+--   'allowed' / 'permitted'           a permit in force on a verified
+--                                     record, with no limit;
+--   'restricted' / 'limited'          only such permits with a limit;
 --   'restricted' / 'pending_verification'   a permit in force, unverified;
---   'restricted' / 'not_started'            a permit not in force yet
---                              (draft, proposed, or a start in the future);
---   'restricted' / 'no_permission'          otherwise.
+--   'withdrawn' / 'withdrawn'         a withdrawn permission: a withdrawn
+--                                     patient-privacy record that had a
+--                                     permit for an external actor and no
+--                                     deny (a withdrawn refusal, an empty
+--                                     record or a care team permit is not);
+--   'restricted' / 'not_started'      a permit not in force yet (draft,
+--                                     proposed, or a start in the future);
+--   'restricted' / 'no_permission'    otherwise.
+-- A deny counts only where the evaluator would apply it (in force, as
+-- above): a deny on a draft or proposed record, or one that has not
+-- started, is not counted, although the patient may already have said it.
 -- active_records / withdrawn_records count every scope; last_changed_at is
 -- the latest updated_at of the family's records.
 CREATE OR REPLACE FUNCTION public.interop_consent_summary(p_patient_id text)
@@ -1594,8 +1657,9 @@ DECLARE
   v_deny       boolean;
   v_permit     boolean;
   v_unverified boolean;
-  v_wd_privacy boolean;
+  v_wd_permit  boolean;
   v_refused    boolean;
+  v_partly     boolean;
   v_full       boolean;
   v_limited    boolean;
   v_pending    boolean;
@@ -1654,38 +1718,49 @@ BEGIN
        AND (r.effective_until IS NULL OR r.effective_until > now())
        AND (p.actor_type IS NULL OR p.actor_type IN ('external_system', 'organization', 'any'))
        AND (p.effective_until IS NULL OR p.effective_until > now()))
-  SELECT COALESCE(bool_or(s.provision_type = 'deny'), false),
+  SELECT COALESCE(bool_or(s.provision_type = 'deny' AND s.in_force AND NOT s.limited), false),
+         COALESCE(bool_or(s.provision_type = 'deny' AND s.in_force AND s.limited), false),
          COALESCE(bool_or(s.provision_type = 'permit' AND s.in_force AND s.verified AND NOT s.limited), false),
          COALESCE(bool_or(s.provision_type = 'permit' AND s.in_force AND s.verified AND s.limited), false),
          COALESCE(bool_or(s.provision_type = 'permit' AND s.in_force AND NOT s.verified), false),
          COALESCE(bool_or(s.provision_type = 'permit' AND NOT s.in_force), false)
-    INTO v_refused, v_full, v_limited, v_pending, v_future
+    INTO v_refused, v_partly, v_full, v_limited, v_pending, v_future
     FROM chip_rows AS s;
 
+  -- A withdrawn permission: a withdrawn patient-privacy record with a
+  -- permit for an external actor and no deny provision.
   SELECT count(*) FILTER (WHERE r.status = 'active' AND r.withdrawn_at IS NULL),
          count(*) FILTER (WHERE r.withdrawn_at IS NOT NULL),
-         COALESCE(bool_or(r.withdrawn_at IS NOT NULL AND r.scope = 'patient-privacy'), false),
+         COALESCE(bool_or(
+           r.withdrawn_at IS NOT NULL AND r.scope = 'patient-privacy'
+           AND EXISTS (SELECT 1 FROM interop.consent_provisions AS p
+                        WHERE p.consent_id = r.id AND p.provision_type = 'permit'
+                          AND (p.actor_type IS NULL
+                               OR p.actor_type IN ('external_system', 'organization', 'any')))
+           AND NOT EXISTS (SELECT 1 FROM interop.consent_provisions AS p
+                            WHERE p.consent_id = r.id AND p.provision_type = 'deny')), false),
          max(r.updated_at)
-    INTO v_active, v_withdrawn, v_wd_privacy, v_last
+    INTO v_active, v_withdrawn, v_wd_permit, v_last
     FROM interop.consent_records AS r
    WHERE r.patient_id = ANY (v_family);
 
   RETURN jsonb_build_object(
     'external_sharing', CASE WHEN v_deny THEN 'not_allowed'
                              WHEN v_permit THEN 'allowed'
-                             WHEN v_wd_privacy THEN 'withdrawn'
+                             WHEN v_wd_permit THEN 'withdrawn'
                              ELSE 'not_allowed' END,
     'pending_verification', NOT v_deny AND NOT v_permit AND v_unverified,
-    'sharing_state', CASE WHEN v_refused THEN 'restricted'
+    'sharing_state', CASE WHEN v_refused OR v_partly THEN 'restricted'
                           WHEN v_full THEN 'allowed'
-                          WHEN v_limited THEN 'restricted'
-                          WHEN v_wd_privacy THEN 'withdrawn'
+                          WHEN v_limited OR v_pending THEN 'restricted'
+                          WHEN v_wd_permit THEN 'withdrawn'
                           ELSE 'restricted' END,
     'sharing_reason', CASE WHEN v_refused THEN 'refused'
+                           WHEN v_partly THEN 'refused_partly'
                            WHEN v_full THEN 'permitted'
                            WHEN v_limited THEN 'limited'
-                           WHEN v_wd_privacy THEN 'withdrawn'
                            WHEN v_pending THEN 'pending_verification'
+                           WHEN v_wd_permit THEN 'withdrawn'
                            WHEN v_future THEN 'not_started'
                            ELSE 'no_permission' END,
     'active_records', v_active,
@@ -1701,11 +1776,14 @@ COMMENT ON FUNCTION public.interop_consent_summary(text) IS
   'withdrawn, in-period records; in-period provisions without a security label whose actor '
   'type is external_system, organization, any or unset. not_allowed when any such deny '
   'exists; allowed when such a permit is on a verified record; withdrawn when neither and a '
-  'patient-privacy record was withdrawn; otherwise not_allowed. pending_verification: only '
-  'unverified permits exist. sharing_state (for the staff chip): allowed only for a verified, '
-  'in-force permit with no limit (purpose, action, resource type, data class, security label) '
-  'and no refusal; withdrawn; otherwise restricted, with sharing_reason (refused, permitted, '
-  'limited, withdrawn, pending_verification, not_started, no_permission).';
+  'withdrawn patient-privacy record had an external permit and no deny; otherwise '
+  'not_allowed. pending_verification: only unverified permits exist. sharing_state (for the '
+  'staff chip): allowed only for a verified, in-force permit with no limit (purpose, action, '
+  'resource type, data class, security label) and no refusal in force; withdrawn; otherwise '
+  'restricted. sharing_reason, first match: refused (a deny in force, no limit), '
+  'refused_partly (a limited deny in force), permitted, limited, pending_verification, '
+  'withdrawn (a withdrawn external permit with no deny), not_started, no_permission. A deny '
+  'on a draft, proposed or not yet started record is not counted, as in the evaluator.';
 
 -- ----------------------------------------------------------------------------
 -- 9. fhir_access_audit_events (AuditEvent source)
@@ -2130,7 +2208,7 @@ REVOKE ALL ON FUNCTION public.fhir_interop_admin_status() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.fhir_patient_lab_results(uuid[], uuid[], uuid, integer) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.interop_record_consent(text, text, text, text, text, text, timestamptz, timestamptz, jsonb) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.interop_verify_consent(uuid) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.interop_withdraw_consent(uuid, text) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.interop_withdraw_consent(uuid, text, text) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.interop_my_consents(text) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.interop_consent_summary(text) FROM PUBLIC, anon;
 
@@ -2146,6 +2224,6 @@ GRANT EXECUTE ON FUNCTION public.fhir_interop_admin_status() TO authenticated, s
 GRANT EXECUTE ON FUNCTION public.fhir_patient_lab_results(uuid[], uuid[], uuid, integer) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.interop_record_consent(text, text, text, text, text, text, timestamptz, timestamptz, jsonb) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.interop_verify_consent(uuid) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.interop_withdraw_consent(uuid, text) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.interop_withdraw_consent(uuid, text, text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.interop_my_consents(text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.interop_consent_summary(text) TO authenticated, service_role;

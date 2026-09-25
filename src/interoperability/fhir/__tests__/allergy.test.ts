@@ -609,6 +609,13 @@ describe("AllergyIntolerance definition", () => {
     expect(r.interaction).toEqual([{ code: "read" }, { code: "search-type" }]);
     expect(r.searchParam.map((p: Json) => p.name)).toEqual(["_id", "patient", "clinical-status", "category", "criticality"]);
     expect(r.documentation).toMatch(/no known allergies/);
+    // No claim that a medication category is published or searchable: the
+    // form's pre-selected type is left out (see the mapper and search tests).
+    const category = r.searchParam.find((p: Json) => p.name === "category").documentation;
+    expect(category).toMatch(/^food or environment\. medication and biologic match nothing/);
+    expect(r.documentation).toMatch(/No category is sent for allergies saved with the form's pre-selected type \(medication\)/);
+    expect(r.documentation).toMatch(/A missing category does not mean the allergy is not to a medicine\./);
+    expect(r.documentation).not.toMatch(/category medication/);
   });
 });
 

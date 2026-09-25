@@ -61,7 +61,7 @@ export const definition: ResourceDefinition = {
   idStrategy: "patient_allergies.id as stored (opaque: a uuid, or a device ULID where the column holds text)",
   fields: [
     "clinicalStatus (is_active: true -> active, false -> inactive; a record without a value is withheld, never shown as active)",
-    "category (medication, food or environment, only for those recorded types)",
+    "category (food or environment, only when staff chose that type; medication is the form's pre-selected type and is never published)",
     "criticality (high, only for allergies rated life-threatening)",
     "code.text (the allergen exactly as recorded; no substance coding)",
     "patient",
@@ -89,7 +89,7 @@ export const definition: ResourceDefinition = {
       name: "category",
       type: "token",
       documentation:
-        "medication, food or environment. biologic matches nothing, and allergies recorded as 'other' have no category and never match.",
+        "food or environment. medication and biologic match nothing: medication is the form's pre-selected type, so no category is published for it. Allergies recorded as 'other' have no category and never match.",
     },
     {
       name: "criticality",
@@ -109,7 +109,7 @@ export const definition: ResourceDefinition = {
     "No verificationStatus or type: mBHR does not record whether an allergy was confirmed, or whether it is an allergy or an intolerance.",
     "inactive means a staff member removed the allergy from the app's warnings; mBHR records no reason (resolved, recorded in error or a duplicate).",
     "The allergen and the reaction are free text as recorded: no substance code is published, and one record may name several substances.",
-    "category medication is the form's pre-selected type: do not use category to decide whether an allergy matters for medicines.",
+    "No category is sent for allergies saved with the form's pre-selected type (medication), because it may mean nobody chose one. A missing category does not mean the allergy is not to a medicine.",
     "After a merge, allergies from both records are listed under the kept patient as recorded, including duplicates.",
     "An allergy whose patient record cannot be resolved (for example a merged record whose kept record is missing) is not published: a searchset then carries a warning saying how many were left out, and a read returns an error rather than 'not found'.",
     "Staff notes and staff account ids are never published. Patients cannot read allergies through this interface.",

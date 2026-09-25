@@ -74,23 +74,24 @@ What each published type does today, as implemented in code. Write is
   token (401) has no account and is not audited.
 - **Tests** column: files in `src/interoperability/fhir/__tests__/`
   (`.test.ts` left off). `statusMaps`, `authorize`, `guard` and
-  `vercelRouting` cover every type as well.
+  `vercelRouting` cover every type as well, and `reviewFixes.gateway`
+  checks the CapabilityStatement of every type.
 
 | Resource | Read | Search | Write | Consent | Audit | Tests | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Patient | Yes | Yes | No | demographics | Every request | mappers, gateway, guard, security | Implemented. No MRN or national id is recorded; a merged-away record is served as a tombstone. |
-| Encounter | Yes | Yes | No | clinical | Every request | mappers, gateway, security | Implemented. mBHR records no end time; patients see closed visits only. |
-| Observation (vital signs) | Yes | Yes | No | clinical | Every request | mappers, framework, gateway, security | Implemented. LOINC and UCUM from the R4 vital signs profile; no interpretation or reference range. |
-| Observation (laboratory) | Yes | Yes | No | clinical | Every request | laboratory, security | Implemented. Staff need consult or lab_review; patients see released results only; tests carry local codes only (no LOINC). |
-| Condition | Yes | Yes | No | clinical | Every request | mappers, gateway, security | Partial. Reads `public.conditions`, which no app code writes (repository check); diagnoses in consultation notes are not published. |
-| AllergyIntolerance | Yes | Yes | No | clinical | Every request | allergy | Implemented. Staff only; allergen and reaction as free text; "no known allergies" cannot be recorded. |
+| Encounter | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Implemented. mBHR records no end time; a "Portal entry" visit has no start time and never matches a date search; patients see closed visits only. |
+| Observation (vital signs) | Yes | Yes | No | clinical | Every request | mappers, framework, gateway, security, reviewFixes.gateway | Implemented. LOINC and UCUM from the R4 vital signs profile; no interpretation or reference range. |
+| Observation (laboratory) | Yes | Yes | No | clinical | Every request | laboratory, security | Implemented. Staff need consult or lab_review (other staff get a note in their searches and 403 on a read); patients see released results only; tests carry local codes only (no LOINC). |
+| Condition | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Partial. Reads `public.conditions`, which no app code writes (repository check); diagnoses in consultation notes are not published; a stored "confirmed" verification status (the column's default) is left out. |
+| AllergyIntolerance | Yes | Yes | No | clinical | Every request | allergy | Implemented. Staff only; allergen and reaction as free text; "no known allergies" cannot be recorded; the form's pre-selected type (medication) is not sent as a category. |
 | Medication | Yes | `_id` only | No | medication | Every request | medication | Partial. Search by `_id` only; name and strength as text, no medicine code. |
 | MedicationRequest | Yes | Yes | No | medication | Every request | medication | Implemented. Staff only; dosing as free text. |
 | MedicationDispense | Yes | Yes | No | medication | Every request | medication | Implemented. Status is almost always `unknown`; no handover time is published. |
 | ServiceRequest | Yes | Yes | No | laboratory | Every request | laboratory | Implemented. Staff with consult or lab_review only; local test codes only. |
 | DiagnosticReport | Yes | Yes | No | laboratory | Every request | laboratory | Implemented. `final` only when every current result is reviewed; never `final` for a patient; no conclusion. |
 | DocumentReference | Yes | Yes | No | document | Every request | documents | Implemented. No author and no `meta.lastUpdated`; staff need consult. |
-| Binary | Yes (the file itself) | No | No | document | Every request | documents, guard, security | Implemented. Read by id only; the whole file is held in memory (25 MB cap); not scanned for malware. |
+| Binary | Yes (the file itself) | No | No | document | Every request | documents, guard, security | Implemented. Read by id only; no ETag or conditional read; the whole file is held in memory (25 MB cap); not scanned for malware. |
 | Consent | Yes | Yes | No | consent | Every request | consentResource, consentPolicy | Partial. The register is empty: nothing in the app records consents yet. Patients do not see directives filed under a record that was merged into theirs. |
 | Practitioner | Yes | Yes | No | directory | Every request | directory, security | Implemented. Name only; `active` is left out when the account records no flag. |
 | PractitionerRole | Yes | Yes | No | directory | Every request | directory | Implemented. The mBHR access role as a local code, not a qualification. |
@@ -144,7 +145,11 @@ This work does not use, extend or change it. Those functions use the
 service-role key and a separate `fhir_resources` store; this gateway reads the
 live tables as the signed-in user. Whether to retire them or rebuild them on
 this gateway is a later decision. Until a partner actually needs them, they
-should stay undeployed (see [security.md](security.md#findings)).
+should stay undeployed (see [security.md](security.md#findings)). Their
+FHIR mapper, and the app's older client-side FHIR export, do not follow
+the representation rules of this gateway (for example, every allergy is
+sent as "confirmed"). Phase 2 does not change them
+([security.md](security.md#known-security-limitations)).
 
 ## Code layout
 
@@ -190,7 +195,7 @@ prefix, so none is compiled into the browser bundle. The code is
 | --- | --- | --- |
 | `FHIR_ENABLED` | off | The gateway answers at all. Off: every `/fhir/R4` request gets 404 and nothing is read. |
 | `FHIR_READ_ENABLED` | follows `FHIR_ENABLED` | `false` leaves only `/metadata`, without the resource list; every other request gets 404. |
-| `FHIR_PATIENT_ACCESS_ENABLED` | off | Portal patients may read their own records, for the eight types listed in [fhir-r4.md](fhir-r4.md#patient-self-access). Off: patients get 403 (`patient_access_disabled`). |
+| `FHIR_PATIENT_ACCESS_ENABLED` | off | Portal patients may read their own records, for the eight types listed in [fhir-r4.md](fhir-r4.md#patient-self-access). Off: patients get 403 (`patient_access_disabled`), and `/metadata` says nothing about what patients get. |
 | `FHIR_CONSENT_ENFORCEMENT_ENABLED` | off | For disclosures that stored consent governs: on means directives are evaluated (no explicit permit means deny), off means they are refused outright. No such disclosure is served in this release, so this flag changes no answer today ([consent.md](consent.md)). |
 | `FHIR_AUDIT_ENABLED` | on | Must stay on. `false` is refused: every request gets 503. |
 | `FHIR_EXTERNAL_ACCESS_ENABLED` | off | **Cannot be turned on.** A true value makes every request a 503. |
@@ -250,6 +255,16 @@ So, for any database the gateway will use, with the owner's go-ahead:
    `20260926130000_interop_phase2.sql`. Phase 2 refuses to apply without
    Phase 1.
 3. Only then set `FHIR_ENABLED` on that environment.
+
+Applying Phase 2 briefly holds up writes to `public.patients`. The file
+sets a 5-second lock timeout for its own transaction (`supabase db push`
+runs each migration file in one transaction), so a statement that would
+wait more than 5 seconds behind a busy table fails the migration instead
+of holding up that table. The `patients.fhir_id` trigger is its last step that locks
+`public.patients`, so patient writes wait only from that step to the
+commit, not through the index builds. A re-run that finds the trigger in
+place takes no lock on `patients`. Apply it at a quiet time, and do not
+re-run it on production without a reason.
 
 ### State
 

@@ -103,7 +103,7 @@ export const definition: ResourceDefinition = {
     "The medicine's name and dispensing unit are read from the current catalogue entry (a line records only the entry).",
     "A prescription reaches the server only when a prescriber's tablet uploads it; a handover the server refused is kept on the tablet only.",
     "No medicine code (RxNorm, SNOMED CT, ATC) and no reason for prescribing are published; the prescriber's account id and void notes are never published.",
-    "Not available to patient accounts.",
+    "Staff only; not available to patients.",
   ],
 };
 

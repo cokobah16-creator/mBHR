@@ -101,10 +101,12 @@ Contents: [Patient](#patient--publicpatients) ·
 | period.start | `started_at`. There is no end time column. **No period** for a visit whose site is "Portal entry" (its start is when it was typed in, not when care happened). |
 | location | `site_name` as a display-only reference. **Left out** for "Mobile Clinic" (the tablet's default) and "Portal entry", which are not places. No Location resource is referenced (visits record a typed name, not a registered site). |
 | Not modelled | Queue tickets are **not** encounters and are not published. Participants, service provider and reason are not recorded on visits. |
-| Searches | `_id`, `patient`/`subject`, `date` (started_at, up to two bounds), `status`. |
+| Searches | `_id`, `patient`/`subject`, `date` (started_at, up to two bounds; a visit published without a period, such as a "Portal entry" visit, never matches), `status`. |
 | Who reads | Staff with vitals, consult or lab_review; a patient sees their own visits with status `closed` only. |
 
-`ENCOUNTER_STATUS` (`visits.status`, matched case-insensitively):
+`ENCOUNTER_STATUS` (`visits.status`, matched case-insensitively but not
+trimmed: a value with spaces around it, such as " closed", is `unknown`
+in the resource and in a status search alike):
 
 | visits.status | Encounter.status |
 | --- | --- |
@@ -143,8 +145,10 @@ One vitals row becomes up to seven Observations, id `<vitals.id>-<kind>`:
   local rules awaiting sign-off).
 - Not published: `sdoh_observations` (no writer in the app).
 - Searches: `_id`, `patient`/`subject`, `encounter`, `date` (taken_at),
-  `category` (vital-signs), `code` (LOINC above or local column code),
-  `status` (final).
+  `category` (vital-signs), `code` (a coding the Observation's own code
+  carries: the LOINC code above, or the local column code of a
+  single-column kind; a blood pressure matches on `85354-9` only, never on
+  its components' codes), `status` (final).
 - Who reads: staff with vitals, consult or lab_review; a patient sees
   their own rows whose `portal_visible` is not false.
 
@@ -169,7 +173,7 @@ Served by the same Observation module, after vital signs.
 | referenceRange | `[{ text }]` only; never parsed into low and high. |
 | Never published | notes (staff and patient notes), performer (reviewer and enterer are accounts), specimen, method, device, bodySite, `hasMember`, `derivedFrom`, the withhold reason, the release time, `amended_at`. The validator refuses them. |
 | Searches | `_id` (`lab-<uuid>`), `patient`/`subject`, `encounter`, `based-on`, `date` (collected_at), `category` (laboratory), `code` (quick pick), `status` (final, preliminary). |
-| Who reads | Staff with consult or lab_review (other staff get vital signs only). A patient only through `fhir_patient_lab_results()`: reviewed, released to the patient, not withheld, not superseded. |
+| Who reads | Staff with consult or lab_review. Other staff get vital signs only: each of their Observation searches that could include laboratory results carries a note saying they were left out, and a read of `Observation/lab-<id>` answers 403 (audited as `missing_permission`), decided from the id before any lookup. A patient only through `fhir_patient_lab_results()`: reviewed, released to the patient, not withheld, not superseded. |
 
 `LAB_OBSERVATION_STATUS` (review state):
 
@@ -186,7 +190,7 @@ Served by the same Observation module, after vital signs.
 | --- | --- |
 | FHIR id | `conditions.id` (uuid) |
 | clinicalStatus | `clinical_status` (already condition-clinical codes); left out when missing or not a code, and on an `entered-in-error` record (invariant con-5). |
-| verificationStatus | `verification_status` (already condition-ver-status codes): provisional stays provisional, differential stays differential. Left out when missing or not a code. |
+| verificationStatus | `verification_status` (already condition-ver-status codes): provisional stays provisional, differential stays differential. Left out when missing, not a code, or "confirmed": the column defaults to "confirmed", so a stored "confirmed" may just mean nobody recorded one; the two cannot be told apart. |
 | category | `problem-list-item`, `encounter-diagnosis` (R4 condition-category); `health-concern` (US Core code system). |
 | severity | mild/moderate/severe → SNOMED CT 255604002 / 6736007 / 24484000 (R4 condition-severity value set). |
 | code | local `https://mbhr.app/codes/condition|<condition_code>` with `condition_name` as display and text; plus any **verified** mapping from `interop.terminology_map` (domain `condition`). |
@@ -204,7 +208,7 @@ Served by the same Observation module, after vital signs.
 | FHIR id | `patient_allergies.id` as stored (opaque: a uuid, or a device ULID where the column holds text). Whether production stores uuid or text is not verified. |
 | clinicalStatus | `is_active` (table below). A row with no usable value gets no clinical status, fails invariant ait-1 and is **withheld** (a searchset says how many; a read is 500), never shown as active. |
 | verificationStatus, type | **Never filled**: mBHR records neither. Nothing is "confirmed" by default. |
-| category | `allergy_type`: medication → medication, food → food, environmental → environment; anything else (including "other") → left out. |
+| category | `allergy_type`: food → food, environmental → environment. "medication" is left out: the form pre-selects it, so it cannot be told apart from "not chosen". Anything else (including "other") → left out. |
 | criticality | `high` only for severity "life-threatening"; otherwise left out. |
 | code | `code.text` = the allergen exactly as recorded (outer spaces trimmed). No substance coding; "Penicillin, codeine" stays one record. Blank → no code (the record is still published). |
 | patient | the canonical Patient. |
@@ -213,7 +217,7 @@ Served by the same Observation module, after vital signs.
 | recorder | `Practitioner/<id>` only when `created_by` resolves in the staff directory; otherwise left out. |
 | reaction | Only when a reaction was written: `manifestation.text` = the reaction as recorded, and `severity` from the severity rating (table below). The severity is not published without a reaction. |
 | Never published | `notes`, `created_by` (an account id), device sync columns, the internal patient id. |
-| Searches | `_id`, `patient`, `clinical-status`, `category`, `criticality`. No `subject`. |
+| Searches | `_id`, `patient`, `clinical-status`, `category`, `criticality`. No `subject`. `category=medication` matches nothing. |
 | Who reads | Staff with register, vitals, consult or dispense. Not available to patients. |
 
 Every searchset carries a note: mBHR does not record "no known allergies";
@@ -230,13 +234,14 @@ as written, as an allergy.
 | severity severe | reaction.severity severe | |
 | severity life-threatening | reaction.severity severe, criticality high | |
 | severity mild | left out | the form pre-selects mild |
+| allergy_type medication | no category | the form pre-selects medication |
 
 ## Medication ← `public.pharmacy_items`
 
 | | |
 | --- | --- |
 | Source | The pharmacy catalogue: one entry per medicine, form and strength at a site. Columns read: `id, med_name, strength, form, is_active, updated_at`. |
-| FHIR id | A random uuid minted once per catalogue entry by `fhir_link_ids()` and kept in `interop.resource_links`. `pharmacy_items.id` is never published (seeded ids exceed the 64-character FHIR limit). |
+| FHIR id | A random uuid minted once per catalogue entry by `fhir_link_ids()` and kept in `interop.resource_links`. `fhir_link_ids()` and `fhir_link_sources()` answer only staff holding consult, dispense or inventory (the same set as the catalogue's row-level security); others get 42501. `pharmacy_items.id` is never published (seeded ids exceed the 64-character FHIR limit). |
 | code | `code.text` = `med_name` + `strength` as typed ("Paracetamol 500mg"). **No coding.** The strength is never parsed into ingredient or amount. |
 | form | `form.text` as recorded; no code. |
 | status | `is_active`: true → active, false → inactive, missing or not a boolean → left out. |
@@ -414,7 +419,7 @@ recorded or published.
 | --- | --- |
 | Source | The file of a `patient_documents` row in the private Storage bucket `patient-documents`, downloaded **as the caller** (the bucket's own policies apply a second time). The bucket is a constant; the path comes from the row, never from the request. |
 | FHIR id | The same `patient_documents.id` as the DocumentReference. |
-| Response | The file itself, as an attachment download (see [fhir-r4.md](fhir-r4.md#binary)). Never FHIR JSON, never base64 `data`. |
+| Response | The file itself, as an attachment download (see [fhir-r4.md](fhir-r4.md#binary)). Never FHIR JSON, never base64 `data`. No ETag or version: `If-None-Match` is ignored. |
 | contentType | As for the DocumentReference: allowlisted type, else `application/octet-stream`, with a `.bin` file name. |
 | securityContext | `DocumentReference/<id>`, sent as `X-Security-Context`. |
 | Search | None (400). |

@@ -210,15 +210,56 @@ them. Each checks the caller itself.
 | `fhir_consent_directives()` | staff with `consult`, `portal_manage` or `audit_access` (any patient); a portal patient (own records, including records merged into theirs) | Directives and provisions for named patient ids or consent ids (one is required). Used by the gateway. Never returns account ids, the withdrawal reason, who signed, the source document or a provision's actor reference. |
 | `interop_record_consent()` | staff with `portal_manage` or `consult` | Records a directive with up to 20 provisions. Status draft, proposed or active. The patient must exist and must not be merged away. `policy_uri` may be empty. |
 | `interop_verify_consent()` | staff with `portal_manage` or `consult` | Marks a draft, proposed or active record verified. A withdrawn record cannot be verified. |
-| `interop_withdraw_consent()` | staff with `portal_manage` or `consult`; or the portal patient whose record it is (including records merged into theirs) | Withdraws a record, with an optional reason of at most 500 characters. Status becomes inactive (entered-in-error stays). A repeat returns false. |
-| `interop_my_consents()` | portal patients only | The patient's own directives (at most 500), including records merged into theirs. |
-| `interop_consent_summary()` | staff with `consult`, `portal_manage` or `audit_access`; or the patient | External sharing for one patient over the whole merge family: `allowed`, `not_allowed` or `withdrawn`, plus `pending_verification`, counts and the last change time. It follows the evaluator's external-sharing rules, but cannot weigh purpose, action, resource type or data class. |
+| `interop_withdraw_consent(p_consent_id, p_reason, p_patient_id)` | staff with `portal_manage` or `consult`; or the portal patient whose record it is (including records merged into theirs) | Withdraws a record, with an optional reason of at most 500 characters. Status becomes inactive (entered-in-error stays). A repeat returns false. A portal patient may withdraw only a permission to share: scope patient-privacy or research, and no deny provision (the database also accepts a record with no provisions, which the portal does not offer). A refusal, a treatment consent or an advance directive is changed with clinic staff: the patient gets 42501, whatever the record's status. `p_patient_id` is optional and names the page's patient. When given, the record must be that patient's or a record merged into it (42501 otherwise, for staff too), and a patient must name one of their own portal records (42501 otherwise). A malformed id is refused (22023). The portal always sends it, so a sign-in linked to two people (a shared phone) withdraws only for the person the page shows. Without it, a patient may still withdraw a permission of any person linked to the sign-in, and staff are not limited. |
+| `interop_my_consents(p_patient_id)` | a portal patient, for one of their own portal records | The directives (at most 500) of that record and of the records merged into it, not of every record linked to the sign-in (a shared phone can link several people). NULL or a malformed id is refused (22023); a record that is not one of the caller's gives 42501. There is no form without an argument. |
+| `interop_consent_summary(p_patient_id)` | staff with `consult`, `portal_manage` or `audit_access`; or the patient | For one patient over the whole merge family. `external_sharing`: `allowed`, `not_allowed` or `withdrawn`, by the evaluator's external-sharing rules (it cannot weigh purpose, action, resource type or data class), plus `pending_verification`, record counts and the last change time. For the staff chip, also `sharing_state` and `sharing_reason` ([below](#the-staff-chips-state-and-reason)). |
 | `fhir_interop_admin_status()` | `audit_access` or `users` | Gateway request counts, recent requests and refusals, and consent record counts. No ids. |
 
 **Nothing in the app calls `interop_record_consent()` or
 `interop_verify_consent()` yet.** There is no screen to record or verify a
 consent. So the register is empty after the migration, and stays empty
 until a recording screen or an import exists **(owner)**.
+
+### The staff chip's state and reason
+
+`interop_consent_summary()` returns `sharing_state` and `sharing_reason`
+for the staff chip. They read the register more strictly than
+`external_sharing`: the chip says Allowed only for a full, verified
+permission.
+
+What counts: patient-privacy records that are draft, proposed or active,
+not withdrawn and not ended, and their provisions for someone outside
+mBHR (actor `external_system`, `organization`, `any` or unset) that have
+not ended. A provision is **in force** when its record is active and has
+started, and the provision itself has started. A provision is
+**limited** when it names a purpose, action, resource type, data class or
+security label.
+
+`sharing_reason`, first match wins:
+
+| `sharing_reason` | `sharing_state` | When |
+| --- | --- | --- |
+| `refused` | `restricted` | a refusal in force, with no limit (verified or not) |
+| `refused_partly` | `restricted` | a refusal in force, with a limit. A verified full permission beside it does not make the chip Allowed |
+| `permitted` | `allowed` | a verified permission in force, with no limit |
+| `limited` | `restricted` | the only verified permissions in force are limited |
+| `pending_verification` | `restricted` | a permission in force that staff have not verified |
+| `withdrawn` | `withdrawn` | a withdrawn patient-privacy record had a permission for someone outside mBHR and no refusal |
+| `not_started` | `restricted` | a permission that is not in force yet (draft, proposed, or a start in the future) |
+| `no_permission` | `restricted` | anything else, including no record at all |
+
+- A refusal counts only where the gateway's evaluator would apply it. A
+  refusal on a draft or proposed record, or one that has not started, is
+  not counted, so the chip can read Allowed beside it until it is active
+  and started.
+- A refusal with a security label counts as `refused_partly`, although
+  the evaluator ignores labelled provisions (mBHR labels no data).
+- A withdrawn refusal, a withdrawn record with no rules, or a withdrawn
+  permission for the care team only does not make the chip say
+  Withdrawn. The same rule applies to `withdrawn` in the older
+  `external_sharing` key.
+- A permission waiting for staff to check it ranks above an older
+  withdrawal.
 
 ## Where consent shows in the app
 
@@ -227,28 +268,94 @@ them can block care.
 
 - **Patient portal, "Privacy and data sharing".** A section inside the
   portal's "Sharing your health records" page
-  (`src/features/patient-portal/PrivacyConsentSection.tsx`). It explains in
-  plain words that mBHR does not share records outside the care team,
-  lists the permissions the patient has given (`interop_my_consents()`),
-  and lets the patient withdraw one that is in place or not started yet
-  (`interop_withdraw_consent()`). When the functions are not deployed it
-  says "This list is not available yet." Offline, it asks the patient to
-  connect.
+  (`src/features/patient-portal/PrivacyConsentSection.tsx`, wording in
+  `privacyCopy.ts`).
+  - The intro says that the care team uses the records to care for the
+    patient, that the list shows the choices about sharing that mBHR has
+    recorded, that it is separate from the sharing choices further down
+    the page, that mBHR does not apply these choices automatically yet,
+    that a permission can be withdrawn here and a refusal changed only
+    with clinic staff, and that withdrawing deletes neither the records
+    nor the history of who looked at them. It makes no claim that mBHR
+    shares nothing.
+  - The list, "Your recorded choices", shows only patient-privacy and
+    research records of the page's patient and of the records merged
+    into it (`interop_my_consents(p_patient_id)`). Treatment consents and
+    advance directives are not listed. Empty: "No choices are recorded
+    here."
+  - A permission (it allows something and refuses nothing) reads "Sharing
+    your records outside mBHR" or "Using your records for research",
+    with the purposes it names in brackets ("for your care", and so on).
+    While it is in place or not started yet it has a Withdraw button. The
+    dialog says: "mBHR will record that you withdrew this permission. It
+    will no longer count as your permission. You cannot undo this here.
+    To give permission again, ask clinic staff." Withdrawing sends the
+    page's patient id (`interop_withdraw_consent()`).
+  - A record with any "do not" rule is a refusal and has no Withdraw
+    button. It reads "You asked us not to share your records outside
+    mBHR" (research: "You asked us not to use your records for research")
+    only when one of its "do not" rules is for someone outside mBHR
+    (`external_system`, `organization`, `any` or unset). When those rules
+    name purposes, the purposes follow in brackets, and if one of them is
+    the patient's own requests (`PATRQT`) the neutral title below is used
+    instead. A named refusal carries "Ask clinic staff if you want to
+    change this."
+  - Any other refusal (a rule only for the care team, a practitioner or
+    the portal, or one about the patient's own requests) reads "A choice
+    about how your records are shared" (research: "A choice about how
+    your records are used for research"), with "Ask clinic staff about
+    it."
+  - A refusal that also allows something adds "This choice also allows
+    some sharing."
+  - A record with no rules reads "A choice about sharing your records
+    outside mBHR" (or the research form) with "It does not say what is
+    allowed. Ask clinic staff about it.", and has no button.
+  - A purpose that repeats the topic ("for research" under research) is
+    not shown.
+  - When the functions are not deployed it says "This list is not
+    available yet." Offline, it asks the patient to connect. Signed out,
+    refused, or without a valid patient id, it says "Sign in online to
+    see this list."
 - **Staff chip on the patient page.** `ExternalSharingChip` on
-  `PatientDetail` shows "External sharing: Allowed", "Not allowed" or
-  "Withdrawn" from `interop_consent_summary()`. The hover text says it
-  does not affect care. It shows only to roles with `consult`,
-  `portal_manage` or `audit_access`, only when online and signed in
-  online. It renders nothing when the summary cannot be read.
+  `PatientDetail` shows "External sharing: Allowed", "Restricted" or
+  "Withdrawn" from `sharing_state` ([above](#the-staff-chips-state-and-reason)).
+  The hover text, also read out by screen readers, gives the reason in
+  plain words, then says: "External access is off in this release, so
+  this is not used to share records yet. It does not affect care." The
+  reasons read:
+  - `refused`: "The patient asked us not to share their records outside
+    mBHR."
+  - `refused_partly`: "The patient refused some sharing outside mBHR."
+  - `permitted`: "The patient allowed sharing outside mBHR, with no
+    limits."
+  - `limited`: "The patient's permission covers only some records or
+    uses."
+  - `pending_verification`: "A permission is recorded, but staff have not
+    checked it yet."
+  - `withdrawn`: "A permission to share outside mBHR was withdrawn." (It
+    does not say who withdrew it.)
+  - `not_started`: "A permission is recorded, but it has not started
+    yet."
+  - `no_permission`: "No permission to share outside mBHR is in force."
+  - an unknown reason: "The reason is not known."
+
+  It shows only to roles with `consult`, `portal_manage` or
+  `audit_access`, only when online and signed in online. It renders
+  nothing when the summary cannot be read, or when the answer has no
+  `sharing_state`.
 - **Admin settings, Interoperability panel.**
   `src/pages/admin/InteroperabilitySettings.tsx` in `/admin/settings`, for
   roles with `audit_access` or `users`. It shows the gateway flags (read
   from the `/metadata` flags header), request and refusal activity, and
   consent record counts (`fhir_interop_admin_status()`). It changes
-  nothing.
+  nothing. Its description says that the FHIR interface lets signed-in
+  mBHR staff (and patients, when patient access is on) read records in
+  the FHIR R4 format, and that other systems and apps cannot connect in
+  this release.
 
 With the register empty, the portal list is empty and the chip reads
-"External sharing: Not allowed". That matches the default-deny rule.
+"External sharing: Restricted" (hover: "No permission to share outside
+mBHR is in force."). That matches the default-deny rule.
 
 ## The Consent resource
 

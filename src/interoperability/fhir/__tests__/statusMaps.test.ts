@@ -116,14 +116,17 @@ describe("Condition.verificationStatus", () => {
   const ctx = { patientFhirIds: new Map([["p1", "f0000000-0000-4000-8000-000000000001"]]) };
   const row = (verification_status: unknown) => ({ id: "c1", patient_id: "p1", clinical_status: "active", verification_status });
 
-  it("the mapper publishes what the map says, except the column's default 'confirmed'", () => {
+  it("the mapper publishes exactly what the map says, for every code", () => {
     for (const code of CONDITION_VERIFICATION_STATUS.allowed) {
       const served = mapCondition(row(code), ctx)!.verificationStatus?.coding?.[0]?.code;
-      // DEFAULT 'confirmed' on public.conditions: a stored 'confirmed' may
-      // mean nobody recorded one, so it is never published.
-      if (code === "confirmed") expect(served, code).toBeUndefined();
-      else expect(served, code).toBe(applyStatusMap(CONDITION_VERIFICATION_STATUS, code));
+      expect(served, code).toBe(applyStatusMap(CONDITION_VERIFICATION_STATUS, code) ?? undefined);
     }
+    // DEFAULT 'confirmed' on public.conditions: a stored 'confirmed' may just
+    // mean nobody recorded one, so neither the map nor the mapper publishes it.
+    expect(applyStatusMap(CONDITION_VERIFICATION_STATUS, "confirmed")).toBeNull();
+    expect(explainStatus(CONDITION_VERIFICATION_STATUS, "confirmed").reason).toMatch(/column's default/);
+    expect(CONDITION_VERIFICATION_STATUS.rules.map((r) => r.fhir)).toEqual(["unconfirmed", "provisional", "differential", "refuted", "entered-in-error"]);
+    expect(sourceValuesFor(CONDITION_VERIFICATION_STATUS, "confirmed")).toEqual([]);
     for (const raw of [null, "", "suspected", "CONFIRMED"]) {
       expect(mapCondition(row(raw), ctx)!.verificationStatus, String(raw)).toBeUndefined();
     }

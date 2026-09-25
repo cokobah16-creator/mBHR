@@ -204,7 +204,10 @@ async function vitalsPhase(
 async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
   if (id.startsWith(LAB_OBSERVATION_PREFIX)) {
     // Decided from the id alone, before any lookup: says nothing about whether the result exists.
-    if (!labAllowed(ctx)) throw errors.forbidden("Laboratory results need the consult or lab_review permission.");
+    // Audited as missing_permission, as a DiagnosticReport read without the permission is.
+    if (!labAllowed(ctx)) {
+      throw errors.forbidden("Laboratory results need the consult or lab_review permission.", { auditReason: "missing_permission" });
+    }
     return labObservationSource.read(ctx, id);
   }
   const parsed = parseObservationId(id);

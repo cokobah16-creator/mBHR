@@ -211,6 +211,10 @@ describe("Condition mapper", () => {
     // Search cannot find what the read leaves out: there is no
     // verification-status parameter (an unknown parameter is refused).
     expect(conditionDefinition.searchParams.map((p) => p.name)).not.toContain("verification-status");
+    // The published notes say so, so a missing verificationStatus is not read as "unconfirmed".
+    expect(conditionDefinition.notes?.join(" ")).toMatch(
+      /verificationStatus is left out when the stored value is 'confirmed'.*cannot be told apart.*does not mean the diagnosis is unconfirmed/,
+    );
   });
 });
 

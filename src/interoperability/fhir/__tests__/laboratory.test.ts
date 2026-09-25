@@ -1083,13 +1083,26 @@ describe("laboratory Observations at the gateway (staff)", () => {
         expect(labNote(r.body), q).toStrictEqual([]);
       }
       // A read is refused (403, as DiagnosticReport is) from the id alone, before any lookup:
-      // an existing result and an unknown id answer the same.
+      // an existing result and an unknown id answer the same. It is audited as the missing
+      // permission it is, with the same reason as the DiagnosticReport refusal below.
       for (const id of [lab(R1a.id), "lab-00000000-0000-4000-8000-0000000000ff"]) {
+        const auditsBefore = audits.length;
         const r = await call(`/fhir/R4/Observation/${id}`, token);
         expect(r.status, id).toBe(403);
         expect(r.body).toMatchObject({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "forbidden" }] });
-        expect(audits.at(-1)).toMatchObject({ p_decision: "deny", p_denial_reason: "forbidden", p_http_status: 403, p_result_count: 0 });
+        expect(audits.length, id).toBe(auditsBefore + 1);
+        expect(audits.at(-1)).toMatchObject({
+          p_decision: "deny",
+          p_denial_reason: "missing_permission",
+          p_http_status: 403,
+          p_result_count: 0,
+          p_resource_type: "Observation",
+          p_resource_id: id,
+        });
       }
+      const report = await call(`/fhir/R4/DiagnosticReport/${O1.id}`, token);
+      expect(report.status).toBe(403);
+      expect(audits.at(-1)).toMatchObject({ p_decision: "deny", p_denial_reason: "missing_permission", p_http_status: 403, p_resource_type: "DiagnosticReport" });
       expect(calls.slice(before).some((c) => c.url.includes("/rest/v1/lab_"))).toBe(false);
     }
     // Staff who may read laboratory results get no note.
