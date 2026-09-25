@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/ui/PageHeader";
 import { DeviceResetPanel } from "@/components/DeviceResetPanel";
+import { InteroperabilitySettings } from "./InteroperabilitySettings";
 
 /**
  * Administrator settings. Admin-only (see the route guard in App.tsx).
@@ -33,6 +34,11 @@ export default function Settings() {
           <DeviceResetPanel />
         </div>
       </section>
+
+      {/* Read-only FHIR interface status; admin-only like the rest of this page. */}
+      <div className="mt-6">
+        <InteroperabilitySettings />
+      </div>
     </div>
   );
 }

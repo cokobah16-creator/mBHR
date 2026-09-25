@@ -22,6 +22,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PatientDetailSkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 import { MergeProvenance } from "@/components/patient/MergeProvenance";
+import { ExternalSharingChip } from "@/components/ExternalSharingChip";
 import {
   derivePatientFlow,
   currentFlowStage,
@@ -506,14 +507,19 @@ export function PatientDetail() {
           patient={patient}
           showFlow={Boolean(openVisit)}
           actions={
-            status && (
-              <span
-                className={`badge ${status.classes}`}
-                title={status.detail}
-              >
-                {status.label}
-              </span>
-            )
+            <>
+              {status && (
+                <span
+                  className={`badge ${status.classes}`}
+                  title={status.detail}
+                >
+                  {status.label}
+                </span>
+              )}
+              {/* Sharing outside mBHR only; renders nothing offline or
+                  when the summary is unavailable. */}
+              <ExternalSharingChip patientId={patient.id} />
+            </>
           }
         />
       )}
