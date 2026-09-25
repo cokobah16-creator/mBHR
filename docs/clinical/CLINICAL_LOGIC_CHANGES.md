@@ -355,6 +355,44 @@ only when a clinician has decided it, and write the decision next to it.
       otherwise the merged-away record keeps its own and they are not
       combined field by field. Decide whether that is acceptable.
 
+### 2.5 FHIR R4 export: questions for clinical review
+
+The FHIR R4 gateway (`src/interoperability/fhir`, off by default behind
+`FHIR_ENABLED`) publishes existing records in a standard format. It changes
+nothing staff or patients see in mBHR, and no threshold, range or
+decision-support rule. These representation rules decide what another
+system would read, so each needs a clinician's decision before the gateway
+is switched on anywhere real data exists. Full rules:
+`docs/interoperability/resource-mapping.md`.
+
+- [ ] **A stored vital sign of 0 is not published.** A pulse, blood
+      pressure, temperature, SpO₂, weight, height or BMI of 0 (or below)
+      is left out of the export rather than sent as a reading, because
+      "pulse 0" would tell another system the patient had no pulse. Missing
+      values are never sent as 0. Confirm, or say whether such rows should
+      be sent with a "data absent" marker instead.
+- [ ] **mBHR's vitals flags and ranges are not exported.** No
+      interpretation (high/low) and no reference range is attached to a
+      reading, because those are local rules still awaiting sign-off in
+      2.2. Confirm.
+- [ ] **Every saved vitals reading is "final".** mBHR has no preliminary
+      or entered-in-error state for vitals. Confirm that a saved reading is
+      a completed measurement.
+- [ ] **Pulse is published as LOINC "Heart rate" (8867-4) and SpO₂ as
+      arterial oxygen saturation by pulse oximetry (2708-6 and 59408-5)**,
+      the codes the FHIR vital signs profile requires, with mBHR's own
+      column name kept alongside. Confirm these match how outreach readings
+      are taken.
+- [ ] **Diagnosis status is carried over exactly.** A provisional or
+      differential diagnosis stays provisional or differential; only
+      diagnoses in the `conditions` table are exported. Provisional
+      diagnoses typed on the consultation (`provisional_dx`) are not
+      exported yet. Confirm that leaving them out is safer than exporting
+      them without a stable identity.
+- [ ] **Diagnosis codes stay local unless a person has verified a
+      mapping.** An ICD-10 or SNOMED CT code is added only from a reviewed
+      entry in `interop.terminology_map`. Decide who may verify a mapping.
+
 ## 3. Owner decisions (decided)
 
 These are decided by the owner and are not open questions. The code
@@ -427,6 +465,7 @@ clinician must sign off, or write "None" and say why.
 
 | Date | Pull request | What changed | Files | Checklist item (section 2) | Clinician sign-off |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-25 | FHIR R4 interoperability foundation | None for staff or patients: the new `/fhir/R4` gateway is off (`FHIR_ENABLED` unset) and only publishes existing records in FHIR format when switched on. How readings, statuses and codes are represented (a 0 reading is not published, no interpretation or range is attached, diagnosis status is kept exactly, codes stay local unless verified) is listed for review in 2.5. The mappers and terminology files are added to the clinical logic gate, so later changes to them must be recorded here. | `src/interoperability/fhir/mappers/*`, `src/interoperability/fhir/terminology/codeSystems.ts`, `scripts/check-clinical-logic-change.mjs` | 2.5 (all items) | Pending |
 | 2026-09-25 | Clinician sign-off follow-up (rows 18 to 22) | Records the clinician's decisions on rows 18 to 22 and makes the app-only changes they asked for. Dispensing now needs the pharmacist to confirm that the patient or caregiver gave the patient's name and a second identifier (date of birth, MBHR ID, or the ticket number when a date of birth can't be given) matching the record. The same allergy recorded on several records of a merge chain, or with different case or spacing, shows as one warning. A merged-away record's page shows its old and kept MBHR ID, when and by whom it was merged, and why. The critical lab banner is shown to doctors and nurses, no longer to administrators. No allergy matching rule, range, dose or threshold changed. | `src/features/pharmacy/Dispense.tsx`, `src/features/pharmacy/dispensePatient.ts`, `src/components/patient/MergeProvenance.tsx`, `src/pages/PatientDetail.tsx`, `src/components/Layout.tsx` | 2.2 rows 18, 20, 21, 22 | Emeke Okobah, Director, 2026-09-25 (no professional registration; accepted by owner decision) |
 | 2026-09-25 | Critical lab result alert (in app) | Doctors, nurses and admins see the number of unreviewed critical lab results on the Labs menu item and in a banner on every other page, refreshed every minute while online, without opening `/labs`. The consultation Labs tab shows each order's most severe result with its value and review state instead of a plain "Completed". No interpretation, range or review rule changed. | `src/hooks/useCriticalLabCount.ts`, `src/components/Layout.tsx`, `src/features/labs/LabOrderForm.tsx`, `src/features/labs/labWorklist.ts`, `src/services/labs.ts` | 2.2 row 22 | Pending |
 | 2026-09-25 | Queue: urgent first in every waiting line | The staff queue screens (queue board "Call next", the Queue page and the ticket board) now order each waiting line urgent first, then by queue position, then by time queued. Positions are renumbered on each device and can arrive out of date from another station; an urgent patient could then sit behind non-urgent ones. This is the order row 17 already intends (`insertionPosition`), so nothing changes while positions agree. Who is urgent, and how priority is carried or lowered, are unchanged. | `src/services/queuePriority.ts` `compareWaiting`; `src/components/EnhancedQueueBoard.tsx`; `src/pages/Queue.tsx`; `src/features/tickets/queueBoardModel.ts` `splitStage` | 2.2 row 17 (same ordering rule) | Pending |
