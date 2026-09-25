@@ -81,7 +81,10 @@ describe('Conflict Resolver', () => {
       expect(changes).not.toHaveProperty('_serverVersion')
     })
 
-    it('records the server updated_at the decision was made against', async () => {
+    it('records the server updated_at the conflict was raised on, not that of a newer server copy', async () => {
+      // The server copy read when the button was pressed changed since the
+      // conflict was raised (possibly in other fields): that change must
+      // still be compared at the next upload, not overwritten unseen.
       await resolveConflict(
         { ...mockConflict, entityType: 'patient_allergies', entityId: 'allergy-1' },
         'keep-local',
@@ -94,8 +97,28 @@ describe('Conflict Resolver', () => {
         'allergy-1',
         expect.objectContaining({
           _dirty: 1,
-          _serverUpdatedAt: '2024-01-01T11:30:00.123456+00:00'
+          _serverUpdatedAt: '2024-01-01T11:00:00Z'
         })
+      )
+    })
+
+    it('uses the updated_at of the server copy when the conflict carries none', async () => {
+      await resolveConflict(
+        {
+          ...mockConflict,
+          entityType: 'patient_allergies',
+          entityId: 'allergy-1',
+          remoteTimestamp: ''
+        },
+        'keep-local',
+        undefined,
+        undefined,
+        { id: 'allergy-1', updated_at: '2024-01-01T11:30:00.123456+00:00' }
+      )
+
+      expect(db.patientAllergies.update).toHaveBeenCalledWith(
+        'allergy-1',
+        expect.objectContaining({ _serverUpdatedAt: '2024-01-01T11:30:00.123456+00:00' })
       )
     })
 
@@ -274,7 +297,7 @@ describe('Conflict Resolver', () => {
       expect(changes).not.toHaveProperty('id')
     })
 
-    it('records the server updated_at the choice was made against', async () => {
+    it('records the server updated_at the conflict was raised on', async () => {
       patients.update.mockResolvedValueOnce(1)
 
       await resolveConflict(
@@ -285,8 +308,10 @@ describe('Conflict Resolver', () => {
         { id: 'patient-123', phone: '08087654321', updated_at: '2024-01-01T11:30:00Z' }
       )
 
+      // Fields outside the choice keep this device's values, so a server
+      // change made after the conflict is still compared at the next upload.
       const changes = patients.update.mock.calls[0][1] as Record<string, unknown>
-      expect(changes._serverUpdatedAt).toBe('2024-01-01T11:30:00Z')
+      expect(changes._serverUpdatedAt).toBe('2024-01-01T11:00:00Z')
     })
 
     it('fails when the record is no longer on this device', async () => {

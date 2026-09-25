@@ -9,10 +9,12 @@
 // overwrite another device's edit.
 //
 // So each record keeps _serverUpdatedAt: the server's updated_at exactly as
-// this device last saw it (downloaded, read back after an upload, or the
-// server copy a conflict decision was made against). The server changed the
-// record since then only if its updated_at is now a different instant. The
-// value is device-only: it is in no upload column map and never uploaded.
+// this device last saw it (downloaded, read back after an upload, or the one
+// a conflict decision was made against). The server changed the record since
+// then only if its updated_at is now a different instant. An upload from
+// this device makes it stale: it is dropped then, and the read-back after
+// the upload sets it again when it can. The value is device-only: it is in
+// no upload column map and never uploaded.
 
 import { findFieldConflicts, timeOf } from "./fieldCompare";
 

@@ -717,6 +717,56 @@ describe("Sync Adapter - Operations Queue Integration", () => {
         expect(visits.store.get("v1")).not.toHaveProperty("_serverUpdatedAt");
       });
 
+      it("drops the stamp seen before an upload whose read back fails, so a re-edit of that upload is not a conflict", async () => {
+        const { visits, pushChanges } = await setUp(
+          [
+            {
+              id: "v1",
+              patientId: "p1",
+              status: "open",
+              updatedAt: "2026-09-20T10:05:00.000Z",
+              _serverUpdatedAt: seen,
+              _dirty: 1,
+            },
+          ],
+          {
+            remote: { id: "v1", patient_id: "p1", status: "closed", updated_at: seen },
+            readBackError: { code: "57014" },
+          },
+        );
+
+        const first = await pushChanges();
+        expect(first).toMatchObject({ uploaded: 1, conflicts: [] });
+        // The upload changed the server's updated_at: the one seen before is stale.
+        expect(visits.store.get("v1")).not.toHaveProperty("_serverUpdatedAt");
+
+        // The server holds this device's upload; the record is edited again
+        // before a download refreshes it.
+        const afterUpload = remoteTable({
+          remote: { id: "v1", patient_id: "p1", status: "open", updated_at: "2026-09-20T10:05:00+00:00" },
+        });
+        mockFrom.mockImplementation((t: string) => (t === "visits" ? afterUpload : remoteTable({})));
+        await visits.update("v1", { status: "closed", updatedAt: "2026-09-20T10:07:00.000Z", _dirty: 1 });
+
+        const second = await pushChanges();
+
+        expect(second.conflicts).toEqual([]);
+        expect(afterUpload.upsert).toHaveBeenCalledTimes(1);
+        expect(visits.store.get("v1")).toMatchObject({ status: "closed", _dirty: 0 });
+      });
+
+      it("drops the stamp seen before an upload when the read back does not return the row", async () => {
+        const { visits, pushChanges } = await setUp(
+          [{ id: "v1", patientId: "p1", status: "closed", _serverUpdatedAt: seen, _dirty: 1 }],
+          { remote: null, readBack: [] },
+        );
+
+        const result = await pushChanges();
+
+        expect(result.uploaded).toBe(1);
+        expect(visits.store.get("v1")).not.toHaveProperty("_serverUpdatedAt");
+      });
+
       it("uploads this device's copy after keep-local instead of raising the same conflict again", async () => {
         const serverRow = {
           id: "v1",
@@ -740,6 +790,39 @@ describe("Sync Adapter - Operations Queue Integration", () => {
         expect(second.conflicts).toEqual([]);
         expect(remote.upsert).toHaveBeenCalledTimes(1);
         expect(visits.store.get("v1")).toMatchObject({ status: "closed", _dirty: 0 });
+      });
+
+      it("after keep-local, still compares a server change made while the conflict was open", async () => {
+        const raisedOn = {
+          id: "v1",
+          patient_id: "p1",
+          status: "open",
+          site_name: "Clinic A",
+          updated_at: "2026-09-20T10:05:00.000001+00:00",
+        };
+        const { visits, pushChanges } = await setUp(
+          [{ id: "v1", patientId: "p1", status: "closed", siteName: "Clinic A", _serverUpdatedAt: seen, _dirty: 1 }],
+          { remote: raisedOn },
+        );
+        const { resolveConflict } = await import("./conflictResolver");
+
+        const first = await pushChanges();
+        expect(first.conflicts[0].conflicts.map((c) => c.field)).toEqual(["status"]);
+
+        // Another device changes the site before this device's choice is made.
+        const changedSince = { ...raisedOn, site_name: "Clinic B", updated_at: "2026-09-20T10:06:00.000001+00:00" };
+        const moved = remoteTable({ remote: changedSince });
+        mockFrom.mockImplementation((t: string) => (t === "visits" ? moved : remoteTable({})));
+        await resolveConflict(first.conflicts[0], "keep-local", undefined, undefined, changedSince);
+        expect(visits.store.get("v1")).toMatchObject({ _serverUpdatedAt: raisedOn.updated_at });
+        const second = await pushChanges();
+
+        // The site change was never shown: raised, not overwritten.
+        expect(second.conflicts.map((c) => c.entityId)).toEqual(["v1"]);
+        expect(second.conflicts[0].conflicts.map((c) => c.field)).toContain("siteName");
+        expect(second.conflicts[0].remoteTimestamp).toBe(changedSince.updated_at);
+        expect(moved.upsert).not.toHaveBeenCalled();
+        expect(visits.store.get("v1")).toMatchObject({ siteName: "Clinic A", _dirty: 1 });
       });
     });
 

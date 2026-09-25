@@ -888,8 +888,11 @@ const READ_BACK_CHUNK = 100;
  * device uploaded it, so the next edit is compared with the server's stamp,
  * not this device's clock. A separate read, not a reply to the upload: an
  * upload that returns rows needs read permission, and roles that may upload
- * but not read back would be refused. Best effort: a failed read writes and
- * fails nothing (the row then keeps the stamp it had).
+ * but not read back would be refused. Best effort: a failed read fails
+ * nothing. A row it did not stamp keeps none (the upload made the earlier
+ * one stale): its next edit falls back to the clock check, as before stamps
+ * were kept, instead of always being compared field by field with this
+ * device's own upload.
  */
 async function readBackServerStamps(
   t: Tbl,
@@ -914,9 +917,12 @@ async function readBackServerStamps(
       for (const serverRow of (data ?? []) as unknown as Row[]) {
         const record = byId.get(String(serverRow.id));
         if (!record) continue;
-        // Another change reached the server in between: keep the old stamp,
-        // so that change is still compared at the next upload.
-        const stamp = stampAfterUpload(record, serverRow, mapToDB[t]);
+        // Another change reached the server in between: put back the stamp
+        // the upload was checked against, so that change is still compared
+        // at the next upload.
+        const stamp =
+          stampAfterUpload(record, serverRow, mapToDB[t]) ??
+          serverStampOf(record._serverUpdatedAt);
         if (stamp === undefined) continue;
         await table.update(record.id, { _serverUpdatedAt: stamp }).catch(() => undefined);
       }
@@ -1027,6 +1033,9 @@ export async function pushChanges(): Promise<PushSummary> {
             ...markersAfterUpload(record, current, syncedAt),
             _syncBlock: undefined,
             ...(serverVersion !== undefined ? { _serverVersion: serverVersion } : {}),
+            // This upload changed the server's updated_at, so the one seen
+            // before it is stale; the read-back below records the new one.
+            ...(comparesServerStamp(t) ? { _serverUpdatedAt: undefined } : {}),
           });
         });
         summary.uploaded += 1;
