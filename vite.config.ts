@@ -131,6 +131,9 @@ export default defineConfig(({ command, mode }) => {
         registerType: "autoUpdate",
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,mp3}"],
+          // The FHIR interface and server functions are not app pages: a
+          // browser opening them must reach the server, not the cached app.
+          navigateFallbackDenylist: [/^\/fhir\//, /^\/api\//],
           maximumFileSizeToCacheInBytes: 3000000,
           // Runtime caching tuned per host. See docs/architecture/CACHING_STRATEGY.md.
           runtimeCaching: [

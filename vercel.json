@@ -17,7 +17,11 @@
       "permanent": true
     }
   ],
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "rewrites": [
+    { "source": "/fhir/R4", "destination": "/api/fhir?__fhir_path=" },
+    { "source": "/fhir/R4/:path*", "destination": "/api/fhir?__fhir_path=:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
