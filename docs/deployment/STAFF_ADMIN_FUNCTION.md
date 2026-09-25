@@ -10,6 +10,10 @@ never accepts or stores a PIN: PINs stay on each device.
 
 **Merging code does not deploy it.** It changes nothing for anyone until you
 deploy it, and the Users screen only starts using it in a later update.
+This holds even with "Deploy to production" on in Supabase's GitHub
+integration, because that integration deploys only the functions declared in
+`supabase/config.toml`, and none is. Keep it that way: the workflow's check
+fails if a `[functions.<name>]` section is added there.
 
 Two rules are built in:
 
@@ -186,6 +190,7 @@ Each function carries its own copy of the shared code, so a change to
 | "Deploy from mainone, the branch production is deployed from" | Run it again and choose `mainone` under **Use workflow from**. |
 | "Missing secrets in the production environment: ..." | Add the named secret under Settings > Environments > production. `SUPABASE_ACCESS_TOKEN` comes from your Supabase account page (Access Tokens); `SUPABASE_PROJECT_REF` is the project's reference, shown in its settings. |
 | "supabase/functions/staff-admin/index.ts does not exist on this branch" | The branch you chose does not have the function yet. Merge it first, or choose the right branch. |
+| "supabase/config.toml declares an edge function" | Someone added a `[functions.<name>]` section. Remove it: Supabase's GitHub integration would deploy that function on every merge. |
 | The run never stops for approval | Nobody is set as a required reviewer. Fix it as in section 1, step 7, before deploying again. |
 
 ## 5. Check it answers
@@ -249,8 +254,8 @@ supabase functions list --project-ref <project-ref>
 `DENO_NO_PACKAGE_JSON=1` stops Deno from using the web app's `package.json`,
 so it does not look for a `node_modules` folder.
 
-**Never add `--no-verify-jwt`.** `supabase/config.toml` keeps JWT
-verification on for this function, and that flag would turn it off.
+**Never add `--no-verify-jwt`.** The CLI checks the caller's JWT by
+default, and that flag would turn it off.
 
 ## 8. Undo a deploy
 

@@ -78,13 +78,12 @@ enable_signup = false
 [edge_runtime]
 enabled = true
 
-# Staff account setup for administrators (supabase/functions/staff-admin).
-# The gateway must check the caller's JWT: never deploy it with
-# --no-verify-jwt. The function then checks the caller's staff record itself.
-# See docs/deployment/STAFF_ADMIN_FUNCTION.md.
-[functions.staff-admin]
-enabled = true
-verify_jwt = true
+# Edge functions: do not declare them here with [functions.<name>]. With
+# "Deploy to production" on in Supabase's GitHub integration, every function
+# declared in this file is deployed to production on each merge to mainone,
+# skipping the release gate. Deploy functions with Actions > Deploy edge
+# functions instead (docs/deployment/STAFF_ADMIN_FUNCTION.md). The CLI checks
+# the caller's JWT by default; never deploy with --no-verify-jwt.
 
 [analytics]
 enabled = false

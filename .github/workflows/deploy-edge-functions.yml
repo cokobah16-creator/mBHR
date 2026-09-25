@@ -23,8 +23,13 @@ name: Deploy edge functions
 # Deploying from here also means nobody needs the CLI or an access token on
 # their own machine.
 #
-# JWT verification stays on: each function's verify_jwt comes from
-# supabase/config.toml, and this workflow never passes --no-verify-jwt.
+# JWT verification stays on: the CLI checks the caller's JWT by default and
+# this workflow never passes --no-verify-jwt.
+#
+# No function may be declared in supabase/config.toml ([functions.<name>]):
+# with "Deploy to production" on in Supabase's GitHub integration, a declared
+# function is deployed to production on every merge to mainone, skipping this
+# workflow and its approval. The check job fails if one is declared.
 #
 # The repository is public, so nothing here prints a secret's value, the
 # function's secrets or any SQL. Secrets are named only when they are missing.
@@ -37,6 +42,7 @@ on:
     paths:
       - "supabase/functions/staff-admin/**"
       - "supabase/functions/_shared/**"
+      - "supabase/config.toml"
       - ".github/workflows/deploy-edge-functions.yml"
   workflow_dispatch:
     inputs:
@@ -95,6 +101,14 @@ jobs:
             echo "::error::supabase/functions/$FN/index.ts does not exist on this branch."
             exit 1
           fi
+
+      - name: Check no function is declared in supabase/config.toml
+        run: |
+          if grep -nE '^[[:space:]]*\[functions\.' supabase/config.toml; then
+            echo "::error::supabase/config.toml declares an edge function (above). Supabase's GitHub integration deploys declared functions to production on every merge to mainone. Remove the [functions.<name>] section and deploy with this workflow."
+            exit 1
+          fi
+          echo "No function is declared in supabase/config.toml."
 
       - name: Setup Deno
         if: env.TYPECHECK == 'true'
