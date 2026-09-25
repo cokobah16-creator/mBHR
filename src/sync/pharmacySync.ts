@@ -30,6 +30,7 @@ import {
   countOpenCommands,
   countWaitingPermission,
   drainCommands,
+  enqueueCommand,
   registerCommandHandler,
   type CommandStore,
   type DrainSummary,
@@ -40,6 +41,7 @@ import {
   batchFromServer,
   discrepancyFromServer,
   dispenseFromServer,
+  handedOverRefusalStatus,
   isStaleBalance,
   itemFromServer,
   movementFromServer,
@@ -48,6 +50,7 @@ import {
   prescriptionFromServer,
   prescriptionUploadRow,
   recomputeShown,
+  refusedDispenseAction,
   shouldUploadPrescription,
   type ServerBalance,
 } from "./pharmacySyncModel";
@@ -177,16 +180,60 @@ registerCommandHandler("rx_dispense", {
   },
   async onRejected(command, reason) {
     const prescriptionId = argString(command, "p_prescription_id") ?? "";
-    await mbhrDb.transaction("rw", LEDGER_TABLES(), async () => {
-      await mbhrDb.dispenses.where("commandId").equals(command.id).delete();
+    await mbhrDb.transaction("rw", [...LEDGER_TABLES(), mbhrDb.rx_commands], async () => {
+      // Read the stored command, not the copy sent: the confirm wait marks
+      // it as handed over (p_offline) while the call may still be in flight.
+      const stored = await mbhrDb.rx_commands.get(command.id);
+      const handedOver = (stored?.args ?? command.args)?.p_offline === true;
+      const action = refusedDispenseAction(reason, handedOver);
+      const rx = await mbhrDb.prescriptions.get(prescriptionId);
+      const carried = !!rx && rx.pendingCommandId === command.id;
+      await applyBalances(parseBalances(command.result));
+
+      if (action === "resend_offline" && stored) {
+        // Send it again as handed over under a new command id; the dispense
+        // rows and pending stock follow the new command.
+        const resent = await enqueueCommand(rxCommandStore(), {
+          rpc: stored.rpc,
+          args: { ...stored.args, p_offline: true },
+          authorId: stored.authorId,
+          requiredPermission: stored.requiredPermission,
+          entityRefs: stored.entityRefs,
+        });
+        await mbhrDb.dispenses.where("commandId").equals(command.id).modify({ commandId: resent.id });
+        await mbhrDb.stock_movements
+          .where("commandId")
+          .equals(command.id)
+          .filter((m) => m.status === "pending")
+          .modify({ commandId: resent.id });
+        if (rx && carried) await mbhrDb.prescriptions.update(rx.id, { pendingCommandId: resent.id });
+        return;
+      }
+
+      // The server never recorded these stock movements, so the shown stock
+      // goes back to the server's balance either way.
       await mbhrDb.stock_movements
         .where("commandId")
         .equals(command.id)
         .filter((m) => m.status === "pending")
         .delete();
-      await applyBalances(parseBalances(command.result));
-      const rx = await mbhrDb.prescriptions.get(prescriptionId);
-      if (rx && rx.pendingCommandId === command.id) {
+
+      if (action === "keep_handed_over") {
+        // The medicine was given: keep the dispense rows as the record and
+        // list the prescription for reconciliation instead of reopening it.
+        if (rx && carried) {
+          await mbhrDb.prescriptions.update(rx.id, {
+            status: handedOverRefusalStatus(reason),
+            pendingCommandId: undefined,
+            lastRejectReason: reason,
+            handoverRefused: 1,
+          });
+        }
+        return;
+      }
+
+      await mbhrDb.dispenses.where("commandId").equals(command.id).delete();
+      if (rx && carried) {
         // The command carried the prescription. When the server raised an
         // error (no stored result) nothing was saved there, so a
         // prescription it never had is uploaded again at the next sync.

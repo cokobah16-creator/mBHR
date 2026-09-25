@@ -67,13 +67,17 @@ async function loadDispenseData(): Promise<DispenseData> {
       mbhrDb.prescriptions.where("status").equals("open").toArray(),
       mbhrDb.pharmacy_batches.toArray(),
       mbhrDb.pharmacy_items.toArray(),
-      mbhrDb.prescriptions.filter((r) => !!r.pendingCommandId || (r.uncoveredQty ?? 0) > 0).toArray(),
+      mbhrDb.prescriptions
+        .filter((r) => !!r.pendingCommandId || (r.uncoveredQty ?? 0) > 0 || r.handoverRefused === 1)
+        .toArray(),
       mbhrDb.rx_commands.where("status").anyOf(["pending", "waiting_permission"]).toArray(),
       mbhrDb.stock_discrepancies.where("status").equals("open").count(),
     ]);
     const since = new Date(Date.now() - DAY_MS).toISOString();
     const recent = pendingRx
-      .filter((r) => !!r.pendingCommandId || (r.dispensedAt ?? "") >= since)
+      // A handed-over dispense the server refused stays listed so it can be
+      // reconciled.
+      .filter((r) => !!r.pendingCommandId || r.handoverRefused === 1 || (r.dispensedAt ?? "") >= since)
       .sort((a, b) => (b.dispensedAt ?? "").localeCompare(a.dispensedAt ?? ""));
     // Resolve people so the pharmacist sees names, not record ids.
     const ids = [...new Set([...rxData, ...recent].flatMap((r) => [r.patientId, r.prescriberId]))];
@@ -458,7 +462,15 @@ export default function Dispense() {
                   return (
                     <li key={r.id} className="space-y-1 px-4 py-3">
                       <span className="block font-medium text-ink">{names[r.patientId] ?? "Unknown patient"}</span>
-                      {r.pendingCommandId ? (
+                      {r.handoverRefused === 1 ? (
+                        <>
+                          <StatusBadge tone="danger">Handed over, but refused by the server</StatusBadge>
+                          <span className="block text-caption text-ink-secondary">
+                            {rejectReasonText(r.lastRejectReason)} The dispense is kept on this device. Count
+                            the stock and reconcile this record with the pharmacy lead.
+                          </span>
+                        </>
+                      ) : r.pendingCommandId ? (
                         <StatusBadge tone="warning">
                           {status === "waiting_permission"
                             ? "Waiting for an authorised person to sync"

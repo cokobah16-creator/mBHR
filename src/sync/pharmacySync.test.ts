@@ -13,8 +13,10 @@ import {
   parseShortLines,
   pharmacySiteKey,
   prescriptionFromServer,
+  handedOverRefusalStatus,
   prescriptionUploadRow,
   recomputeShown,
+  refusedDispenseAction,
   rejectReasonText,
   remapLines,
   shouldUploadPrescription,
@@ -124,6 +126,15 @@ describe("downloads", () => {
     const merged = prescriptionFromServer({ id: "rx1", status: "open", lines: local.lines }, local, "now");
     expect(merged?.status).toBe("dispensed");
     expect(merged?.pendingCommandId).toBe("c1");
+  });
+
+  it("never reopens a handed-over dispense the server refused", () => {
+    const local = rx({ status: "dispensed", handoverRefused: 1, lastRejectReason: "permission_denied" });
+    const merged = prescriptionFromServer({ id: "rx1", status: "open", lines: local.lines }, local, "now");
+    expect(merged?.status).toBe("dispensed");
+    expect(merged?.handoverRefused).toBe(1);
+    // A server status other than open (cancelled, dispensed) still applies.
+    expect(prescriptionFromServer({ id: "rx1", status: "void" }, local, "now")?.status).toBe("void");
   });
 
   it("takes the server's status otherwise (dispensed on another device)", () => {
@@ -271,6 +282,30 @@ describe("server answers", () => {
     expect(rejectReasonText("lines_mismatch")).toMatch(/do not match the prescription/);
     expect(rejectReasonText("prescription_not_found")).toMatch(/no record/);
     expect(rejectReasonText("something_new")).toBe("The server refused this change.");
+  });
+});
+
+describe("refused dispenses", () => {
+  it("undoes a dispense the pharmacist was told not to hand over", () => {
+    for (const reason of ["insufficient_stock", "prescription_void", "already_dispensed", "permission_denied"]) {
+      expect(refusedDispenseAction(reason, false)).toBe("undo");
+    }
+  });
+
+  it("resends a handed-over dispense refused for stock as handed over", () => {
+    expect(refusedDispenseAction("insufficient_stock", true)).toBe("resend_offline");
+  });
+
+  it("keeps a handed-over dispense refused for any other reason", () => {
+    for (const reason of ["prescription_void", "already_dispensed", "permission_denied", "lines_mismatch"]) {
+      expect(refusedDispenseAction(reason, true)).toBe("keep_handed_over");
+    }
+  });
+
+  it("does not reopen a handed-over prescription", () => {
+    expect(handedOverRefusalStatus("permission_denied")).toBe("dispensed");
+    expect(handedOverRefusalStatus("already_dispensed")).toBe("dispensed");
+    expect(handedOverRefusalStatus("prescription_void")).toBe("void");
   });
 });
 
