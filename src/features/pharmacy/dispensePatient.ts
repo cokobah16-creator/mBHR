@@ -23,6 +23,9 @@ export type DispensePatient =
       patient: Patient;
       /** Every id from the prescription's own id to `patient.id`, in order. */
       chain: string[];
+      // Present on both branches so `.reason` type-checks without
+      // strictNullChecks (boolean discriminants don't narrow then).
+      reason?: undefined;
     }
   | {
       ok: false;
