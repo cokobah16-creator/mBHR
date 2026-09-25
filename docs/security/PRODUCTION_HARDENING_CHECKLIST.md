@@ -426,12 +426,12 @@ review").
       under-tested service first — likely `src/services/portalEnrollment.ts`
       or `src/services/messaging.ts`.
 
-## Phase C — Resilience ✅
+## Phase C — Resilience 🟡
 
 | Item                                                                 | Status | Notes                                                                                                                                       |
 | -------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Nightly `pg_dump` workflow uploading to private storage              | ✅     | `.github/workflows/backup.yml` (runs at 03:00 UTC; manual `workflow_dispatch` also supported)                                               |
-| Restore runbook with verification queries                            | ✅     | `docs/RESTORE_RUNBOOK.md`                                                                                                                   |
+| Nightly `pg_dump` workflow uploading to private storage              | 🟡     | `.github/workflows/backup.yml` (03:00 UTC; manual `workflow_dispatch`). Schema, data, auth/storage data and roles dumps, with a patient-row check. Not done until a restore from these files succeeds (restore drill below). Storage files (photos, documents) are not copied, and the dumps sit in the production project's own bucket: an off-project copy is recommended |
+| Restore runbook with verification queries                            | ✅     | `docs/deployment/RESTORE_RUNBOOK.md`                                                                                                                 |
 | Opportunistic background sync (≤ 60s push of dirty rows when online) | ✅     | `startBackgroundSync()` in `src/sync/adapter.ts`, kicked off from `src/main.tsx` after seed; exponential backoff up to 5 min on repeat fail |
 | Symmetric JSON export → import round-trip                            | ✅     | `src/utils/import.ts` (counterpart to `src/utils/export.ts`); 6 unit tests covering shape, idempotency, dirty-flag stamping                 |
 | Device-key escrow for tablet-loss recovery                           | 🔬     | Deferred to a follow-up spike doc — requires real cryptographic protocol design + UX work; see Phase D / WS13 spike for adjacent context.   |
@@ -445,9 +445,14 @@ review").
       `supabase storage buckets create backups --public=false`. The nightly
       job assumes it exists.
 - [ ] **Run the quarterly restore drill** documented in
-      `docs/RESTORE_RUNBOOK.md` (Step 7) — drift in pg_dump / Supabase CLI
+      `docs/deployment/RESTORE_RUNBOOK.md` ("Test the runbook quarterly") — drift in pg_dump / Supabase CLI
       behaviour is real; rehearsing once a quarter is the cheapest
       production incident.
+- [ ] **Keep a copy of the nightly dumps outside the production project**
+      (recommended): today they go only to that project's own `backups`
+      bucket.
+- [ ] **Back up Storage bucket files** (patient photos, portal documents)
+      separately; no database dump contains them.
 
 ## Phase D — Polish ✅ (partial — see follow-ups)
 
