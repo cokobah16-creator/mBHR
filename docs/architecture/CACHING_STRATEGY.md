@@ -30,31 +30,39 @@ maximumFileSizeToCacheInBytes: 3000000
 
 That captures the app shell. Runtime caching is then tuned per host:
 
-| URL pattern                       | Strategy               | Why                                                                                                                                   |
-| --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `https://*.supabase.co/rest/*`    | `NetworkFirst` (5s)    | PostgREST queries. Try network for 5s for fresh data; fall back to cache if offline or slow. Max 100 entries, 24h TTL.                |
-| `https://*.supabase.co/storage/*` | `StaleWhileRevalidate` | Patient photos & exports — rarely change once uploaded. Serve cached immediately, refresh in the background. Max 200 entries, 7d TTL. |
-| `https://cdn.jsdelivr.net/*`      | `CacheFirst`           | Third-party static assets (fonts, libraries). Long-lived. Max 50 entries, 30d TTL.                                                    |
-
-All entries cache responses with status `0` (opaque/CORS) and `200`.
+| URL pattern                  | Strategy      | Why                                                                                                                                         |
+| ---------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `https://*.supabase.co/*`    | `NetworkOnly` | Database, sign-in, storage and functions. Answers carry patient records, photos and the staff directory, so none is kept in Cache Storage. |
+| `https://cdn.jsdelivr.net/*` | `CacheFirst`  | Third-party static assets (fonts, libraries). Long-lived. Max 50 entries, 30d TTL. Caches status `0` (opaque/CORS) and `200`.              |
 
 ## What we do NOT cache
 
-- **Supabase Auth endpoints** (`/auth/v1/*`). Token refresh and sign-in
-  must always hit the live server.
-- **Edge functions** (`/functions/v1/*`). They have their own
-  rate-limiting and side-effects; caching POSTs is a foot-gun.
-- **PostgREST writes**. Workbox `NetworkFirst` is the SELECT path; PUT /
-  POST / DELETE go through the offline outbox (`src/db/outbox.ts`) when
-  there's no network, not Workbox.
+- **Anything from Supabase.** On a shared tablet a cached answer could be
+  served to the next person, or an old staff directory could switch a
+  deactivated account back on. Offline work reads and writes the local
+  database (IndexedDB) and syncs through the outboxes instead.
+- Builds before this change cached Supabase answers in `supabase-rest` and
+  `supabase-storage`. `src/services/clearApiCaches.ts` deletes every cache
+  except the Workbox precache and `jsdelivr`: at start-up, on staff and
+  patient-portal sign-out, and on device reset.
 
-## Cache-busting on deploy
+## Updates on deploy
 
-Service-worker `registerType: "autoUpdate"` means a new build's SW
-takes over within a few seconds of a page reload. The
-`GlobalErrorBoundary` already includes a "Clear cached data & reload"
-button that unregisters all service workers + clears caches +
-deletes IndexedDB — use it during an incident if a deploy goes bad.
+`registerType: "prompt"` with `skipWaiting: false`: a new build's service
+worker installs in the background and waits. The app registers it itself
+(`src/lib/serviceWorker.ts`, `injectRegister: null`), checks for a new
+version hourly while online, and shows "A new version of mBHR is ready"
+(`src/components/AppUpdateBanner.tsx`). The new version takes over only
+when someone chooses **Reload now**, so a deploy never reloads the app in
+the middle of entering a record. Until then the old worker keeps serving
+the files of the version that is running.
+
+When a window on the new version upgrades the local databases, windows
+still on the old version close their connection and ask to be reloaded
+(`src/db/versionChange.ts`), since they can no longer save.
+
+The error screen's "Clear cached data & reload" button unregisters the
+service workers and clears Cache Storage; it does not delete IndexedDB.
 
 ## Open follow-ups
 

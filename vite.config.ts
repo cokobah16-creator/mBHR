@@ -128,39 +128,32 @@ export default defineConfig(({ command, mode }) => {
     plugins: [
       react(),
       VitePWA({
-        registerType: "autoUpdate",
+        // A new version installs in the background and then waits: it takes
+        // over only when the person chooses to reload (src/lib/serviceWorker.ts),
+        // so a deploy never reloads the app, or swaps its files, while
+        // someone is entering a record. The app registers the worker itself,
+        // so the plugin injects no registration script.
+        registerType: "prompt",
+        injectRegister: null,
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,mp3}"],
           maximumFileSizeToCacheInBytes: 3000000,
+          // A waiting version takes over only on the app's SKIP_WAITING
+          // message. A first install still controls the open page at once,
+          // so it works offline without a reload.
+          skipWaiting: false,
+          clientsClaim: true,
           // Runtime caching tuned per host. See docs/architecture/CACHING_STRATEGY.md.
           runtimeCaching: [
             {
-              // Supabase REST (PostgREST). Network-first with a short timeout
-              // so stale data is served if the network is slow, but fresh data
-              // beats cached when both are available.
-              urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/.*/i,
-              handler: "NetworkFirst",
-              options: {
-                cacheName: "supabase-rest",
-                networkTimeoutSeconds: 5,
-                expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
-                cacheableResponse: { statuses: [0, 200] },
-              },
-            },
-            {
-              // Supabase Storage. Patient photos and exports — these are large
-              // and rarely change after upload, so stale-while-revalidate keeps
-              // the UI fast while updating in the background.
-              urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/.*/i,
-              handler: "StaleWhileRevalidate",
-              options: {
-                cacheName: "supabase-storage",
-                expiration: {
-                  maxEntries: 200,
-                  maxAgeSeconds: 60 * 60 * 24 * 7,
-                },
-                cacheableResponse: { statuses: [0, 200] },
-              },
+              // Supabase: database, sign-in, storage and functions. Its
+              // answers carry patient records, photos and the staff
+              // directory, so none is kept in Cache Storage: the next person
+              // on a shared device could be served them, and an old staff
+              // list could switch a deactivated account back on. Offline
+              // work reads the local database instead.
+              urlPattern: /^https:\/\/[^/]+\.supabase\.co\/.*/i,
+              handler: "NetworkOnly",
             },
             {
               // Google Fonts and similar static CDNs.

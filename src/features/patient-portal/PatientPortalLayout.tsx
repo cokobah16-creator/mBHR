@@ -32,6 +32,7 @@ import { supabase } from "@/lib/supabase";
 import { supabase as authClient } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 import { logout as endLocalPortalSession } from "@/services/patientPortalAuth";
+import { clearApiCaches } from "@/services/clearApiCaches";
 import {
   getPatientProfile,
   getPatientProfileByEmail,
@@ -354,6 +355,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       // signOut() cannot finish offline and then keeps the stored sign-in:
       // remove it from this phone either way.
       if (authClient) clearStoredSupabaseAuth();
+      void clearApiCaches();
       navigate("/patient");
     }
   };

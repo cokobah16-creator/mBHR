@@ -11,6 +11,7 @@ import {
   isSupabaseAuthKey,
 } from "@/lib/supabaseAuthStorage";
 import { useSyncStore } from "@/stores/syncStore";
+import { clearApiCaches } from "@/services/clearApiCaches";
 
 /**
  * Why the last online sign-in was refused although the email and password
@@ -681,6 +682,7 @@ export const useAuthStore = create<AuthState>()(
         // Also end the online sign-in, in the background: the local logout
         // above is already complete and never waits for the network.
         startCloudSignOut();
+        void clearApiCaches();
       },
 
       setCurrentUser: (user: User | null) => {
