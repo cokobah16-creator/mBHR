@@ -154,8 +154,9 @@ Nothing that holds patient data:
 - Every answer that can contain patient data carries
   `Cache-Control: private, no-store` and `Pragma: no-cache`, so neither the
   browser nor any shared cache (including Vercel's edge) keeps it.
-- Reads carry an `ETag` (from **Phase 2**, a hash of the resource content)
-  and `Last-Modified`. `If-None-Match` with the current tag gets a 304 with
+- Reads (not Binary) carry an `ETag` (from **Phase 2**, a hash of the
+  resource content), and `Last-Modified` only when the resource has
+  `meta.lastUpdated`. `If-None-Match` with the current tag gets a 304 with
   no body, and only after authentication, the access decision and the audit
   record, exactly like a 200.
 - The service worker never answers `/fhir/` with the app shell
@@ -163,8 +164,8 @@ Nothing that holds patient data:
   precache, and no runtime-caching rule matches it; Supabase responses are
   `NetworkOnly` for the app too.
 - Document downloads are not cached either (2.4).
-- `/metadata` is `no-cache`: it may be stored but must be revalidated. It
-  holds no patient data.
+- `/metadata` carries the same `Cache-Control: private, no-store` as every
+  other answer. It holds no patient data.
 - The gateway itself keeps nothing between requests: no disk, no key-value
   store, no in-memory cache of rows or decisions.
 

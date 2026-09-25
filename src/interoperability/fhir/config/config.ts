@@ -35,8 +35,10 @@ export interface FhirConfig {
   rateLimitPerMinute: number;
   /**
    * FHIR_SENSITIVE_RATE_LIMIT_PER_MINUTE (default 20): a second, stricter
-   * limit for Patient, Observation, DiagnosticReport and DocumentReference
-   * searches and for document downloads, counted on top of the general one.
+   * limit for searches on the types marked sensitiveSearch (Patient,
+   * Observation, ServiceRequest, DiagnosticReport, DocumentReference,
+   * Provenance, AuditEvent) and for every Binary download, counted on top of
+   * the general one.
    */
   sensitiveRateLimitPerMinute: number;
   /** FHIR_READ_ENABLED; defaults to FHIR_ENABLED. */
