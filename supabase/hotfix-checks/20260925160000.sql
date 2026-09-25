@@ -88,9 +88,31 @@ RESET ROLE;
 -- limit exceeded", and after dropping the open policy alone every staff
 -- member would. Production's check constraint admin_perm_implies_admin
 -- needs admin_access = true on a permanent admin row.
-INSERT INTO public.app_users (id, full_name, role, admin_access, admin_permanent) VALUES
-  ('00000000-0000-4000-8000-00000000f1a1', 'Hotfix check nurse', 'nurse', false, false),
-  ('00000000-0000-4000-8000-00000000f1a2', 'Hotfix check permanent admin', 'admin', true, true);
+--
+-- If a row breaks one of the table's rules, say which rule and (for a check
+-- constraint) its definition, so the log shows the mismatch. The run's log
+-- is public, so nothing about the schema is printed when the rows go in.
+DO $$
+DECLARE
+  v_constraint text;
+  v_column     text;
+  v_def        text;
+BEGIN
+  INSERT INTO public.app_users (id, full_name, role, admin_access, admin_permanent) VALUES
+    ('00000000-0000-4000-8000-00000000f1a1', 'Hotfix check nurse', 'nurse', false, false),
+    ('00000000-0000-4000-8000-00000000f1a2', 'Hotfix check permanent admin', 'admin', true, true);
+EXCEPTION
+  WHEN check_violation THEN
+    GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+    SELECT pg_get_constraintdef(oid) INTO v_def
+      FROM pg_constraint
+     WHERE conrelid = 'public.app_users'::regclass AND conname = v_constraint;
+    RAISE EXCEPTION 'the test staff rows break app_users check constraint %: %',
+      v_constraint, coalesce(v_def, '(definition not found)');
+  WHEN not_null_violation THEN
+    GET STACKED DIAGNOSTICS v_column = COLUMN_NAME;
+    RAISE EXCEPTION 'the test staff rows leave app_users.% empty, and it is NOT NULL with no default', v_column;
+END $$;
 
 SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-4000-8000-00000000f1a1","role":"authenticated"}';
