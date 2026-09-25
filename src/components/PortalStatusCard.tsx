@@ -2,7 +2,11 @@
  * Portal Status Card Component
  *
  * Displays patient portal enrollment status with:
- * - Enable/disable switch (turning access off asks for confirmation)
+ * - Enable/disable switch. Turning access on asks staff to tick that the
+ *   patient has agreed to use the portal ("Turn on access" stays disabled
+ *   until then); turning it off asks for confirmation. The tick is not
+ *   stored on the server: the request carries only a reason code
+ *   (staff_choice)
  * - Where the decision stands: waiting for the server, confirmed by the
  *   server, refused by the server, or kept on this device only
  * - Verification status
@@ -11,10 +15,15 @@
  * - Send/resend invitation button with rate limiting, and an honest
  *   message when no email or SMS could be sent. Only roles with the
  *   portal_invite permission see it; others are told why
+ * - For a patient under 18 the switch can only turn access off, and no
+ *   invitation or registration link is offered: portal accounts are for
+ *   adults (the services refuse too)
  *
  * Portal access belongs to the server. A change made here is saved on this
  * device, queued, and shown as waiting until the server answers; the card
- * follows the answer live.
+ * follows the answer live. The queued change is sent only while the staff
+ * member who made it is signed in online on this device (a PIN unlock is not
+ * enough), so the card says so when they are not.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -48,6 +57,8 @@ import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
 import { useServerStatus } from "@/features/admin/useServerStatus";
+import { ONLINE_SIGN_IN_HINT, useCloudSession } from "@/lib/cloudSession";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 
 interface PortalStatusCardProps {
   patientId: string;
@@ -99,6 +110,11 @@ export function PortalStatusCard({
   // service and by the server).
   const canInvite = !!role && can(role, "portal_invite");
   const server = useServerStatus();
+  // A queued change goes to the server only under its author's own online
+  // sign-in (services/portalAccess). After a PIN unlock there is none.
+  const cloudSession = useCloudSession();
+  const notSignedInOnline =
+    server.state !== "not-configured" && cloudSession === "signed_out";
   const firstName = patientName.split(" ")[0];
   const titleId = `portal-card-${patientId}`;
 
@@ -107,6 +123,9 @@ export function PortalStatusCard({
   const [sending, setSending] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const [confirmEnable, setConfirmEnable] = useState(false);
+  // Staff attestation for turning access on. Starts unticked every time.
+  const [patientAgreed, setPatientAgreed] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
   const [inviteLink, setInviteLink] = useState<{
     url: string;
@@ -168,8 +187,17 @@ export function PortalStatusCard({
     }
   }, [countdown]);
 
+  const closeEnableDialog = () => {
+    setConfirmEnable(false);
+    setPatientAgreed(false);
+  };
+
   const setPortalAccess = async (enable: boolean) => {
+    // Access is turned on only after staff tick that the patient agreed.
+    const agreed = patientAgreed;
+    if (enable && !agreed) return;
     setConfirmDisable(false);
+    closeEnableDialog();
     if (!status) return;
     if (!canEdit) {
       pushToast({
@@ -184,7 +212,7 @@ export function PortalStatusCard({
     setToggling(true);
     try {
       const result = enable
-        ? await enablePortalAccess(patientId, { termsAccepted: true })
+        ? await enablePortalAccess(patientId, { termsAccepted: agreed })
         : await disablePortalAccess(patientId);
 
       if (result.success) {
@@ -200,9 +228,11 @@ export function PortalStatusCard({
               : "Portal access off: waiting for the server",
           body: result.deviceOnly
             ? "Saved on this device only: no server is connected."
-            : server.available
-              ? "Saved on this device and queued for the server. This card shows when the server answers."
-              : "Saved on this device. It is sent to the server when this device is online and syncs.",
+            : notSignedInOnline
+              ? `Saved on this device and queued. You are not signed in online, so it is sent to the server when you sign in online. ${ONLINE_SIGN_IN_HINT}`
+              : server.available
+                ? "Saved on this device and queued for the server. This card shows when the server answers."
+                : "Saved on this device. It is sent to the server when this device is online and syncs.",
         });
         await loadStatus();
         onStatusChange?.();
@@ -228,8 +258,20 @@ export function PortalStatusCard({
 
   const handleSwitch = () => {
     if (!status) return;
-    if (access.enabled) setConfirmDisable(true);
-    else setPortalAccess(true);
+    if (access.enabled) {
+      setConfirmDisable(true);
+    } else if (status.minor) {
+      // Do not ask staff to confirm agreement for a change that is refused.
+      pushToast({
+        id: generateId(),
+        tone: "error",
+        title: "Portal access not changed",
+        body: MINOR_PORTAL_ACCESS_MESSAGE,
+      });
+    } else {
+      setPatientAgreed(false);
+      setConfirmEnable(true);
+    }
   };
 
   const handleSendInvitation = async () => {
@@ -336,6 +378,9 @@ export function PortalStatusCard({
   const enabled = access.enabled;
   const pending = access.pending;
   const deviceOnly = server.state === "not-configured";
+  // A child's record can still have access on from before portal accounts
+  // were limited to adults. Staff can only turn it off.
+  const minor = status.minor === true;
 
   const statusBadge = pending ? (
     <StatusBadge tone="warning" icon>
@@ -363,6 +408,17 @@ export function PortalStatusCard({
         ? "SMS"
         : "None recorded";
 
+  // Registration (PatientRegister) always asks for an email address, a
+  // name and the date of birth, plus a password, or a 6-digit PIN on a
+  // device with no server. With a server, portal_link_patient_record links
+  // the new account to a clinic record by that record's email address (once
+  // confirmed) and date of birth; a phone number typed at registration is
+  // not used to find the record.
+  const credential = deviceOnly ? "a 6-digit PIN" : "a password";
+  const signInWith = deviceOnly ? "email and PIN" : "email and password";
+  const phoneOnlyLinkNote =
+    "This record has no email address, and registration needs one. The server links a new portal account to a clinic record through the record's email address; a phone number typed at registration is not checked. Add the patient's email to their record before they register.";
+
   // Where the decision stands, in words (never colour alone).
   const decisionLine = (() => {
     if (deviceOnly) {
@@ -380,7 +436,9 @@ export function PortalStatusCard({
           ? `Turning ${enabled ? "on" : "off"}: waiting for someone allowed to manage portal access to sync this device.`
           : !server.available
             ? `Turning ${enabled ? "on" : "off"}: saved on this device. It is sent to the server when this device is online and syncs.`
-            : access.lastErrorCode
+            : notSignedInOnline
+              ? `Turning ${enabled ? "on" : "off"}: saved on this device and queued. It is sent to the server when the staff member who made the change signs in online on this device.`
+              : access.lastErrorCode
               ? `Turning ${enabled ? "on" : "off"}: saved on this device. The server has not answered the last attempt (for example the record is not uploaded yet, or the connection failed); it is tried again at the next sync.`
               : `Turning ${enabled ? "on" : "off"}: saved on this device and waiting for the server's answer. It is sent again at each sync until the server answers.`,
       };
@@ -429,11 +487,15 @@ export function PortalStatusCard({
               Portal access
             </p>
             <p className="text-caption text-ink-muted">
-              {canEdit
+              {minor
                 ? enabled
-                  ? "The patient can register and sign in to the portal once the server confirms access."
-                  : "Turn on only after the patient agrees to use the portal."
-                : "Your role cannot change portal access."}
+                  ? `Portal accounts are for adults. This patient is under 18, so they cannot register or be linked to this record.${canEdit ? " Turn access off." : ""}`
+                  : MINOR_PORTAL_ACCESS_MESSAGE
+                : canEdit
+                  ? enabled
+                    ? "The patient can register and sign in to the portal once the server confirms access."
+                    : "Turn on only after the patient agrees to use the portal."
+                  : "Your role cannot change portal access."}
             </p>
           </div>
           {canEdit ? (
@@ -582,14 +644,17 @@ export function PortalStatusCard({
               </button>
             </div>
             <p className="text-caption text-ink-secondary">
-              The patient's contact is pre-filled. They only need to enter their
-              date of birth to finish registering.
+              {status.contactMethod === "email"
+                ? `The patient's email is pre-filled. They also enter their name, date of birth and ${credential} to finish registering.`
+                : deviceOnly
+                  ? "The patient's phone number is pre-filled. Registration also needs an email address, so they enter an email, their name, the date of birth on their record and a 6-digit PIN."
+                  : phoneOnlyLinkNote}
             </p>
           </div>
         )}
 
-        {/* Send/Resend Button */}
-        {enabled && (
+        {/* Send/Resend Button (never for a child's record) */}
+        {enabled && !minor && (
           <div className="space-y-3 border-t border-line pt-4">
             {status.contactMethod ? (
               canInvite ? (
@@ -617,12 +682,19 @@ export function PortalStatusCard({
                     <p className="text-caption text-ink-muted">
                       Invitations can be sent once the server confirms portal access.
                     </p>
+                  ) : !server.available ? (
+                    <p className="text-caption text-ink-muted">
+                      {server.state === "offline"
+                        ? "This device is offline, so no email or SMS can be sent. You'll get a link to share with the patient."
+                        : "No server is connected, so no email or SMS can be sent. You'll get a link to share with the patient."}
+                    </p>
                   ) : (
-                    !server.available && (
+                    notSignedInOnline && (
                       <p className="text-caption text-ink-muted">
-                        {server.state === "offline"
-                          ? "This device is offline, so no email or SMS can be sent. You'll get a link to share with the patient."
-                          : "No server is connected, so no email or SMS can be sent. You'll get a link to share with the patient."}
+                        You are not signed in online, so the server will not
+                        send an email or SMS. You'll get a link to share with
+                        the patient. To send it, sign in online.{" "}
+                        {ONLINE_SIGN_IN_HINT}
                       </p>
                     )
                   )}
@@ -644,27 +716,68 @@ export function PortalStatusCard({
             {(status.inviteCount || 0) > 0 && !status.verified && (
               <div className="rounded-md border border-line bg-surface-sunken px-3 py-2">
                 <p className="text-label text-ink">What to tell the patient</p>
-                <p className="text-caption text-ink-secondary">
-                  Go to <strong>{window.location.origin}/patient/login</strong>,
-                  choose "Register here", and enter your{" "}
-                  {status.contactMethod === "email"
-                    ? "email address"
-                    : "phone number"}{" "}
-                  and date of birth.
-                </p>
+                {status.contactMethod === "email" || deviceOnly ? (
+                  <p className="text-caption text-ink-secondary">
+                    Go to <strong>{window.location.origin}/patient/login</strong>,
+                    choose "Register here", and enter{" "}
+                    {status.contactMethod === "email"
+                      ? "the email address the clinic has for you, your name, your date of birth"
+                      : "an email address, your name, and the phone number and date of birth the clinic has for you,"}{" "}
+                    and {credential}. Then sign in with your {signInWith}.
+                  </p>
+                ) : (
+                  <p className="text-caption text-ink-secondary">{phoneOnlyLinkNote}</p>
+                )}
               </div>
             )}
           </div>
         )}
 
         {/* Enable Portal Prompt */}
-        {!enabled && (
+        {!enabled && !minor && (
           <p className="text-body text-ink-secondary">
             Turning on portal access lets {firstName} view their medical
             records, request appointments and message the clinic online.
           </p>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmEnable}
+        title={`Turn on portal access for ${firstName}?`}
+        confirmLabel="Turn on access"
+        confirmDisabled={!patientAgreed}
+        busy={toggling}
+        busyLabel="Turning on…"
+        onConfirm={() => setPortalAccess(true)}
+        onCancel={closeEnableDialog}
+      >
+        <p>
+          Portal access lets {firstName} use the patient portal to see their
+          records, request appointments and message the clinic.
+        </p>
+        <p>
+          {deviceOnly
+            ? "No server is connected, so it is turned on for this device only."
+            : notSignedInOnline
+              ? `The change is saved on this device and queued. You are not signed in online, so it is sent to the server when you sign in online. The server decides; until it confirms, ${firstName} cannot use the online portal. ${ONLINE_SIGN_IN_HINT}`
+              : `The change is saved on this device and queued for the clinic server, which decides. ${firstName} can use the online portal once the server confirms it.${
+                  server.available ? "" : " It is sent when this device is online and syncs."
+                }`}
+        </p>
+        <label className="flex items-start gap-3 rounded-md border border-line bg-surface-sunken p-3">
+          <input
+            type="checkbox"
+            id={`${titleId}-agreed`}
+            checked={patientAgreed}
+            onChange={(e) => setPatientAgreed(e.target.checked)}
+            className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
+          />
+          <span className="text-body text-ink">
+            {firstName} has agreed to use the patient portal.
+          </span>
+        </label>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={confirmDisable}
@@ -679,7 +792,9 @@ export function PortalStatusCard({
         <p>
           {deviceOnly
             ? "Portal access will be turned off on this device. No server is connected, so there is nothing to upload."
-            : `The change is sent to the clinic server. Once the server confirms it, ${firstName} can no longer sign in to the online portal. Until this device syncs, the change waits here.`}{" "}
+            : notSignedInOnline
+              ? `The change is saved on this device and queued. You are not signed in online, so it is sent to the server when you sign in online. Once the server confirms it, ${firstName} can no longer sign in to the online portal. ${ONLINE_SIGN_IN_HINT}`
+              : `The change is sent to the clinic server. Once the server confirms it, ${firstName} can no longer sign in to the online portal. Until this device syncs, the change waits here.`}{" "}
           Their records are not deleted.
         </p>
         <p>You can turn access back on later.</p>

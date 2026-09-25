@@ -1,11 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -16,16 +10,33 @@ const { mocks } = vi.hoisted(() => ({
     pushToast: vi.fn(),
     serverState: "available" as "available" | "offline" | "not-configured",
     cloudSession: "signed_in" as "unknown" | "signed_in" | "signed_out",
+    role: "registration_lead",
+    // What useLiveQuery returns: the patient row and its queued commands.
+    // Kept as stable objects: the card reloads when the patient changes.
+    patient: { portalEnabled: 0, portalPending: 0 } as Record<string, unknown>,
+    commands: [] as unknown[],
   },
+}));
+
+vi.mock("dexie-react-hooks", () => ({
+  useLiveQuery: (_query: unknown, _deps: unknown, defaultValue?: unknown) =>
+    defaultValue === undefined ? mocks.patient : mocks.commands,
 }));
 
 vi.mock("@/services/portalEnrollment", () => ({
   getPortalStatus: (...args: unknown[]) => mocks.getPortalStatus(...args),
-  sendPortalInvitation: (...args: unknown[]) =>
-    mocks.sendPortalInvitation(...args),
+  sendPortalInvitation: (...args: unknown[]) => mocks.sendPortalInvitation(...args),
   enablePortalAccess: (...args: unknown[]) => mocks.enablePortalAccess(...args),
-  disablePortalAccess: (...args: unknown[]) =>
-    mocks.disablePortalAccess(...args),
+  disablePortalAccess: (...args: unknown[]) => mocks.disablePortalAccess(...args),
+  INVITE_NOT_SENT_REASONS: {
+    noServer: "not_sent_no_server",
+    serviceFailed: "not_sent_service_failed",
+    demoMode: "not_sent_demo_mode",
+  },
+}));
+
+vi.mock("@/services/portalAccess", () => ({
+  listPortalAccessCommands: vi.fn(),
 }));
 
 vi.mock("@/stores/toast", () => ({
@@ -33,14 +44,13 @@ vi.mock("@/stores/toast", () => ({
 }));
 
 vi.mock("@/stores/auth", () => {
-  const state = { currentUser: { role: "nurse" } };
-  const useAuthStore = (selector: (s: typeof state) => unknown) =>
-    selector(state);
-  useAuthStore.getState = () => state;
+  const useAuthStore = (selector: (s: { currentUser: { role: string } }) => unknown) =>
+    selector({ currentUser: { role: mocks.role } });
+  useAuthStore.getState = () => ({ currentUser: { role: mocks.role } });
   return { useAuthStore };
 });
 
-vi.mock("@/db", () => ({ generateId: () => "toast-id" }));
+vi.mock("@/db", () => ({ db: {}, generateId: () => "toast-id" }));
 
 vi.mock("@/features/admin/useServerStatus", () => ({
   useServerStatus: () => ({
@@ -52,36 +62,33 @@ vi.mock("@/features/admin/useServerStatus", () => ({
 }));
 
 vi.mock("@/lib/cloudSession", () => ({
-  ONLINE_SIGN_IN_HINT:
-    "On the sign-in screen, choose Online and use your email and password.",
+  ONLINE_SIGN_IN_HINT: "On the sign-in screen, choose Online and use your email and password.",
   useCloudSession: () => mocks.cloudSession,
 }));
 
 import { PortalStatusCard } from "./PortalStatusCard";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 
-beforeEach(() => {
-  // Signed in online unless a test says otherwise.
-  mocks.cloudSession = "signed_in";
-});
+const OFF = { portalEnabled: 0, portalPending: 0 };
+const ON = { portalEnabled: 1, portalPending: 0 };
 
-const disabledStatus = {
+const baseStatus = {
   enabled: false,
+  pending: false,
   verified: false,
-  contactMethod: "phone" as const,
+  contactMethod: "email" as const,
   inviteCount: 0,
   canResend: false,
+  minor: false,
 };
 
 function renderCard() {
-  return render(
-    <PortalStatusCard patientId="p1" patientName="Ada Obi" />,
-  );
+  return render(<PortalStatusCard patientId="p1" patientName="Ada Obi" />);
 }
 
 async function openEnableDialog() {
   renderCard();
-  const toggle = await screen.findByRole("switch");
-  fireEvent.click(toggle);
+  fireEvent.click(await screen.findByRole("switch"));
   return screen.getByRole("alertdialog");
 }
 
@@ -90,23 +97,19 @@ function lastToastBody(): string {
   return (calls[calls.length - 1]?.[0] as { body: string }).body;
 }
 
-async function turnOn() {
-  await openEnableDialog();
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: /has agreed to use the patient portal/i }),
-  );
-  fireEvent.click(screen.getByRole("button", { name: /turn on access/i }));
-  await waitFor(() => expect(mocks.pushToast).toHaveBeenCalled());
-}
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.serverState = "available";
+  mocks.cloudSession = "signed_in";
+  mocks.role = "registration_lead";
+  mocks.patient = OFF;
+  mocks.commands = [];
+  mocks.getPortalStatus.mockResolvedValue(baseStatus);
+  mocks.enablePortalAccess.mockResolvedValue({ success: true, pending: true, deviceOnly: false });
+  mocks.disablePortalAccess.mockResolvedValue({ success: true, pending: true, deviceOnly: false });
+});
 
-describe("PortalStatusCard turning access on", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.serverState = "available";
-    mocks.getPortalStatus.mockResolvedValue(disabledStatus);
-    mocks.enablePortalAccess.mockResolvedValue({ success: true });
-  });
-
+describe("PortalStatusCard turning access on (staff attestation)", () => {
   it("asks for the patient's agreement with an unticked box first", async () => {
     await openEnableDialog();
 
@@ -115,35 +118,28 @@ describe("PortalStatusCard turning access on", () => {
     }) as HTMLInputElement;
     expect(agreed.checked).toBe(false);
     expect(
-      (screen.getByRole("button", { name: /turn on access/i }) as HTMLButtonElement)
-        .disabled,
+      (screen.getByRole("button", { name: /turn on access/i }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(mocks.enablePortalAccess).not.toHaveBeenCalled();
   });
 
-  it("does not turn access on until the box is ticked", async () => {
+  it("turns access on only after the box is ticked, and passes the tick on", async () => {
     await openEnableDialog();
 
     fireEvent.click(screen.getByRole("button", { name: /turn on access/i }));
     expect(mocks.enablePortalAccess).not.toHaveBeenCalled();
 
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: /has agreed to use the patient portal/i }),
-    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /has agreed to use the patient portal/i }));
     fireEvent.click(screen.getByRole("button", { name: /turn on access/i }));
 
     await waitFor(() =>
-      expect(mocks.enablePortalAccess).toHaveBeenCalledWith("p1", {
-        termsAccepted: true,
-      }),
+      expect(mocks.enablePortalAccess).toHaveBeenCalledWith("p1", { termsAccepted: true }),
     );
   });
 
   it("starts unticked again after cancelling", async () => {
     await openEnableDialog();
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: /has agreed to use the patient portal/i }),
-    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /has agreed to use the patient portal/i }));
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(screen.queryByRole("alertdialog")).toBeNull();
 
@@ -154,203 +150,73 @@ describe("PortalStatusCard turning access on", () => {
     expect(agreed.checked).toBe(false);
     expect(mocks.enablePortalAccess).not.toHaveBeenCalled();
   });
+
+  it("says the change is queued and the server decides", async () => {
+    const dialog = await openEnableDialog();
+
+    expect(dialog.textContent).toMatch(/queued for the clinic server, which decides/i);
+    expect(dialog.textContent).toMatch(/once the server confirms/i);
+  });
 });
 
-describe("PortalStatusCard says where portal access was saved", () => {
+describe("PortalStatusCard when the staff member is not signed in online", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.serverState = "available";
-    mocks.getPortalStatus.mockResolvedValue(disabledStatus);
-  });
-
-  it("does not promise online access in the dialog", async () => {
-    const dialog = await openEnableDialog();
-
-    expect(dialog.textContent).not.toMatch(/online\./i);
-    expect(dialog.textContent).toMatch(/if the server does not take it/i);
-  });
-
-  it("says the device is offline in the dialog when it is", async () => {
-    mocks.serverState = "offline";
-    const dialog = await openEnableDialog();
-
-    expect(dialog.textContent).toMatch(/saved on this device only/i);
-    expect(dialog.textContent).not.toMatch(/sent to the server/i);
-  });
-
-  it("says the change stays on this device when nobody is signed in online", async () => {
     mocks.cloudSession = "signed_out";
-    const dialog = await openEnableDialog();
-
-    expect(dialog.textContent).toMatch(
-      /not signed in online, so it is saved on this device only/i,
-    );
-    expect(dialog.textContent).toMatch(/sign in online/i);
-    expect(dialog.textContent).not.toMatch(/sent to the server/i);
   });
 
-  it("says turning access off stays on this device when nobody is signed in online", async () => {
-    mocks.cloudSession = "signed_out";
-    mocks.getPortalStatus.mockResolvedValue({ ...disabledStatus, enabled: true });
+  it("says turning access on is queued and sent when they sign in online", async () => {
+    const dialog = await openEnableDialog();
+
+    expect(dialog.textContent).toMatch(/queued/i);
+    expect(dialog.textContent).toMatch(/sent to the server when you sign in online/i);
+    expect(dialog.textContent).not.toMatch(/on this device only/i);
+  });
+
+  it("says the same after the change is saved", async () => {
+    await openEnableDialog();
+    fireEvent.click(screen.getByRole("checkbox", { name: /has agreed to use the patient portal/i }));
+    fireEvent.click(screen.getByRole("button", { name: /turn on access/i }));
+
+    await waitFor(() => expect(mocks.pushToast).toHaveBeenCalled());
+    expect(lastToastBody()).toMatch(/sent to the server when you sign in online/i);
+  });
+
+  it("says turning access off is queued and sent when they sign in online", async () => {
+    mocks.patient = ON;
+    mocks.getPortalStatus.mockResolvedValue({ ...baseStatus, enabled: true });
     renderCard();
     fireEvent.click(await screen.findByRole("switch"));
     const dialog = screen.getByRole("alertdialog");
 
-    expect(dialog.textContent).toMatch(
-      /not signed in online, so portal access will be turned off on this device only/i,
-    );
-    expect(dialog.textContent).not.toMatch(/sent to the server/i);
+    expect(dialog.textContent).toMatch(/sent to the server when you sign in online/i);
+    expect(dialog.textContent).not.toMatch(/on this device only/i);
   });
 
-  it("says so when the server took the change", async () => {
-    mocks.enablePortalAccess.mockResolvedValue({ success: true, server: "updated" });
+  it("does not say so on a device with no server", async () => {
+    mocks.serverState = "not-configured";
+    const dialog = await openEnableDialog();
 
-    await turnOn();
-
-    expect(lastToastBody()).toMatch(/on this device and on the server/i);
-  });
-
-  it("says only this device changed when the server did not take it", async () => {
-    mocks.enablePortalAccess.mockResolvedValue({
-      success: true,
-      server: "not-updated",
-    });
-
-    await turnOn();
-
-    expect(lastToastBody()).toMatch(/saved on this device only/i);
-    expect(lastToastBody()).toMatch(/not be uploaded yet/i);
-  });
-
-  it("says only this device changed when offline", async () => {
-    mocks.enablePortalAccess.mockResolvedValue({ success: true, server: "offline" });
-
-    await turnOn();
-
-    expect(lastToastBody()).toMatch(/this device only.*offline/i);
-  });
-
-  it("says whether turning access off reached the server", async () => {
-    mocks.getPortalStatus.mockResolvedValue({ ...disabledStatus, enabled: true });
-    mocks.disablePortalAccess.mockResolvedValue({
-      success: true,
-      server: "not-updated",
-    });
-    renderCard();
-    fireEvent.click(await screen.findByRole("switch"));
-    fireEvent.click(screen.getByRole("button", { name: /turn off access/i }));
-
-    await waitFor(() => expect(mocks.disablePortalAccess).toHaveBeenCalledWith("p1"));
-    await waitFor(() => expect(mocks.pushToast).toHaveBeenCalled());
-    expect(lastToastBody()).toMatch(/turned off on this device only/i);
-    expect(lastToastBody()).toMatch(/online portal account may still work/i);
-  });
-});
-
-describe("PortalStatusCard invitation for a patient with no email", () => {
-  const url = "https://mbhr.test/patient/register?phone=08012345678";
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.serverState = "available";
-    mocks.getPortalStatus.mockResolvedValue({ ...disabledStatus, enabled: true });
-    mocks.sendPortalInvitation.mockResolvedValue({
-      success: true,
-      registrationUrl: url,
-      demoOTP: "No message was sent",
-      notSentReason: "sms_not_available",
-    });
-  });
-
-  it("offers a registration link, not an SMS, and shows the link to share", async () => {
-    renderCard();
-
-    const button = await screen.findByRole("button", {
-      name: "Create registration link",
-    });
-    expect(
-      screen.queryByRole("button", { name: /send portal invitation/i }),
-    ).toBeNull();
-
-    fireEvent.click(button);
-
-    const title = await screen.findByText("No message was sent");
-    const panel = title.closest('[role="status"]') as HTMLElement;
-    expect(
-      within(panel).getByText(/invitations cannot be sent by SMS yet/i),
-    ).toBeInTheDocument();
-    expect(within(panel).getByText(url)).toBeInTheDocument();
-    expect(mocks.sendPortalInvitation).toHaveBeenCalledWith("p1");
-    // Registration needs an email address, not only the phone number.
-    expect(
-      within(panel).getByText(/registration also needs an email address/i),
-    ).toBeInTheDocument();
-    expect(panel.textContent).not.toMatch(/only need to enter their date of birth/i);
-  });
-
-  it("tells staff the patient registers with an email as well as the phone number", async () => {
-    mocks.getPortalStatus.mockResolvedValue({
-      ...disabledStatus,
-      enabled: true,
-      inviteCount: 1,
-    });
-    renderCard();
-
-    expect(await screen.findByText("What to tell the patient")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /enter an email address, the phone number and date of birth the clinic has for you/i,
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/sign in with your email and password/i),
-    ).toBeInTheDocument();
-  });
-});
-
-describe("PortalStatusCard invitation when the server cannot send email", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.serverState = "available";
-    mocks.getPortalStatus.mockResolvedValue({
-      ...disabledStatus,
-      enabled: true,
-      contactMethod: "email",
-    });
-    mocks.sendPortalInvitation.mockResolvedValue({
-      success: true,
-      registrationUrl: "https://mbhr.test/patient/register?email=ada%40example.com",
-      demoOTP: "No email was sent.",
-      notSentReason: "email_not_configured",
-    });
-  });
-
-  it("says no email was sent, not that the invitation was sent", async () => {
-    renderCard();
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: /send portal invitation/i }),
-    );
-
-    const title = await screen.findByText("No email was sent");
-    const panel = title.closest('[role="status"]') as HTMLElement;
-    expect(
-      within(panel).getByText(/not set up to send email/i),
-    ).toBeInTheDocument();
-    expect(panel.textContent).not.toMatch(/invitation sent by email/i);
-    expect(panel.textContent).not.toMatch(/staff account/i);
+    expect(dialog.textContent).toMatch(/for this device only/i);
+    expect(dialog.textContent).not.toMatch(/sign in online/i);
   });
 });
 
 describe("PortalStatusCard for a patient under 18", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.serverState = "available";
+  it("does not open the turn-on dialog for a child's record", async () => {
+    mocks.getPortalStatus.mockResolvedValue({ ...baseStatus, minor: true });
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("switch"));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(lastToastBody()).toBe(MINOR_PORTAL_ACCESS_MESSAGE);
+    expect(mocks.enablePortalAccess).not.toHaveBeenCalled();
   });
 
-  it("says a child's record cannot be used for the portal and offers no invitation", async () => {
+  it("never says a child can register, offers no invitation, and still turns access off", async () => {
+    mocks.patient = ON;
     mocks.getPortalStatus.mockResolvedValue({
-      ...disabledStatus,
+      ...baseStatus,
       enabled: true,
       minor: true,
       inviteCount: 1,
@@ -361,29 +227,49 @@ describe("PortalStatusCard for a patient under 18", () => {
       await screen.findByText(/portal accounts are for adults.*cannot register/i),
     ).toBeInTheDocument();
     expect(screen.queryByText(/can register and sign in/i)).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /send portal invitation/i }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /create registration link/i }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /portal invitation/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /create registration link/i })).toBeNull();
     expect(screen.queryByText("What to tell the patient")).toBeNull();
 
-    // Turning access off still works.
     fireEvent.click(screen.getByRole("switch"));
-    expect(
-      screen.getByRole("button", { name: /turn off access/i }),
-    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /turn off access/i }));
+    await waitFor(() => expect(mocks.disablePortalAccess).toHaveBeenCalledWith("p1"));
   });
 
-  it("does not open the turn-on dialog for a child's record", async () => {
-    mocks.getPortalStatus.mockResolvedValue({ ...disabledStatus, minor: true });
+  it("offers invitations for an adult with access on", async () => {
+    mocks.patient = ON;
+    mocks.getPortalStatus.mockResolvedValue({ ...baseStatus, enabled: true });
     renderCard();
 
-    fireEvent.click(await screen.findByRole("switch"));
+    expect(
+      await screen.findByRole("button", { name: /send portal invitation/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/can register and sign in to the portal/i)).toBeInTheDocument();
+  });
+});
 
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(lastToastBody()).toMatch(/under 18/i);
-    expect(mocks.enablePortalAccess).not.toHaveBeenCalled();
+describe("PortalStatusCard registration instructions", () => {
+  it("tells staff a phone-only record needs an email before the patient registers", async () => {
+    mocks.patient = ON;
+    mocks.getPortalStatus.mockResolvedValue({
+      ...baseStatus,
+      enabled: true,
+      contactMethod: "phone",
+      inviteCount: 1,
+    });
+    renderCard();
+
+    expect(await screen.findByText("What to tell the patient")).toBeInTheDocument();
+    expect(screen.getByText(/add the patient's email to their record/i)).toBeInTheDocument();
+    expect(screen.queryByText(/enter your phone number and date of birth/i)).toBeNull();
+  });
+
+  it("tells an email patient to register with a password and sign in with it", async () => {
+    mocks.patient = ON;
+    mocks.getPortalStatus.mockResolvedValue({ ...baseStatus, enabled: true, inviteCount: 1 });
+    renderCard();
+
+    expect(await screen.findByText("What to tell the patient")).toBeInTheDocument();
+    expect(screen.getByText(/sign in with your email and password/i)).toBeInTheDocument();
   });
 });
