@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  PIN_IN_USE_MESSAGE,
-  pinInUseOnDevice,
-  setDevicePin,
-} from "./devicePin";
+import { clearDevicePin, setDevicePin } from "./devicePin";
 
 // db.users.filter(...) → a Dexie Collection whose toArray() the code awaits.
 const { mockUsers, mockRows } = vi.hoisted(() => {
@@ -67,17 +63,6 @@ beforeEach(() => {
   mockUsers.update.mockResolvedValue(1);
 });
 
-describe("pinInUseOnDevice", () => {
-  it("finds another account that signs in with the PIN", async () => {
-    expect(await pinInUseOnDevice("111111")).toBe(true);
-    expect(await pinInUseOnDevice("222222")).toBe(false);
-  });
-
-  it("ignores the account being given the PIN", async () => {
-    expect(await pinInUseOnDevice("111111", "colleague")).toBe(false);
-  });
-});
-
 describe("setDevicePin", () => {
   it("stores a salted hash on the account and returns the updated user", async () => {
     const updated = await setDevicePin({
@@ -89,7 +74,7 @@ describe("setDevicePin", () => {
     expect(mockUsers.update).toHaveBeenCalledWith("me", {
       pinHash: "482913@fixed-salt",
       pinSalt: "fixed-salt",
-      updatedAt: expect.any(Date),
+      pinEnrolledAt: expect.any(Date),
     });
     expect(updated).toMatchObject({
       id: "me",
@@ -99,11 +84,11 @@ describe("setDevicePin", () => {
     });
   });
 
-  it("refuses a PIN another account on the device already uses", async () => {
-    await expect(
-      setDevicePin({ userId: "me", pin: "111111", confirmPin: "111111" }),
-    ).rejects.toThrow(PIN_IN_USE_MESSAGE);
-    expect(mockUsers.update).not.toHaveBeenCalled();
+  it("allows a PIN another account happens to use", async () => {
+    // Offline sign-in checks only the chosen person's PIN, so a shared PIN
+    // never signs someone in as the wrong person.
+    await setDevicePin({ userId: "me", pin: "111111", confirmPin: "111111" });
+    expect(mockUsers.update).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a PIN that is not 6 digits", async () => {
@@ -125,5 +110,16 @@ describe("setDevicePin", () => {
       setDevicePin({ userId: "nobody", pin: "482913", confirmPin: "482913" }),
     ).rejects.toThrow("not on this device");
     expect(mockUsers.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("clearDevicePin", () => {
+  it("removes only the device PIN fields", async () => {
+    await clearDevicePin("colleague");
+    expect(mockUsers.update).toHaveBeenCalledWith("colleague", {
+      pinHash: "",
+      pinSalt: "",
+      pinEnrolledAt: undefined,
+    });
   });
 });

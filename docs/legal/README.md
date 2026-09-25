@@ -24,6 +24,13 @@ Items that need a decision from the Foundation, not just legal review:
 - a concrete retention period for medical records;
 - whether Sentry session replay should stay enabled in production.
 
+## Readiness checklist
+
+[`LEGAL_READINESS_CHECKLIST.md`](./LEGAL_READINESS_CHECKLIST.md) checks mBHR against 20
+common legal-readiness items (privacy, consent, children's data, accessibility,
+unsubscribe, deletion and more). It lists what to fix first, the file-level
+steps for each item, and the decisions the Foundation must make.
+
 ## Keeping the notice accurate
 
 Update `PrivacyPolicy.tsx` in the same change whenever you:

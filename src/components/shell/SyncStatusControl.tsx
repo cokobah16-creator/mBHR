@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowPathIcon,
   CheckCircleIcon,
@@ -7,14 +7,20 @@ import {
   ExclamationTriangleIcon,
   SignalSlashIcon,
   ServerIcon,
+  LockClosedIcon,
+  UserGroupIcon,
 } from "@heroicons/react/20/solid";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   syncNow,
   isOnlineSyncEnabled,
   countUnsyncedRecords,
+  countAwaitingAuthorisedSync,
   fetchRemoteRecord,
 } from "@/sync/adapter";
+// The pharmacy sync participant and its database only, not the pharmacy
+// screens (src/test/startupChunks.test.ts keeps those out of startup).
+import { countPharmacyAwaitingAuthorised, countPharmacyUnsynced } from "@/sync/pharmacySync";
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
 import { useAuthStore } from "@/stores/auth";
@@ -30,8 +36,17 @@ import { conflictQueueService } from "@/services/conflictQueue";
 import { ConflictResolutionModal, type ConflictData } from "../ConflictResolutionModal";
 import { usePopover } from "./usePopover";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  checkCloudSession,
+  useCloudSession,
+  NO_CLOUD_SESSION_DETAIL,
+  NO_CLOUD_SESSION_LABEL,
+  ONLINE_SIGN_IN_HINT,
+  ONLINE_SIGN_IN_PATH,
+} from "@/lib/cloudSession";
+import { deriveSyncIndicatorKind, type SyncIndicatorKind } from "@/lib/syncIndicator";
 
-type Kind = "offline" | "local" | "syncing" | "error" | "conflict" | "pending" | "synced" | "idle";
+type Kind = SyncIndicatorKind;
 
 function clock(ts: number) {
   return new Date(ts).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit" });
@@ -55,6 +70,8 @@ export function SyncStatusControl() {
   const [conflicts, setConflicts] = useState<ConflictData[]>([]);
   const [currentConflict, setCurrentConflict] = useState<ConflictData | null>(null);
   const [conflictCount, setConflictCount] = useState(0);
+  const cloudSession = useCloudSession();
+  const noSession = syncEnabled && cloudSession === "signed_out";
 
   const loadConflicts = useCallback(async () => {
     if (!isOnlineSyncEnabled()) return;
@@ -73,6 +90,17 @@ export function SyncStatusControl() {
   }, [loadConflicts]);
 
   const handleSync = async () => {
+    // A PIN unlock opens this device's records only. Without an online
+    // sign-in nothing may start a sync (or recreate the sign-in).
+    if (!(await checkCloudSession())) {
+      push({
+        id: generateId(),
+        tone: "warning",
+        title: NO_CLOUD_SESSION_LABEL,
+        body: `${NO_CLOUD_SESSION_DETAIL} ${ONLINE_SIGN_IN_HINT}`,
+      });
+      return;
+    }
     syncStore.setStatus("syncing");
     try {
       const result = await syncNow();
@@ -215,28 +243,42 @@ export function SyncStatusControl() {
     await loadConflicts();
   };
 
-  const unsynced = useLiveQuery(() => countUnsyncedRecords(), [], 0) ?? 0;
+  // The main outbox counts db.serverCommands only; pharmacy changes wait in
+  // their own outbox (queued stock commands and prescriptions not uploaded).
+  const unsynced =
+    useLiveQuery(
+      async () => (await countUnsyncedRecords()) + (await countPharmacyUnsynced()),
+      [],
+      0,
+    ) ?? 0;
+  // Records (and commands) the server refused for the account signed in
+  // online: they stay on this device until someone allowed to send them
+  // signs in online and syncs. Already included in `unsynced`.
+  const awaitingAuthorised =
+    useLiveQuery(
+      async () =>
+        (await countAwaitingAuthorisedSync().catch(() => 0)) +
+        (await countPharmacyAwaitingAuthorised()),
+      [],
+      0,
+    ) ?? 0;
   const pending = unsynced + queueStore.getPendingCount();
   const failed = queueStore.getFailedCount();
   const syncing = syncStore.status === "syncing";
 
-  const kind: Kind = !online
-    ? "offline"
-    : !syncEnabled
-      ? "local"
-      : syncing
-        ? "syncing"
-        : syncStore.errorMessage || failed > 0
-          ? "error"
-          : conflictCount > 0
-            ? "conflict"
-            : pending > 0
-              ? "pending"
-              : syncStore.lastSuccessAt > 0
-                ? "synced"
-                : "idle";
+  const kind: Kind = deriveSyncIndicatorKind({
+    online,
+    syncEnabled,
+    cloudSession,
+    syncing,
+    hasError: !!syncStore.errorMessage || failed > 0,
+    conflictCount,
+    pending,
+    lastSuccessAt: syncStore.lastSuccessAt,
+  });
 
   const view: Record<Kind, { label: string; Icon: typeof CheckCircleIcon; cls: string }> = {
+    no_session: { label: NO_CLOUD_SESSION_LABEL, Icon: LockClosedIcon, cls: "text-warning" },
     offline: { label: "Offline", Icon: SignalSlashIcon, cls: "text-ink-secondary" },
     local: { label: "This device only", Icon: ServerIcon, cls: "text-ink-secondary" },
     syncing: { label: "Syncing", Icon: ArrowPathIcon, cls: "text-info" },
@@ -284,6 +326,18 @@ export function SyncStatusControl() {
               </dd>
             </div>
             {syncEnabled && (
+              <div className="flex justify-between gap-3 px-3 py-2.5">
+                <dt className="text-ink-muted">Online sign-in</dt>
+                <dd className="font-medium text-ink">
+                  {cloudSession === "signed_in"
+                    ? "Signed in"
+                    : cloudSession === "signed_out"
+                      ? "Not signed in"
+                      : "Checking…"}
+                </dd>
+              </div>
+            )}
+            {syncEnabled && (
               <>
                 <div className="flex justify-between gap-3 px-3 py-2.5">
                   <dt className="text-ink-muted">Last successful sync</dt>
@@ -320,6 +374,40 @@ export function SyncStatusControl() {
               {syncStore.errorMessage}
             </p>
           )}
+          {syncEnabled && awaitingAuthorised > 0 && (
+            <div className="mx-3 mb-2 banner banner-warning text-caption" role="status">
+              <UserGroupIcon className="h-4 w-4 shrink-0" aria-hidden />
+              <div className="min-w-0 space-y-1">
+                <p className="font-medium">
+                  {awaitingAuthorised} waiting for an authorised person to sync
+                </p>
+                <p>
+                  The server did not accept {awaitingAuthorised === 1 ? "this change" : "these changes"} from
+                  the account signed in online, because that role is not allowed to make{" "}
+                  {awaitingAuthorised === 1 ? "it" : "them"}. {awaitingAuthorised === 1 ? "It stays" : "They stay"} on
+                  this device, not uploaded, until someone with permission signs in online on this
+                  device and runs Sync now.
+                </p>
+              </div>
+            </div>
+          )}
+          {noSession && (
+            <div className="mx-3 mb-2 banner banner-warning text-caption" role="status">
+              <LockClosedIcon className="h-4 w-4 shrink-0" aria-hidden />
+              <div className="min-w-0 space-y-1">
+                <p className="font-medium">{NO_CLOUD_SESSION_LABEL}</p>
+                <p>{NO_CLOUD_SESSION_DETAIL}</p>
+                <Link
+                  to={ONLINE_SIGN_IN_PATH}
+                  onClick={() => setOpen(false)}
+                  className="inline-flex min-h-touch-target items-center font-medium underline hover:no-underline"
+                >
+                  Sign in online
+                </Link>
+                <p>{ONLINE_SIGN_IN_HINT}</p>
+              </div>
+            </div>
+          )}
           {!syncEnabled && (
             <p className="px-3 pb-3 text-caption text-ink-muted">
               Records are saved on this device only.
@@ -330,7 +418,7 @@ export function SyncStatusControl() {
               <button
                 type="button"
                 onClick={handleSync}
-                disabled={syncing || !online}
+                disabled={syncing || !online || noSession}
                 className="btn-primary flex-1 min-h-10 py-2"
               >
                 <ArrowPathIcon className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} aria-hidden />

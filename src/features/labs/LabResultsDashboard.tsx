@@ -24,10 +24,11 @@ import {
   addLabResult,
   getLabSessionUser,
   getLabWorklist,
-  resolveLabActorId,
+  releaseLabResult,
   reviewLabResult,
   sessionMatchesUser,
   updateLabOrderStatus,
+  withholdLabResult,
   LabServiceError,
   LAB_WORKLIST_CLOSED_LIMIT,
   type LabOrderWithResults,
@@ -40,28 +41,37 @@ import {
   deriveLabStage,
   describeLabError,
   formatResultValue,
+  interpretationMeta,
+  isInterpretation,
   isLabFilter,
   matchesFilter,
   matchesSearch,
+  releaseStateOf,
+  resultsToRelease,
+  resultsWithholdable,
   worstInterpretation,
   worstUnreviewed,
   INTERPRETATION_META,
   LAB_FILTERS,
   PRIORITY_LABEL,
+  RELEASE_META,
   STAGE_META,
   type LabFilter,
   type WorklistSortable,
 } from "./labWorklist";
 import {
+  LabReleaseDialog,
   LabResultEntryDialog,
+  type LabReleaseMode,
   type LabResultFormValues,
 } from "./LabResultEntryDialog";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 interface LabResultsDashboardProps {
   /**
-   * Staff id to record as the reviewer. The /labs route passes "", in which
-   * case the signed-in user is used.
+   * Kept for compatibility; no longer used. Reviews, releases and
+   * withholds are credited by the server to the account signed in online,
+   * and the page checks that this is the person using the app.
    */
   userId?: string;
 }
@@ -81,6 +91,30 @@ const PATIENT_NOT_LOCAL = "Patient not on this device";
 
 const FK_REVIEW_HINT =
   "Your staff account is not in the online staff directory, so the review could not be credited to you. Sign in with your email and password, or ask an admin to add your account.";
+
+const WRONG_ACCOUNT =
+  "Nothing was changed. This device is signed in online as a different staff account, and the cloud credits the change to that account. Sign out, then sign in with your own email and password.";
+
+const NO_ONLINE_ACCOUNT =
+  "Nothing was changed. You are not signed in with an online account, so the cloud cannot credit this to you. Sign in with your email and password.";
+
+interface ReleaseTarget {
+  row: WorklistRow;
+  mode: LabReleaseMode;
+  resultIds: string[];
+  /** How many of them were withheld before (release mode only). */
+  withheldCount: number;
+}
+
+/**
+ * Stored results a release would act on (see resultsToRelease: a withheld
+ * result is never released along with new ones).
+ */
+function releasableResults(results: LabResult[]): (LabResult & { id: string })[] {
+  return resultsToRelease(results).filter(
+    (r): r is LabResult & { id: string } => !!r.id,
+  );
+}
 
 const blankToUndefined = (value?: string) => {
   const trimmed = value?.trim();
@@ -103,7 +137,14 @@ async function lookupLocalRecords(orders: LabOrderWithResults[]) {
   const staffIds = [
     ...new Set(
       orders
-        .flatMap((o) => [o.orderedBy, ...o.results.map((r) => r.reviewedBy)])
+        .flatMap((o) => [
+          o.orderedBy,
+          ...o.results.flatMap((r) => [
+            r.reviewedBy,
+            r.releasedToPatientBy,
+            r.withheldBy,
+          ]),
+        ])
         .filter((id): id is string => typeof id === "string" && id.length > 0),
     ),
   ];
@@ -129,10 +170,11 @@ async function lookupLocalRecords(orders: LabOrderWithResults[]) {
 
 /**
  * Clinician and lab work queue for lab orders: ordered → collected →
- * processing → result recorded → reviewed. Lab data lives only in the
- * cloud, so the page says plainly when it cannot be reached.
+ * processing → result recorded → reviewed → released to the patient portal
+ * (or withheld). Lab data lives only in the cloud, so the page says plainly
+ * when it cannot be reached.
  */
-export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
+export function LabResultsDashboard(_props: LabResultsDashboardProps) {
   const currentUser = useAuthStore((s) => s.currentUser);
   const { push } = useToast();
   const online = useOnlineStatus();
@@ -169,13 +211,21 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
   const [entryOrder, setEntryOrder] = useState<WorklistRow | null>(null);
   const [entrySaving, setEntrySaving] = useState(false);
   const [entryError, setEntryError] = useState<string | null>(null);
+  const [releaseTarget, setReleaseTarget] = useState<ReleaseTarget | null>(null);
+  const [releaseSaving, setReleaseSaving] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
   const requestRef = useRef(0);
 
   const role = currentUser?.role;
   // Specimen and result recording follow the "vitals" permission (clinical
-  // measurements); marking a result reviewed is a clinician decision.
+  // measurements). Marking a result reviewed needs "lab_review", which is
+  // granted by DIOF clinical policy (see src/auth/roles.ts) and enforced
+  // again by the database.
   const canRecord = !!role && can(role, "vitals");
-  const canReview = !!role && can(role, "consult");
+  const canReview = !!role && can(role, "lab_review");
+  // Releasing to (or withholding from) the patient portal needs
+  // "lab_release"; the server checks it again.
+  const canRelease = !!role && can(role, "lab_release");
 
   const load = useCallback(async () => {
     if (!isSupabaseEnabled) return;
@@ -265,6 +315,9 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
   const waitingAbnormal = rows.filter(
     (r) => r.stage === "awaiting_review" && r.severity === "abnormal",
   ).length;
+  const waitingUnknown = rows.filter(
+    (r) => r.stage === "awaiting_review" && r.severity === "unknown",
+  ).length;
 
   // ---- Actions: permission and connection are checked before every write.
 
@@ -332,11 +385,24 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
     }
   };
 
+  /**
+   * Review, release and withhold are credited by the server to the account
+   * signed in online. Refuse (with a reason) when that is not the person
+   * using the app, so nobody's name goes on someone else's decision.
+   */
+  const onlineAccountProblem = async (): Promise<string | null> => {
+    if (!currentUser) return NO_ONLINE_ACCOUNT;
+    const session = await getLabSessionUser();
+    if (!session) return NO_ONLINE_ACCOUNT;
+    if (!sessionMatchesUser(session, currentUser)) return WRONG_ACCOUNT;
+    return null;
+  };
+
   const review = async (row: WorklistRow) => {
     if (
       !allowWrite(
-        "consult",
-        "Marking results as reviewed needs a clinician role. Ask a doctor to review this result.",
+        "lab_review",
+        "Your role cannot mark lab results reviewed. Ask a staff member authorised to review lab results.",
       )
     )
       return;
@@ -347,14 +413,16 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
     );
     if (pending.length === 0) return;
     setBusyId(order.id);
+    const accountProblem = await onlineAccountProblem();
+    if (accountProblem) {
+      push({ id: generateId(), tone: "warning", title: "Review not saved", body: accountProblem });
+      setBusyId(null);
+      return;
+    }
     let done = 0;
     try {
-      const reviewerId =
-        userId && userId !== currentUser.id
-          ? userId
-          : await resolveLabActorId(currentUser);
       for (const result of pending) {
-        await reviewLabResult(result.id, reviewerId);
+        await reviewLabResult(result.id);
         done += 1;
         await audit("lab_result_reviewed", "lab_result", result.id);
       }
@@ -365,7 +433,7 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
           pending.length === 1
             ? "Result marked as reviewed"
             : `${pending.length} results marked as reviewed`,
-        body: order.testName,
+        body: `${order.testName}. Not shown to the patient until it is released.`,
       });
     } catch (error) {
       console.error(
@@ -390,6 +458,119 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
     }
   };
 
+  const openRelease = (row: WorklistRow, mode: LabReleaseMode) => {
+    if (
+      !allowWrite(
+        "lab_release",
+        "Your role cannot release lab results to patients or withhold them. Ask a doctor, lead clinician or admin.",
+      )
+    )
+      return;
+    const targets =
+      mode === "release"
+        ? releasableResults(row.order.results)
+        : resultsWithholdable(row.order.results).filter(
+            (r): r is LabResult & { id: string } => !!r.id,
+          );
+    if (targets.length === 0) return;
+    setReleaseError(null);
+    setReleaseTarget({
+      row,
+      mode,
+      resultIds: targets.map((r) => r.id),
+      withheldCount:
+        mode === "release" ? targets.filter((r) => !!r.withheldAt).length : 0,
+    });
+  };
+
+  const closeRelease = useCallback(() => {
+    setReleaseTarget(null);
+    setReleaseError(null);
+  }, []);
+
+  const submitRelease = async (text: string) => {
+    const target = releaseTarget;
+    if (!target) return;
+    const { row, mode, resultIds } = target;
+    const { order } = row;
+    const release = mode === "release";
+    const blocked = writeBlockedReason(
+      "lab_release",
+      "Your role cannot release lab results to patients or withhold them.",
+    );
+    if (blocked) {
+      setReleaseError(blocked);
+      return;
+    }
+    setReleaseSaving(true);
+    setBusyId(order.id);
+    setReleaseError(null);
+    const accountProblem = await onlineAccountProblem();
+    if (accountProblem) {
+      setReleaseError(accountProblem);
+      setReleaseSaving(false);
+      setBusyId(null);
+      return;
+    }
+    let done = 0;
+    try {
+      for (const id of resultIds) {
+        if (release) await releaseLabResult(id, text);
+        else await withholdLabResult(id, text);
+        done += 1;
+        await audit(release ? "lab_result_released" : "lab_result_withheld", "lab_result", id);
+      }
+      push({
+        id: generateId(),
+        tone: "success",
+        title: release
+          ? resultIds.length === 1
+            ? "Result released to the patient portal"
+            : `${resultIds.length} results released to the patient portal`
+          : resultIds.length === 1
+            ? "Result withheld from the patient portal"
+            : `${resultIds.length} results withheld from the patient portal`,
+        body: release
+          ? `${order.testName}. The patient sees it when they sign in to the portal online, if their portal access is on.`
+          : `${order.testName}. It stays in the clinical record.`,
+      });
+      setReleaseTarget(null);
+    } catch (error) {
+      console.error(
+        release ? "[labs] Release failed:" : "[labs] Withhold failed:",
+        error instanceof Error ? error.name : error,
+      );
+      const what = release ? "released" : "withheld";
+      setReleaseError(
+        describeLabError(
+          error,
+          done > 0
+            ? `${done} of ${resultIds.length} results for ${order.testName} were ${what}; the rest were not confirmed.`
+            : `${order.testName} was not ${what}.`,
+          FK_REVIEW_HINT,
+        ),
+      );
+      if (done > 0) {
+        // Some results changed: the list must show that even if the dialog
+        // is closed without trying again.
+        const remaining = resultIds.slice(done);
+        setReleaseTarget({
+          ...target,
+          resultIds: remaining,
+          withheldCount: release
+            ? order.results.filter(
+                (r) => !!r.id && remaining.includes(r.id) && !!r.withheldAt,
+              ).length
+            : 0,
+        });
+      }
+    } finally {
+      setReleaseSaving(false);
+      await load();
+      setBusyId(null);
+    }
+  };
+
   const openEntry = (row: WorklistRow) => {
     if (!allowWrite("vitals", "Your role cannot record lab results.")) return;
     setEntryError(null);
@@ -408,6 +589,14 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
     const blocked = writeBlockedReason("vitals", "Your role cannot record lab results.");
     if (blocked) {
       setEntryError(blocked);
+      return;
+    }
+    // The interpretation must be a deliberate choice. An empty or unknown
+    // value is never sent: the server would file it as "normal".
+    if (!isInterpretation(values.interpretation)) {
+      setEntryError(
+        "Nothing was saved. Choose Normal, Abnormal or Critical for this result.",
+      );
       return;
     }
     const { order } = row;
@@ -475,7 +664,7 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
   const header = (
     <PageHeader
       title="Lab orders"
-      description="Lab orders and results for every patient. Results waiting for review come first, with critical and abnormal results at the top."
+      description="Lab orders and results for every patient. Results waiting for review come first, with critical and abnormal results at the top. A result reaches the patient portal only after it is reviewed and released."
       actions={
         isSupabaseEnabled ? (
           <>
@@ -584,7 +773,7 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
         </div>
       )}
 
-      {(waitingCritical > 0 || waitingAbnormal > 0) && (
+      {(waitingCritical > 0 || waitingAbnormal > 0 || waitingUnknown > 0) && (
         <div className="banner banner-danger">
           <ExclamationTriangleIcon className="h-5 w-5 shrink-0" aria-hidden />
           <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -594,6 +783,8 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
                   `${waitingCritical} critical result${waitingCritical === 1 ? "" : "s"}`,
                 waitingAbnormal > 0 &&
                   `${waitingAbnormal} abnormal result${waitingAbnormal === 1 ? "" : "s"}`,
+                waitingUnknown > 0 &&
+                  `${waitingUnknown} result${waitingUnknown === 1 ? "" : "s"} with no interpretation`,
               ]
                 .filter(Boolean)
                 .join(" and ")}{" "}
@@ -718,9 +909,11 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
                             disabled={!available || busyId !== null}
                             canRecord={canRecord}
                             canReview={canReview}
+                            canRelease={canRelease}
                             onAdvance={advance}
                             onEnterResult={openEntry}
                             onReview={review}
+                            onRelease={openRelease}
                           />
                         </td>
                       </tr>
@@ -749,9 +942,11 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
                       disabled={!available || busyId !== null}
                       canRecord={canRecord}
                       canReview={canReview}
+                      canRelease={canRelease}
                       onAdvance={advance}
                       onEnterResult={openEntry}
                       onReview={review}
+                      onRelease={openRelease}
                       block
                     />
                   </li>
@@ -766,10 +961,21 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
               {LAB_WORKLIST_CLOSED_LIMIT} most recent completed or cancelled
               orders.{truncated ? " Some older orders are not listed." : ""}
             </p>
+            <p>
+              Patients see a result in their portal only after it is reviewed
+              and released, and only if their portal access is on. Staff notes
+              are never shown to patients.
+            </p>
             {!canReview && (
               <p>
-                Your role can see results but cannot mark them reviewed; a
-                clinician does that.
+                Your role can see results but cannot mark them reviewed. Staff
+                authorised to review lab results do that.
+              </p>
+            )}
+            {canReview && !canRelease && (
+              <p>
+                Your role can review results but cannot release them to
+                patients. A doctor, lead clinician or admin does that.
               </p>
             )}
           </div>
@@ -784,6 +990,20 @@ export function LabResultsDashboard({ userId }: LabResultsDashboardProps) {
           error={entryError}
           onCancel={closeEntry}
           onSubmit={(values) => void saveResult(values)}
+        />
+      )}
+
+      {releaseTarget && (
+        <LabReleaseDialog
+          mode={releaseTarget.mode}
+          testName={releaseTarget.row.order.testName}
+          patientLabel={releaseTarget.row.patientLabel}
+          resultCount={releaseTarget.resultIds.length}
+          withheldCount={releaseTarget.withheldCount}
+          saving={releaseSaving}
+          error={releaseError}
+          onCancel={closeRelease}
+          onSubmit={(text) => void submitRelease(text)}
         />
       )}
     </div>
@@ -885,11 +1105,11 @@ function ResultCell({
   return (
     <ul className="space-y-2">
       {results.map((r, i) => {
-        const meta = INTERPRETATION_META[r.interpretation] ?? {
-          label: "Not interpreted",
-          tone: "neutral" as const,
-        };
+        // A missing or unknown interpretation is shown as needing a check,
+        // never as normal.
+        const meta = interpretationMeta(r.interpretation);
         const flagged = r.interpretation === "abnormal" || r.interpretation === "critical";
+        const release = RELEASE_META[releaseStateOf(r)];
         return (
           <li key={r.id ?? i} className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -909,8 +1129,45 @@ function ResultCell({
                 ? ` · reviewed by ${staffName(staff, r.reviewedBy)}, ${formatNigerianDateTime(r.reviewedAt)}`
                 : " · not reviewed"}
             </p>
+            {r.amendedAt && (
+              <p className="text-caption text-ink-muted tabular-nums">
+                Changed after it was recorded, {formatNigerianDateTime(r.amendedAt)}
+              </p>
+            )}
             {r.notes && (
-              <p className="text-caption text-ink-secondary">Note: {r.notes}</p>
+              <p className="text-caption text-ink-secondary">Staff note: {r.notes}</p>
+            )}
+            {r.reviewedAt && !r.supersededBy && (
+              <div className="mt-1 space-y-0.5">
+                <StatusBadge tone={release.tone} icon>
+                  {release.label}
+                </StatusBadge>
+                {r.releasedToPatientAt && (
+                  <p className="text-caption text-ink-muted tabular-nums">
+                    Released by {staffName(staff, r.releasedToPatientBy)},{" "}
+                    {formatNigerianDateTime(r.releasedToPatientAt)}
+                  </p>
+                )}
+                {r.withheldAt && (
+                  <p className="text-caption text-ink-muted">
+                    <span className="tabular-nums">
+                      Withheld by {staffName(staff, r.withheldBy)},{" "}
+                      {formatNigerianDateTime(r.withheldAt)}
+                    </span>
+                    {r.withheldReason && <>: {r.withheldReason}</>}
+                  </p>
+                )}
+                {r.patientNote && (
+                  <p className="text-caption text-ink-secondary">
+                    Note for patient: {r.patientNote}
+                  </p>
+                )}
+              </div>
+            )}
+            {r.supersededBy && (
+              <p className="text-caption text-ink-muted">
+                Replaced by a newer result. Not shown to the patient.
+              </p>
             )}
           </li>
         );
@@ -925,9 +1182,11 @@ interface RowActionProps {
   disabled: boolean;
   canRecord: boolean;
   canReview: boolean;
+  canRelease: boolean;
   onAdvance: (row: WorklistRow, next: "collected" | "processing") => void;
   onEnterResult: (row: WorklistRow) => void;
   onReview: (row: WorklistRow) => void;
+  onRelease: (row: WorklistRow, mode: LabReleaseMode) => void;
   /** Full-width button (phone list). */
   block?: boolean;
 }
@@ -938,9 +1197,11 @@ function RowAction({
   disabled,
   canRecord,
   canReview,
+  canRelease,
   onAdvance,
   onEnterResult,
   onReview,
+  onRelease,
   block = false,
 }: RowActionProps) {
   const { stage, order } = row;
@@ -985,6 +1246,44 @@ function RowAction({
       >
         {busy ? "Saving…" : "Mark reviewed"}
       </button>
+    );
+  }
+  if (
+    canRelease &&
+    (stage === "reviewed" || stage === "released" || stage === "withheld")
+  ) {
+    // Offer each action only when some current result can take it: an
+    // order can hold one released and one withheld result.
+    const showRelease = releasableResults(order.results).length > 0;
+    const showWithhold = resultsWithholdable(order.results).length > 0;
+    if (!showRelease && !showWithhold) return null;
+    return (
+      <div
+        className={`flex gap-2 ${block ? "flex-col" : "justify-end"}`}
+      >
+        {showRelease && (
+          <button
+            type="button"
+            className={`${stage === "reviewed" ? "btn-primary" : "btn-secondary"} ${width}`}
+            disabled={disabled}
+            onClick={() => onRelease(row, "release")}
+            aria-label={`Release to patient: ${context}`}
+          >
+            Release to patient
+          </button>
+        )}
+        {showWithhold && (
+          <button
+            type="button"
+            className={`btn-secondary ${width}`}
+            disabled={disabled}
+            onClick={() => onRelease(row, "withhold")}
+            aria-label={`Withhold from patient: ${context}`}
+          >
+            Withhold
+          </button>
+        )}
+      </div>
     );
   }
   return null;

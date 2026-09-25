@@ -5,6 +5,7 @@ import {
   announcementFor,
   isJustCalled,
   displayFreshness,
+  rowsForSiteToday,
   toDisplayRow,
   MAX_NEXT_PER_STAGE,
   MAX_SERVING,
@@ -40,11 +41,24 @@ describe("toDisplayRow", () => {
       queuedAt: new Date(T0),
       assignedTo: "user-1",
       assignedName: "Nurse Ada",
+      ticketId: "ticket-1",
+      siteKey: "mobile-clinic",
+      serviceDate: "2026-09-23",
       updatedAt: new Date(T0),
     } as QueueItem;
     const r = toDisplayRow(item);
     expect(Object.keys(r).sort()).toEqual(
-      ["id", "position", "queuedAt", "stage", "status", "ticketNumber", "updatedAt"].sort(),
+      [
+        "id",
+        "position",
+        "queuedAt",
+        "serviceDate",
+        "siteKey",
+        "stage",
+        "status",
+        "ticketNumber",
+        "updatedAt",
+      ].sort(),
     );
     expect(JSON.stringify(r)).not.toContain("patient-123");
     expect(JSON.stringify(r)).not.toContain("Ada");
@@ -166,6 +180,30 @@ describe("diffNewCalls / announcementFor", () => {
   });
 });
 
+describe("rowsForSiteToday", () => {
+  it("keeps this site's tickets for today only", () => {
+    const rows = [
+      row({ id: "here", siteKey: "mobile-clinic", serviceDate: "2026-09-23" }),
+      row({ id: "other-site", siteKey: "ikeja", serviceDate: "2026-09-23" }),
+      row({ id: "yesterday", siteKey: "mobile-clinic", serviceDate: "2026-09-22" }),
+    ];
+    expect(rowsForSiteToday(rows, "mobile-clinic", "2026-09-23").map((r) => r.id)).toEqual([
+      "here",
+    ]);
+  });
+
+  it("dates rows from older app versions by the Lagos day they were queued", () => {
+    const rows = [
+      // 23:30 UTC on the 22nd is 00:30 on the 23rd in Lagos.
+      row({ id: "just-after-midnight", queuedAt: new Date("2026-09-22T23:30:00Z") }),
+      row({ id: "late-yesterday", queuedAt: new Date("2026-09-22T22:30:00Z") }),
+    ];
+    expect(rowsForSiteToday(rows, "mobile-clinic", "2026-09-23").map((r) => r.id)).toEqual([
+      "just-after-midnight",
+    ]);
+  });
+});
+
 describe("displayFreshness", () => {
   const base = { online: true, syncEnabled: true, lastChangeAt: T0, activeCount: 3, now: T0 };
 
@@ -187,6 +225,20 @@ describe("displayFreshness", () => {
   it("does not call an empty queue stale", () => {
     const f = displayFreshness({ ...base, activeCount: 0, now: T0 + 3 * 60 * 60_000 });
     expect(f.kind).toBe("online");
+  });
+
+  it("warns when the screen has no online sign-in", () => {
+    const f = displayFreshness({ ...base, cloudSignedIn: false });
+    expect(f.kind).toBe("signed_out");
+    expect(f.tone).toBe("warning");
+    // Offline still explains more.
+    expect(displayFreshness({ ...base, online: false, cloudSignedIn: false }).kind).toBe(
+      "offline",
+    );
+    // A device without cloud sync is not asked to sign in.
+    expect(
+      displayFreshness({ ...base, syncEnabled: false, cloudSignedIn: false }).kind,
+    ).not.toBe("signed_out");
   });
 
   it("formats long gaps in hours", () => {

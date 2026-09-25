@@ -3,12 +3,24 @@ import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Patient, type QueueItem } from "@/db";
 import { useAuthStore } from "@/stores/auth";
-import { canManageQueue } from "@/features/tickets/queueBoardModel";
+import {
+  canManageQueue,
+  ticketLabel,
+  ticketStateBadge,
+} from "@/features/tickets/queueBoardModel";
+import type { QueueRow } from "@/services/queueTickets";
+import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import { recordStageEvent } from "@/services/stageEvents";
-import { queueManagement } from "@/services/queueManagement";
+import {
+  queueManagement,
+  QueuePermissionError,
+  QueueValidationError,
+} from "@/services/queueManagement";
+import { normalisePriority } from "@/services/queuePriority";
 import { patientStatusFromQueue } from "@/services/patientStatus";
 import { FLOW_STAGE_LABELS } from "@/services/patientFlow";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { QueueSkeleton } from "@/components/ui/Skeleton";
 import { formatTime } from "@/utils/dateFormat";
 import {
@@ -39,8 +51,27 @@ const ASSUMED_MINUTES_PER_PATIENT = 4;
 interface StageMetrics {
   stage: Stage;
   waiting: number;
+  urgentWaiting: number;
   inProgress: number;
   etaMinutes: number;
+}
+
+/** Urgent status in text and icon (never colour alone); nothing for other priorities. */
+function UrgentBadge({ priority }: { priority?: QueueItem["priority"] }) {
+  return normalisePriority(priority) === "urgent" ? (
+    <StatusBadge tone="danger">Urgent</StatusBadge>
+  ) : null;
+}
+
+/** Temporary, unconfirmed or changed ticket number (text and icon). */
+function TicketState({ row }: { row: QueueRow }) {
+  const badge = ticketStateBadge(row, isSupabaseEnabled);
+  if (!badge) return null;
+  return (
+    <StatusBadge tone={badge.tone} icon>
+      {badge.label}
+    </StatusBadge>
+  );
 }
 
 function nextStageOf(stage: Stage): Stage | null {
@@ -80,10 +111,14 @@ export function EnhancedQueueBoard() {
       STAGES.map((stage) => {
         const stageItems = activeItems.filter((item) => item.stage === stage);
         const waiting = stageItems.filter((i) => i.status === "waiting").length;
+        const urgentWaiting = stageItems.filter(
+          (i) => i.status === "waiting" && normalisePriority(i.priority) === "urgent",
+        ).length;
         const inProgress = stageItems.filter((i) => i.status === "in_progress").length;
         return {
           stage,
           waiting,
+          urgentWaiting,
           inProgress,
           etaMinutes: waiting * ASSUMED_MINUTES_PER_PATIENT,
         };
@@ -113,7 +148,11 @@ export function EnhancedQueueBoard() {
         "Queue action failed:",
         error instanceof Error ? error.name : error,
       );
-      setActionError("That change was not saved. Try again.");
+      setActionError(
+        error instanceof QueuePermissionError || error instanceof QueueValidationError
+          ? `${error.message} Nothing was changed.`
+          : "That change was not saved. Try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -232,6 +271,11 @@ export function EnhancedQueueBoard() {
                 {metrics.inProgress} being seen
                 {metrics.etaMinutes > 0 ? ` · about ${metrics.etaMinutes} min` : ""}
               </span>
+              {metrics.urgentWaiting > 0 && (
+                <StatusBadge tone="danger" className="mt-1">
+                  {metrics.urgentWaiting} urgent waiting
+                </StatusBadge>
+              )}
             </button>
           );
         })}
@@ -264,7 +308,7 @@ export function EnhancedQueueBoard() {
           {currentPatient ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <span className="w-16 shrink-0 font-mono text-h3 text-ink">
-                {currentPatient.ticketNumber ?? `#${currentPatient.position}`}
+                {ticketLabel(currentPatient)}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -278,6 +322,8 @@ export function EnhancedQueueBoard() {
                     const s = patientStatusFromQueue(currentPatient);
                     return <span className={`badge ${s.classes}`}>{s.label}</span>;
                   })()}
+                  <UrgentBadge priority={currentPatient.priority} />
+                  <TicketState row={currentPatient} />
                 </div>
                 <p className="text-caption text-ink-muted">
                   Called at {formatTime(currentPatient.updatedAt)}
@@ -364,7 +410,7 @@ export function EnhancedQueueBoard() {
                 return (
                   <li key={item.id} className="flex items-center gap-3 px-4 py-3">
                     <span className="w-16 shrink-0 font-mono text-body text-ink">
-                      {item.ticketNumber ?? `#${item.position}`}
+                      {ticketLabel(item)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -375,6 +421,8 @@ export function EnhancedQueueBoard() {
                           {patientName(item)}
                         </Link>
                         <span className={`badge ${s.classes}`}>{s.label}</span>
+                        <UrgentBadge priority={item.priority} />
+                        <TicketState row={item} />
                       </div>
                       <p className="text-caption text-ink-muted">
                         Position {item.position} · queued at{" "}

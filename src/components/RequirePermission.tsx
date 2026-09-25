@@ -15,6 +15,12 @@ const PERMISSION_LABEL: Record<Permission, string> = {
   approve_phi_conflicts: "approve sensitive record conflicts",
   audit_access: "view audit logs",
   resolve_conflicts: "resolve data conflicts",
+  lab_review: "mark lab results reviewed",
+  queue: "move patients through the queue",
+  portal_manage: "manage patient portal access",
+  merge_patients: "merge patient records",
+  lab_release: "release lab results to patients",
+  portal_invite: "send patient portal invitations",
 };
 
 type Props = {

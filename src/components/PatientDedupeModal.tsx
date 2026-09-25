@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { formatNigerianDate } from "@/utils/dateFormat";
-import { mergePatients } from "@/db";
+import { generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
+import { useToast } from "@/stores/toast";
 import { can } from "@/auth/roles";
 import type { Patient } from "@/db";
+import { chooseExistingForRegistration } from "@/services/patientMerge";
 import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import {
   ExclamationTriangleIcon,
@@ -39,6 +41,7 @@ export function PatientDedupeModal({
   onCancel,
 }: PatientDedupeModalProps) {
   const { currentUser } = useAuthStore();
+  const { push } = useToast();
   const [selectedWinner, setSelectedWinner] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -53,6 +56,9 @@ export function PatientDedupeModal({
     if (!selectedWinner || !currentUser) return;
     setError("");
 
+    // Choosing an existing patient needs the same permission as registering.
+    // If this registration was already saved as its own record, it is merged
+    // into the chosen one, which needs merge_patients (checked in requestMerge).
     if (!can(currentUser.role, "register")) {
       setError("Your role cannot link registrations to existing patients.");
       return;
@@ -60,15 +66,33 @@ export function PatientDedupeModal({
 
     setLoading(true);
     try {
-      await mergePatients(selectedWinner, newPatient.id!, currentUser.id);
-      onResolve("merge", selectedWinner);
+      const result = await chooseExistingForRegistration({
+        draftId: newPatient.id,
+        existingId: selectedWinner,
+        actor: { id: currentUser.id, role: currentUser.role },
+      });
+      if (result.kind === "refused") {
+        setError(result.message);
+        return;
+      }
+      if (result.kind === "merged") {
+        push({
+          id: generateId(),
+          tone: result.willSync ? "info" : "warning",
+          title: "Records merged on this device",
+          body: result.willSync
+            ? "The merge is waiting to sync. The server then moves the history to the chosen patient, and other devices update at their next sync."
+            : "Cloud sync is not set up on this device, so other devices do not get this merge.",
+        });
+      }
+      onResolve("merge", result.patientId);
     } catch (err) {
       console.error(
-        "Merge patients failed:",
-        err instanceof Error ? err.name : err,
+        "Choosing the existing patient failed:",
+        err instanceof Error ? err.name : "unknown",
       );
       setError(
-        "The records were not linked. Nothing was changed — try again, or register as a new patient.",
+        "The records were not linked. Nothing was changed. Try again, or register as a new patient.",
       );
     } finally {
       setLoading(false);
@@ -323,8 +347,8 @@ export function PatientDedupeModal({
           </div>
 
           <p className="mt-4 text-center text-caption text-ink-muted">
-            Choosing an existing patient links this registration to their
-            record.
+            Choosing an existing patient continues with their record. The
+            details typed here are not kept as a separate patient.
           </p>
         </div>
       </div>

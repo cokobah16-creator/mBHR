@@ -1,14 +1,23 @@
 import { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db as mbhrDb, ulid, type PharmacyItem } from "@/db/mbhr";
+import { db as mbhrDb, ulid, type PharmacyItem, type Prescription } from "@/db/mbhr";
 import { db, type Patient } from "@/db";
+import { can } from "@/auth/roles";
 import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
 import { PatientSearch } from "@/components/PatientSearch";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { matchMedicationToAllergen } from "@/utils/allergyMatch";
+import {
+  canPrescribe,
+  createPrescription,
+  ledgerEnabled,
+  voidPrescription,
+} from "@/services/pharmacyCommands";
+import type { Tone } from "@/components/ui/StatusBadge";
 import { ExclamationTriangleIcon } from "@heroicons/react/20/solid";
+import { isAllergyActive } from "@/utils/allergyActive";
 
 interface RxFormProps {
   /** When given, the prescription is written for this patient and visit. */
@@ -27,6 +36,17 @@ const EMPTY = {
   notes: "",
 };
 
+function rxStatus(r: Prescription): { tone: Tone; label: string } {
+  if (r.status === "void") {
+    return { tone: "neutral", label: r.pendingCommandId ? "Cancelled · waiting to sync" : "Cancelled" };
+  }
+  if (r.status === "dispensed" || r.status === "partial") {
+    return { tone: "success", label: r.pendingCommandId ? "Dispensed · waiting to sync" : "Dispensed" };
+  }
+  if (r._dirty === 1 && ledgerEnabled) return { tone: "warning", label: "Waiting at pharmacy · not uploaded yet" };
+  return { tone: "info", label: "Waiting at pharmacy" };
+}
+
 /**
  * Structured prescription for the pharmacy's FEFO dispensing queue
  * (/rx/dispense). Always tied to a real patient, the signed-in prescriber,
@@ -40,6 +60,9 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
   const [form, setForm] = useState(EMPTY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const mayPrescribe = canPrescribe(currentUser?.role);
 
   const effectivePatientId = patientId ?? chosenPatient?.id;
 
@@ -59,7 +82,7 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
               await db.patientAllergies
                 .where("patientId")
                 .equals(effectivePatientId)
-                .filter((a) => a.isActive === 1 && a.allergyType === "medication")
+                .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
                 .toArray()
             ).map((a) => a.allergen)
           : [],
@@ -84,6 +107,10 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
 
   async function save() {
     setError("");
+    if (!currentUser || !canPrescribe(currentUser.role)) {
+      setError("Your account cannot write prescriptions.");
+      return;
+    }
     if (!effectivePatientId) {
       setError("Choose the patient first.");
       return;
@@ -110,30 +137,36 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
         linkedVisit = open?.id ?? "";
       }
 
-      await mbhrDb.prescriptions.add({
-        id: ulid(),
-        visitId: linkedVisit,
-        patientId: effectivePatientId,
-        prescriberId: currentUser?.id ?? "unknown",
-        createdAt: new Date().toISOString(),
-        status: "open",
-        lines: [
-          {
-            itemId: form.itemId,
-            dosage: form.dosage.trim(),
-            frequency: form.frequency.trim(),
-            durationDays: form.durationDays,
-            qty: form.qty,
-            notes: form.notes.trim() || undefined,
-          },
-        ],
-      });
+      await createPrescription(
+        {
+          visitId: linkedVisit,
+          patientId: effectivePatientId,
+          lines: [
+            {
+              itemId: form.itemId,
+              dosage: form.dosage.trim(),
+              frequency: form.frequency.trim(),
+              durationDays: form.durationDays,
+              qty: form.qty,
+              notes: form.notes.trim() || undefined,
+            },
+          ],
+        },
+        { id: currentUser.id, role: currentUser.role },
+      );
 
       pushToast({
         id: ulid(),
         tone: "success",
-        title: "Prescription sent to pharmacy",
-        body: `${selectedItem?.medName ?? "Medicine"} ${selectedItem?.strength ?? ""} × ${form.qty}`,
+        title: "Prescription saved",
+        body: `${selectedItem?.medName ?? "Medicine"} ${selectedItem?.strength ?? ""} × ${form.qty}. ${
+          !ledgerEnabled
+            ? "In the pharmacy list on this device."
+            : can(currentUser.role, "consult")
+              ? "In the pharmacy list on this device; other devices get it after the next sync."
+              : // Only a prescriber's sync uploads prescriptions (or a dispense on this device).
+                "In the pharmacy list on this device. Other devices get it only after a prescriber syncs this device."
+        }`,
       });
       setForm(EMPTY);
     } catch (err) {
@@ -141,6 +174,39 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
       setError("The prescription was not saved. Try again.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function cancelPrescription(id: string) {
+    if (!currentUser || !canPrescribe(currentUser.role)) {
+      setError("Your account cannot cancel prescriptions.");
+      return;
+    }
+    setCancelling(true);
+    try {
+      const mode = await voidPrescription(id, "cancelled_by_prescriber", {
+        id: currentUser.id,
+        role: currentUser.role,
+      });
+      pushToast({
+        id: ulid(),
+        tone: "success",
+        title: "Prescription cancelled",
+        body:
+          mode === "queued"
+            ? "Removed from the pharmacy list on this device. The server confirms it at the next sync."
+            : "Removed from the pharmacy list on this device.",
+      });
+    } catch (err) {
+      console.error("Error cancelling prescription:", err instanceof Error ? err.name : "unknown");
+      setError(
+        err instanceof Error && err.name === "PrescriptionNotOpen"
+          ? "This prescription is no longer open (it was dispensed or is being dispensed)."
+          : "The prescription was not cancelled. Try again.",
+      );
+    } finally {
+      setCancelling(false);
+      setConfirmCancel(null);
     }
   }
 
@@ -186,7 +252,7 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
           onChange={(e) => setForm({ ...form, itemId: e.target.value })}
         >
           <option value="">Choose a medicine</option>
-          {items.map((item) => (
+          {items.filter((item) => item.isActive !== false).map((item) => (
             <option key={item.id} value={item.id}>
               {item.medName} {item.strength} ({item.form}) — {item.onHandQty} {item.unit} in stock
             </option>
@@ -283,11 +349,17 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
         />
       </div>
 
+      {!mayPrescribe && (
+        <p className="text-caption text-ink-muted" role="status">
+          Only clinicians who prescribe can send prescriptions to the pharmacy.
+        </p>
+      )}
+
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button type="button" className="btn-secondary" onClick={() => setForm(EMPTY)} disabled={loading}>
           Clear
         </button>
-        <button type="button" className="btn-primary" disabled={loading} onClick={save}>
+        <button type="button" className="btn-primary" disabled={loading || !mayPrescribe} onClick={save}>
           {loading ? "Saving…" : "Send prescription to pharmacy"}
         </button>
       </div>
@@ -310,9 +382,39 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
                       {line?.dosage} · {line?.frequency} · {line?.durationDays} days · qty {line?.qty}
                     </span>
                   </span>
-                  <StatusBadge tone={r.status === "dispensed" ? "success" : "info"}>
-                    {r.status === "dispensed" ? "Dispensed" : "Waiting at pharmacy"}
-                  </StatusBadge>
+                  <span className="flex shrink-0 flex-col items-end gap-1">
+                    <StatusBadge tone={rxStatus(r).tone}>{rxStatus(r).label}</StatusBadge>
+                    {mayPrescribe && r.status === "open" && !r.pendingCommandId &&
+                      (confirmCancel === r.id ? (
+                        <span className="flex gap-1">
+                          <button
+                            type="button"
+                            className="btn-ghost text-caption"
+                            onClick={() => setConfirmCancel(null)}
+                            disabled={cancelling}
+                          >
+                            Keep
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-danger text-caption"
+                            onClick={() => cancelPrescription(r.id)}
+                            disabled={cancelling}
+                          >
+                            {cancelling ? "Cancelling…" : "Cancel prescription"}
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-ghost text-caption"
+                          onClick={() => setConfirmCancel(r.id)}
+                          aria-label={`Cancel prescription for ${item ? `${item.medName} ${item.strength}` : "this medicine"}`}
+                        >
+                          Cancel
+                        </button>
+                      ))}
+                  </span>
                 </li>
               );
             })}

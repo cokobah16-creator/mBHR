@@ -1,8 +1,11 @@
 // Aggregations for the Outreach Summary report.
 // Pure functions over Dexie — no React dependencies.
 import { db, Patient, Visit } from "@/db";
-import { mbhrDb } from "@/db/mbhr";
+import { mbhrDb, type Prescription } from "@/db/mbhr";
 import { listActiveSiteNames } from "@/services/sites";
+import { tallyMedicines, type MedicineTally } from "@/services/outreachMedicines";
+
+export type { MedicineTally } from "@/services/outreachMedicines";
 
 export interface OutreachFilters {
   start: Date;
@@ -30,12 +33,6 @@ export type AgeBands = Record<string, number>;
 export interface ConditionTally {
   diagnosis: string;
   count: number;
-}
-
-export interface MedicineTally {
-  name: string;
-  unitsDispensed: number;
-  events: number;
 }
 
 export interface VolunteerTally {
@@ -190,7 +187,10 @@ export async function getOutreachSummary(
   }
   const highRiskCases = flaggedPatients.size;
 
-  // Medicines dispensed: prefer the rich db.dispenses (has itemName + Date).
+  // Medicines dispensed: db.dispenses (visit dispensing and prescription
+  // dispenses downloaded from the server) plus prescription dispenses made
+  // on this device (pharmacy database). Each dispense id is counted once,
+  // so a prescription dispense that is in both is not counted twice.
   const dispenses = await db.dispenses
     .where("dispensedAt")
     .between(filters.start, filters.end, true, false)
@@ -198,22 +198,25 @@ export async function getOutreachSummary(
   const scopedDispenses = filters.siteName
     ? dispenses.filter((d) => visitIds.has(d.visitId))
     : dispenses;
-  const medMap = new Map<string, { units: number; events: number }>();
-  for (const d of scopedDispenses) {
-    const name = (d.itemName ?? "").trim() || "Unknown";
-    const cur = medMap.get(name) ?? { units: 0, events: 0 };
-    cur.units += d.qty ?? 0;
-    cur.events += 1;
-    medMap.set(name, cur);
+  const rxDispenses = (await mbhrDb.dispenses.toArray()).filter((d) =>
+    inRangeIso(d.dispensedAt, filters.start, filters.end),
+  );
+  let scopedRx = rxDispenses;
+  if (filters.siteName && rxDispenses.length > 0) {
+    const prescriptions: Array<Prescription | undefined> = await mbhrDb.prescriptions.bulkGet([
+      ...new Set(rxDispenses.map((d) => d.prescriptionId)),
+    ]);
+    const rxVisits = new Map<string, string>();
+    for (const r of prescriptions) if (r) rxVisits.set(r.id, r.visitId);
+    scopedRx = rxDispenses.filter((d) => visitIds.has(rxVisits.get(d.prescriptionId) ?? ""));
   }
-  const medicines: MedicineTally[] = [...medMap.entries()]
-    .map(([name, v]) => ({
-      name,
-      unitsDispensed: v.units,
-      events: v.events,
-    }))
-    .sort((a, b) => b.unitsDispensed - a.unitsDispensed)
-    .slice(0, 20);
+  const rxItems = new Map(
+    (await mbhrDb.pharmacy_items.toArray()).map((i) => [i.id, `${i.medName} ${i.strength}`.trim()]),
+  );
+  const medicines: MedicineTally[] = tallyMedicines(
+    scopedDispenses.map((d) => ({ id: d.id, itemName: d.itemName, qty: d.qty })),
+    scopedRx.map((d) => ({ id: d.id, itemName: rxItems.get(d.itemId), qty: d.qty })),
+  );
 
   // Volunteer attendance: distinct stage_event actors with activity in range.
   const stageEvents = await mbhrDb.stage_events.toArray();

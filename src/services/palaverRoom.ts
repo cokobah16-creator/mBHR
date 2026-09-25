@@ -124,6 +124,30 @@ function errorTag(err: unknown): string {
   return "unknown";
 }
 
+/**
+ * Staff account the Palaver Room acts as. Messages are stored against the
+ * online staff account (app_users.id, the Supabase auth user id) and the
+ * server only lets that signed-in account read and send its own messages,
+ * so a PIN-only unlock (no online session) cannot use messaging.
+ * - signed_in: `id` is the online account id to send and read as.
+ * - signed_out: no online session, or it belongs to someone else.
+ */
+export type PalaverStaffSession =
+  | { status: "signed_in"; id: string }
+  | { status: "signed_out" };
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether an id can be an online staff account id (app_users.id, a UUID).
+ * Staff records created by a PIN-only setup use device ids and cannot
+ * receive messages.
+ */
+export function isOnlineStaffId(id: string | null | undefined): boolean {
+  return !!id && UUID.test(id);
+}
+
 // Ids are interpolated into a PostgREST `or` filter, so only accept the
 // characters our ids use (ULIDs and UUIDs).
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
@@ -163,6 +187,53 @@ class PalaverRoomService {
     }
 
     return { available: true };
+  }
+
+  /**
+   * The online staff account for the person using the app, or signed_out.
+   * The online session must belong to that person: the same id, or (for a
+   * staff record first made on this device) the same email. Never throws.
+   */
+  async getStaffSession(localUser: {
+    id: string;
+    email?: string | null;
+  }): Promise<PalaverStaffSession> {
+    if (!supabase) return { status: "signed_out" };
+    try {
+      const { data } = await supabase.auth.getSession();
+      const user = data?.session?.user;
+      if (!user?.id || !isOnlineStaffId(user.id)) return { status: "signed_out" };
+      const sameId = user.id === localUser.id;
+      const sameEmail =
+        !!user.email &&
+        !!localUser.email &&
+        user.email.toLowerCase() === localUser.email.toLowerCase();
+      return sameId || sameEmail
+        ? { status: "signed_in", id: user.id }
+        : { status: "signed_out" };
+    } catch (err) {
+      logger.warn("[palaver] Could not read the online session:", errorTag(err));
+      return { status: "signed_out" };
+    }
+  }
+
+  /**
+   * Calls `onChange` when the online sign-in changes (signed in, signed
+   * out, token refreshed). Returns the unsubscribe function.
+   */
+  onStaffSessionChange(onChange: () => void): () => void {
+    if (!supabase) return () => undefined;
+    try {
+      // The auth client must not be called from inside its own callback (it
+      // can deadlock), and onChange reads the session again: run it after.
+      const { data } = supabase.auth.onAuthStateChange(() => {
+        setTimeout(onChange, 0);
+      });
+      return () => data?.subscription?.unsubscribe();
+    } catch (err) {
+      logger.warn("[palaver] Could not watch the online session:", errorTag(err));
+      return () => undefined;
+    }
   }
 
   /**

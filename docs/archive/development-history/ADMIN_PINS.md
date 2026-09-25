@@ -1,5 +1,15 @@
 # Admin PIN System
 
+> **Security notice — published PINs are compromised.** Any PIN that has
+> ever appeared in this repository, its Git history, an archive, an example
+> or a published document (including the administrator PIN this file once
+> documented) must be treated as known to anyone. Rotate every such PIN on
+> **every** device where it was used: sign in as an administrator and set a
+> new PIN for each affected account, or reset the device and run first-run
+> setup. Do not reuse an old PIN. All PIN values in this archived file have
+> been replaced with `<redacted>`; never write a real PIN into this
+> repository, an issue, a chat or a document.
+
 ## Overview
 
 The mBHR application uses a secure PIN-based authentication system for offline operation. Each user has a 6-digit PIN that is hashed using PBKDF2 with a random salt before being stored in the local IndexedDB database.
@@ -9,15 +19,18 @@ The mBHR application uses a secure PIN-based authentication system for offline o
 `npm run dev` seeds these demo accounts so the app can be tried locally.
 Production builds create **no** accounts: a new device goes to first-run
 setup (`/setup`), where the first administrator chooses their own PIN.
-Real PINs must never be written into this repository.
+Real PINs must never be written into this repository. The demo PINs are
+public and exist only in development builds; they must never be used on a
+device that holds real patient data. The development seed in
+`src/db/seed.ts` defines them; they are not repeated here.
 
 | User Name | Role | PIN |
 |-----------|------|-----|
-| Admin User | admin | `123456` |
-| Dr. Sarah Johnson | doctor | `234567` |
-| Nurse Mary | nurse | `345678` |
-| Pharmacist John | pharmacist | `456789` |
-| Volunteer Mike | volunteer | `567890` |
+| Admin User | admin | `<redacted>` |
+| Dr. Sarah Johnson | doctor | `<redacted>` |
+| Nurse Mary | nurse | `<redacted>` |
+| Pharmacist John | pharmacist | `<redacted>` |
+| Volunteer Mike | volunteer | `<redacted>` |
 
 ## Security Features
 
@@ -62,6 +75,8 @@ The PIN hashing utility provides:
 2. **Reset the device** (administrator approval required):
    - Sign in as an admin, open **Settings** → **Device recovery**, then
      re-enter your admin PIN. It is not available from the login page.
+   - If no administrator can sign in, the only option left is clearing this
+     site's data in the browser settings, which loses anything not yet synced.
    - This deletes every patient, visit and staff account on the device,
      including anything not yet synced, and the device returns to first-run
      setup.
@@ -69,7 +84,8 @@ The PIN hashing utility provides:
 ### Common Issues:
 
 **"Invalid PIN" with correct PIN**
-- Database might be corrupted — ask an administrator to reset the device
+- Database might be corrupted — ask an administrator to reset the device from
+  **Settings** (see above if no administrator can sign in)
 
 **Lockout after 5 attempts**
 - Wait 15 minutes. Wrong admin PINs in the reset form count towards the same
@@ -86,7 +102,7 @@ const users = [
   {
     fullName: 'New User',
     role: 'doctor' as const,
-    pin: '111222',  // 6 digits
+    pin: '<redacted>',  // 6 digits, development only; never a real PIN
     adminAccess: false,
     adminPermanent: false
   },

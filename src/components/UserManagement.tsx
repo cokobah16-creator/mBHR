@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { db, User, generateId } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { useToast } from "@/stores/toast";
-import { derivePinHash, newSaltB64, verifyPin } from "@/utils/pin";
+import { devicePinFields, clearDevicePin } from "@/db/devicePin";
+import { hasDevicePin } from "@/db/offlineAccess";
 import { countOtherActiveAdmins, LAST_ADMIN_MESSAGE } from "@/db/firstRun";
 import { can, getRoleDisplayName } from "@/auth/roles";
 import { supabase } from "@/lib/supabase";
@@ -27,6 +28,7 @@ import {
   UsersIcon,
   NoSymbolIcon,
   CheckCircleIcon,
+  KeyIcon,
 } from "@heroicons/react/24/outline";
 
 type FormState = StaffFormValues & {
@@ -72,6 +74,8 @@ export function UserManagement() {
   const [pendingStatusUser, setPendingStatusUser] = useState<User | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
   const [pendingDeleteUser, setPendingDeleteUser] = useState<User | null>(null);
+  const [pendingPinReset, setPendingPinReset] = useState<User | null>(null);
+  const [pinResetBusy, setPinResetBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const loadUsers = useCallback(async () => {
@@ -130,17 +134,6 @@ export function UserManagement() {
     setFormError("");
     setEditingUser(user);
     setShowForm(true);
-  };
-
-  /** Another account (active or not) that would sign in with this PIN. */
-  const pinInUse = async (pin: string, excludeId?: string) => {
-    const others = await db.users
-      .filter((u) => u.id !== excludeId && !!u.pinHash && !!u.pinSalt)
-      .toArray();
-    for (const u of others) {
-      if (await verifyPin(pin, u.pinHash, u.pinSalt)) return true;
-    }
-    return false;
   };
 
   const handleSubmit = (e: FormEvent) => {
@@ -203,21 +196,12 @@ export function UserManagement() {
         return;
       }
 
+      // Two people may share a PIN: offline sign-in asks who is signing in
+      // and checks only that person's PIN.
       const newPin = form.pin !== "";
-      if (newPin && (await pinInUse(form.pin, editingUser?.id))) {
-        setConfirmRoleChange(false);
-        setErrors({ pin: "Another account already uses this PIN. Choose a different PIN." });
-        setFormError("Check the highlighted fields.");
-        return;
-      }
 
       const fullName = form.fullName.trim();
-      const pinFields = newPin
-        ? await (async () => {
-            const pinSalt = newSaltB64();
-            return { pinHash: await derivePinHash(form.pin, pinSalt), pinSalt };
-          })()
-        : {};
+      const pinFields = newPin ? await devicePinFields(form.pin, form.confirmPin) : {};
 
       if (editingUser) {
         await db.users.update(editingUser.id, {
@@ -268,6 +252,50 @@ export function UserManagement() {
     }
   };
 
+  /** Resolve a review flag by keeping the account deactivated here. */
+  const keepDeactivated = async (user: User) => {
+    if (!canManage) {
+      denied();
+      return;
+    }
+    try {
+      await db.users.update(user.id, { accessConflict: 0 });
+      await loadUsers();
+    } catch (error) {
+      console.error("Error resolving access review:", errorName(error));
+    }
+  };
+
+  /** Remove someone's offline access on this device (they enroll again). */
+  const resetDevicePin = async (user: User) => {
+    if (!canManage) {
+      denied();
+      return;
+    }
+    setPinResetBusy(true);
+    try {
+      await clearDevicePin(user.id);
+      pushToast({
+        id: generateId(),
+        tone: "success",
+        title: "Device PIN reset",
+        body: `${user.fullName} chooses a new PIN the next time they sign in online here, or you can set one with Edit.`,
+      });
+      await loadUsers();
+    } catch (error) {
+      console.error("Error resetting device PIN:", errorName(error));
+      pushToast({
+        id: generateId(),
+        tone: "error",
+        title: "Could not reset the PIN",
+        body: "Try again.",
+      });
+    } finally {
+      setPinResetBusy(false);
+      setPendingPinReset(null);
+    }
+  };
+
   const setActive = async (user: User, active: boolean) => {
     if (!canManage) {
       denied();
@@ -294,8 +322,12 @@ export function UserManagement() {
         refuse(LAST_ADMIN_MESSAGE);
         return;
       }
+      // A deactivation here is remembered so a download never silently
+      // reactivates the person; activating is the authorised resolution.
       await db.users.update(user.id, {
         isActive: active ? 1 : 0,
+        disabledLocallyAt: active ? undefined : new Date(),
+        accessConflict: 0,
         updatedAt: new Date(),
       });
       pushToast({
@@ -438,6 +470,17 @@ export function UserManagement() {
             Edit
           </button>
         )}
+        {editable && hasDevicePin(u) && (
+          <button
+            type="button"
+            onClick={() => setPendingPinReset(u)}
+            className="btn-ghost"
+            aria-label={`Reset device PIN for ${u.fullName}`}
+          >
+            <KeyIcon className="h-4 w-4" aria-hidden />
+            Reset PIN
+          </button>
+        )}
         {statusable &&
           (u.isActive === 1 ? (
             <button
@@ -487,7 +530,26 @@ export function UserManagement() {
   );
 
   const renderStatus = (u: User) =>
-    u.isActive === 1 ? (
+    u.accessConflict === 1 ? (
+      <span className="flex flex-col items-start gap-1">
+        <StatusBadge tone="warning" icon>
+          Needs review
+        </StatusBadge>
+        <span className="text-caption text-ink-muted">
+          Deactivated on this device, still active online.
+        </span>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => keepDeactivated(u)}
+            className="btn-ghost"
+            aria-label={`Keep ${u.fullName} deactivated`}
+          >
+            Keep deactivated
+          </button>
+        )}
+      </span>
+    ) : u.isActive === 1 ? (
       <StatusBadge tone="success" icon>
         Active
       </StatusBadge>
@@ -495,6 +557,13 @@ export function UserManagement() {
       <StatusBadge tone="neutral" icon>
         Deactivated
       </StatusBadge>
+    );
+
+  const renderOfflineAccess = (u: User) =>
+    hasDevicePin(u) ? (
+      <StatusBadge tone="success">PIN on this device</StatusBadge>
+    ) : (
+      <StatusBadge tone="neutral">No PIN here</StatusBadge>
     );
 
   const oldRole = editingUser?.role;
@@ -505,9 +574,10 @@ export function UserManagement() {
     <div className="space-y-4">
       <div className="banner banner-info">
         <p>
-          Accounts added here are saved on this device. Staff sign in on this
-          device with their 6-digit PIN. PINs are stored scrambled and are never
-          shown again after they are set.
+          Staff come from your organisation's online directory. Offline access
+          is per device: each person signs in offline here with their own
+          6-digit PIN, which is stored scrambled on this device only and never
+          sent to the server.
         </p>
       </div>
 
@@ -630,8 +700,8 @@ export function UserManagement() {
                 />
                 <p id="staff-pin-hint" className="field-hint">
                   {isEditing
-                    ? "Leave blank to keep the current PIN."
-                    : "Give the PIN to the person privately. It cannot be shown again."}
+                    ? "Sets this person's PIN on this device only. Leave blank to keep the current one. Hand the device to them to type it."
+                    : "Works on this device only. Give the PIN to the person privately. It cannot be shown again."}
                 </p>
                 {fieldError("pin")}
               </div>
@@ -774,6 +844,7 @@ export function UserManagement() {
                     <th scope="col">Admin flags</th>
                     <th scope="col">Contact</th>
                     <th scope="col">Status</th>
+                    <th scope="col">Offline access</th>
                     <th scope="col">Added</th>
                     <th scope="col">
                       <span className="sr-only">Actions</span>
@@ -802,6 +873,7 @@ export function UserManagement() {
                         {!u.email && !u.phone && <span className="text-ink-muted">None</span>}
                       </td>
                       <td>{renderStatus(u)}</td>
+                      <td>{renderOfflineAccess(u)}</td>
                       <td className="text-caption text-ink-muted tabular-nums">
                         {formatNigerianDate(u.createdAt)}
                       </td>
@@ -820,6 +892,7 @@ export function UserManagement() {
                     {u.id === currentUser?.id && <StatusBadge tone="info">You</StatusBadge>}
                     <StatusBadge>{getRoleDisplayName(u.role)}</StatusBadge>
                     {renderStatus(u)}
+                    {renderOfflineAccess(u)}
                   </div>
                   {(u.adminAccess || u.adminPermanent) && renderAdminFlags(u)}
                   <p className="text-caption text-ink-muted">
@@ -877,6 +950,23 @@ export function UserManagement() {
           activates the account again.
         </p>
         <p>Records they created are kept.</p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={!!pendingPinReset}
+        title={`Reset ${pendingPinReset?.fullName ?? "this person"}'s PIN on this device?`}
+        confirmLabel="Reset PIN"
+        busy={pinResetBusy}
+        busyLabel="Resetting…"
+        onConfirm={() => pendingPinReset && resetDevicePin(pendingPinReset)}
+        onCancel={() => setPendingPinReset(null)}
+      >
+        <p>
+          Their current PIN stops working on this device. They choose a new one
+          the next time they sign in online here, or you can set one now with
+          Edit.
+        </p>
+        <p>Their account and records are not changed.</p>
       </ConfirmDialog>
 
       <ConfirmDialog

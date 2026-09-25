@@ -7,7 +7,7 @@ import type {
 } from "@/services/conflictQueue";
 import { formatConflictValue } from "./conflictDiff";
 import { recordTypeLabel, strategyActionLabel } from "./conflictLabels";
-import type { DevicePlan, FieldChange } from "./devicePlan";
+import { mergeFieldChoicesFor, type DevicePlan, type FieldChange } from "./devicePlan";
 
 export type SummaryMode = "resolve" | "approve" | "apply";
 
@@ -39,8 +39,9 @@ export interface SummaryInput {
   recordBLabel?: string;
 }
 
+/** Records this device moves from the merged record to the kept record. */
 const MERGED_HISTORY =
-  "visits, vital signs, consultations, dispensing records, queue tickets, care tasks, allergies and preferences";
+  "visits, vital signs, consultations, dispensing records, queue tickets, care tasks, triage records, appointments, clinical alerts and allergies";
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -169,17 +170,38 @@ function deviceLines(input: SummaryInput): { lines: string[]; blocked: boolean }
   const merged = keepB ? a : b;
   const lines: string[] = [];
   const copied = plan.copied.filter((c) => c.changesValue).length;
-  if (copied > 0) {
-    lines.push(`Copies ${plural(copied, "value")} from ${b} into ${a}.`);
-  }
   if (plan.alreadyMerged) {
+    // Already merged here: the chosen values are an ordinary edit that uploads.
+    if (copied > 0) {
+      lines.push(`Copies ${plural(copied, "value")} from ${b} into ${a}.`);
+    }
     lines.push(`${capitalise(merged)} is already marked as merged into ${kept} on this device.`);
+    lines.push("Marks the changed records to upload at the next sync.");
   } else {
+    // The merge is a request to the server, which decides and tells every
+    // device. Count only the values the merge actually carries.
+    const { choices, skipped } = mergeFieldChoicesFor(plan);
+    const sent = Object.keys(choices).length;
+    if (sent > 0) {
+      lines.push(
+        `Sends ${plural(sent, "chosen value")} from ${b} with the merge; the server applies ${
+          sent === 1 ? "it" : "them"
+        } to ${a}.`,
+      );
+    }
+    if (skipped.length > 0) {
+      lines.push(
+        `Leaves out ${plural(skipped.length, "chosen value")} a merge cannot copy (for example an empty name, sex or date of birth).`,
+      );
+    }
     lines.push(
       `Moves the ${MERGED_HISTORY} of ${merged} to ${kept}, and marks ${merged} as merged into ${kept}. Neither record is deleted.`,
     );
+    lines.push(`Moves the preferences of ${merged} only if ${kept} has none.`);
+    lines.push(
+      "Sends the merge to the server at the next sync. The server moves the history and every device shows the merge after its next sync. If the server refuses it, the merge is undone on this device and listed for review.",
+    );
   }
-  lines.push("Marks the changed records to upload at the next sync.");
   lines.push("Adds an entry to this device's audit log.");
   return { lines, blocked: false };
 }
@@ -188,13 +210,20 @@ function capitalise(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
-function warnings(plan: DevicePlan): string[] {
-  const changes =
-    plan.kind === "update_record"
-      ? plan.changes
-      : plan.kind === "merge_patients"
-        ? plan.copied
-        : [];
+/**
+ * Field-level changes the decision writes. A merge not yet made here leaves
+ * out values the server would not apply (for example an empty name), so
+ * those are shown as "No change", matching what is written.
+ */
+function writtenChanges(plan: DevicePlan): FieldChange[] {
+  if (plan.kind === "update_record") return plan.changes;
+  if (plan.kind !== "merge_patients") return [];
+  if (plan.alreadyMerged) return plan.copied;
+  const skipped = new Set(mergeFieldChoicesFor(plan).skipped);
+  return plan.copied.map((c) => (skipped.has(c.field) ? { ...c, changesValue: false } : c));
+}
+
+function warnings(changes: FieldChange[]): string[] {
   return changes
     .filter((c) => c.changedSinceReport && c.changesValue)
     .map(
@@ -218,19 +247,14 @@ function confirmLabel(input: SummaryInput): string {
 
 export function summariseResolution(input: SummaryInput): ResolutionSummary {
   const device = deviceLines(input);
-  const changes =
-    input.plan.kind === "update_record"
-      ? input.plan.changes
-      : input.plan.kind === "merge_patients"
-        ? input.plan.copied
-        : [];
+  const changes = writtenChanges(input.plan);
   return {
     heading: strategyActionLabel(input.strategy, input.conflict.conflictType),
     confirmLabel: confirmLabel(input),
     server: serverLines(input),
     device: device.lines,
     changes,
-    warnings: warnings(input.plan),
+    warnings: warnings(changes),
     blocked: device.blocked,
   };
 }

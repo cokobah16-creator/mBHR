@@ -18,7 +18,7 @@ const {
 } = vi.hoisted(() => {
   function makeTable() {
     return {
-      update: vi.fn().mockResolvedValue(undefined),
+      update: vi.fn().mockResolvedValue(1),
       where: vi.fn().mockReturnThis(),
       equals: vi.fn().mockReturnThis(),
       and: vi.fn().mockReturnThis(),
@@ -33,7 +33,14 @@ const {
   };
 });
 
+const { authState } = vi.hoisted(() => ({
+  authState: { currentUser: { id: "dr1", role: "doctor" } as { id: string; role: string } | null },
+}));
+
 vi.mock("@/lib/supabase", () => ({ supabase: mockSupabase }));
+vi.mock("@/stores/auth", () => ({
+  useAuthStore: { getState: () => authState },
+}));
 vi.mock("@/db", () => ({
   db: {
     vitals: mockDbVitals,
@@ -65,10 +72,16 @@ import {
 //
 // eq() returns an object that is both awaitable (has .then) AND has all chain methods
 // so that chaining after eq() continues to work.
-function makeFromChain(limitData: unknown[] = [], error: null | object = null) {
+function makeFromChain(
+  limitData: unknown[] = [],
+  error: null | object = null,
+  updatedRows: unknown[] = [{ id: "row" }],
+) {
   // Create eqResult as a thenable first, then assign all chain methods to it.
+  // Awaiting it (update ... .eq().select("id")) gives the rows the server changed.
   const eqResult: Record<string, unknown> = {
-    then: (r: (v: unknown) => unknown) => Promise.resolve({ error }).then(r),
+    then: (r: (v: unknown) => unknown) =>
+      Promise.resolve({ data: error ? null : updatedRows, error }).then(r),
   };
 
   const chain: Record<string, unknown> = {
@@ -90,9 +103,10 @@ function makeFromChain(limitData: unknown[] = [], error: null | object = null) {
 describe("recordVisibility service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbVitals.update.mockResolvedValue(undefined);
-    mockDbConsultations.update.mockResolvedValue(undefined);
-    mockDbDispenses.update.mockResolvedValue(undefined);
+    authState.currentUser = { id: "dr1", role: "doctor" };
+    mockDbVitals.update.mockResolvedValue(1);
+    mockDbConsultations.update.mockResolvedValue(1);
+    mockDbDispenses.update.mockResolvedValue(1);
     mockDbVitals.where.mockReturnThis();
     mockDbVitals.equals.mockReturnThis();
     mockDbVitals.and.mockReturnThis();
@@ -201,6 +215,89 @@ describe("recordVisibility service", () => {
     });
   });
 
+  // ── permission and zero-row checks ───────────────────────────────────────────
+
+  describe("permission and changed-row checks", () => {
+    it("refuses a role that cannot change this record type, without writing", async () => {
+      authState.currentUser = { id: "vol1", role: "volunteer" };
+      mockFrom.mockReturnValue(makeFromChain());
+
+      const result = await toggleRecordVisibility({
+        recordType: "consultations",
+        recordId: "c1",
+        patientId: "p1",
+        visible: false,
+        performedBy: "vol1",
+      });
+
+      expect(result).toBe(false);
+      expect(mockDbConsultations.update).not.toHaveBeenCalled();
+      expect(mockFrom).not.toHaveBeenCalled();
+      expect(mockCreateAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("refuses when nobody is signed in", async () => {
+      authState.currentUser = null;
+
+      const result = await toggleRecordVisibility({
+        recordType: "vitals",
+        recordId: "v1",
+        patientId: "p1",
+        visible: false,
+        performedBy: "x",
+      });
+
+      expect(result).toBe(false);
+      expect(mockDbVitals.update).not.toHaveBeenCalled();
+    });
+
+    it("treats a record missing from this device (0 rows) as failure", async () => {
+      mockDbVitals.update.mockResolvedValue(0);
+      mockFrom.mockReturnValue(makeFromChain());
+
+      const result = await toggleRecordVisibility({
+        recordType: "vitals",
+        recordId: "missing",
+        patientId: "p1",
+        visible: false,
+        performedBy: "dr1",
+      });
+
+      expect(result).toBe(false);
+      expect(mockFrom).not.toHaveBeenCalled();
+      expect(mockCreateAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("treats a server update that changed no row as failure", async () => {
+      mockFrom.mockReturnValue(makeFromChain([], null, []));
+
+      const result = await toggleRecordVisibility({
+        recordType: "vitals",
+        recordId: "v1",
+        patientId: "p1",
+        visible: false,
+        performedBy: "dr1",
+      });
+
+      expect(result).toBe(false);
+      expect(mockCreateAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("treats a server error as failure", async () => {
+      mockFrom.mockReturnValue(makeFromChain([], { code: "42501" }));
+
+      const result = await toggleRecordVisibility({
+        recordType: "vitals",
+        recordId: "v1",
+        patientId: "p1",
+        visible: false,
+        performedBy: "dr1",
+      });
+
+      expect(result).toBe(false);
+    });
+  });
+
   // ── audit log ────────────────────────────────────────────────────────────────
 
   describe("audit logging", () => {
@@ -278,6 +375,20 @@ describe("recordVisibility service", () => {
 
       expect(result.success).toBe(3);
       expect(result.failed).toBe(0);
+    });
+
+    it("counts records the server did not change as failed", async () => {
+      mockFrom.mockReturnValue(makeFromChain([], null, []));
+
+      const result = await bulkToggleVisibility({
+        recordType: "vitals",
+        recordIds: ["v1", "v2"],
+        patientId: "p1",
+        visible: false,
+        performedBy: "admin",
+      });
+
+      expect(result).toEqual({ success: 0, failed: 2 });
     });
 
     it("counts failed records when update throws", async () => {

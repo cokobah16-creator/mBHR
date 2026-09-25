@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
-import { ArrowPathIcon, SignalSlashIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, ExclamationTriangleIcon, LockClosedIcon, SignalSlashIcon } from "@heroicons/react/24/outline";
 import { enhancedSync } from "@/services/enhancedSync";
-import { countUnsyncedRecords } from "@/sync/adapter";
+import { countAwaitingAuthorisedSync, countUnsyncedRecords, syncNow } from "@/sync/adapter";
+import {
+  countPharmacyAwaitingAuthorised,
+  countPharmacyUnsynced,
+  syncPharmacyNow,
+} from "@/sync/pharmacySync";
+import { queueSyncConflicts } from "@/sync/queueConflicts";
 import { useSyncStore } from "@/stores/syncStore";
 import { useOperationsQueue } from "@/stores/operationsQueue";
 import { useAuthStore } from "@/stores/auth";
@@ -14,6 +20,14 @@ import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { formatConflictAge, formatTimestamp, humanise } from "@/features/conflicts/conflictLabels";
 import { deriveSyncHeadline } from "@/features/conflicts/syncStatus";
 import { countDirtyIn, ENHANCED_ONLY_TABLES } from "@/features/conflicts/syncCounts";
+import {
+  checkCloudSession,
+  useCloudSession,
+  NO_CLOUD_SESSION_DETAIL,
+  NO_CLOUD_SESSION_LABEL,
+  ONLINE_SIGN_IN_HINT,
+  ONLINE_SIGN_IN_PATH,
+} from "@/lib/cloudSession";
 
 /** Tables the dashboard's Sync now (enhanced sync) downloads. */
 const SESSION_TABLES = [
@@ -85,8 +99,21 @@ export function SyncDashboard() {
   const errorMessage = useSyncStore((s) => s.errorMessage);
   const adapterSyncing = useSyncStore((s) => s.status === "syncing");
   const operations = useOperationsQueue((s) => s.operations);
+  const cloudSession = useCloudSession();
+  const noSession = configured && cloudSession === "signed_out";
 
-  const coreWaiting = useLiveQuery(() => countUnsyncedRecords(), []);
+  // Pharmacy changes wait in their own outbox (queued stock commands and
+  // prescriptions not uploaded), which the main counts do not include.
+  const coreWaiting = useLiveQuery(
+    async () => (await countUnsyncedRecords()) + (await countPharmacyUnsynced()),
+    [],
+  );
+  const awaitingAuthorised =
+    useLiveQuery(
+      async () => (await countAwaitingAuthorisedSync()) + (await countPharmacyAwaitingAuthorised()),
+      [],
+      0,
+    ) ?? 0;
   const extraWaiting = useLiveQuery(() => countDirtyIn(ENHANCED_ONLY_TABLES), []);
   const queuedOps = operations.filter(
     (op) => op.status === "pending" || op.status === "processing",
@@ -138,18 +165,36 @@ export function SyncDashboard() {
 
   const handleSync = async () => {
     if (syncing || !online) return;
+    // Without an online sign-in (for example after a PIN unlock) no sync
+    // may start; the status below explains how to sign in online.
+    if (!(await checkCloudSession())) return;
     setRunning(true);
     try {
+      // Patients and the queue sync through the adapter only; the other
+      // tables through enhanced sync. Run both.
+      const core = await syncNow();
+      if (core.conflicts.length > 0) await queueSyncConflicts(core.conflicts);
       const result = await enhancedSync.syncAll();
+      // Pharmacy records (prescriptions and stock commands) are sent by
+      // syncNow once its download has finished. If it stopped before that,
+      // send them here so the pharmacy outbox does not wait for the rest.
+      const pharmacy = core.success ? null : await syncPharmacyNow();
+      const pharmacyFailed =
+        (core.participantFailures ?? []).includes("pharmacy") ||
+        (pharmacy !== null && pharmacy.failedTables.length > 0);
       setRun({
         at: new Date(),
-        success: result.success,
+        success: result.success && core.success && !pharmacyFailed,
         pushed: result.pushed,
         pulled: result.pulled,
         failedUploads: result.failedUploads,
         keptLocalEdits: result.keptLocalEdits,
-        failedTables: (result.failedTables ?? []).map((f) => f.table),
-        error: result.error,
+        failedTables: [
+          ...(core.downloadFailedTables ?? []),
+          ...(result.failedTables ?? []).map((f) => f.table),
+          ...(pharmacyFailed ? ["pharmacy records"] : []),
+        ],
+        error: result.error ?? core.error,
       });
     } catch (error) {
       console.error("Sync run failed:", error instanceof Error ? error.name : "unknown");
@@ -187,16 +232,25 @@ export function SyncDashboard() {
   }
 
   const conflictCount = conflicts.state === "ok" ? conflicts.count : null;
-  const headline = deriveSyncHeadline({
-    configured,
-    online,
-    syncing,
-    waiting,
-    failed,
-    errorMessage,
-    conflicts: conflictCount,
-    lastSuccessText: lastSuccessAt > 0 ? formatTimestamp(new Date(lastSuccessAt)) : null,
-  });
+  const headline = noSession
+    ? {
+        tone: "warning" as const,
+        title: NO_CLOUD_SESSION_LABEL,
+        detail:
+          waiting && waiting > 0
+            ? `${plural(waiting, "change")} saved on this device, not uploaded. ${NO_CLOUD_SESSION_DETAIL}`
+            : NO_CLOUD_SESSION_DETAIL,
+      }
+    : deriveSyncHeadline({
+        configured,
+        online,
+        syncing,
+        waiting,
+        failed,
+        errorMessage,
+        conflicts: conflictCount,
+        lastSuccessText: lastSuccessAt > 0 ? formatTimestamp(new Date(lastSuccessAt)) : null,
+      });
 
   const conflictValue = (() => {
     switch (conflicts.state) {
@@ -252,7 +306,7 @@ export function SyncDashboard() {
         <button
           type="button"
           onClick={handleSync}
-          disabled={syncing || !online}
+          disabled={syncing || !online || noSession}
           className="btn-primary"
         >
           <ArrowPathIcon
@@ -271,7 +325,22 @@ export function SyncDashboard() {
           <p className="min-w-0 flex-1 text-body text-ink-secondary">{headline.detail}</p>
         </div>
 
-        {!online && (
+        {noSession && (
+          <div className="banner banner-warning">
+            <LockClosedIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <div className="space-y-1">
+              <p>Sync now needs an online sign-in. {ONLINE_SIGN_IN_HINT}</p>
+              <Link
+                to={ONLINE_SIGN_IN_PATH}
+                className="inline-flex min-h-touch-target items-center font-medium underline hover:no-underline"
+              >
+                Sign in online
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {!online && !noSession && (
           <div className="banner banner-warning">
             <SignalSlashIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <p>You are offline. Sync now is available when the connection returns.</p>
@@ -313,6 +382,15 @@ export function SyncDashboard() {
               )}
             </div>
           </div>
+        )}
+
+        {awaitingAuthorised > 0 && (
+          <p className="flex items-start gap-2 text-body text-warning-fg" role="status">
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            {awaitingAuthorised} record{awaitingAuthorised === 1 ? "" : "s"} waiting for an authorised
+            person to sync. The server does not accept them from the account signed in online; they stay
+            on this device until someone with the right role signs in online and syncs.
+          </p>
         )}
 
         <dl className="grid gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">

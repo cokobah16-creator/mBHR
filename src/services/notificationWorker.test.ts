@@ -52,9 +52,26 @@ vi.mock("@/db", () => ({
   },
 }));
 
+// Online session on this device (null: nobody signed in online).
+const mockSession: { current: { access_token: string; user?: { id: string } } | null } = {
+  current: null,
+};
+// The staff member signed in online in this session (src/lib/cloudSession.ts).
+const STAFF_CLOUD_ID = "staff-1";
+vi.mock("@/lib/cloudSession", () => ({
+  isSignedInStaffAccount: (id: string | null | undefined) => id === "staff-1",
+}));
+// Every update the worker tries on a server table.
+const mockTableUpdates: { table: string; values: unknown }[] = [];
+
 vi.mock("@/lib/supabase", () => ({
   supabase: {
-    from: vi.fn(() => ({
+    auth: {
+      getSession: vi.fn(() =>
+        Promise.resolve({ data: { session: mockSession.current }, error: null }),
+      ),
+    },
+    from: vi.fn((table: string) => ({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
           lte: vi.fn(() => ({
@@ -64,9 +81,10 @@ vi.mock("@/lib/supabase", () => ({
           })),
         })),
       })),
-      update: vi.fn(() => ({
-        eq: vi.fn(() => Promise.resolve({ error: null })),
-      })),
+      update: vi.fn((values: unknown) => {
+        mockTableUpdates.push({ table, values });
+        return { eq: vi.fn(() => Promise.resolve({ error: null })) };
+      }),
     })),
   },
 }));
@@ -83,6 +101,8 @@ describe("notificationWorker", () => {
     vi.clearAllMocks();
     mockOutboundMessages.clear();
     mockMedicationReminders.length = 0;
+    mockTableUpdates.length = 0;
+    mockSession.current = null;
     vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "test-key");
   });
@@ -158,6 +178,182 @@ describe("notificationWorker", () => {
       expect(result).toHaveProperty("messages");
       expect(typeof result.reminders).toBe("number");
       expect(typeof result.messages).toBe("number");
+    });
+  });
+
+  describe("server reminders", () => {
+    const fetchMock = () => globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const reminder = {
+      id: "rem-1",
+      patient_id: "patient-123",
+      phone_number: "+2348012345678",
+      message: "Take your medicine",
+      status: "pending",
+    };
+
+    it("does not try to send when nobody is signed in online", async () => {
+      mockMedicationReminders.push(reminder);
+      const { processNow } = await import("./notificationWorker");
+
+      const result = await processNow();
+
+      expect(result.skipped).toBe("signed_out");
+      expect(fetchMock()).not.toHaveBeenCalled();
+      expect(mockTableUpdates).toEqual([]);
+    });
+
+    it("does not send under another account's online sign-in left in this browser", async () => {
+      mockSession.current = { access_token: "portal-token", user: { id: "portal-patient-1" } };
+      mockMedicationReminders.push(reminder);
+      const { processNow } = await import("./notificationWorker");
+
+      const result = await processNow();
+
+      expect(result.skipped).toBe("signed_out");
+      expect(fetchMock()).not.toHaveBeenCalled();
+    });
+
+    it("sends with the staff token and leaves the status to the server", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      mockMedicationReminders.push(reminder);
+      fetchMock().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({ success: true, messageId: "m-1", reminderRecorded: true }),
+      });
+      const { processNow } = await import("./notificationWorker");
+
+      const result = await processNow();
+
+      expect(result.reminders).toBe(1);
+      const [url, init] = fetchMock().mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("https://test.supabase.co/functions/v1/send-sms-reminder");
+      expect(init.headers).toMatchObject({
+        Authorization: "Bearer staff-token",
+        apikey: "test-key",
+      });
+      const body = JSON.parse(String(init.body));
+      expect(body.reminderId).toBe("rem-1");
+      expect(body).not.toHaveProperty("to");
+      // medication_reminders is written by the server function, not here.
+      expect(mockTableUpdates.filter((u) => u.table === "medication_reminders")).toEqual([]);
+    });
+
+    it("does not count a reminder the server already records as sent", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      mockMedicationReminders.push(reminder);
+      fetchMock().mockResolvedValue({
+        ok: false,
+        status: 409,
+        headers: { get: () => null },
+        text: () =>
+          Promise.resolve(JSON.stringify({ success: false, error: "already_sent" })),
+      });
+      const { processNow } = await import("./notificationWorker");
+
+      const result = await processNow();
+
+      expect(result.reminders).toBe(0);
+      expect(result.failed).toBe(0);
+      expect(mockTableUpdates).toEqual([]);
+    });
+
+    it("reports a role the server refuses instead of a failure", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      mockMedicationReminders.push(reminder);
+      fetchMock().mockResolvedValue({
+        ok: false,
+        status: 403,
+        headers: { get: () => null },
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              success: false,
+              error: "not_permitted",
+              message: "Your role cannot send SMS to patients.",
+            }),
+          ),
+      });
+      const { processNow } = await import("./notificationWorker");
+
+      const result = await processNow();
+
+      expect(result.skipped).toBe("not_permitted");
+      expect(mockTableUpdates).toEqual([]);
+    });
+
+    it("Send now reports whether the server recorded the outcome", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      fetchMock().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ success: true, reminderRecorded: false }),
+      });
+      const { sendReminderNow } = await import("./notificationWorker");
+
+      const result = await sendReminderNow({
+        id: "rem-1",
+        patientId: "patient-123",
+        phoneNumber: "+2348012345678",
+        message: "Take your medicine",
+      });
+
+      expect(result).toMatchObject({ ok: true, recordUpdated: false });
+      expect(mockTableUpdates).toEqual([]);
+    });
+
+    it("Send now keeps the server's record flag when it refuses the send", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      fetchMock().mockResolvedValue({
+        ok: false,
+        status: 422,
+        headers: { get: () => null },
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              success: false,
+              error: "no_phone",
+              message: "The patient has no phone number on the server.",
+              reminderRecorded: true,
+            }),
+          ),
+      });
+      const { sendReminderNow } = await import("./notificationWorker");
+
+      const result = await sendReminderNow({
+        id: "rem-422",
+        patientId: "patient-123",
+        phoneNumber: "",
+        message: "Take your medicine",
+      });
+
+      expect(result).toMatchObject({ ok: false, recordUpdated: true });
+      expect(result.error).toMatch(/^no_phone/);
+    });
+
+    it("does not send again a reminder accepted but not recorded by the server", async () => {
+      mockSession.current = { access_token: "staff-token", user: { id: STAFF_CLOUD_ID } };
+      fetchMock().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ success: true, reminderRecorded: false }),
+      });
+      const { sendReminderNow, SMS_ACCEPTED_NOT_RECORDED_ERROR } = await import(
+        "./notificationWorker"
+      );
+      const reminderToSend = {
+        id: "rem-unrecorded",
+        patientId: "patient-123",
+        phoneNumber: "",
+        message: "Take your medicine",
+      };
+
+      await sendReminderNow(reminderToSend);
+      const again = await sendReminderNow(reminderToSend);
+
+      expect(again).toMatchObject({ ok: false, error: SMS_ACCEPTED_NOT_RECORDED_ERROR });
+      // The patient is not texted a second time.
+      expect(fetchMock()).toHaveBeenCalledTimes(1);
+      // Its own code: it must not read as "the server records it as sent".
+      expect(SMS_ACCEPTED_NOT_RECORDED_ERROR).not.toMatch(/already_sent/);
     });
   });
 

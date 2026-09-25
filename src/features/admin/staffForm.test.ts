@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  ASSIGNABLE_ROLES,
   validateStaffForm,
   describeRoleAccess,
   lostAccess,
@@ -57,6 +58,11 @@ describe("validateStaffForm", () => {
     expect(validateStaffForm({ ...base, phone: "call me" }, "create").phone).toBeTruthy();
   });
 
+  it("lets an administrator give the registration lead role", () => {
+    expect(ASSIGNABLE_ROLES).toContain("registration_lead");
+    expect(validateStaffForm({ ...base, role: "registration_lead" }, "create").role).toBeUndefined();
+  });
+
   it("allows an existing non-assignable role to be kept on edit", () => {
     expect(validateStaffForm({ ...base, role: "guest" }, "edit").role).toBeUndefined();
     expect(validateStaffForm({ ...base, role: "guest" }, "create").role).toBeTruthy();
@@ -66,10 +72,25 @@ describe("validateStaffForm", () => {
 describe("role access descriptions", () => {
   it("describes what a role can do from the RBAC matrix", () => {
     expect(describeRoleAccess("volunteer")).toBe(
-      "Volunteer: can register patients and record vital signs.",
+      "Volunteer: can register patients, record vital signs, move patients through the queue and manage patient portal access.",
     );
     expect(describeRoleAccess("guest")).toBe("Guest: no clinical or admin actions.");
     expect(describeRoleAccess("admin")).toContain("manage staff accounts");
+  });
+
+  it("describes a registration lead: registration and invitations, no vital signs", () => {
+    expect(describeRoleAccess("registration_lead")).toBe(
+      "Registration lead: can register patients, move patients through the queue, manage patient portal access and send patient portal invitations.",
+    );
+    expect(gainedAccess("volunteer", "registration_lead")).toEqual([
+      "send patient portal invitations",
+    ]);
+    expect(lostAccess("volunteer", "registration_lead")).toEqual([
+      "record vital signs",
+    ]);
+    expect(lostAccess("registration_lead", "nurse")).toEqual([
+      "send patient portal invitations",
+    ]);
   });
 
   it("lists what a demotion takes away", () => {
@@ -81,7 +102,11 @@ describe("role access descriptions", () => {
   });
 
   it("lists what a promotion adds", () => {
-    expect(gainedAccess("nurse", "doctor")).toEqual(["document consultations"]);
+    expect(gainedAccess("nurse", "doctor")).toEqual([
+      "document consultations",
+      "mark lab results reviewed",
+      "release lab results to patients",
+    ]);
     expect(lostAccess("nurse", "doctor")).toEqual([]);
   });
 });

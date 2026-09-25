@@ -14,9 +14,37 @@ vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ login: mockLogin }),
 }));
 
+// Offline mode by default; the online tests switch the server on.
+const online = vi.hoisted(() => ({
+  enabled: false,
+  signOut: vi.fn(),
+  getUser: vi.fn(),
+  fetchStatus: vi.fn(),
+  link: vi.fn(),
+  clearAuth: vi.fn(),
+  getProfile: vi.fn(),
+  getProfileByEmail: vi.fn(),
+}));
+
 vi.mock("@/lib/supabaseClient", () => ({
-  supabase: null,
-  isSupabaseEnabled: false,
+  get supabase() {
+    return online.enabled
+      ? { auth: { signOut: online.signOut, getUser: online.getUser } }
+      : null;
+  },
+  get isSupabaseEnabled() {
+    return online.enabled;
+  },
+}));
+
+vi.mock("@/lib/supabaseAuthStorage", () => ({
+  clearStoredSupabaseAuth: online.clearAuth,
+}));
+
+vi.mock("@/services/portalSignIn", () => ({
+  fetchPortalAccessStatus: online.fetchStatus,
+  linkPortalAccount: online.link,
+  linkDetailsFromUser: () => ({ dob: "1990-01-01" }),
 }));
 
 vi.mock("@/services/patientPortalAuth", () => ({
@@ -24,7 +52,8 @@ vi.mock("@/services/patientPortalAuth", () => ({
 }));
 
 vi.mock("@/services/patientService", () => ({
-  getPatientProfile: vi.fn(),
+  getPatientProfile: online.getProfile,
+  getPatientProfileByEmail: online.getProfileByEmail,
 }));
 
 import { PatientLogin } from "./PatientLogin";
@@ -71,6 +100,7 @@ describe("PatientLogin (offline mode)", () => {
     sessionStore = {};
     localStore = {};
     vi.clearAllMocks();
+    online.enabled = false;
   });
 
   it("renders PIN input, not date-of-birth input", () => {
@@ -189,5 +219,90 @@ describe("PatientLogin (offline mode)", () => {
 
     await waitFor(() => expect(mockNavigate).toHaveBeenCalled());
     expect(localStore["patient_session_token"]).toBeUndefined();
+  });
+});
+
+describe("PatientLogin (online: the server decides portal access)", () => {
+  beforeEach(() => {
+    sessionStore = {};
+    localStore = {};
+    vi.clearAllMocks();
+    online.enabled = true;
+    mockLogin.mockResolvedValue(null);
+    online.signOut.mockResolvedValue({ error: null });
+    online.getUser.mockResolvedValue({
+      data: { user: { id: "auth-1", email: "ada@test.com", user_metadata: {} } },
+    });
+    online.link.mockResolvedValue({ linked: true });
+  });
+
+  function submitOnline() {
+    renderLogin();
+    fireEvent.change(screen.getByLabelText(/email/i), {
+      target: { value: "ada@test.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/password/i), {
+      target: { value: "correct-horse" },
+    });
+    fireEvent.submit(screen.getByRole("button", { name: /login/i }));
+  }
+
+  it("signs out and refuses when the server has portal access off", async () => {
+    online.fetchStatus.mockResolvedValue({ kind: "not_enabled" });
+
+    submitOnline();
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toMatch(
+        /not turned on portal access/i,
+      );
+    });
+    expect(online.signOut).toHaveBeenCalled();
+    expect(online.clearAuth).toHaveBeenCalled();
+    expect(localStore["patient_portal_user"]).toBeUndefined();
+    expect(online.getProfile).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the server cannot be asked", async () => {
+    online.fetchStatus.mockResolvedValue({ kind: "unavailable" });
+
+    submitOnline();
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toMatch(/could not check/i);
+    });
+    expect(online.signOut).toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("links an unlinked account first and refuses with the server's reason", async () => {
+    online.fetchStatus.mockResolvedValue({ kind: "not_linked" });
+    online.link.mockResolvedValue({
+      linked: false,
+      message: "More than one clinic record matches your details.",
+    });
+
+    submitOnline();
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toMatch(/more than one clinic record/i);
+    });
+    expect(online.link).toHaveBeenCalled();
+    expect(online.clearAuth).toHaveBeenCalled();
+    expect(localStore["patient_portal_user"]).toBeUndefined();
+  });
+
+  it("opens the portal when the server says access is on", async () => {
+    online.fetchStatus.mockResolvedValue({ kind: "allowed", patientIds: ["p1"] });
+    online.getProfile.mockResolvedValue({
+      data: { id: "p1", givenName: "Ada", familyName: "Obi", email: "ada@test.com" },
+    });
+
+    submitOnline();
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/patient/dashboard"));
+    expect(JSON.parse(localStore["patient_portal_user"]).patientId).toBe("p1");
+    expect(online.signOut).not.toHaveBeenCalled();
   });
 });

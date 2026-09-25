@@ -1,18 +1,28 @@
 /**
  * useAuth – Supabase auth hook for the patient portal.
  *
- * Wraps signInWithPassword, signUp (auto-creates the patients row),
- * signOut, and exposes live user/session state.
+ * Wraps signInWithPassword, signUp (then links the clinic record on the
+ * server with portal_link_patient_record), signOut, and exposes live
+ * user/session state.
  * Safe to call when Supabase is not configured — all operations no-op
  * gracefully so offline mode keeps working.
  */
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import type { Session, User } from "@/lib/supabaseClient";
+import { clearStoredSupabaseAuth } from "@/lib/supabaseAuthStorage";
 import { normalizePhone } from "@/utils/phone";
+import { linkPortalAccount } from "@/services/portalSignIn";
 
 export interface AuthError {
   message: string;
+  /**
+   * Set when the account was created but is not ready yet:
+   * confirm_email: sign-up needs the email confirmed before the clinic
+   *   record can be linked (not an error; show it as information);
+   * not_linked: the server did not link a clinic record (message says why).
+   */
+  code?: "confirm_email" | "not_linked";
 }
 
 export interface SignUpData {
@@ -88,13 +98,23 @@ export function useAuth(): UseAuthReturn {
           message: "Supabase is not configured — running in offline mode.",
         };
 
-      // 1. Create the Supabase auth user
+      const phone = data.phone ? normalizePhone(data.phone) || data.phone.trim() : null;
+
+      // 1. Create the Supabase auth user. The registration details are kept
+      //    on the account so the clinic record can be linked at the first
+      //    sign-in when the email address must be confirmed first.
       const { data: authData, error: signUpError } = await supabase.auth.signUp(
         {
           email: data.email,
           password: data.password,
           options: {
-            data: { full_name: `${data.givenName} ${data.familyName}`.trim() },
+            data: {
+              full_name: `${data.givenName} ${data.familyName}`.trim(),
+              given_name: data.givenName,
+              family_name: data.familyName,
+              dob: data.dob ?? null,
+              phone,
+            },
           },
         },
       );
@@ -103,98 +123,34 @@ export function useAuth(): UseAuthReturn {
       if (!authData.user)
         return { message: "Sign-up succeeded but no user was returned." };
 
-      // 2. Look for an existing staff-registered patient with this email or phone.
-      //    If one exists, stamp auth_uid onto it so the portal can find their
-      //    clinical records (vitals, consults, dispenses) via getPatientProfile().
-      const orClauses: string[] = [
-        `email.eq.${data.email.toLowerCase().trim()}`,
-      ];
-      if (data.phone) {
-        const normPhone = normalizePhone(data.phone);
-        if (normPhone) orClauses.push(`phone.eq.${normPhone}`);
-      }
-
-      // Security guard: never rebind a patient that already belongs to
-      // another auth user, even if their phone/email is matched at sign-up.
-      const { data: linkedPatients, error: linkedPatientError } = await supabase
-        .from("patients")
-        .select("id")
-        .or(orClauses.join(","))
-        .not("auth_uid", "is", null)
-        .neq("auth_uid", authData.user.id)
-        .limit(1);
-
-      if (linkedPatientError) {
+      // Email confirmation required: there is no session yet, so the clinic
+      // record is linked when the patient first signs in.
+      if (!authData.session) {
         return {
+          code: "confirm_email",
           message:
-            "We could not automatically verify your clinic profile. Please contact support for identity verification.",
+            "Your account is created. Confirm your email address with the link we sent you, then sign in to finish.",
         };
       }
 
-      if (linkedPatients && linkedPatients.length > 0) {
-        return {
-          message:
-            "We could not automatically link your clinic profile. Please contact support for identity verification.",
-        };
-      }
-      const normalizedEmail = data.email.toLowerCase().trim();
-
-      const { data: existingPatient } = await supabase
-        .from("patients")
-        .select("id, auth_uid, dob, email, phone")
-        .or(orClauses.join(","))
-        .is("auth_uid", null)
-        .maybeSingle();
-
-      if (existingPatient) {
-        const normalizedPhone = data.phone ? normalizePhone(data.phone) : null;
-        const matchedByEmail =
-          !!existingPatient.email &&
-          existingPatient.email.toLowerCase().trim() === normalizedEmail;
-        const matchedByPhone =
-          !!normalizedPhone && existingPatient.phone === normalizedPhone;
-        const dobMatches =
-          !!existingPatient.dob &&
-          !!data.dob &&
-          existingPatient.dob === data.dob;
-        const canLinkPatient = matchedByEmail || (matchedByPhone && dobMatches);
-
-        if (canLinkPatient) {
-          // Conditional update: only succeeds if auth_uid is still NULL (race safety).
-          const { error: linkError } = await supabase
-            .from("patients")
-            .update({ auth_uid: authData.user.id })
-            .eq("id", existingPatient.id)
-            .is("auth_uid", null);
-
-          if (!linkError) return null;
-          // If the conditional update found no rows (already linked by a race),
-          // fall through and create a fresh row.
-        }
-      }
-
-      // 3. No existing clinic record — create a fresh patient row for self-registered users.
-      const { error: insertError } = await supabase.from("patients").insert({
-        id: crypto.randomUUID(),
-        auth_uid: authData.user.id,
-        given_name: data.givenName,
-        family_name: data.familyName,
-        email: data.email,
-        phone: data.phone ?? null,
+      // 2. Link the clinic record on the server (or create a self-registered
+      //    one). The server matches only verified contact details and the
+      //    date of birth; the device never reads or writes patients here.
+      const outcome = await linkPortalAccount(supabase, {
         dob: data.dob ?? null,
-        sex: "other",
-        address: "",
-        state: "",
-        lga: "",
+        givenName: data.givenName,
+        familyName: data.familyName,
+        phone,
       });
+      if (outcome.linked) return null;
 
-      if (insertError) {
-        return {
-          message: `Account created but profile save failed: ${insertError.message}`,
-        };
-      }
-
-      return null;
+      // Not linked: do not stay signed in to a portal with no record.
+      await supabase.auth.signOut().catch(() => undefined);
+      clearStoredSupabaseAuth();
+      return {
+        code: "not_linked",
+        message: outcome.message ?? "Your account could not be linked to your clinic record.",
+      };
     },
     [],
   );

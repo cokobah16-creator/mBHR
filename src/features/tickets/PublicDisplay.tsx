@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
@@ -10,12 +10,16 @@ import {
   ExclamationTriangleIcon,
   SignalIcon,
   SignalSlashIcon,
+  UserMinusIcon,
 } from "@heroicons/react/24/outline";
 import { db } from "@/db";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import { useSyncStore } from "@/stores/syncStore";
 import { useActiveSite } from "@/hooks/useActiveSite";
+import { useRealtimeSubscription } from "@/hooks/useRealtimeSubscription";
 import { DEFAULT_SITE_NAME } from "@/services/activeSite";
+import { serviceDateOf, siteKeyFromName } from "@/services/queueTickets";
+import { syncNow } from "@/sync/adapter";
 import type { FlowStage } from "@/services/patientFlow";
 import { formatNigerianDateTime } from "@/utils/dateFormat";
 import {
@@ -24,6 +28,7 @@ import {
   diffNewCalls,
   displayFreshness,
   isJustCalled,
+  rowsForSiteToday,
   toDisplayRow,
   type DisplayQueueRow,
   type FreshnessKind,
@@ -33,12 +38,16 @@ import { useNow } from "./useNow";
 
 // Waiting-room TV screen. PUBLIC: ticket numbers and destinations only.
 // Rows are reduced to DisplayQueueRow inside the query, so no patient id,
-// name or other identifying field ever reaches this component.
+// name or other identifying field ever reaches this component. It shows
+// this site's tickets for today (Africa/Lagos day). With cloud sync and an
+// online sign-in, a change to the queue on any device triggers a sync here
+// (realtime), so calls from other desks appear within seconds.
 
 type DisplayData = { rows: DisplayQueueRow[]; failed: boolean };
 
 const FRESHNESS_ICON: Record<FreshnessKind, typeof SignalIcon> = {
   offline: SignalSlashIcon,
+  signed_out: UserMinusIcon,
   stale: ExclamationTriangleIcon,
   local: ComputerDesktopIcon,
   online: SignalIcon,
@@ -66,6 +75,66 @@ function sameDay(a: number, b: number): boolean {
   );
 }
 
+/** Wait after a queue change before syncing, so a burst becomes one sync. */
+const REALTIME_SYNC_DELAY_MS = 1500;
+/** Fallback when realtime is unavailable: sync this often while open. */
+const POLL_SYNC_MS = 60_000;
+
+/**
+ * Keeps the display's copy of the queue fresh: syncs when the server
+ * reports a queue change (realtime) and every minute as a fallback. Only
+ * with cloud sync, a connection and an online sign-in.
+ */
+function useDisplaySync(enabled: boolean): void {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const running = useRef(false);
+  const again = useRef(false);
+
+  const run = useCallback(async () => {
+    if (running.current) {
+      again.current = true;
+      return;
+    }
+    running.current = true;
+    try {
+      do {
+        again.current = false;
+        await syncNow();
+      } while (again.current);
+    } catch (err) {
+      console.warn(
+        "Waiting-room display could not sync:",
+        err instanceof Error ? err.name : "unknown",
+      );
+    } finally {
+      running.current = false;
+    }
+  }, []);
+
+  const schedule = useCallback(() => {
+    if (timer.current) return;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      void run();
+    }, REALTIME_SYNC_DELAY_MS);
+  }, [run]);
+
+  useRealtimeSubscription("queue", { onChange: schedule, enabled });
+
+  useEffect(() => {
+    if (!enabled) return;
+    void run();
+    const id = setInterval(() => void run(), POLL_SYNC_MS);
+    return () => {
+      clearInterval(id);
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
+    };
+  }, [enabled, run]);
+}
+
 function StageChip({ stage, label, large }: { stage: FlowStage; label: string; large?: boolean }) {
   return (
     <span
@@ -90,9 +159,14 @@ export default function PublicDisplay() {
   const now = useNow(5_000);
   const online = useSyncStore((s) => s.isOnline);
   const lastSyncAt = useSyncStore((s) => s.lastSuccessAt);
+  const cloudSession = useSyncStore((s) => s.cloudSession);
   const { site, loading: siteLoading } = useActiveSite();
   // Wait for the site setting instead of flashing the default name first.
   const siteName = siteLoading ? "" : (site?.name ?? DEFAULT_SITE_NAME);
+  const siteKey = siteLoading ? null : siteKeyFromName(site?.name, DEFAULT_SITE_NAME);
+  const today = serviceDateOf(now);
+
+  useDisplaySync(isSupabaseEnabled && online && cloudSession === "signed_in");
 
   const data: DisplayData | undefined = useLiveQuery(async () => {
     try {
@@ -108,8 +182,11 @@ export default function PublicDisplay() {
   }, []);
 
   const board = useMemo(
-    () => (data ? buildDisplayBoard(data.rows) : null),
-    [data],
+    () =>
+      data && siteKey
+        ? buildDisplayBoard(rowsForSiteToday(data.rows, siteKey, today))
+        : null,
+    [data, siteKey, today],
   );
   const failed = data?.failed ?? false;
 
@@ -154,6 +231,8 @@ export default function PublicDisplay() {
         lastChangeAt: board.lastChangeAt,
         activeCount: board.activeCount,
         now,
+        cloudSignedIn:
+          cloudSession === "unknown" ? undefined : cloudSession === "signed_in",
       })
     : null;
   const FreshnessIcon = freshness ? FRESHNESS_ICON[freshness.kind] : null;

@@ -5,6 +5,7 @@
 // patient ids or notes. `toDisplayRow` strips a queue row down to the fields
 // the screen needs before anything else touches it.
 import type { QueueItem } from "@/db";
+import { serviceDateOf } from "@/services/queueTickets";
 import {
   FLOW_STAGES,
   FLOW_STAGE_LABELS,
@@ -20,6 +21,9 @@ export interface DisplayQueueRow {
   ticketNumber?: string;
   updatedAt?: Date | string | number;
   queuedAt?: Date | string | number;
+  /** Site and Africa/Lagos service day of the ticket (not identifying). */
+  siteKey?: string;
+  serviceDate?: string;
 }
 
 export interface DisplayCall {
@@ -53,9 +57,8 @@ export interface DisplayBoard {
   /** Next tickets for every stage, in flow order. */
   next: DisplayNextGroup[];
   /**
-   * Active queue rows that have no ticket number on this device. Ticket
-   * numbers are device-local (not in the sync column map), so rows pulled
-   * from another device arrive without one.
+   * Active queue rows that have no ticket number on this device (for
+   * example rows uploaded by an older app version on another device).
    */
   withoutTicket: number;
   /** Waiting + in-service rows (all stages). */
@@ -80,7 +83,27 @@ export function toDisplayRow(item: QueueItem): DisplayQueueRow {
     ticketNumber: item.ticketNumber,
     updatedAt: item.updatedAt,
     queuedAt: item.queuedAt,
+    siteKey: item.siteKey,
+    serviceDate: item.serviceDate,
   };
+}
+
+/**
+ * Rows for this screen: this site's tickets for today (Africa/Lagos).
+ * Rows from older app versions carry no site or day; they count when they
+ * were queued today (their site is unknown, so they are shown).
+ */
+export function rowsForSiteToday(
+  rows: DisplayQueueRow[],
+  siteKey: string,
+  serviceDate: string,
+): DisplayQueueRow[] {
+  return rows.filter((r) => {
+    if (r.siteKey && r.siteKey !== siteKey) return false;
+    if (r.serviceDate) return r.serviceDate === serviceDate;
+    const when = r.queuedAt ?? r.updatedAt;
+    return when !== undefined && serviceDateOf(when) === serviceDate;
+  });
 }
 
 function toMs(d: Date | string | number | undefined | null): number | null {
@@ -197,7 +220,7 @@ export function isJustCalled(call: DisplayCall, now: number): boolean {
   return age > -JUST_CALLED_MS && age < JUST_CALLED_MS;
 }
 
-export type FreshnessKind = "offline" | "stale" | "local" | "online";
+export type FreshnessKind = "offline" | "signed_out" | "stale" | "local" | "online";
 
 export interface Freshness {
   kind: FreshnessKind;
@@ -216,8 +239,9 @@ function formatMinutes(m: number): string {
 
 /**
  * How far the screen can be trusted. Offline wins (it explains everything
- * else), then "no changes for a while" while people are still queued, then
- * whether this device shares data at all.
+ * else), then a missing online sign-in (nothing from other devices can
+ * arrive), then "no changes for a while" while people are still queued,
+ * then whether this device shares data at all.
  */
 export function displayFreshness(input: {
   online: boolean;
@@ -225,6 +249,8 @@ export function displayFreshness(input: {
   lastChangeAt: number | null;
   activeCount: number;
   now: number;
+  /** false when this screen has no online sign-in (it cannot sync). */
+  cloudSignedIn?: boolean;
 }): Freshness {
   const { online, syncEnabled, lastChangeAt, activeCount, now } = input;
 
@@ -235,6 +261,16 @@ export function displayFreshness(input: {
       label: "Offline",
       detail:
         "Tickets called on other devices will not appear until the connection returns.",
+    };
+  }
+
+  if (syncEnabled && input.cloudSignedIn === false) {
+    return {
+      kind: "signed_out",
+      tone: "warning",
+      label: "Not signed in online",
+      detail:
+        "Tickets from other devices cannot appear. Staff: sign in online on this screen.",
     };
   }
 

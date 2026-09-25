@@ -48,8 +48,7 @@ mBHR is a mature, well-architected offline-first PWA for Nigerian medical outrea
 
 **Location:** `src/services/portalSyncWorker.ts:65`  
 **Finding:** `// TODO: Implement actual SMS/Email delivery` — the production code path marks messages as "sent" without transmitting them. Patients never receive portal invitations, appointment reminders, or medication alerts.  
-**Note:** `TermiiGateway` in `src/services/messaging.ts` is fully implemented and uses the Termii Nigeria SMS API. The disconnect is in `portalSyncWorker.ts` which never calls it.  
-**Next step:** Wire `portalSyncWorker.ts` to call `MessageService` using `TermiiGateway` when `VITE_TERMII_API_KEY` is set. Requires **infrastructure decision** on SMS provider and key management. See Technical Support section T-1.
+**Update (superseded):** SMS is no longer sent from the browser. There is no client-side Termii gateway and no `VITE_` SMS key: all SMS goes through the `send-sms-reminder` and `send-otp-sms` edge functions, which hold the provider secrets (`TERMII_API_KEY`, `TERMII_SENDER_ID`) server-side, require a signed-in staff account with an SMS role, and send only to the number on the patient's record. See `docs/deployment/SMS_SETUP_TERMII.md` for the current setup. Any Termii key ever set as a `VITE_` variable must be rotated.
 
 ### 🟠 C5 — Audit Log Coverage is Incomplete
 

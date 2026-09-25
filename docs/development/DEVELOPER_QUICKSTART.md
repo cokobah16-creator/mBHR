@@ -485,6 +485,27 @@ await queueManagement['reorderQueue']('vitals')
 
 ---
 
+## Changing Clinical Logic
+
+Any pull request that touches clinical thresholds, interpretation,
+medication guidance, lab interpretation, triage, vitals ranges, diagnosis
+support, contraindication logic, or patient-facing medical advice must
+either update `docs/clinical/CLINICAL_LOGIC_CHANGES.md` (add a change-log
+row, and an unticked checklist item for anything a clinician must review)
+or say "No clinical logic change" in its description. The **Clinical logic
+gate** CI check enforces this; the list of files it watches is in
+`scripts/check-clinical-logic-change.mjs`. Add new clinical files to that
+list in the same pull request. Check a branch locally with:
+
+```bash
+PR_BODY="" node scripts/check-clinical-logic-change.mjs --base origin/main --head HEAD
+```
+
+All clinical decision-support logic must be signed off by a qualified
+clinician before production use (section 2 of that file).
+
+---
+
 ## Best Practices
 
 1. **Always mark records as dirty** when modifying offline
