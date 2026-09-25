@@ -55,8 +55,11 @@ and offline, and refuses anyone under 18 (`isMinor` in
 clinic record whose date of birth shows the person is under 18: the online
 sign-up and email lookup (`src/hooks/useAuth.ts`,
 `src/services/patientService.ts`) and the offline registration and
-date-of-birth login (`src/services/patientPortalAuth.ts`) all refuse. A
-record with no date of birth still links, and accounts already linked to a
+date-of-birth login (`src/services/patientPortalAuth.ts`) all refuse. So
+does the server: `portal_link_patient_record`, which any signed-in account
+can call, refuses a child's record and never creates one for an under-18
+date of birth (`20260926000210_portal_link_adults_only.sql`). A record
+with no date of birth still links, and accounts already linked to a
 child's record are not changed. Staff can still turn on portal access for a
 child's record, and there is no guardian record or guardian consent yet
 (checklist item 17).
