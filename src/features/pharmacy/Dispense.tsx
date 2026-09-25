@@ -32,7 +32,10 @@ import {
   dispensePatientBlock,
   identityLine,
   resolveDispensePatient,
+  secondIdentifierOptions,
+  uniqueAllergens,
   type DispensePatient,
+  type SecondIdentifierKind,
 } from "./dispensePatient";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 
@@ -160,6 +163,11 @@ export default function Dispense() {
   const [error, setError] = useState("");
   const [allergyAck, setAllergyAck] = useState(false);
   const [resolved, setResolved] = useState<DispensePatient | undefined>(undefined);
+  // Second patient identifier, confirmed with the patient or caregiver
+  // before the medicine is handed over (clinical change log row 20).
+  const [ticket, setTicket] = useState<string | undefined>(undefined);
+  const [idKind, setIdKind] = useState<SecondIdentifierKind | "">("");
+  const [idConfirmed, setIdConfirmed] = useState(false);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -186,6 +194,9 @@ export default function Dispense() {
     setError("");
     setAllergens([]);
     setResolved(undefined);
+    setTicket(undefined);
+    setIdKind("");
+    setIdConfirmed(false);
     if (!selectedPatientId) {
       setAllergyStatus("ready");
       return;
@@ -203,9 +214,16 @@ export default function Dispense() {
           .anyOf(who.chain)
           .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
           .toArray();
+        const queue = who.ok
+          ? await db.queue.where("patientId").equals(who.patient.id).toArray()
+          : [];
         if (stale) return;
+        const active = queue
+          .filter((q) => q.status !== "done")
+          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
         setResolved(who);
-        setAllergens([...new Set(as.map((a) => a.allergen))]);
+        setTicket(active?.ticketNumber != null ? String(active.ticketNumber) : undefined);
+        setAllergens(uniqueAllergens(as.map((a) => a.allergen)));
         setAllergyStatus("ready");
       })
       .catch(() => {
@@ -245,6 +263,8 @@ export default function Dispense() {
   // Only to a patient identified on this device (following merges to the
   // record kept), so the allergy check is about the right person.
   const patientBlock = dispensePatientBlock(resolved);
+  const idOptions = resolved?.ok ? secondIdentifierOptions(resolved.patient, ticket) : [];
+  const idChoice = idOptions.find((o) => o.kind === idKind);
   const canDispense =
     !!chosen &&
     mayDispense &&
@@ -255,6 +275,8 @@ export default function Dispense() {
     mode !== "missing" &&
     allergyStatus === "ready" &&
     (allergyHits.length === 0 || allergyAck) &&
+    !!idChoice &&
+    idConfirmed &&
     !loading;
 
   function itemName(itemId: string) {
@@ -291,6 +313,18 @@ export default function Dispense() {
         },
         { id: currentUser.id, role: currentUser.role },
       );
+
+      // Which identifier was confirmed, never its value.
+      await db.auditLogs
+        .add({
+          id: ulid(),
+          actorRole: currentUser.role ?? "unknown",
+          action: `dispense_identity_confirmed_${idKind}`,
+          entity: "prescription",
+          entityId: chosen.id,
+          at: new Date(),
+        })
+        .catch(() => undefined);
 
       if (allergyHits.length > 0) {
         await db.auditLogs
@@ -640,6 +674,56 @@ export default function Dispense() {
                     <span>I have checked this with the prescriber and will dispense anyway.</span>
                   </label>
                 </div>
+              )}
+
+              {resolved?.ok && (
+                <fieldset className="rounded-md border border-line p-4">
+                  <legend className="px-1 text-label text-ink">Confirm who you are handing to</legend>
+                  <p className="text-body text-ink-secondary">
+                    Ask the patient or caregiver to tell you the patient's full name and one more identifier. Do not
+                    read them out. Compare what they say with this record.
+                  </p>
+                  <p className="mt-2 text-body text-ink">
+                    Name: <strong>{`${resolved.patient.givenName} ${resolved.patient.familyName}`}</strong>
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {idOptions.map((o) => (
+                      <label key={o.kind} className="flex min-h-touch-target items-center gap-2 text-body text-ink">
+                        <input
+                          type="radio"
+                          name="second-identifier"
+                          checked={idKind === o.kind}
+                          onChange={() => {
+                            setIdKind(o.kind);
+                            setIdConfirmed(false);
+                          }}
+                          className="h-4 w-4"
+                        />
+                        <span>
+                          {o.label}: <strong>{o.value}</strong>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <label className="mt-3 flex min-h-touch-target items-start gap-2 text-body text-ink">
+                    <input
+                      type="checkbox"
+                      checked={idConfirmed}
+                      disabled={!idChoice}
+                      onChange={(e) => setIdConfirmed(e.target.checked)}
+                      className="mt-1 h-4 w-4"
+                    />
+                    <span>
+                      The patient or caregiver told me the name and {idChoice ? idChoice.spoken : "the identifier chosen above"}, and both match this record.
+                    </span>
+                  </label>
+                  {!idConfirmed && (
+                    <p className="mt-1 text-caption text-ink-muted">
+                      Dispensing stays blocked until both identifiers are confirmed. If they do not match, do not hand
+                      over the medicine.
+                    </p>
+                  )}
+                </fieldset>
               )}
 
               {plans.map(({ line, item, fefo }, idx) => (

@@ -222,9 +222,11 @@ export function Layout({ children }: LayoutProps) {
   const hasRole = (...roles: string[]) => !!role && roles.includes(role);
   const hasPerm = (p: Parameters<typeof can>[1]) => !!role && can(role, p);
 
-  // Staff who can open /labs see unreviewed critical results in the shell,
-  // re-read every minute, without having to open or refresh /labs.
-  const criticalLabs = useCriticalLabCount(hasRole("doctor", "nurse", "admin")) ?? 0;
+  // Clinical staff who can open /labs (doctors and nurses) see unreviewed
+  // critical results in the shell, re-read every minute, without having to
+  // open or refresh /labs. A generic administrator does not get the alert
+  // (clinician sign-off on change log row 22).
+  const criticalLabs = useCriticalLabCount(hasRole("doctor", "nurse")) ?? 0;
   const criticalLabsLabel = `${criticalLabs} critical lab result${criticalLabs === 1 ? "" : "s"} not yet reviewed`;
 
   // Navigation mirrors the route guards in App.tsx, so staff only see pages
