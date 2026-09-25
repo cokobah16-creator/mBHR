@@ -204,9 +204,13 @@ queue priority change that follows the owner decision in section 3.3.
       These decisions approve the workflow and patient-safety changes only.
       They do not approve any allergy-matching rule, laboratory reference
       range, medication dose, treatment recommendation or triage threshold.
-      Rows 18 to 22 stay unticked until the reviewer's name, professional
-      role, registration number and date are recorded (the returned form
-      left them blank).
+      Signed off: Emeke Okobah, Director (no professional registration
+      given), 2026-09-25. Signature: KCO.
+      Decision: row 18 accept; rows 19 to 22 change as described above.
+      Rows 18 to 22 stay unticked: this section asks for a qualified
+      clinician's sign-off with professional registration, and none was
+      given. They can be ticked when a registered clinician countersigns,
+      or when the owner records that the Director's sign-off is enough.
 
 | # | Change | Why | Where | Revert by |
 | --- | --- | --- | --- | --- |
@@ -423,7 +427,7 @@ clinician must sign off, or write "None" and say why.
 
 | Date | Pull request | What changed | Files | Checklist item (section 2) | Clinician sign-off |
 | --- | --- | --- | --- | --- | --- |
-| 2026-09-25 | Clinician sign-off follow-up (rows 18 to 22) | Records the clinician's decisions on rows 18 to 22 and makes the app-only changes they asked for. Dispensing now needs the pharmacist to confirm that the patient or caregiver gave the patient's name and a second identifier (date of birth, MBHR ID, or the ticket number when a date of birth can't be given) matching the record. The same allergy recorded on several records of a merge chain, or with different case or spacing, shows as one warning. A merged-away record's page shows its old and kept MBHR ID, when and by whom it was merged, and why. The critical lab banner is shown to doctors and nurses, no longer to administrators. No allergy matching rule, range, dose or threshold changed. | `src/features/pharmacy/Dispense.tsx`, `src/features/pharmacy/dispensePatient.ts`, `src/components/patient/MergeProvenance.tsx`, `src/pages/PatientDetail.tsx`, `src/components/Layout.tsx` | 2.2 rows 18, 20, 21, 22 | Decisions received 2026-09-25; signatory details pending |
+| 2026-09-25 | Clinician sign-off follow-up (rows 18 to 22) | Records the clinician's decisions on rows 18 to 22 and makes the app-only changes they asked for. Dispensing now needs the pharmacist to confirm that the patient or caregiver gave the patient's name and a second identifier (date of birth, MBHR ID, or the ticket number when a date of birth can't be given) matching the record. The same allergy recorded on several records of a merge chain, or with different case or spacing, shows as one warning. A merged-away record's page shows its old and kept MBHR ID, when and by whom it was merged, and why. The critical lab banner is shown to doctors and nurses, no longer to administrators. No allergy matching rule, range, dose or threshold changed. | `src/features/pharmacy/Dispense.tsx`, `src/features/pharmacy/dispensePatient.ts`, `src/components/patient/MergeProvenance.tsx`, `src/pages/PatientDetail.tsx`, `src/components/Layout.tsx` | 2.2 rows 18, 20, 21, 22 | Emeke Okobah, Director, 2026-09-25 (no professional registration given); rows stay unticked |
 | 2026-09-25 | Critical lab result alert (in app) | Doctors, nurses and admins see the number of unreviewed critical lab results on the Labs menu item and in a banner on every other page, refreshed every minute while online, without opening `/labs`. The consultation Labs tab shows each order's most severe result with its value and review state instead of a plain "Completed". No interpretation, range or review rule changed. | `src/hooks/useCriticalLabCount.ts`, `src/components/Layout.tsx`, `src/features/labs/LabOrderForm.tsx`, `src/features/labs/labWorklist.ts`, `src/services/labs.ts` | 2.2 row 22 | Pending |
 | 2026-09-25 | Queue: urgent first in every waiting line | The staff queue screens (queue board "Call next", the Queue page and the ticket board) now order each waiting line urgent first, then by queue position, then by time queued. Positions are renumbered on each device and can arrive out of date from another station; an urgent patient could then sit behind non-urgent ones. This is the order row 17 already intends (`insertionPosition`), so nothing changes while positions agree. Who is urgent, and how priority is carried or lowered, are unchanged. | `src/services/queuePriority.ts` `compareWaiting`; `src/components/EnhancedQueueBoard.tsx`; `src/pages/Queue.tsx`; `src/features/tickets/queueBoardModel.ts` `splitStage` | 2.2 row 17 (same ordering rule) | Pending |
 | 2026-09-25 | Dispense: patient identity | The dispense list shows MBHR ID, sex and age for each prescription, the dispense panel shows the patient header, and dispensing is blocked when the prescription's patient cannot be resolved to a record on the device (missing, or merged into a missing record). | `src/features/pharmacy/Dispense.tsx`, `src/features/pharmacy/dispensePatient.ts` | 2.2 row 20 | Pending |
