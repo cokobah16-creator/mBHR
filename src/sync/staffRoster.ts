@@ -11,6 +11,7 @@
 import { supabase } from "@/lib/supabase";
 import { db, type User } from "@/db";
 import { accessFromAppUser, endSessionIfRevoked, isDeactivatedAppUser } from "@/stores/auth";
+import { isStaffRole } from "@/auth/roles";
 import { mergePulledRow } from "./pullMerge";
 import { serverStampMarker } from "./serverStamp";
 
@@ -69,6 +70,42 @@ export function keepLocalRevocation(
   return { ...merged, isActive: 0, accessConflict: 1 };
 }
 
+/**
+ * Whether a download may switch off staff it does not list: only when it is
+ * the whole directory as an active staff member sees it. That needs more
+ * than one row (one row is usually just the caller's own record), every row
+ * the server counted (not a page cut short by the server's row limit), and
+ * the caller's own record among them with an active staff role (the server
+ * shows the directory to staff only). Anything else is a partial answer:
+ * nobody is switched off for being missing from it.
+ */
+export function isFullStaffDirectory(
+  rows: Row[],
+  serverCount: number | null | undefined,
+  callerId: string | null | undefined,
+): boolean {
+  if (rows.length <= 1) return false;
+  if (typeof serverCount !== "number" || serverCount !== rows.length) return false;
+  if (!callerId) return false;
+  const own = rows.find(
+    (raw) => raw.id !== null && raw.id !== undefined && String(raw.id) === callerId,
+  );
+  if (!own) return false;
+  const caller = staffFromServerRow(own);
+  return caller.isActive === 1 && isStaffRole(caller.role);
+}
+
+/** The online account the server answered for, or null. Never throws. */
+async function signedInAccountId(): Promise<string | null> {
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export type RosterPullResult =
   | { ok: true; staff: number; deactivated: number }
   | { ok: false; reason: "not-configured" | "error" };
@@ -81,8 +118,9 @@ export type RosterPullResult =
  * - Existing records get the server's identity fields; their PIN is kept.
  * - A record this device got from the server earlier that the server no
  *   longer lists is switched off here, so a removed person cannot keep
- *   signing in offline with an old PIN. Records created on this device and
- *   never synced are left alone.
+ *   signing in offline with an old PIN, but only when the answer is the
+ *   whole directory (isFullStaffDirectory). Records created on this device
+ *   and never synced are left alone.
  *
  * Needs an online sign-in (the server only shows the directory to staff).
  * Never throws.
@@ -91,13 +129,19 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
   if (!supabase) return { ok: false, reason: "not-configured" };
 
   let rows: Row[];
+  let serverCount: number | null = null;
   try {
-    const { data, error } = await supabase.from("app_users").select("*");
+    // count: how many rows the server holds for this caller, to tell the
+    // whole directory from a page cut short by the server's row limit.
+    const { data, error, count } = await supabase
+      .from("app_users")
+      .select("*", { count: "exact" });
     if (error) {
       console.warn("[roster] staff directory download failed", error.code ?? "unknown");
       return { ok: false, reason: "error" };
     }
     rows = (data ?? []) as Row[];
+    serverCount = typeof count === "number" ? count : null;
   } catch (error) {
     console.warn(
       "[roster] staff directory download failed",
@@ -109,10 +153,10 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
   // An empty answer usually means the server hid the directory (for example
   // row-level security for a deactivated account), not that everyone left.
   if (rows.length === 0) return { ok: true, staff: 0, deactivated: 0 };
-  // A single row is usually just the signed-in person's own record (a
-  // server whose row-level security shows staff only themselves). That is
-  // not the directory, so nobody is switched off for being missing from it.
-  const fullDirectory = rows.length > 1;
+  // A single row (usually just the signed-in person's own record), a page
+  // the server cut short, or an answer to someone who is not active staff
+  // is not the directory: nobody is switched off for being missing from it.
+  const fullDirectory = isFullStaffDirectory(rows, serverCount, await signedInAccountId());
 
   const syncedAt = new Date().toISOString();
   const serverIds = new Set<string>();

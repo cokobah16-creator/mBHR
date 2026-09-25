@@ -12,6 +12,8 @@ import {
 } from "@/lib/supabaseAuthStorage";
 import { useSyncStore } from "@/stores/syncStore";
 import { clearApiCaches } from "@/services/clearApiCaches";
+import { hasDevicePin } from "@/db/offlineAccess";
+import { isIdleExpired } from "@/auth/idle";
 
 /**
  * Why the last online sign-in was refused although the email and password
@@ -53,6 +55,12 @@ interface AuthState {
   lockoutUntil: number | null;
   sessionExpiresAt: number | null;
   lastActivityAt: number | null;
+  /**
+   * When the session was locked for inactivity (src/components/IdleLock.tsx),
+   * or null. Kept across reloads: only the same person's PIN (unlockSession)
+   * or signing out ends a lock. Means nothing while signed out.
+   */
+  lockedAt: number | null;
 
   // Actions
   /** Offline sign-in: the chosen account's PIN on this device. */
@@ -65,6 +73,10 @@ interface AuthState {
   checkLockout: () => boolean;
   updateActivity: () => void;
   checkSessionExpiry: () => boolean;
+  /** Locks the signed-in session (inactivity). */
+  lockSession: () => void;
+  /** Lifts the lock with the signed-in person's own device PIN. */
+  unlockSession: (pin: string) => Promise<boolean>;
 }
 
 /**
@@ -345,6 +357,31 @@ async function markVerifiedOnline(user: User, roleFromServer: boolean): Promise<
   return { ...user, ...fields };
 }
 
+/** Clears a restored session (expired or unusable) before the app uses it. */
+function clearRestoredSession(state: AuthState): void {
+  state.currentUser = null;
+  state.currentSession = null;
+  state.isAuthenticated = false;
+  state.authMode = null;
+  state.cloudUserId = null;
+  state.sessionExpiresAt = null;
+  state.lastActivityAt = null;
+  state.lockedAt = null;
+}
+
+/**
+ * A restored session left idle (the app was closed, or the tablet slept)
+ * opens locked, so a reload never resets the idle clock. Otherwise activity
+ * counts from now.
+ */
+function restoreActivity(state: AuthState, now: number): void {
+  if (state.lockedAt || isIdleExpired(state.lastActivityAt, now)) {
+    state.lockedAt = state.lockedAt ?? now;
+  } else {
+    state.lastActivityAt = now;
+  }
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -358,6 +395,7 @@ export const useAuthStore = create<AuthState>()(
       lockoutUntil: null,
       sessionExpiresAt: null,
       lastActivityAt: null,
+      lockedAt: null,
 
       login: async (userId: string, pin: string) => {
         const state = get();
@@ -415,6 +453,7 @@ export const useAuthStore = create<AuthState>()(
               lockoutUntil: null,
               sessionExpiresAt: expiresAt,
               lastActivityAt: now,
+              lockedAt: null,
             });
 
             await auditSignIn("sign_in_offline", user.id, user.role);
@@ -637,6 +676,7 @@ export const useAuthStore = create<AuthState>()(
             lockoutUntil: null,
             sessionExpiresAt: now + STAFF_SESSION_DURATION,
             lastActivityAt: now,
+            lockedAt: null,
           });
           // The sign-in event fired before this session existed, so it was
           // not yet counted as this staff member's: it is now.
@@ -732,6 +772,9 @@ export const useAuthStore = create<AuthState>()(
         const state = get();
         const now = Date.now();
 
+        // Touching the lock screen is not activity: only the PIN unlocks.
+        if (state.isAuthenticated && state.lockedAt) return;
+
         // Extend session if still valid
         if (state.sessionExpiresAt && now < state.sessionExpiresAt) {
           // Calculate time remaining
@@ -769,6 +812,70 @@ export const useAuthStore = create<AuthState>()(
 
         return false;
       },
+
+      lockSession: () => {
+        const { isAuthenticated, currentUser, lockedAt } = get();
+        if (!isAuthenticated || !currentUser || lockedAt) return;
+        set({ lockedAt: Date.now() });
+        logger.info("[Auth] Session locked after inactivity");
+        void auditSignIn("session_locked_idle", currentUser.id, currentUser.role);
+      },
+
+      unlockSession: async (pin: string) => {
+        const state = get();
+        const { currentUser, currentSession } = state;
+        if (!state.isAuthenticated || !currentUser) return false;
+        if (state.checkLockout()) return false;
+
+        // Only the signed-in person's own PIN, read fresh from this device.
+        let user: User | undefined;
+        try {
+          user = await db.users.get(currentUser.id);
+        } catch (error) {
+          logger.error(
+            "[Auth] Could not read the account to unlock:",
+            error instanceof Error ? error.name : typeof error,
+          );
+          return false;
+        }
+
+        // Switched off, or no PIN here any more, while locked: the lock
+        // cannot be lifted, so the session ends and sign-in starts again.
+        if (!user || user.isActive !== 1 || !isStaffRole(user.role) || !hasDevicePin(user)) {
+          await auditSignIn("unlock_refused_no_access", currentUser.id, currentUser.role);
+          await get().logout();
+          return false;
+        }
+
+        const ok =
+          /^\d{6}$/.test(pin) &&
+          (await verifyPin(pin, user.pinHash, user.pinSalt).catch(() => false));
+
+        // Signed out, or another session opened, while the PIN was checked.
+        if (get().currentSession?.id !== currentSession?.id) return false;
+
+        if (ok) {
+          set({
+            currentUser: sessionUser(user),
+            lockedAt: null,
+            lastActivityAt: Date.now(),
+            failedAttempts: 0,
+            lockoutUntil: null,
+          });
+          await auditSignIn("session_unlocked", user.id, user.role);
+          return true;
+        }
+
+        // Wrong PINs count towards the same lockout as sign-in. At the limit
+        // the session ends and the sign-in screen is locked for a while.
+        get().incrementFailedAttempts();
+        await auditSignIn("unlock_pin_failed", user.id, user.role);
+        if (get().lockoutUntil) {
+          await auditSignIn("offline_pin_lockout", user.id, user.role);
+          await get().logout();
+        }
+        return false;
+      },
     }),
     {
       name: "mbhr-auth",
@@ -782,6 +889,7 @@ export const useAuthStore = create<AuthState>()(
         cloudUserId: state.cloudUserId,
         sessionExpiresAt: state.sessionExpiresAt,
         lastActivityAt: state.lastActivityAt,
+        lockedAt: state.lockedAt,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
@@ -792,6 +900,18 @@ export const useAuthStore = create<AuthState>()(
         // person signs in online again.
         state.authMode = state.authMode ?? null;
         state.cloudUserId = state.cloudUserId ?? null;
+        state.lockedAt = state.lockedAt ?? null;
+
+        // An online sign-in whose person left before choosing a device PIN
+        // is never picked up again on a later start: whoever opens the app
+        // next must not choose that person's PIN. It ends here, with its
+        // online sign-in, as an expired session does.
+        if (state.isAuthenticated && state.currentUser && !hasDevicePin(state.currentUser)) {
+          logger.info("[Auth] Unfinished device PIN setup on rehydration: signed out");
+          clearRestoredSession(state);
+          startCloudSignOut();
+          return;
+        }
 
         // Check if session is expired on rehydration
         if (state.sessionExpiresAt && state.isAuthenticated) {
@@ -805,13 +925,7 @@ export const useAuthStore = create<AuthState>()(
             logger.info(
               "[Auth] Session expired on rehydration (grace period exceeded)",
             );
-            state.currentUser = null;
-            state.currentSession = null;
-            state.isAuthenticated = false;
-            state.authMode = null;
-            state.cloudUserId = null;
-            state.sessionExpiresAt = null;
-            state.lastActivityAt = null;
+            clearRestoredSession(state);
             // Its online sign-in ends too, as a logout would: the next
             // person on this device must not sync under it.
             startCloudSignOut();
@@ -819,10 +933,9 @@ export const useAuthStore = create<AuthState>()(
             // Slightly expired but within grace period - renew it
             logger.info("[Auth] Session within grace period, extending");
             state.sessionExpiresAt = now + STAFF_SESSION_DURATION;
-            state.lastActivityAt = now;
+            restoreActivity(state, now);
           } else {
-            // Session still valid - update last activity
-            state.lastActivityAt = now;
+            restoreActivity(state, now);
             logger.info(
               "[Auth] Session restored successfully",
               `Time remaining: ${Math.floor(timeRemaining / 60000)} minutes`,
@@ -857,6 +970,50 @@ export async function endSessionIfRevoked(): Promise<boolean> {
   }
   logger.info("[Auth] Signed-in account was switched off; ending the session");
   await auditSignIn("session_ended_deactivated", currentUser.id, currentUser.role);
+  await useAuthStore.getState().logout();
+  return true;
+}
+
+/**
+ * While signed in online, asks the server again for the person's own staff
+ * record, as sign-in does, and ends the session when it no longer lists them
+ * as active staff (record removed, switched off, or no staff role). The
+ * record on this device is switched off too, so their PIN stops working
+ * here; a later staff directory download that lists them again switches it
+ * back on. Runs after every sync (src/sync/staffRosterSync.ts), so it repeats
+ * while the device is online. A lookup that fails changes nothing: work
+ * carries on offline. Returns true when the session was ended. Never throws.
+ */
+export async function revalidateOnlineSession(): Promise<boolean> {
+  const { isAuthenticated, currentUser, currentSession, authMode, cloudUserId } =
+    useAuthStore.getState();
+  if (!isAuthenticated || !currentUser || authMode !== "online" || !cloudUserId) {
+    return false;
+  }
+  const account = await readServerStaffAccount(cloudUserId);
+  if (account.status === "error") return false;
+  if (account.status === "found" && !account.deactivated && isStaffRole(account.role)) {
+    return false;
+  }
+  // Signed out, or another session opened, while the server was asked.
+  if (useAuthStore.getState().currentSession?.id !== currentSession?.id) return false;
+
+  // Same scope as sign-in: a switched-off account's record is switched off
+  // here; without a staff record, only a record under the same online id.
+  const deactivated = account.status === "found" && account.deactivated;
+  if (deactivated || currentUser.id === cloudUserId) {
+    try {
+      await db.users.update(currentUser.id, { isActive: 0, updatedAt: new Date() });
+    } catch {
+      // The session still ends below.
+    }
+  }
+  logger.info("[Auth] The server no longer lists this account as active staff; ending the session");
+  await auditSignIn(
+    deactivated ? "session_ended_deactivated" : "session_ended_not_staff",
+    currentUser.id,
+    currentUser.role,
+  );
   await useAuthStore.getState().logout();
   return true;
 }

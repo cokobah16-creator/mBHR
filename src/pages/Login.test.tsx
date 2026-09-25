@@ -15,10 +15,12 @@ const { authState, mocks } = vi.hoisted(() => {
     isAuthenticated: false,
     failedAttempts: 0,
     lockoutUntil: null as number | null,
+    lastActivityAt: null as number | null,
     login: vi.fn(),
     loginOnline: vi.fn(),
     logout: vi.fn(),
     setCurrentUser: vi.fn(),
+    updateActivity: vi.fn(),
     signInRefusal: null as null | string,
   };
   return { authState, mocks };
@@ -106,6 +108,7 @@ beforeEach(() => {
   authState.isAuthenticated = false;
   authState.failedAttempts = 0;
   authState.lockoutUntil = null;
+  authState.lastActivityAt = null;
   authState.signInRefusal = null;
   mocks.isOnlineSyncEnabled.mockReturnValue(true);
   mocks.pullStaffRoster.mockResolvedValue({ ok: true, staff: 3, deactivated: 0 });
@@ -175,6 +178,7 @@ describe("Login on a device that has never been set up", () => {
       confirmPin: "482913",
     });
     expect(authState.setCurrentUser).toHaveBeenCalledWith(withPin);
+    expect(authState.updateActivity).toHaveBeenCalled();
   });
 
   it("signs the person out if they cancel enrollment", async () => {
@@ -255,15 +259,32 @@ describe("Login on a device with enrolled staff", () => {
     );
   });
 
-  it("resumes enrollment for someone signed in online without a PIN", async () => {
+  it("resumes enrollment for someone who just signed in online without a PIN", async () => {
     authState.isAuthenticated = true;
     authState.currentUser = { ...ada, pinHash: "", pinSalt: "" };
+    authState.lastActivityAt = Date.now() - 60_000;
     mocks.deviceAccount.mockResolvedValue({ ...ada, pinHash: "", pinSalt: "" });
     renderLogin();
 
     expect(
       await screen.findByRole("heading", { name: "Choose a PIN for this device" }),
     ).toBeInTheDocument();
+    expect(authState.logout).not.toHaveBeenCalled();
+  });
+
+  it("ends an online sign-in whose PIN setup was left unfinished, instead of offering it to the next person", async () => {
+    authState.isAuthenticated = true;
+    authState.currentUser = { ...ada, pinHash: "", pinSalt: "" };
+    authState.lastActivityAt = Date.now() - 11 * 60_000;
+    mocks.deviceAccount.mockResolvedValue({ ...ada, pinHash: "", pinSalt: "" });
+    renderLogin();
+
+    expect(await screen.findByText(/PIN setup was not finished in time/)).toBeInTheDocument();
+    expect(authState.logout).toHaveBeenCalled();
+    expect(
+      screen.queryByRole("heading", { name: "Choose a PIN for this device" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.setDevicePin).not.toHaveBeenCalled();
   });
 });
 

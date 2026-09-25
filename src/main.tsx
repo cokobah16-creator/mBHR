@@ -7,6 +7,7 @@ import * as Sentry from "@sentry/react";
 import App from "./App";
 import { GlobalErrorBoundary } from "./components/GlobalErrorBoundary";
 import { AppUpdateBanner } from "./components/AppUpdateBanner";
+import { DatabaseRecovery } from "./components/DatabaseRecovery";
 import { ScreenSkeleton } from "./components/ui/Skeleton";
 import i18n from "./i18n";
 import "./index.css";
@@ -16,7 +17,7 @@ import { seedGamificationData } from "./db/gamification";
 import { db } from "./db/index";
 import { APP_DATABASES } from "./db/appDatabases";
 import { closeOnVersionChange } from "./db/versionChange";
-import { safeOpenDb } from "./db/safeOpen";
+import { LocalDatabaseOpenError, safeOpenDb } from "./db/safeOpen";
 import { log, error } from "@/lib/logger";
 import { scrubUrl, scrubUrlFields } from "@/lib/scrubUrl";
 import { registerServiceWorker } from "@/lib/serviceWorker";
@@ -179,6 +180,20 @@ function renderFatal(msg: string) {
   el.appendChild(container);
 }
 
+/**
+ * The local database would not open: a recovery screen instead of the app.
+ * The stored records are never deleted automatically (src/db/safeOpen.ts).
+ */
+function renderDatabaseRecovery(upgradeFailed: boolean) {
+  const el = document.getElementById("root");
+  if (!el) return;
+  ReactDOM.createRoot(el).render(
+    <React.StrictMode>
+      <DatabaseRecovery upgradeFailed={upgradeFailed} />
+    </React.StrictMode>,
+  );
+}
+
 (async () => {
   // Unsynced records exist only on this device: ask the browser not to
   // clear them when space runs low. Neither call holds up start-up.
@@ -206,6 +221,10 @@ function renderFatal(msg: string) {
     log("[db] Current counts - Patients:", patientCount, "Users:", userCount);
   } catch (e) {
     error("Failed to initialize database:", e);
+    if (e instanceof LocalDatabaseOpenError) {
+      renderDatabaseRecovery(e.upgradeFailed);
+      return;
+    }
     renderFatal("Could not open the local database.");
     return;
   }

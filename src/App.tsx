@@ -10,6 +10,12 @@ import FirstRunSetup from "@/pages/FirstRunSetup";
 import { useAuthStore } from "@/stores/auth";
 import { hasDevicePin } from "@/db/offlineAccess";
 import { isStaffRole } from "@/auth/roles";
+import {
+  INVENTORY_ROLES,
+  PATIENT_RECORD_ROLES,
+  QUEUE_ROLES,
+} from "@/auth/routeAccess";
+import { IdleLock } from "@/components/IdleLock";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { Home } from "@/pages/Home";
 import {
@@ -293,7 +299,14 @@ const DoctorDashboard = lazy(() =>
   })),
 );
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedRoute({
+  children,
+  lockWhenIdle = true,
+}: {
+  children: React.ReactNode;
+  /** Lock the session after a period without activity (IdleLock). */
+  lockWhenIdle?: boolean;
+}) {
   const { isAuthenticated, currentUser, logout } = useAuthStore();
   // A session for an account without a staff role (for example one kept
   // from an older version of the app) never opens the staff workspace.
@@ -314,21 +327,28 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
 
-  return <>{children}</>;
+  return lockWhenIdle ? <IdleLock>{children}</IdleLock> : <>{children}</>;
+}
+
+/**
+ * The portal patient saved in this browser, or "" when there is none or it
+ * cannot be read (a damaged value must not blank the whole page).
+ */
+function storedPortalPatientId(): string {
+  try {
+    const portalUser = JSON.parse(localStorage.getItem("patient_portal_user") ?? "null");
+    return typeof portalUser?.patientId === "string" ? portalUser.patientId : "";
+  } catch {
+    return "";
+  }
 }
 
 function HealthDataExportWrapper() {
-  const portalUserStr = localStorage.getItem("patient_portal_user");
-  const portalUser = portalUserStr ? JSON.parse(portalUserStr) : null;
-  const patientId = portalUser?.patientId || "";
-  return <HealthDataExport patientId={patientId} />;
+  return <HealthDataExport patientId={storedPortalPatientId()} />;
 }
 
 function DataSharingWrapper() {
-  const portalUserStr = localStorage.getItem("patient_portal_user");
-  const portalUser = portalUserStr ? JSON.parse(portalUserStr) : null;
-  const patientId = portalUser?.patientId || "";
-  return <DataSharingPreferences patientId={patientId} />;
+  return <DataSharingPreferences patientId={storedPortalPatientId()} />;
 }
 
 /** How long a restored portal sign-in waits for the server's access check. */
@@ -609,11 +629,13 @@ function App() {
           />
 
           {/* Waiting-room display: full screen, outside the staff shell, but
-              still behind staff sign-in. Shows ticket numbers only. */}
+              still behind staff sign-in. Shows ticket numbers only, and is
+              left running on its own, so it does not lock when idle. A staff
+              page opened from it after a long idle opens locked. */}
           <Route
             path="/display"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute lockWhenIdle={false}>
                 <Suspense fallback={<ScreenSkeleton label="Loading display" />}>
                   <PublicDisplay />
                 </Suspense>
@@ -631,6 +653,7 @@ function App() {
                       context and navigation stay put while a page loads. */}
                   <Suspense fallback={<PageSkeleton />}>
                     <Routes>
+                      {/* Every staff role's home page after sign-in. */}
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route
                         path="/staff/patients"
@@ -658,10 +681,41 @@ function App() {
                           </RequirePermission>
                         }
                       />
-                      <Route path="/patients" element={<Patients />} />
-                      <Route path="/patients/:id" element={<PatientDetail />} />
-                      <Route path="/queue" element={<Queue />} />
-                      <Route path="/inventory" element={<Inventory />} />
+                      {/* Patient records, the queue and stock follow the
+                          permission matrix (src/auth/routeAccess.ts, also
+                          used by the navigation). */}
+                      <Route
+                        path="/patients"
+                        element={
+                          <RequireRoles roles={PATIENT_RECORD_ROLES}>
+                            <Patients />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/patients/:id"
+                        element={
+                          <RequireRoles roles={PATIENT_RECORD_ROLES}>
+                            <PatientDetail />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/queue"
+                        element={
+                          <RequireRoles roles={QUEUE_ROLES}>
+                            <Queue />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/inventory"
+                        element={
+                          <RequireRoles roles={INVENTORY_ROLES}>
+                            <Inventory />
+                          </RequireRoles>
+                        }
+                      />
                       <Route path="/users" element={<Users />} />
                       <Route
                         path="/vitals"

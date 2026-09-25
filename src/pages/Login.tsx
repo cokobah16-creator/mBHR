@@ -20,6 +20,8 @@ import {
 } from "@/db/offlineAccess";
 import { setDevicePin } from "@/db/devicePin";
 import { getRoleDisplayName, type Role } from "@/auth/roles";
+import { STAFF_IDLE_LOCK_MS, isIdleExpired } from "@/auth/idle";
+import { useIdleTimeout } from "@/hooks/useIdleTimeout";
 import { CANONICAL_ORIGIN, isOffCanonicalOrigin } from "@/config/canonicalOrigin";
 import type { User } from "@/db";
 
@@ -31,6 +33,10 @@ const ROSTER_WAIT_MS = 10_000;
 
 /** Show the name search once the list is long enough to need it. */
 const SEARCH_FROM = 6;
+
+/** Shown when an online sign-in was ended because its PIN setup was left. */
+const PIN_SETUP_TIMED_OUT =
+  "PIN setup was not finished in time, so that sign-in was ended. Sign in online again to choose your PIN.";
 
 interface LoginError {
   title: string;
@@ -124,6 +130,9 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<LoginError | null>(null);
+  // How the last sign-in ended, when it matters (PIN setup left unfinished),
+  // shown above the sign-in options.
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // null while this device's staff list is being read.
   const [offline, setOffline] = useState<OfflineSignInState | null>(null);
@@ -144,6 +153,7 @@ export default function Login() {
   const loginOnline = useAuthStore((s) => s.loginOnline);
   const logout = useAuthStore((s) => s.logout);
   const setCurrentUser = useAuthStore((s) => s.setCurrentUser);
+  const updateActivity = useAuthStore((s) => s.updateActivity);
   const failedAttempts = useAuthStore((s) => s.failedAttempts);
   const pushToast = useToast((s) => s.push);
   const offCanonical = isOffCanonicalOrigin();
@@ -153,14 +163,23 @@ export default function Login() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Someone signed in online but left before choosing a device PIN
-      // (reload, closed tab): enrollment picks up where it stopped.
-      const { isAuthenticated, currentUser } = useAuthStore.getState();
+      // Someone signed in online and went to another page before choosing
+      // a device PIN: enrollment picks up where it stopped, but only soon
+      // after. Left longer, the sign-in ends, so whoever uses the tablet
+      // next cannot choose that person's PIN. (After a reload there is
+      // nothing to pick up: src/stores/auth.ts never restores it.)
+      const { isAuthenticated, currentUser, lastActivityAt } = useAuthStore.getState();
       if (isAuthenticated && currentUser) {
         const record = await deviceAccount(currentUser.id).catch(() => undefined);
         if (cancelled) return;
         if (!hasDevicePin(record ?? currentUser)) {
-          setPinSetupFor(record ?? currentUser);
+          if (isIdleExpired(lastActivityAt, Date.now())) {
+            await logout();
+            if (cancelled) return;
+            setNotice(PIN_SETUP_TIMED_OUT);
+          } else {
+            setPinSetupFor(record ?? currentUser);
+          }
         }
       }
 
@@ -181,11 +200,12 @@ export default function Login() {
     return () => {
       cancelled = true;
     };
-  }, [onlineAvailable]);
+  }, [onlineAvailable, logout]);
 
   const switchMode = (next: "offline" | "online") => {
     setMode(next);
     setErr(null);
+    setNotice(null);
     if (next === "offline") setResettingPin(false);
   };
 
@@ -214,6 +234,7 @@ export default function Login() {
     e.preventDefault();
 
     setErr(null);
+    setNotice(null);
 
     if (mode === "online") {
       if (!onlineAvailable) {
@@ -336,6 +357,12 @@ export default function Login() {
   }
 
   if (pinSetupFor) {
+    const endPinSetup = async () => {
+      await logout();
+      setPinSetupFor(null);
+      setResettingPin(false);
+      setPassword("");
+    };
     return (
       <LoginShell subtitle="Staff sign-in" offCanonical={offCanonical}>
         <DevicePinSetup
@@ -343,13 +370,14 @@ export default function Login() {
           replacing={resettingPin && hasDevicePin(pinSetupFor)}
           onDone={(updated) => {
             setCurrentUser(updated);
+            // Choosing the PIN was activity: the workspace opens unlocked.
+            updateActivity();
             finishSignIn();
           }}
-          onCancel={async () => {
-            await logout();
-            setPinSetupFor(null);
-            setResettingPin(false);
-            setPassword("");
+          onCancel={endPinSetup}
+          onIdle={async () => {
+            await endPinSetup();
+            setNotice(PIN_SETUP_TIMED_OUT);
           }}
         />
       </LoginShell>
@@ -382,6 +410,16 @@ export default function Login() {
         </div>
 
         <div className="panel-body space-y-4">
+          {notice && (
+            <div className="banner banner-info" role="status">
+              <InformationCircleIcon
+                className="h-5 w-5 shrink-0 mt-0.5"
+                aria-hidden
+              />
+              <p>{notice}</p>
+            </div>
+          )}
+
           {notSetUp && (
             <div className="banner banner-info" role="status">
               <InformationCircleIcon
@@ -549,16 +587,22 @@ export default function Login() {
                         <p id="login-pin-hint" className="field-hint">
                           A forgotten PIN can't be recovered, only replaced.{" "}
                           {onlineAvailable ? (
-                            <button
-                              type="button"
-                              onClick={startPinReset}
-                              className="underline text-primary hover:text-primary-hover"
-                            >
-                              Forgot PIN?
-                            </button>
-                          ) : null}{" "}
-                          Sign in online on this device to choose a new one,
-                          or ask an administrator to reset it under Users.
+                            <>
+                              Choose{" "}
+                              <button
+                                type="button"
+                                onClick={startPinReset}
+                                className="underline text-primary hover:text-primary-hover"
+                              >
+                                Forgot PIN?
+                              </button>{" "}
+                              and sign in online on this device to choose a new
+                              one, or ask an administrator to reset it under
+                              Users.
+                            </>
+                          ) : (
+                            "Ask an administrator to reset it under Users."
+                          )}
                         </p>
                       </div>
                     </>
@@ -817,17 +861,25 @@ function DevicePinSetup({
   replacing = false,
   onDone,
   onCancel,
+  onIdle,
 }: {
   user: User;
   /** Forgot PIN: the new PIN replaces the one already on this device. */
   replacing?: boolean;
   onDone: (updated: User) => void;
   onCancel: () => void | Promise<void>;
+  /** Left untouched for STAFF_IDLE_LOCK_MS: the sign-in is ended. */
+  onIdle: () => void | Promise<void>;
 }) {
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Nothing is saved until the PIN is chosen and confirmed. A form left
+  // untouched signs the person out, so the next person on the tablet
+  // cannot choose a PIN for them.
+  useIdleTimeout(STAFF_IDLE_LOCK_MS, () => void onIdle(), !saving);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -905,8 +957,8 @@ function DevicePinSetup({
           />
           <p id="device-pin-note" className="field-hint">
             This PIN is stored only on this device and is never sent to the
-            server. If you forget it, sign in online here again to choose a new
-            one.
+            server. If you forget it, choose Forgot PIN? on the sign-in screen
+            and sign in online here to choose a new one.
           </p>
         </div>
 
