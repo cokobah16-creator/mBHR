@@ -86,10 +86,11 @@ RESET ROLE;
 -- Staff still get through (the copy has no rows, so add some; all rolled
 -- back). Before the hotfix a permanent admin failed here with "stack depth
 -- limit exceeded", and after dropping the open policy alone every staff
--- member would.
-INSERT INTO public.app_users (id, full_name, role, admin_permanent) VALUES
-  ('00000000-0000-4000-8000-00000000f1a1', 'Hotfix check nurse', 'nurse', false),
-  ('00000000-0000-4000-8000-00000000f1a2', 'Hotfix check permanent admin', 'admin', true);
+-- member would. Production's check constraint admin_perm_implies_admin
+-- needs admin_access = true on a permanent admin row.
+INSERT INTO public.app_users (id, full_name, role, admin_access, admin_permanent) VALUES
+  ('00000000-0000-4000-8000-00000000f1a1', 'Hotfix check nurse', 'nurse', false, false),
+  ('00000000-0000-4000-8000-00000000f1a2', 'Hotfix check permanent admin', 'admin', true, true);
 
 SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-4000-8000-00000000f1a1","role":"authenticated"}';
