@@ -3,7 +3,7 @@
 
 The repository's migration history cannot replay on an empty database (see
 docs/interoperability/testing.md), so the interop CI job builds only what
-20260925160000_interop_foundation.sql depends on: the Supabase API roles, an
+20260926110000_interop_foundation.sql depends on: the Supabase API roles, an
 auth.uid() that reads request.jwt.claims (as Supabase's does), a minimal
 public.app_users, and the real definitions of the helper functions, copied
 from the migration files that define them (the latest definition wins).

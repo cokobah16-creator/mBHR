@@ -81,7 +81,7 @@ src/interoperability/fhir/
   audit/         access audit records, IP hashing, redacted log lines
   gateway/       authentication, PostgREST access, queries, the handler
   conformance/   synthetic examples validated by the HL7 validator in CI
-supabase/migrations/20260925160000_interop_foundation.sql
+supabase/migrations/20260926110000_interop_foundation.sql
 supabase/tests/interop_foundation.test.sql
 ```
 
@@ -116,7 +116,7 @@ calls the gateway, and the interop tables are used only by it.
 | Step | State |
 | --- | --- |
 | Code, tests and CI (this pull request) | in review |
-| Migration `20260925160000_interop_foundation.sql` applied anywhere | **not applied**; production reconciliation is owned by the HRIS transformation work, and production changes need the owner's go-ahead |
+| Migration `20260926110000_interop_foundation.sql` applied anywhere | **not applied**; production reconciliation is owned by the HRIS transformation work, and production changes need the owner's go-ahead |
 | `FHIR_ENABLED` on a preview deployment | not set |
 | `FHIR_ENABLED` in production | not set; do not set until the conditions below hold |
 | Clinical review of the representation choices | pending (`docs/clinical/CLINICAL_LOGIC_CHANGES.md` section 2.5) |

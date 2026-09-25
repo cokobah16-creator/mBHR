@@ -19,7 +19,7 @@ on:
       - "scripts/fhir-r4-examples.ts"
       - "scripts/fhir-validator-report.mjs"
       - "scripts/ci/interop_db_base.py"
-      - "supabase/migrations/20260925160000_interop_foundation.sql"
+      - "supabase/migrations/20260926110000_interop_foundation.sql"
       - "supabase/tests/interop_foundation.test.sql"
       - ".github/workflows/interop-fhir.yml"
   push:
@@ -110,7 +110,7 @@ jobs:
 
       - name: Apply the migration twice
         run: |
-          cp supabase/migrations/20260925160000_interop_foundation.sql /tmp/up.sql
+          cp supabase/migrations/20260926110000_interop_foundation.sql /tmp/up.sql
           sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up.sql
           sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up.sql
 
@@ -122,7 +122,7 @@ jobs:
 
       - name: Rollback, then apply again
         run: |
-          sed -n '/^-- Rollback/,/^-- Dropping/p' supabase/migrations/20260925160000_interop_foundation.sql \
+          sed -n '/^-- Rollback/,/^-- Dropping/p' supabase/migrations/20260926110000_interop_foundation.sql \
             | grep -E '^--   (DROP|DELETE)' | sed 's/^--   //' > /tmp/down.sql
           test "$(wc -l < /tmp/down.sql)" -eq 5
           sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/down.sql

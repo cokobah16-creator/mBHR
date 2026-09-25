@@ -173,7 +173,7 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
     const decision = purpose
       ? canAccessFHIRResource({ actor, action, resourceType: type, purposeOfUse: purpose })
       : ({ permit: false, status: 403, reason: "purpose_invalid" } as const);
-    if (!decision.permit) {
+    if (decision.permit === false) {
       await recordAccess(db, { ...audit, decision: "deny", denialReason: decision.reason, resultCount: 0, patientIds: [] });
       throw errors.forbidden();
     }

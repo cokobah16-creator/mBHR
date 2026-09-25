@@ -62,6 +62,8 @@ export function canAccessFHIRResource(req: AccessRequest): AccessDecision {
     internalStaff: true,
     resourceType: req.resourceType,
   });
-  if (!consent.permit) return deny(consent.reason);
+  // An explicit comparison: the app's tsconfig is not strict, where a
+  // truthiness check does not narrow this union.
+  if (consent.permit === false) return deny(consent.reason);
   return { permit: true };
 }

@@ -46,7 +46,7 @@ Supabase's, a minimal `app_users`, the real rate-limit migration, and the
 real latest definitions of `app_current_role()`, `app_role_has_permission()`
 and `app_is_staff()` copied from their migration files. Then it:
 
-1. applies `20260925160000_interop_foundation.sql` twice (it must be
+1. applies `20260926110000_interop_foundation.sql` twice (it must be
    idempotent);
 2. runs `supabase/tests/interop_foundation.test.sql` with `pg_prove`
    (42 tests: the schema is closed to API roles, anon is refused, role and
@@ -73,7 +73,7 @@ bun test src/interoperability
 python3 scripts/ci/interop_db_base.py > /tmp/base.sql
 createdb interop_t
 psql -v ON_ERROR_STOP=1 -d interop_t -f /tmp/base.sql
-psql -v ON_ERROR_STOP=1 -d interop_t -f supabase/migrations/20260925160000_interop_foundation.sql
+psql -v ON_ERROR_STOP=1 -d interop_t -f supabase/migrations/20260926110000_interop_foundation.sql
 psql -d interop_t -c 'CREATE EXTENSION pgtap'   # or pg_prove if installed
 psql -d interop_t -f supabase/tests/interop_foundation.test.sql
 ```

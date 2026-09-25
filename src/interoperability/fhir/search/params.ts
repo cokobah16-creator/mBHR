@@ -126,10 +126,9 @@ export function decodeCursor(raw: string): Cursor {
   if (!parsed || typeof parsed !== "object") throw bad();
   const { k, s } = parsed as { k?: unknown; s?: unknown };
   if (typeof k !== "string" || !/^[A-Za-z0-9\-._]{1,128}$/.test(k)) throw bad();
-  if (s !== undefined && (typeof s !== "number" || !Number.isInteger(s) || s < 0 || s > 64)) {
-    throw bad();
-  }
-  return s === undefined ? { k } : { k, s };
+  if (s === undefined) return { k };
+  if (typeof s !== "number" || !Number.isInteger(s) || s < 0 || s > 64) throw bad();
+  return { k, s };
 }
 
 function base64UrlEncode(text: string): string {
