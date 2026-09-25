@@ -13,6 +13,12 @@ name: Database migrations
 #             edge functions that depend on them. Needs the phrase
 #             "apply to production" in the confirm box.
 #
+#   only      With rehearse, dry-run or apply: run just this one pending
+#             migration (a hotfix) and hold the other pending ones back. It
+#             must be newer than every migration production has. Rehearse then
+#             runs supabase/hotfix-checks/<version>.sql instead of the pgTAP
+#             suite, and apply redeploys no edge functions.
+#
 # Why this exists: the migrate-prod job in build.yml only runs for pushes to
 # `main`, and production deploys from `mainone`, so production migrations are
 # applied here, deliberately and by hand, never as a side effect of a merge.
@@ -46,6 +52,10 @@ on:
         description: "apply only: edge functions to redeploy afterwards (space-separated)"
         type: string
         default: "send-sms-reminder send-otp-email"
+      only:
+        description: "rehearse, dry-run or apply: run only this pending migration version (a hotfix); leave empty for all"
+        type: string
+        default: ""
 
 concurrency:
   group: db-migrations-production
@@ -61,6 +71,7 @@ jobs:
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
       INCLUDE_ALL: ${{ inputs.include_all && '--include-all' || '' }}
+      ONLY: ${{ inputs.only }}
       LOCAL_DB: postgresql://postgres:postgres@127.0.0.1:54322/postgres
     steps:
       - name: Refuse apply without the confirmation phrase
@@ -111,6 +122,46 @@ jobs:
           if [ -s "$RUNNER_TEMP/remote_only.txt" ]; then
             echo "::warning::Production has migrations that are not in supabase/migrations: $(tr '\n' ' ' < "$RUNNER_TEMP/remote_only.txt")"
           fi
+
+      - name: Hold back every pending migration except the one asked for
+        if: inputs.only != '' && inputs.action != 'status'
+        run: |
+          # Leaves supabase/migrations (on this runner only) holding what
+          # production already has plus the one migration asked for, so the
+          # steps below see exactly one pending file. Production-only versions
+          # get an empty placeholder: they are already applied, nothing runs
+          # them, and the CLI needs a local file for every applied version.
+          if ! printf '%s' "$ONLY" | grep -qE '^[0-9]{14}$'; then
+            echo "::error::only must be one migration version (14 digits), got: $ONLY"
+            exit 1
+          fi
+          target=$(ls supabase/migrations/"$ONLY"_*.sql 2>/dev/null || true)
+          if [ -z "$target" ] || [ "$(printf '%s\n' "$target" | wc -l)" != 1 ]; then
+            echo "::error::Expected exactly one file supabase/migrations/${ONLY}_*.sql"
+            exit 1
+          fi
+          if ! grep -qx "$ONLY" "$RUNNER_TEMP/pending.txt"; then
+            echo "::error::$ONLY is not pending on production."
+            exit 1
+          fi
+          newest=$(sort "$RUNNER_TEMP/remote_all.txt" | tail -1)
+          if [ -n "$newest" ] && [ "$ONLY" -le "$newest" ]; then
+            echo "::error::$ONLY is not newer than production's newest migration ($newest), so it cannot run on its own."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/held-back"
+          for f in supabase/migrations/*.sql; do
+            v=$(basename "$f" | cut -d_ -f1)
+            if [ "$v" != "$ONLY" ] && ! grep -qx "$v" "$RUNNER_TEMP/applied.txt"; then
+              mv "$f" "$RUNNER_TEMP/held-back/"
+            fi
+          done
+          while read -r v; do
+            [ -n "$v" ] || continue
+            echo "-- Placeholder: $v is applied on production and has no file in this repo." \
+              > "supabase/migrations/${v}_production_only.sql"
+          done < "$RUNNER_TEMP/remote_only.txt"
+          echo "Held back $(ls "$RUNNER_TEMP/held-back" | wc -l) pending migrations; running only $(basename "$target")."
 
       - name: What the production-only migrations did (names and objects, no SQL)
         if: inputs.action == 'status'
@@ -175,6 +226,10 @@ jobs:
             echo "::error::Could not read production's applied migrations from the list above."
             exit 1
           fi
+          # With "only", production-only versions have placeholder files too.
+          if [ -n "$ONLY" ]; then
+            applied="$applied $(cat "$RUNNER_TEMP/remote_only.txt")"
+          fi
           supabase migration repair --local --status applied $applied --yes
 
       - name: Apply the pending migrations locally
@@ -185,8 +240,19 @@ jobs:
           supabase migration list --local
 
       - name: Run pgTAP tests locally
-        if: inputs.action == 'rehearse'
+        if: inputs.action == 'rehearse' && inputs.only == ''
         run: supabase test db
+
+      - name: Run the one migration's checks locally
+        if: inputs.action == 'rehearse' && inputs.only != ''
+        run: |
+          # The pgTAP suite covers the Wave B migrations, which "only" holds back.
+          check="supabase/hotfix-checks/${ONLY}.sql"
+          if [ -f "$check" ]; then
+            psql "$LOCAL_DB" -v ON_ERROR_STOP=1 -f "$check"
+          else
+            echo "::warning::No $check, so nothing checked what ${ONLY} did."
+          fi
 
       - name: Stop the local stack
         if: always() && inputs.action == 'rehearse'
@@ -203,7 +269,7 @@ jobs:
         run: supabase db push --linked $INCLUDE_ALL --yes
 
       - name: Redeploy edge functions
-        if: inputs.action == 'apply' && inputs.functions != ''
+        if: inputs.action == 'apply' && inputs.functions != '' && inputs.only == ''
         env:
           FUNCTIONS: ${{ inputs.functions }}
         run: |
