@@ -121,6 +121,16 @@ export const CLINICAL_PATH_RULES = [
     ],
   },
   {
+    // How recorded values, statuses and codes are presented to other
+    // systems (zero and missing values, status mapping, LOINC / SNOMED
+    // codes). See docs/interoperability/resource-mapping.md.
+    area: "FHIR export: how clinical data is represented to other systems",
+    paths: [
+      "src/interoperability/fhir/mappers/**",
+      "src/interoperability/fhir/terminology/**",
+    ],
+  },
+  {
     // Editing this list can switch the gate off for a file, so a change to
     // the gate itself must be recorded or declared like any other.
     area: "The clinical logic gate itself (the list of clinical files)",
