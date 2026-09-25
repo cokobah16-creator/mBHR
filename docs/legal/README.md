@@ -12,18 +12,21 @@ notice, and consent to portal access to their health records. The account
 keeps the two versions they accepted and the time. Online this is stored
 with the sign-in account (Supabase user metadata); offline it is stored
 with the account on the device. Nothing is written to
-`patient_consent_records` yet.
+`patient_consent_records` yet. The signed-in patient can change their own
+user metadata (`supabase.auth.updateUser`), so the online copy shows what
+the app recorded but is not evidence of consent until item 6 writes
+`patient_consent_records` rows.
 
 Not every portal account comes from sign-up. Staff can turn on portal
 access for one patient after ticking that the patient agreed
 (`src/components/PortalStatusCard.tsx`), and administrators have two pages
 for many patients at once (`src/pages/admin/PortalMigration.tsx`,
 `src/pages/admin/BulkPortalMigration.tsx`). None of these stores a record
-of the patient's agreement. Such a patient can then log in on a device with
-their phone or email and date of birth, which creates an account there
-without the three boxes (`loginPatientPortal` in
-`src/services/patientPortalAuth.ts`). No terms or privacy version is
-recorded for these accounts.
+of the patient's agreement. `loginPatientPortal`
+(`src/services/patientPortalAuth.ts`) can create an account on a device
+from a phone or email and a date of birth, without the three boxes, but no
+screen calls it that way yet: `PatientLogin` always asks for a PIN. If a
+screen does, no terms or privacy version is recorded for those accounts.
 
 Where access is saved matters. The online portal checks
 `patients.portal_enabled` on the server. The trigger that set it for every

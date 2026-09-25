@@ -9,7 +9,7 @@
 export const TERMS_VERSION = "2026-09-22";
 
 /** Version of src/pages/legal/PrivacyPolicy.tsx. */
-export const PRIVACY_VERSION = "2026-09-24";
+export const PRIVACY_VERSION = "2026-09-25";
 
 /**
  * What a patient accepted when creating a portal account. It is recorded
@@ -39,7 +39,7 @@ export const UNDER_18_SIGN_UP_MESSAGE =
  * record that belongs to someone under 18.
  */
 export const MINOR_RECORD_LINK_MESSAGE =
-  "This email or phone number is on a clinic record for someone under 18. We cannot link a child's record to an account this way. A parent or guardian can find out how to add a child under People you care for in their own account. For help, ask clinic staff.";
+  "We could not link this account to a clinic record. Please ask clinic staff to help. To add a child under 18, a parent or guardian can use People you care for in their own account.";
 
 /** The acceptance to record for a patient who ticks the boxes now. */
 export function currentPolicyAcceptance(now: Date = new Date()): PolicyAcceptance {

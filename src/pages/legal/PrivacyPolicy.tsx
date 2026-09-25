@@ -104,7 +104,9 @@ export default function PrivacyPolicy() {
             Vercel hosts the app. When your device loads the app from the
             internet, Vercel receives your device’s IP address, browser details
             and the address of the page. Your records do not pass through
-            Vercel.
+            Vercel. An invitation link from the clinic includes your email
+            address or phone number, so Vercel also receives it when you open
+            the link.
           </li>
           <li>
             GitHub Actions runs our nightly database backup. The backup file is
