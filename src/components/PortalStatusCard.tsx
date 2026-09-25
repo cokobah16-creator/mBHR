@@ -77,7 +77,7 @@ function notSentReasonText(reason: InvitationNotSentReason): string {
     case "not_signed_in":
       return `The server sends email only for staff signed in online. A PIN unlock is not enough. ${ONLINE_SIGN_IN_HINT}`;
     case "email_not_configured":
-      return "The server is not set up to send email, so no email was sent.";
+      return "The server is not set up to send email.";
     default:
       return "The server does not let your staff account send email. It may not be active, or its role on the server may not allow it. Ask an administrator to check your account.";
   }
@@ -561,7 +561,7 @@ export function PortalStatusCard({
             <p className="text-caption text-ink-secondary">
               {status.contactMethod === "email"
                 ? `The patient's email is pre-filled. They also enter their name, date of birth and ${credential} to finish registering.`
-                : `The patient's phone number is pre-filled. Registration also needs an email address, so they also enter an email, their name, the date of birth on their record and ${credential}.`}
+                : `The patient's phone number is pre-filled. Registration also needs an email address, so they enter an email, their name, the date of birth on their record and ${credential}.`}
             </p>
           </div>
         )}
