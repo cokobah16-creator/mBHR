@@ -187,6 +187,45 @@ describe("Condition mapper", () => {
     expect(validateResource(c)).toEqual([]);
   });
 
+  it("publishes an end date only beside an ended clinical status (con-4)", () => {
+    const ended = { ...CONDITION_A, abatement_date: "2026-03-01" };
+    for (const status of ["inactive", "remission", "resolved"]) {
+      const c = mapCondition({ ...ended, clinical_status: status }, ctx)!;
+      expect(c.abatementDateTime, status).toBe("2026-03-01");
+      expect(validateResource(c), status).toEqual([]);
+    }
+    // No clinical status is published for these, so the date is left out
+    // and no ended status is inferred from it.
+    for (const row of [
+      { ...ended, verification_status: "entered-in-error", clinical_status: "resolved" },
+      { ...ended, clinical_status: null },
+      { ...ended, clinical_status: "cured?" },
+      { ...ended, clinical_status: "active" },
+      { ...ended, clinical_status: "relapse" },
+    ]) {
+      const c = mapCondition(row, ctx)!;
+      expect("abatementDateTime" in c, JSON.stringify(row.clinical_status)).toBe(false);
+      expect(validateResource(c)).toEqual([]);
+    }
+  });
+
+  it("refuses a Condition that is abated without an ended clinical status (con-4)", () => {
+    const base = { resourceType: "Condition", id: "c1", subject: { reference: "Patient/p1" }, abatementDateTime: "2026-03-01" };
+    expect(validateResource(base).map((i) => i.path)).toContain("abatement[x]");
+    expect(
+      validateResource({
+        ...base,
+        clinicalStatus: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-clinical", code: "active" }] },
+      }).map((i) => i.path),
+    ).toContain("abatement[x]");
+    expect(
+      validateResource({
+        ...base,
+        clinicalStatus: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-clinical", code: "resolved" }] },
+      }).map((i) => i.path),
+    ).not.toContain("abatement[x]");
+  });
+
   it("drops unknown status values rather than inventing one", () => {
     const c = mapCondition({ ...CONDITION_A, clinical_status: "cured?", verification_status: null }, ctx)!;
     expect(c.clinicalStatus).toBeUndefined();

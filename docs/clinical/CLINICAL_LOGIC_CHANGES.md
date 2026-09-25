@@ -523,6 +523,21 @@ Changes to what Phase 1 published (2.5)
       "active" as the clinical status when nothing is given, and that is
       still sent as active. Nothing in mBHR writes this table yet. Confirm
       both, before anything starts writing diagnoses there.
+- [ ] **A diagnosis end date is sent only beside an ended status**
+      (inactive, remission or resolved), as FHIR requires. Beside active,
+      recurrence or relapse it was already left out; it is now also left
+      out when no status is sent (entered in error, or a status that is
+      missing or not recognised). An ended status is never guessed from the
+      date. Confirm.
+- [ ] **An estimated date of birth is sent as an exact date** (unchanged
+      from Phase 1). Quick registration turns an age into 1 January of the
+      birth year, or the 1st of the birth month, and the "estimated" mark
+      stays on the tablet that registered the patient, so the server cannot
+      tell an estimate from a real birthday. Another system could then work
+      out an exact age in days or months (for example for a child's dose)
+      from it. Options: send it as is (today); or have the app upload the
+      mark so the gateway sends only the year (or year and month) for an
+      estimate, which needs an app and database change. Which?
 
 Allergies
 

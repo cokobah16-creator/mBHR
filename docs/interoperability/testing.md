@@ -28,7 +28,7 @@ Locally, where `npm install` is not possible, the same files run under Bun:
 bun test src/interoperability
 ```
 
-With Bun this is 19 files and 670 tests (670 pass, 0 fail). Vitest is
+With Bun this is 19 files and 672 tests (672 pass, 0 fail). Vitest is
 what CI uses; the Bun run is a local convenience.
 
 Files in `src/interoperability/fhir/__tests__/` (plus

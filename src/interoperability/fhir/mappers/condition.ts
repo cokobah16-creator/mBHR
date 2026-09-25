@@ -42,6 +42,8 @@ export const CONDITION_COLUMNS = [
 ] as const;
 
 const CLINICAL = ["active", "recurrence", "relapse", "inactive", "remission", "resolved"];
+/** The clinical statuses an abatement may stand beside (R4 con-4). */
+const ENDED = ["inactive", "remission", "resolved"];
 /**
  * The verification codes published as stored. "confirmed" is not one of
  * them: public.conditions.verification_status has DEFAULT 'confirmed'
@@ -121,15 +123,16 @@ export function mapCondition(
 
   const onset = calendarDate(row, "onset_date");
   if (onset) condition.onsetDateTime = onset;
-  // R4 invariant con-4: an abated condition is not active. When the record
-  // says both (active, recurrence or relapse, and an abatement date), the
-  // clinical status is the recorder's primary statement: it is kept and the
-  // contradicting abatement date is left out rather than guessed between.
+  // R4 invariant con-4: an abatement needs a clinical status of inactive,
+  // remission or resolved. When the record says otherwise (active,
+  // recurrence or relapse beside an end date), the clinical status is the
+  // recorder's primary statement: it is kept and the contradicting date is
+  // left out rather than guessed between. Where no clinical status is
+  // published (entered in error, or a missing or unknown stored value), the
+  // date is left out too: an ended status is never inferred from it.
   const abatement = calendarDate(row, "abatement_date");
-  const stillActive = ["active", "recurrence", "relapse"].includes(
-    condition.clinicalStatus?.coding?.[0]?.code ?? "",
-  );
-  if (abatement && !stillActive) condition.abatementDateTime = abatement;
+  const ended = ENDED.includes(condition.clinicalStatus?.coding?.[0]?.code ?? "");
+  if (abatement && ended) condition.abatementDateTime = abatement;
   const recorded = instant(row, "created_at");
   if (recorded) condition.recordedDate = recorded;
   return condition;

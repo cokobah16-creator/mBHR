@@ -194,7 +194,7 @@ Served by the same Observation module, after vital signs.
 | category | `problem-list-item`, `encounter-diagnosis` (R4 condition-category); `health-concern` (US Core code system). |
 | severity | mild/moderate/severe → SNOMED CT 255604002 / 6736007 / 24484000 (R4 condition-severity value set). |
 | code | local `https://mbhr.app/codes/condition|<condition_code>` with `condition_name` as display and text; plus any **verified** mapping from `interop.terminology_map` (domain `condition`). |
-| onset / abatement | `onset_date`; `abatement_date`, **left out** when the clinical status is active, recurrence or relapse (invariant con-4: an abated condition is not active). |
+| onset / abatement | `onset_date`; `abatement_date` only beside a published clinical status of inactive, remission or resolved (invariant con-4). It is **left out** beside active, recurrence or relapse, and when no clinical status is published (entered in error, or a missing or unknown stored value): an ended status is never inferred from the date. |
 | recordedDate | `created_at` |
 | Never published | `notes`, `recorded_by` (free text, not a staff reference). |
 | Not yet | `consultations.provisional_dx` (a text array on the consultation, with no stable per-diagnosis id). No app code writes `public.conditions` (repository check), so most diagnoses mBHR records are not in this table. Every searchset carries a note saying so. `conditions` has no encounter column, so there is no `encounter` search. |

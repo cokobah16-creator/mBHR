@@ -129,6 +129,17 @@ export function validateResource(resource: unknown, extra?: (resource: Json, add
         const codes = (resource.verificationStatus.coding as Json[] | undefined)?.map((c) => c.code) ?? [];
         if (codes.includes("entered-in-error")) add("clinicalStatus", "con-5: not allowed when entered-in-error");
       }
+      if (["abatementDateTime", "abatementAge", "abatementPeriod", "abatementRange", "abatementString"].some((k) => resource[k] !== undefined)) {
+        const clinical = isObj(resource.clinicalStatus)
+          ? ((resource.clinicalStatus.coding as Json[] | undefined) ?? [])
+          : [];
+        const ended = clinical.some(
+          (c) =>
+            c.system === "http://terminology.hl7.org/CodeSystem/condition-clinical" &&
+            ["inactive", "remission", "resolved"].includes(c.code as string),
+        );
+        if (!ended) add("abatement[x]", "con-4: an abated condition needs clinicalStatus inactive, remission or resolved");
+      }
       break;
     default:
       break;
