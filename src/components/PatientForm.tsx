@@ -636,7 +636,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                     <span className="text-ink-muted block mt-1">
                       {dobIsMinor
                         ? MINOR_PORTAL_ACCESS_MESSAGE
-                        : "When you save, portal access is asked for and the clinic server decides. With an internet connection a portal account is also made on the server. Tick only if the patient agrees to use the portal."}
+                        : "When you save, mBHR asks for portal access and the clinic server decides. Online, it first tries to make a portal account on the server. This can fail, and then access is not asked for; turn it on later from Patient portal on the patient's record. Tick only if the patient agrees to use the portal."}
                     </span>
                   </label>
                 </div>
