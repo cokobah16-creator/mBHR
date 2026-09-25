@@ -31,6 +31,10 @@ three boxes, but no screen calls it that way yet: `PatientLogin` always
 asks for a PIN. If a screen does, no terms or privacy version is recorded
 for those accounts.
 
+This describes the code. The server rules from `20260926000200` and
+`20260926000210` take effect only after the Foundation applies them with the
+Database migrations workflow (see the checklist's Progress section).
+
 Portal access is decided by the server. Staff changes go through
 `requestPortalAccessChange` (`src/services/portalAccess.ts`): the device
 shows the change as waiting and queues the `set_patient_portal_access`

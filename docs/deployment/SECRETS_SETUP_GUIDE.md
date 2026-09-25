@@ -2,7 +2,7 @@
 
 ## Current Status: ✅ Working in Demo Mode
 
-The edge functions are **already deployed and working** in demo mode. No secrets are required for testing!
+Once deployed, the edge functions work in demo mode. The behaviour below is that of the current `send-otp-email`; deploy it with the Database migrations workflow (`apply`) or `supabase functions deploy send-otp-email`. No secrets are required for testing!
 
 ### Demo Mode Features
 
