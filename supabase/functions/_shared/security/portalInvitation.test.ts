@@ -160,6 +160,12 @@ describe("invitation text", () => {
     expect(email.text).toContain("https://mbhr.app/r");
     expect(email.text).toContain("Already registered? Log in here: https://mbhr.app/patient/login");
   });
+
+  it("escapes quotes and ampersands too (the shared html.ts rule)", () => {
+    const email = invitationEmail(`O'Neill "Ada" & co`, "https://mbhr.app/r", "https://mbhr.app/l");
+    expect(email.html).toContain("Hi O&#39;Neill &quot;Ada&quot; &amp; co,");
+    expect(email.html).not.toContain(`"Ada"`);
+  });
 });
 
 describe("readInvitationBegin", () => {
