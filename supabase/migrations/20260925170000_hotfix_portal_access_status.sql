@@ -54,18 +54,26 @@
 --   * Linked but portal_enabled false (the column default): refused with
 --     "Your clinic has not turned on portal access for you". A portal session
 --     already open on a device is signed out at its next load, where today it
---     still opens (src/App.tsx PatientProtectedRoute). Staff cannot turn
---     access on from the app until Wave B (set_patient_portal_access).
+--     still opens (src/App.tsx:400 PatientProtectedRoute). Staff cannot
+--     turn access on from the app until Wave B (set_patient_portal_access).
 --   * Not linked yet (first sign-in after sign-up): still refused, because
 --     portal_link_patient_record (Wave A 20260924110300) is missing too.
+-- portal_enabled is only the app's gate until Wave A: production's read
+-- rules do not test it, so a linked login can still read its own record
+-- through the API. To cut off a wrongly linked account, clear auth_uid.
 -- Count the second group first, read-only (counts only, no patient data):
 --   SELECT count(*) FILTER (WHERE portal_enabled IS TRUE)     AS enabled,
---          count(*) FILTER (WHERE portal_enabled IS NOT TRUE) AS not_enabled
+--          count(*) FILTER (WHERE portal_enabled IS NOT TRUE) AS not_enabled,
+--          count(DISTINCT auth_uid)                           AS logins
 --     FROM public.patients WHERE auth_uid IS NOT NULL;
 --
 -- Runs on its own, ahead of the older pending migrations, and only after
--- 20260925160000: once this version is recorded on production, 20260925160000
--- is no longer newer than production's newest and cannot run on its own.
+-- 20260925160000, for two reasons. Once this version is recorded on
+-- production, 20260925160000 is no longer newer than production's newest
+-- and cannot run on its own. And until 20260925160000, the anon key can make
+-- itself staff and so write any patient's auth_uid, which this function
+-- trusts. If 20260925160000 was applied some other way, record it first:
+-- supabase migration repair --linked --status applied 20260925160000.
 -- Actions > Database migrations > Run workflow, with "only" set to
 -- 20260925170000: rehearse, then dry-run, then apply. Checks:
 -- supabase/hotfix-checks/20260925170000.sql. Safe to re-run.
@@ -99,7 +107,7 @@ BEGIN
   IF to_regclass('supabase_migrations.schema_migrations') IS NOT NULL THEN
     IF NOT EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations
                     WHERE version = '20260925160000') THEN
-      RAISE EXCEPTION 'portal hotfix: apply 20260925160000 first; once 20260925170000 is recorded, 20260925160000 can no longer run on its own';
+      RAISE EXCEPTION 'portal hotfix: apply 20260925160000 first (or, if it was applied some other way, record it with migration repair); once 20260925170000 is recorded, 20260925160000 can no longer run on its own';
     END IF;
   END IF;
 

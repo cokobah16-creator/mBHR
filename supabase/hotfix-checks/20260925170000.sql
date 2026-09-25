@@ -194,7 +194,12 @@ BEGIN
 
   -- patient_portal_users rows do not count until Wave B (the anon key can
   -- still add and activate them on production), so the three portal-account
-  -- logins get nothing.
+  -- logins get nothing. Where Wave B's function is already in place, the
+  -- migration left it alone and these answers do not apply.
+  IF to_regclass('public.patient_portal_access_events') IS NOT NULL THEN
+    RAISE NOTICE 'Wave B''s portal_access_status() is in place; the hotfix''s sign-in answers were not checked';
+    RETURN;
+  END IF;
 
   FOR c IN
     SELECT * FROM (VALUES
