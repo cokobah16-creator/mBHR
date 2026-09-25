@@ -8,7 +8,7 @@
  * metadata. Before any account is made it refuses a sign-up without all
  * three boxes ticked, and anyone under 18. The server refuses to link a
  * child's clinic record or to create a record for an under-18 date of birth
- * (20260926000210_portal_link_adults_only.sql).
+ * (20260926120100_portal_link_adults_only.sql).
  * Safe to call when Supabase is not configured — all operations no-op
  * gracefully so offline mode keeps working.
  */

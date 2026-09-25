@@ -264,7 +264,7 @@ export function portalLinkOutcome(status: unknown): PortalLinkOutcome {
       // Returned when the date of birth does not match the clinic record,
       // when the matching record belongs to someone under 18, and when no
       // record matches and the date of birth is under 18
-      // (20260926000210_portal_link_adults_only.sql). One message that is
+      // (20260926120100_portal_link_adults_only.sql). One message that is
       // true for all three: ask clinic staff.
       return { linked: false, message: MINOR_RECORD_LINK_MESSAGE };
     case "contact_not_verified":

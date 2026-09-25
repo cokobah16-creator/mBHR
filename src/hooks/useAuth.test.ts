@@ -150,7 +150,7 @@ describe("useAuth signup: linking the clinic record on the server", () => {
   });
 
   it("sends a patient whose match is a child's record to clinic staff and signs out", async () => {
-    // 20260926000210: a child's record comes back as needs_staff_verification.
+    // 20260926120100: a child's record comes back as needs_staff_verification.
     mockRpc.mockResolvedValue({ data: { status: "needs_staff_verification" }, error: null });
 
     const error = await signup(SIGN_UP);

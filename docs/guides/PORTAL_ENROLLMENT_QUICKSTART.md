@@ -164,7 +164,7 @@ do not ask them, and no record of their agreement is stored.
   in the command outbox (`src/sync/commandOutbox.ts`). A guard trigger
   puts back `patients.portal_enabled` when an API write tries to change it
   directly. Auto-enrolment on insert is off
-  (`20260926000200_consent_defaults_off.sql` sets `auto_enrollment_enabled`
+  (`20260926120000_consent_defaults_off.sql` sets `auto_enrollment_enabled`
   to false).
 - Invitations: `sendPortalInvitation` (`src/services/portalEnrollment.ts`)
   calls `send-otp-email` or `send-sms-reminder` with purpose
@@ -175,7 +175,7 @@ do not ask them, and no record of their agreement is stored.
   retries them.
 - Children are refused in the app (`isMinor` in `src/utils/patient.ts`) and
   by `portal_link_patient_record`
-  (`20260926000210_portal_link_adults_only.sql`).
+  (`20260926120100_portal_link_adults_only.sql`).
   `set_patient_portal_access` and `portal_invitation_begin` do not check age
   yet.
 - `send-otp-email` needs `RESEND_API_KEY` (and optionally `SENDER_EMAIL`) on

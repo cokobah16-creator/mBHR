@@ -31,8 +31,8 @@ three boxes, but no screen calls it that way yet: `PatientLogin` always
 asks for a PIN. If a screen does, no terms or privacy version is recorded
 for those accounts.
 
-This describes the code. The server rules from `20260926000200` and
-`20260926000210` take effect only after the Foundation applies them with the
+This describes the code. The server rules from `20260926120000` and
+`20260926120100` take effect only after the Foundation applies them with the
 Database migrations workflow (see the checklist's Progress section).
 
 Portal access is decided by the server. Staff changes go through
@@ -45,7 +45,7 @@ server's value. A guard trigger puts back `patients.portal_enabled` when an
 API write tries to change it directly. The auto-enrolment trigger runs on
 insert only and never overrides a decision; it is switched off by
 `auto_enrollment_enabled` = false
-(`supabase/migrations/20260926000200_consent_defaults_off.sql`), so a new
+(`supabase/migrations/20260926120000_consent_defaults_off.sql`), so a new
 patient's access stays off until staff ask for it. The registration form's
 portal box and BulkPortalMigration use `enrollPatientInPortal`
 (`src/services/unifiedPortalEnrollment.ts`), which, online, first inserts a
@@ -72,7 +72,7 @@ and offline, and refuses anyone under 18 before any account is made
 `src/services/patientPortalAuth.ts`). Online, the new account is linked to
 a clinic record by the server: `portal_link_patient_record` refuses a
 child's record and never creates a record for an under-18 date of birth
-(`20260926000210_portal_link_adults_only.sql`). It answers
+(`20260926120100_portal_link_adults_only.sql`). It answers
 `needs_staff_verification`, which the app shows as "ask clinic staff"
 (`MINOR_RECORD_LINK_MESSAGE`); the account is created but not linked, and
 signed out. The email lookup at portal sign-in (`src/services/patientService.ts`)
