@@ -43,7 +43,7 @@ const INVALID_DOB_MESSAGE =
   "Please enter a real date of birth. It cannot be in the future.";
 
 // Required in both modes. People under 18 cannot create their own account:
-// a parent or guardian adds them from their own account instead.
+// a parent or guardian asks clinic staff instead.
 const dateOfBirthField = z.string().superRefine((value, ctx) => {
   const fail = (message: string) =>
     ctx.addIssue({ code: z.ZodIssueCode.custom, message });

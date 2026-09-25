@@ -342,8 +342,10 @@ describe("PatientRegister (offline mode)", () => {
     await waitFor(() => {
       expect(screen.getByText(UNDER_18_SIGN_UP_MESSAGE)).toBeTruthy();
     });
-    // The message points to the caregiver option in a parent's account.
-    expect(UNDER_18_SIGN_UP_MESSAGE).toMatch(/people you care for/i);
+    // The message sends parents to clinic staff, not to People you care
+    // for, which cannot reach a child's clinic record.
+    expect(UNDER_18_SIGN_UP_MESSAGE).toMatch(/clinic staff/i);
+    expect(UNDER_18_SIGN_UP_MESSAGE).not.toMatch(/people you care for/i);
     expect(
       screen.getByLabelText(/date of birth/i).getAttribute("aria-invalid"),
     ).toBe("true");

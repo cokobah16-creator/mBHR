@@ -29,17 +29,20 @@ export const ACCEPTANCE_REQUIRED_MESSAGE =
 
 // Portal accounts are for adults (isMinor in src/utils/patient.ts). The
 // privacy notice says so; change it in the same commit as these rules.
+// Guardian access to a child's clinic record is not built yet ("People you
+// care for" makes a blank profile, not a link to the child's record), so
+// these messages send parents to clinic staff.
 
 /** Shown when someone under 18 tries to create their own portal account. */
 export const UNDER_18_SIGN_UP_MESSAGE =
-  "You must be 18 or older to create your own account. Ask a parent or guardian to add you from their own account. They can find out how under People you care for.";
+  "You must be 18 or older to create your own account. A parent or guardian can ask clinic staff about access to a child's record.";
 
 /**
  * Shown instead of linking a new portal account, or a sign-in, to a clinic
  * record that belongs to someone under 18.
  */
 export const MINOR_RECORD_LINK_MESSAGE =
-  "We could not link this account to a clinic record. Please ask clinic staff to help. To add a child under 18, a parent or guardian can use People you care for in their own account.";
+  "We could not link this account to a clinic record. Please ask clinic staff to help. A parent or guardian can ask them about access to a child's record.";
 
 /**
  * Shown to staff instead of turning on portal access, sending a portal

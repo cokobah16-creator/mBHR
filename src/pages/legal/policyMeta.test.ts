@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  MINOR_RECORD_LINK_MESSAGE,
   PRIVACY_VERSION,
   TERMS_VERSION,
+  UNDER_18_SIGN_UP_MESSAGE,
   currentPolicyAcceptance,
   formatPolicyDate,
   isCompleteAcceptance,
@@ -34,6 +36,15 @@ describe("policyMeta", () => {
       acceptedAt: "2026-09-24T10:00:00.000Z",
     });
     expect(isCompleteAcceptance(acceptance)).toBe(true);
+  });
+
+  it("sends parents of a child to clinic staff, not to People you care for", () => {
+    // People you care for makes a blank profile; it cannot reach a child's
+    // clinic record.
+    for (const message of [UNDER_18_SIGN_UP_MESSAGE, MINOR_RECORD_LINK_MESSAGE]) {
+      expect(message).toMatch(/clinic staff/i);
+      expect(message).not.toMatch(/people you care for/i);
+    }
   });
 
   it("treats a missing or partly empty acceptance as not given", () => {
