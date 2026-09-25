@@ -10,7 +10,7 @@ This section is about email (`send-otp-email`).
 
 - ✅ The function answers with `"success": true, "demo": true`
 - ✅ No email is sent and no external API is called
-- ✅ The logs say only that demo mode ran. They never contain the address, the code, the subject or the message
+- ✅ The logs say only that demo mode ran. They never contain the address, the code or the invitation's text
 - ✅ Fine for development and testing
 
 ### How Demo Mode Works
@@ -201,7 +201,7 @@ Recommended: **Resend only** ($0)
 
 - Set up free Resend account
 - Configure `RESEND_API_KEY`
-- Send portal invitations by email only
+- Send portal invitations by email. Patients with no email get an SMS invitation only once an SMS provider is set up too; until then staff share the registration link
 - 3,000 emails/month free
 
 ### For Production Launch

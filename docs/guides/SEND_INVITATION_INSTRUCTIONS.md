@@ -57,14 +57,14 @@ if (result.success) {
    - Patient has email address ✅
    - Rate limiting allows sending ✅
 
-2. **Email Delivery:** the app asks the `send-otp-email` function to send an invitation with a registration link. It contains no code. The function sends it only for staff signed in online.
+2. **Email Delivery:** the app sends the patient's id to the `send-otp-email` function with purpose `portal_invitation`. The server checks that your role may send invitations and that portal access is on for the patient, looks up the stored email address, and builds the invitation with a registration link. It contains no code. The function sends it only for staff signed in online.
    - **With API Key:** Email sent via Resend to `cokobah16@gmail.com`
    - **Without API Key (Demo):** no email is sent, and the logs say only that it ran in demo mode
    - **Not signed in online:** the function refuses. The patient record shows the registration link to share instead, and says why.
 
 3. **Record Updated (on this device):**
    - Invitation count incremented
-   - Status set to "queued", then "sent" (also when no message went out and the link was shown to share)
+   - Status set to "queued", then "sent" when the email service accepted it, or "failed" with the reason when no message went out (the card shows "Not sent: link shared")
 
 ---
 

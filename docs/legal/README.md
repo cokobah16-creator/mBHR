@@ -22,81 +22,94 @@ access for one patient after ticking that the patient agreed
 (`src/components/PortalStatusCard.tsx`), and administrators have two pages
 for many patients at once (`src/pages/admin/PortalMigration.tsx`,
 `src/pages/admin/BulkPortalMigration.tsx`). None of these stores a record
-of the patient's agreement. `loginPatientPortal`
-(`src/services/patientPortalAuth.ts`) can create an account on a device
-from a phone or email and a date of birth, without the three boxes, but no
-screen calls it that way yet: `PatientLogin` always asks for a PIN. If a
-screen does, no terms or privacy version is recorded for those accounts.
+of the patient's agreement: the tick on the record page only unlocks the
+button, and the request sent to the server carries a reason code
+(`staff_choice`, `bulk_enable` or `registration`), not the attestation.
+`loginPatientPortal` (`src/services/patientPortalAuth.ts`) can create an
+account on a device from a phone or email and a date of birth, without the
+three boxes, but no screen calls it that way yet: `PatientLogin` always
+asks for a PIN. If a screen does, no terms or privacy version is recorded
+for those accounts.
 
-Where access is saved matters. The online portal checks
-`patients.portal_enabled` on the server. The trigger that set it for every
-patient with a phone or email is dropped
-(`supabase/migrations/20260926000200_consent_defaults_off.sql`), so it
-stays off for a new patient until something turns it on:
+Portal access is decided by the server. Staff changes go through
+`requestPortalAccessChange` (`src/services/portalAccess.ts`): the device
+shows the change as waiting and queues the `set_patient_portal_access`
+command (`supabase/migrations/20260925100100_portal_access_authoritative.sql`),
+which is sent only while the staff member who made it is signed in online.
+The server confirms or refuses it, and other devices then apply the
+server's value. A guard trigger puts back `patients.portal_enabled` when an
+API write tries to change it directly. The auto-enrolment trigger runs on
+insert only and never overrides a decision; it is switched off by
+`auto_enrollment_enabled` = false
+(`supabase/migrations/20260926000200_consent_defaults_off.sql`), so a new
+patient's access stays off until staff ask for it. The registration form's
+portal box and BulkPortalMigration use `enrollPatientInPortal`
+(`src/services/unifiedPortalEnrollment.ts`), which, online, first inserts a
+`patient_portal_users` row. That insert sends columns the table does not
+have in `supabase/migrations`, so on a server built from them it fails and
+access is not asked for (checklist item 2). On a device with no server,
+changes stay on that device.
 
-- The record page switch and PortalMigration (`enablePortalAccess` and
-  `disablePortalAccess` in `src/services/portalEnrollment.ts`) save the
-  change on the device. When the device is online they also send it to the
-  server. The server takes it only if the patient's record has been
-  uploaded and the online sign-in holds the `register` permission.
-  Otherwise only that device changes, nothing retries it, and the message
-  says so.
-- The registration form's portal box and BulkPortalMigration use
-  `enrollPatientInPortal` (`src/services/unifiedPortalEnrollment.ts`). It
-  sets `portal_enabled` only after creating a `patient_portal_users` row.
-  That insert sends columns the table does not have in
-  `supabase/migrations`, so on a server built from them it fails and turns
-  nothing on (checklist item 2).
-- Other staff devices do not receive the change. They apply the server's
-  value only once `portal_enabled_changed_at` is set. The app cannot set
-  it; the planned `set_patient_portal_access` command will (checklist
-  item 9).
-
-Portal invitations go by email only (`sendPortalInvitation` in
-`src/services/portalEnrollment.ts`), and the server sends them only for
-staff signed in online. A patient with no email gets no message:
-`send-otp-sms` sends only one-time codes, so SMS invitations are not
-available yet, and the record page gives staff the registration link to
-share instead. The registration form's portal box and BulkPortalMigration
-send no invitation at all.
+Portal invitations go through the server, by email (`send-otp-email`) or,
+for a patient with no email, by SMS (`send-sms-reminder`), both with
+purpose `portal_invitation` (`sendPortalInvitation` in
+`src/services/portalEnrollment.ts`). Only roles with `portal_invite`
+(registration lead, lead clinician, administrator) can send them; the
+server checks this again in `portal_invitation_begin()`
+(`20260925100600_registration_lead_portal_invite.sql`), sends only for
+staff signed in online, only once the server has portal access on for the
+patient, uses the stored email or phone, builds the text, and records who
+sent it. When nothing is sent, staff get the registration link to share.
+The registration form and BulkPortalMigration send no invitation.
 
 Portal accounts are for adults. Sign-up asks for a date of birth, online
-and offline, and refuses anyone under 18 (`isMinor` in
-`src/utils/patient.ts`). Sign-up and login never link an account to a
-clinic record whose date of birth shows the person is under 18: the online
-sign-up and email lookup (`src/hooks/useAuth.ts`,
-`src/services/patientService.ts`) and the offline registration and
-date-of-birth login (`src/services/patientPortalAuth.ts`) all refuse to
-link it. When the only record matching an online sign-up is a child's, the
-sign-up account is created but not linked, and the person is told to ask
-clinic staff. A record of their own cannot be made there, because the
-database allows one patient record per email address. The server refuses too: `portal_link_patient_record`, which any
-signed-in account can call, refuses a child's record and never creates one
-for an under-18 date of birth (`20260926000210_portal_link_adults_only.sql`).
-A record with no date of birth still links, and accounts already linked to
-a child's record are not changed. The refusal messages send a parent or
-guardian to clinic staff about access to a child's record.
+and offline, and refuses anyone under 18 before any account is made
+(`isMinor` in `src/utils/patient.ts`; `src/hooks/useAuth.ts`,
+`src/services/patientPortalAuth.ts`). Online, the new account is linked to
+a clinic record by the server: `portal_link_patient_record` refuses a
+child's record and never creates a record for an under-18 date of birth
+(`20260926000210_portal_link_adults_only.sql`). It answers
+`needs_staff_verification`, which the app shows as "ask clinic staff"
+(`MINOR_RECORD_LINK_MESSAGE`); the account is created but not linked, and
+signed out. The email lookup at portal sign-in (`src/services/patientService.ts`)
+and the offline registration and date-of-birth login
+(`src/services/patientPortalAuth.ts`) refuse a child's record too. A record
+with no date of birth still links, and accounts already linked to a child's
+record are not changed. The refusal messages send a parent or guardian to
+clinic staff about access to a child's record.
 
 Staff cannot turn on portal access for a child's record in the app:
-`enablePortalAccess`, `sendPortalInvitation` and `enrollPatientInPortal`
-refuse a patient under 18, the registration form's portal box is off for a
-child, and PortalMigration and BulkPortalMigration leave children out.
-Turning access off still works. This is checked in the app only: the server
-lets a sign-in with the `register` permission set `portal_enabled` on any
-record, and a child's record that already has access on (for example from
-the dropped trigger) keeps it until staff turn it off. There is no guardian
-record or guardian consent yet (checklist item 17).
+`enablePortalAccess`, `sendPortalInvitation`, `enrollPatientInPortal` and
+`canEnrollInPortal` refuse a patient under 18, the record page offers no
+invitation or link for a child, the registration form's portal box is off
+for a child, and PortalMigration and BulkPortalMigration leave children
+out. Turning access off still works. This is checked in the app only:
+`set_patient_portal_access` and `portal_invitation_begin` do not check age
+on the server yet, and a child's record that already has access on keeps
+it until staff turn it off. There is no guardian record or guardian consent
+yet (checklist item 17).
 
 Patients stop text-message reminders by telling clinic staff, as the
 privacy notice says. Staff turn appointment or medication reminders off in
-the patient's preferences (`src/components/PreferenceManager.tsx`), and the
-senders skip a reminder that is off. Every screen and helper that reads the
-setting uses one rule (`isReminderOptedOut` in
-`src/services/reminderEligibility.ts`): 0 or false is off; 1, true, an
-empty setting or no record is not an opt-out. This device writes 1 or 0; a
-setting pulled from the server can hold true or false. The portal's own
-"Text message reminders" switch (`src/features/patient-portal/ManageAccount.tsx`)
-is saved, but no sender reads it yet.
+the patient's preferences (`src/components/PreferenceManager.tsx`). Every
+screen and helper that reads the setting uses one rule
+(`isReminderOptedOut` in `src/services/reminderEligibility.ts`): 0 or false
+is off; 1, true, an empty setting or no record is not an opt-out. This
+device writes 1 or 0; a setting pulled from the server can hold true or
+false. The notification worker (`src/services/notificationWorker.ts`)
+checks the setting on the device again right before each send: a queued
+device reminder for a patient who opted out is cancelled, and a server
+reminder is skipped and stays pending on the server, because the device
+may not change its status. A setting that cannot be read holds the
+reminder. One-time codes and televisit links are never held back. The
+portal's own "Text message reminders" switch
+(`src/features/patient-portal/ManageAccount.tsx`) is saved, but no sender
+reads it yet.
+
+The Resend API key that was committed to the repository has been removed
+from the code and docs on both lines of work (mainone's `c7576ac`, and this
+branch's `60dbf03`). It is still in the Git history, so it must be revoked
+and replaced in the Resend dashboard (checklist item 1).
 
 Both were written to describe what the code actually does. **Neither has
 been reviewed by a lawyer.** Before relying on them, have a qualified

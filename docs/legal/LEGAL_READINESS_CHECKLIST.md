@@ -8,20 +8,21 @@ The findings were produced by reading the code, then checked a second time by op
 
 ## Progress
 
-*Updated 25 September 2026.* The fixes that needed no decision by the Foundation are in the code on branch `claude/list-creation-implementation-izwdi5`. Each item below has a **Done in the code** paragraph that says which steps are done and which remain.
+*Updated 25 September 2026.* The fixes that needed no decision by the Foundation are in the code on branch `claude/list-creation-implementation-izwdi5`. That branch was then merged with `mainone` at `68e6da0`. `mainone` had meanwhile made portal access a server decision, built portal invitations on the server and sent SMS with the staff member's token. Where the two overlapped, `mainone`'s design was kept and this branch's rules were put back on top of it; the last row of the table says where. Each item below has a **Done in the code** paragraph that says which steps are done and which remain.
 
 | Change | Items | Where |
 |---|---|---|
-| Resend key removed from the repository, and `send-otp-email` limited to signed-in staff | Fix these first | Lane mB, merge `433177f` |
+| Resend key removed from the repository, and `send-otp-email` limited to signed-in staff | Fix these first | Lane mB, merge `433177f`. `mainone` removed the key too (`c7576ac`) and rebuilt `send-otp-email` around server-built invitations (`57ae804`) |
 | Reminder opt-outs checked right before every send, and a pulled `false` counts | 18, 9 | Lane mC, merge `37eb105` |
-| Auto-enrolment trigger dropped, treatment sharing off by default, and portal access switched by staff with a recorded tick | 9, 6 | Lane mA, merge `ef67701` |
+| Auto-enrolment switched off, treatment sharing off by default, and staff tick that the patient agreed before turning portal access on | 9, 6 | Lane mA, merge `ef67701`. After the merge the trigger is kept (`mainone` made it insert-only) and its setting turns it off; the tick is not stored |
 | Three separate sign-up boxes, with the accepted versions kept | 6, 2 | Lane mA, merge `ef67701` |
 | Portal sign-up and linking for adults only, in the app and on the server | 17 | Lane mA, merge `ef67701`; `441eac3` |
 | Privacy notice names every processor, has a Children section, and is linked from staff sign-in and the portal | 1 | Lane mA, merge `ef67701`; `458b0b9` |
-| Children's records refused portal access, invitations and enrolment by staff and admin tools; one opt-out rule for reminder settings on every screen; no SMS invitation is promised | 17, 9, 18 | `2bbc676` to `011da0d` |
+| Children's records refused portal access, invitations and enrolment by staff and admin tools; one opt-out rule for reminder settings on every screen | 17, 9, 18 | `2bbc676` to `011da0d`. The "no SMS invitation" wording from this range was dropped in the merge: `mainone` sends SMS invitations |
+| Merged with `mainone`: portal access decided by the server through a queued `set_patient_portal_access` command (`20260925100100`, `64b0a20`), invitations checked and built by the server for `portal_invite` roles (`20260925100600`, `57ae804`), SMS sent with the staff member's token (`ccc25eb`). Re-applied on top: the admin-only code email, the staff attestation, the adults-only rules, the send-time opt-out check and consent defaults off | Fix these first, 6, 9, 17, 18 | The merge of `mainone` and the adaptation commits after it |
 
 Still to do by the Foundation:
-- Revoke the old Resend key.
+- Revoke the old Resend key. It was removed from the code on both lines of work, but it is still in git history.
 - Decide whether patients who were enrolled automatically keep portal access. Nothing was reversed.
 - The decisions under [Before you start](#before-you-start): the controller and contacts, retention periods, the "AI training" purpose, guardian verification, and two-way SMS.
 - Have a native speaker check the new Hausa, Yoruba, Igbo and Pidgin labels for the legal links (`legal.links.*` in `src/i18n/locales`).
@@ -41,14 +42,14 @@ These two problems are not on the list of 20, but they carry more risk than most
 
    The repository is on GitHub, so treat the key as exposed. Revoke it in the Resend dashboard, issue a new one, and store the new key only as the `RESEND_API_KEY` Edge Function secret. Replace every occurrence in these files with a placeholder such as `re_your_api_key`. Removing the key from git history is optional once it is revoked.
 
-   **Done in the code:** every copy is now the placeholder `re_your_api_key`, and `scripts/set-resend-key.sh` reads the key from `RESEND_API_KEY` or a hidden prompt and never prints it. **Still to do by the Foundation:** revoke the old key in the Resend dashboard and set a new one. It is still in git history.
+   **Done in the code:** every copy is now the placeholder `re_your_api_key`, and `scripts/set-resend-key.sh` reads the key from `RESEND_API_KEY` or a hidden prompt and never prints it. `mainone` removed the key independently (`c7576ac`) and reviewed the history in `docs/security/CREDENTIAL_HISTORY_REVIEW.md`. The merge keeps this branch's script, which hands the key to the Supabase CLI in a temporary env-file only the user can read, never on the command line. **Still to do by the Foundation:** revoke the old key in the Resend dashboard and set a new one. It is still in git history.
 
 2. **`send-otp-email` will send any message to any address.** `supabase/functions/send-otp-email/index.ts` checks only an IP rate limit (`:18`). It then accepts `email`, `subject` and `message` from the caller (`:32`) and sends them through the Foundation's Resend account. Anyone holding the public anon key can use it to send mail in the Foundation's name. The message is inserted into the HTML without escaping (`:138`), and so is the code (`:120`). In demo mode it also logs the recipient and the code (`:66`). To fix it:
    1. Require a signed-in staff session for message mode, using `supabase/functions/_shared/security/staffAuth.ts`, which the SMS functions already use.
    2. Accept only a 4 to 8 digit `otp`, and HTML-escape every value placed in the email.
    3. Stop logging the address and the code.
 
-   **Done in the code:** the function now calls `requireStaff`, which reads the caller's role from `app_users`, so the anon key gets 401. Message mode is open to the roles that can send portal invitations in the app: volunteer, nurse, doctor, lead clinician and admin. Code mode is admin only and accepts a 4 to 8 digit code. Every value placed in the email is escaped (`supabase/functions/_shared/security/html.ts`). The logs no longer hold the address, the code, the subject or the message. The callers in the app send the signed-in user's token, and bulk invitations need an online sign-in. **Still to do by the Foundation:** deploy the function.
+   **Done in the code:** after the merge, the function follows `mainone`'s design (`57ae804`). A portal invitation is a request with `purpose: "portal_invitation"` and a patient id, from a signed-in staff member whose role holds `portal_invite` (registration lead, lead clinician, administrator), checked in the database by `portal_invitation_begin()`. The server looks up the stored address and builds the subject, text and link, so the caller chooses neither the recipient nor the words. The old free-text mode is refused with `message_mode_removed`. On top of that design, this branch's rules are back: the verification code email is admin only (`requireStaff` with `OTP_SENDER_ROLES`, checked before the address or the code is looked at, in `supabase/functions/_shared/security/emailRequest.ts`) and accepts a 4 to 8 digit code; every value placed in HTML is escaped with `supabase/functions/_shared/security/html.ts`, which the invitation email now uses too; no log line holds an address (masked or not), a code, or the caller's user id or role; anything but POST gets 405, and the rate limit answers with a JSON 429. The app sends the signed-in staff member's token. **Still to do by the Foundation:** deploy the function.
 
 The migrations used to give anonymous users read and insert access to every row in `patients`. The row-level security rework in `supabase/migrations/20260924110100_rls_clinical_core.sql` removed that, and a read-only check of the live database on 24 September 2026 found no such policy. No action is needed.
 
@@ -114,7 +115,7 @@ The migrations used to give anonymous users read and insert access to every row 
 - `LegalLinks` is on staff sign-in and the device-PIN step, first-run setup, portal sign-in and sign-up, and the signed-in portal menus.
 - `docs/legal/README.md` says which accounts have no recorded acceptance.
 
-The version is not yet written to `patient_consent_records` (item 6). Steps 2, 4, 6, 7, 9 and 11 are still open, and a lawyer has not reviewed the notice. Steps 2, 6 and 7 need the controller, retention and AI-training decisions.
+The version is not yet written to `patient_consent_records` (item 6). Steps 2, 4, 6, 7, 9 and 11 are still open, and a lawyer has not reviewed the notice. Steps 2, 6 and 7 need the controller, retention and AI-training decisions. Since the merge with `mainone`, the invitation email is built on the server (`invitationEmail` in `supabase/functions/_shared/security/portalInvitation.ts`), so step 11's footer link belongs there.
 
 **How to check it.**
 - `src/pages/legal/PrivacyPolicy.test.tsx` (new): reuse the `import.meta.glob` scan from `src/test/startupChunks.test.ts:24`, and read `public/` with `node:fs`. Look for `api.twilio.com`, `api.ng.termii.com`, `api.resend.com`, `meet.jit.si`, `cdn.jsdelivr.net` and `@sentry/react`. Render the page in a `MemoryRouter`. Fail if a provider found in the code is not named.
@@ -299,10 +300,10 @@ The version is not yet written to `patient_consent_records` (item 6). Steps 2, 4
 - Offline, the accepted versions and time are stored on the `LocalPortalUser`. The hard-coded `consentGiven: true` is gone.
 - Online, they go in `signUp` `options.data`. The patient can edit that user metadata, so it is not yet evidence of consent.
 - The staff form no longer ticks portal access by itself.
-- `PortalStatusCard` asks staff to tick that the patient agreed before turning access on. When the device is online and staff are signed in online, it also sets `patients.portal_enabled` on the server.
+- `PortalStatusCard` asks staff to tick that the patient agreed before turning access on ("Turn on access" stays disabled until then). After the merge with `mainone`, the change is queued as a `set_patient_portal_access` command and the server decides. The tick is not stored anywhere: the command carries only the reason code `staff_choice`.
 - `docs/legal/README.md` is corrected.
 
-Nothing is written to `patient_consent_records` yet. Steps 2 to 7 (migration `000100`, the Dexie `consents` table and `recordConsent`), 11, 13 and 14 are still open.
+Nothing is written to `patient_consent_records` yet. Steps 2 to 7 (migration `000100`, the Dexie `consents` table and `recordConsent`), 11, 13 and 14 are still open. Step 4 no longer needs to drop the trigger: see item 9.
 
 **How to check it.**
 - Extend `src/features/patient-portal/PatientRegister.test.tsx` (it clicks `#consent` at `:103`): submit fails until all three boxes are ticked, and `recordConsent` gets each kind and version.
@@ -413,17 +414,18 @@ The browser Termii gateway has been deleted (`src/services/messaging.ts:23-28`).
 18. In the same commit, update `src/pages/legal/PrivacyPolicy.tsx:77-78` and `:102-109`, and `docs/legal/README.md:5-6`.
 
 **Done in the code (lanes mA and mC).** Steps 1, 6 and 16 are done, and so are parts of steps 3, 12, 15 and 18.
-- Migration `000200` drops `trigger_auto_enrollment` and `check_auto_enrollment()`, and sets both settings to `false`.
+- Migration `000200` sets `auto_enrollment_enabled` and `send_welcome_notification` to `false`. It does not drop `trigger_auto_enrollment` or `check_auto_enrollment()`: `mainone`'s `20260925100100_portal_access_authoritative.sql` made the trigger run on insert only, never override a decision, an opt-out or an earlier disable, and enrol only while that setting is true, and `supabase/tests/portal_access.test.sql` expects it. With the setting off it enrols no one.
+- Step 7 is done by `mainone` (`64b0a20`): `enablePortalAccess` and `disablePortalAccess` queue `set_patient_portal_access` through `src/services/portalAccess.ts`, and a disable always applies on the server.
 - It defaults `allow_treatment_access` to false. `DataSharingPreferences` starts it unticked.
 - `reminderSkipReason` now treats a pulled `false` as an opt-out (lane mC).
 - `ScheduleReminderForm`, `PreferenceManager` and `src/services/preferences.ts` read reminder settings with that same rule (`isReminderOptedOut`). A setting pulled as `true` shows as On and is saved as 1. It is no longer read as Off, and saving no longer silently opts the patient out.
 
-Step 2 is not done, and deliberately so: whether patients who were enrolled automatically keep access is the Foundation's decision. Step 3's reminder and alert defaults, and steps 4, 5, 7 to 11, 13, 14 and 17, are still open. The auto-enrolment trigger is gone, so a new patient's server access now changes only through the steps listed in the migration header.
+Step 2 is not done, and deliberately so: whether patients who were enrolled automatically keep access is the Foundation's decision. Step 3's reminder and alert defaults, and steps 4, 5, 8 to 11, 13, 14 and 17, are still open. Step 8 in particular: the command carries a reason code, not the staff attestation, and the server does not refuse an enable without consent. With auto-enrolment off, a new patient's server access changes only through `set_patient_portal_access`, which staff queue, and `portal_link_patient_record` for a self-registered record.
 
 **How to check it.**
 - `npm run test:run -- src/services/reminderEligibility.test.ts src/services/portalEnrollment.test.ts src/features/patient-portal/PatientRegister.test.tsx` passes with three new tests: a missing record gives `no_consent`, `disablePortalAccess` queues one `p_enabled: false` command, and all three sign-up boxes start unticked.
 - `src/components/PatientForm.test.tsx` (new): typing a phone number leaves "Enable patient portal access" unticked.
-- SQL after `supabase db reset`: `pg_trigger` has no `trigger_auto_enrollment`. A patient inserted with a phone keeps `portal_enabled = false`. `information_schema.columns` shows `false` as the default for each column in step 3.
+- SQL after `supabase db reset`: `pg_trigger` has `trigger_auto_enrollment` as a `BEFORE INSERT` trigger only, and `auto_enrollment_enabled` is `false`. A patient inserted with a phone keeps `portal_enabled = false`. `information_schema.columns` shows `false` as the default for each column in step 3.
 - Manual: turn SMS off in the portal and sync a staff device. Go offline and confirm `/sms-reminders` refuses the reminder.
 
 **Decision needed.** The owner and a lawyer must decide whether patients who already have portal access keep it or must confirm again. This includes access switched on by the device backfill (`src/db/migrations/backfillPlans.ts:45-67`). They must also decide whether `allow_ias_access` (the patient's own access) stays on by default.
@@ -672,9 +674,10 @@ This change adds no data flow, so the privacy notice does not need to change.
 **Done in the code (lane mA).** Steps 1, 5, 14 and 15 are done, and part of step 22.
 - `isMinor` and `ADULT_AGE` are in `src/utils/patient.ts`. `patientAge` reads a date of birth as a calendar day.
 - Portal sign-up requires a date of birth, online and offline, and refuses anyone under 18.
-- Sign-up, login and the email lookup never link an account to a child's record.
-- The server's `portal_link_patient_record` refuses the same cases (migration `000210`).
-- Staff cannot turn on portal access, send an invitation or enrol a child's record (`enablePortalAccess`, `sendPortalInvitation`, `enrollPatientInPortal`). The registration form and both admin pages leave children out, and the bulk server page filters them before its 100-row limit. Turning access off still works for a child. This covers steps 12 and 18.
+- After the merge with `mainone`, online sign-up is linked to a clinic record by the server (`portal_link_patient_record`, called through `src/services/portalSignIn.ts`). It refuses a child's record and never creates a record for an under-18 date of birth (migration `000210`), and the app shows its `needs_staff_verification` answer as "ask clinic staff". The email lookup, offline registration and the date-of-birth login refuse a child's record too.
+- Staff cannot turn on portal access, send an invitation or enrol a child's record (`enablePortalAccess`, `sendPortalInvitation`, `enrollPatientInPortal`, `canEnrollInPortal`). The record page offers no invitation or link for a child. The registration form and both admin pages leave children out, and the bulk server page filters them before its 100-row limit. Turning access off still works for a child. This covers steps 12 and 18.
+- These staff-side refusals are in the app only. `mainone`'s `set_patient_portal_access` and `portal_invitation_begin` do not check age on the server yet (step 19).
+- Step 4 holds in effect: the auto-enrolment trigger is kept but switched off by its setting (item 9).
 - The privacy notice has a "Children" section.
 
 A record with no date of birth still links, and existing links and existing access are unchanged. Everything to do with guardians waits on the guardian decision: steps 2 to 4, 6 to 11, 13, 16, 17 and 19 to 21, and the terms wording in step 22.
@@ -714,7 +717,7 @@ A record with no date of birth still links, and existing links and existing acce
 16. In the same commit, add the Twilio fallback to `src/pages/legal/PrivacyPolicy.tsx:71` and describe STOP and the email link at `:106`. Document the new secrets in `docs/deployment/SMS_SETUP_TERMII.md` and `docs/deployment/EMAIL_SETUP_GUIDE.md`.
 17. Remove the disclaimer at `ManageAccount.tsx:284-287`, and hide "Email reminders".
 
-**Done in the code (first pass, no migration).** Step 6 and the device half of step 7 are done. `reminderSkipReason` now treats a pulled `false` as an opt-out, as it already did `0` (`src/services/reminderEligibility.ts`, `isReminderOptedOut`), and `ScheduleReminderForm` blocks it too. `notificationWorker.ts` reads the patient's setting on this device right before each of its four send paths. An opted-out reminder in the device outbox or queue ends `cancelled` and is never sent. A server `medication_reminders` row ends `failed`, because that table's status check has no `cancelled`. When the setting cannot be read, the reminder is held, not sent. `reminderKindForTemplateKey` and `TRANSACTIONAL_TEMPLATE_KEYS` live in `src/features/notifications/smsOutbox.ts`, so codes and televisit links are never suppressed. Step 12's security half is done too (see [Fix these first](#fix-these-first)): `send-otp-email` calls `requireStaff`, checks the code with `validOtp` and escapes every value. The server side is still open: steps 1 to 5 and 8 to 11, and step 12's `kind` field. So are the email headers, the unsubscribe page and STOP handling in steps 13 to 17, which wait on the decision below.
+**Done in the code (first pass, no migration).** Step 6 and the device half of step 7 are done. `reminderSkipReason` now treats a pulled `false` as an opt-out, as it already did `0` (`src/services/reminderEligibility.ts`, `isReminderOptedOut`), and `ScheduleReminderForm` blocks it too. `notificationWorker.ts` reads the patient's setting on this device right before each of its four send paths. An opted-out reminder in the device outbox or queue ends `cancelled` and is never sent. After the merge with `mainone` (`ccc25eb`), the device no longer writes a server `medication_reminders` row: only the `send-sms-reminder` function records its outcome. So an opted-out server reminder is skipped on the device in each run and stays pending on the server; Send now refuses it and writes nothing. When the setting cannot be read, the reminder is held, not sent. `reminderKindForTemplateKey` and `TRANSACTIONAL_TEMPLATE_KEYS` live in `src/features/notifications/smsOutbox.ts`, so codes and televisit links are never suppressed. `mainone` did step 9: invitations go through `send-sms-reminder` with purpose `portal_invitation` (`57ae804`). Step 12 is done: `mainone` replaced the free-form mode with a purpose (`portal_invitation`), and this branch's rules keep the code email admin only, check the code with `validOtp` and escape every value (see [Fix these first](#fix-these-first)). The server side is still open: steps 1 to 5, 8, 10 and 11. So are the email headers, the unsubscribe page and STOP handling in steps 13 to 17, which wait on the decision below. `send-sms-reminder` does not check opt-outs itself yet (step 5).
 
 **How to check it.**
 - `src/services/notificationWorker.test.ts`: a reminder for an opted-out patient ends `cancelled` and `fetch` is never called. Cover a local opt-out and one pulled as `medication_reminders: false`.
@@ -839,12 +842,12 @@ A lawyer should confirm who may request erasure for a child.
 
 ### New migrations named in this checklist
 
-The newest migration is `20260925100000_sync_authority_foundation.sql`, so every name below sorts after it.
+The newest migration from `mainone` is `20260925100700_patient_document_ownership.sql`, so every name below sorts after it.
 
 | Migration (new) | Items |
 |---|---|
 | `20260926000100_record_portal_consent.sql` | 2, 6 |
-| `20260926000200_consent_defaults_off.sql` | 9 (**done**, first pass) |
+| `20260926000200_consent_defaults_off.sql` | 9 (**done**, first pass: the auto-enrolment setting and the sharing default) |
 | `20260926000210_portal_link_adults_only.sql` | 17 (**done**, step 5) |
 | `20260926000300_limit_conflict_deltas.sql` | 1, 7 |
 | `20260926000400_add_patient_guardians.sql` | 17 |

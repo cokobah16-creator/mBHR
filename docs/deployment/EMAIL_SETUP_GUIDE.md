@@ -4,7 +4,7 @@
 
 Patient portal email is sent by the `send-otp-email` Edge Function through Resend.
 
-Until the `RESEND_API_KEY` secret is set, the function runs in **demo mode**: it sends no email and answers `{"success": true, "demo": true}`. It logs only that it ran in demo mode. It never logs the address, the code, the subject or the message.
+Until the `RESEND_API_KEY` secret is set, the function runs in **demo mode**: it sends no email and answers `{"success": true, "demo": true}`. It logs only that it ran in demo mode. It never logs the address, the code or the invitation's text.
 
 When no email is sent, the patient record still gives staff a registration link to share by hand.
 
@@ -27,19 +27,22 @@ When no email is sent, the patient record still gives staff a registration link 
 
 | Request body | Who may send it | Sent by |
 |---|---|---|
-| `{ "email", "subject", "message" }` (portal invitation) | volunteer, nurse, doctor, lead_clinician, admin | "Send portal invitation" on a patient record, and bulk enrolment at `/admin/portal-migration` |
+| `{ "purpose": "portal_invitation", "patientId" }` (portal invitation) | registration_lead, lead_clinician, admin (`portal_invite`, checked in the database by `portal_invitation_begin()`) | "Send portal invitation" on a patient record, and "Enable and send invitations" at `/admin/portal-migration` |
 | `{ "email", "otp" }` (sample sign-in code) | admin | The test on `/admin/email-diagnostics` |
+| `{ "email", "subject", "message" }` (old free-text mode) | nobody: refused with 400 `message_mode_removed` | older app versions |
 
-The role is read from `app_users` on the server. A role in the token or the request is ignored. No patient-facing flow calls this function.
+For an invitation the server looks up the patient's stored email address and builds the subject, text and registration link itself, and only when the server has portal access on for that patient. The role is read from `app_users` on the server. A role in the token or the request is ignored. No patient-facing flow calls this function.
 
 The function answers:
 
 - **401 `not_authenticated`:** no online sign-in, an expired one, or the anon key.
 - **403 `not_permitted`:** the role may not send this email, or the account is deactivated or missing from `app_users`.
-- **400:** `email` is not one plain address, `otp` is not 4 to 8 digits, `subject` or `message` is missing, or the subject is longer than 200 characters or the message longer than 5000.
-- **429 `rate_limited`:** more than 10 requests in a minute from one IP address.
+- **400:** the body is not a JSON object, the purpose is unknown, the old free-text mode was used, `email` is not one plain address, `otp` is not 4 to 8 digits, or an invitation has no valid `patientId`.
+- **404, 409, 422:** the invitation was refused: the patient is not on the server, was merged away, has portal access off, or has no email address.
+- **405:** anything but POST.
+- **429 `rate_limited`:** more than 10 requests in a minute from one IP address, or too many invitations from one account or to one patient.
 
-Every value placed in the HTML email (the code and the message) is escaped, so it shows as text and cannot add HTML such as link tags, images or scripts. The plain-text part is sent as written.
+Every value placed in the HTML email (the code, the patient's name) is escaped, so it shows as text and cannot add HTML such as link tags, images or scripts. The plain-text part is sent as written.
 
 To call it by hand, use the access token of a staff user signed in online, not the anon key:
 
@@ -303,7 +306,7 @@ mBHR Patient Portal <noreply@mbhr.health>
    - Demo mode notices
    - Resend errors, as the HTTP status and error name only
 
-The logs never contain the recipient address, the code, the subject or the message. Use the Resend dashboard to see who an email went to.
+The logs never contain the recipient address (in full or masked), the code, the invitation's text, or the caller's user id or role. Use the Resend dashboard to see who an email went to.
 
 ---
 
@@ -364,10 +367,10 @@ The sample sign-in code email sent by the test on `/admin/email-diagnostics` loo
 What `send-otp-email` does today:
 
 - **Staff only:** a staff member signed in online, with a role allowed to send that email (see [Who Can Call the Function](#who-can-call-the-function)).
-- **Rate limiting:** 10 requests a minute per IP address.
-- **One recipient:** `email` must be one plain address. Lists and display names are refused.
-- **Escaped content:** the code and the message are HTML-escaped in the HTML email.
-- **Private logs:** no address, code, subject or message in the function logs.
+- **Rate limiting:** 10 requests a minute per IP address; invitations are also limited per account and per patient.
+- **One recipient:** a code email's `email` must be one plain address; lists and display names are refused. An invitation goes only to the address stored on the patient's record.
+- **Escaped content:** the code and the patient's name are HTML-escaped in the HTML email.
+- **Private logs:** no address, code, invitation text, or caller id or role in the function logs.
 - **Transport:** requests to Supabase and Resend use HTTPS.
 
 ### Best Practices
