@@ -304,7 +304,10 @@ SELECT public.app_rls_policy('auto_resolution_rules', 'auto_resolution_rules_del
 
 -- Configuration tables that were readable by every signed-in account
 -- (USING (true)), including portal patients. Their admin write policies are
--- unchanged.
+-- unchanged. On production site_conflict_settings comes from the catch-up
+-- 20260924105800 with no policies at all, so it also gets a write policy for
+-- the users permission (conflictQueue.ts updateSiteSettings; admin only, so
+-- an auditor cannot switch off dual approval).
 DO $$
 BEGIN
   IF to_regclass('public.site_conflict_settings') IS NOT NULL THEN
@@ -315,6 +318,12 @@ BEGIN
     CREATE POLICY site_conflict_settings_select_staff
       ON public.site_conflict_settings FOR SELECT TO authenticated
       USING ((SELECT public.app_is_staff()));
+    DROP POLICY IF EXISTS site_conflict_settings_write_users
+      ON public.site_conflict_settings;
+    CREATE POLICY site_conflict_settings_write_users
+      ON public.site_conflict_settings FOR ALL TO authenticated
+      USING ((SELECT public.app_has_permission('users')))
+      WITH CHECK ((SELECT public.app_has_permission('users')));
   END IF;
   IF to_regclass('public.data_retention_policies') IS NOT NULL THEN
     DROP POLICY IF EXISTS "Authenticated users can view retention policies"

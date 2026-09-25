@@ -1,6 +1,7 @@
 -- pgTAP: the interop schema and the FHIR gateway's database functions
--- Migration under test: supabase/migrations/20260926110000_interop_foundation.sql
--- Run with `supabase test db` (see supabase/tests/README.md). Fixtures are
+-- Migration under test: supabase/migrations-deferred/20260926110000_interop_foundation.sql
+-- Deferred with its migration: run by .github/workflows/interop-fhir.yml
+-- (plain PostgreSQL 16), not by `supabase test db`. Fixtures are
 -- created below and everything is rolled back at the end.
 
 BEGIN;

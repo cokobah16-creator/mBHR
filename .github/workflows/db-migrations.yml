@@ -19,14 +19,30 @@ name: Database migrations
 #             runs supabase/hotfix-checks/<version>.sql instead of the pgTAP
 #             suite, and apply redeploys no edge functions.
 #
-# Why this exists: the migrate-prod job in build.yml only runs for pushes to
-# `main`, and production deploys from `mainone`, so production migrations are
-# applied here, deliberately and by hand, never as a side effect of a merge.
+# Why this exists: production deploys from `mainone`, and build.yml's
+# migrate-prod and deploy-prod jobs are disabled (if: false), so production
+# migrations are applied here, deliberately and by hand, never as a side
+# effect of a merge.
 #
 # The migration history cannot be replayed on an empty database (early
-# migrations disagree about column types, for example
-# 20251028000000_add_patient_portal.sql), so the rehearsal starts from a copy
+# migrations disagree about column types), so the rehearsal starts from a copy
 # of production's real schema instead.
+#
+# Folders: the CLI reads only supabase/migrations/. It ignores
+# supabase/migrations-superseded/ (legacy files production never applied and
+# must never run) and supabase/migrations-deferred/ (TEFCA/FHIR files held
+# back until FHIR goes live); see the README in each. Every version production
+# has recorded has exactly one file in supabase/migrations/, so nothing is
+# "on production only".
+#
+# A full reconciliation run (the catch-up 20260924105800, Wave A/B and the
+# files after them, several of which are older than production's newest
+# migration) is: rehearse -> dry-run -> apply, each with include_all ticked.
+# Check that the dry-run lists exactly the pending files you expect.
+#
+# The pgTAP suite (supabase/tests) no longer includes the interop test; it
+# moved with its migration to supabase/migrations-deferred/tests/ and runs in
+# interop-fhir.yml instead.
 
 on:
   workflow_dispatch:
@@ -103,7 +119,10 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned: the CLI behaviour this workflow relies on (history
+          # matching by version, --include-all ordering, repair) was checked
+          # with this version in the local replays.
+          version: 2.118.0
 
       - name: Link project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
@@ -241,7 +260,7 @@ jobs:
 
       - name: Run pgTAP tests locally
         if: inputs.action == 'rehearse' && inputs.only == ''
-        run: supabase test db
+        run: supabase test db --local
 
       - name: Run the one migration's checks locally
         if: inputs.action == 'rehearse' && inputs.only != ''

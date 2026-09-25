@@ -1,0 +1,18 @@
+-- 20251026103928_rebuild_patient_portal_simple.sql
+--
+-- History placeholder. This file intentionally contains no SQL.
+--
+-- Production applied a migration with this version (name
+-- rebuild_patient_portal_simple) in October 2025, but its SQL was never
+-- committed to this repository. The Supabase CLI needs a local file for every
+-- version recorded on production, otherwise `supabase db push` and
+-- `supabase migration up` stop with "Remote migration versions not found in
+-- local migrations directory". This file exists only to satisfy that check.
+--
+-- Production already has this version recorded, so the CLI never runs this
+-- file there. On a fresh database it runs and does nothing.
+--
+-- NEVER reconstruct the original SQL here: that migration dropped and
+-- recreated patient-portal tables, and replaying it would destroy data.
+-- Any change to the portal schema belongs in a new migration with a new
+-- version.

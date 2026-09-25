@@ -3,7 +3,8 @@
 
 The repository's migration history cannot replay on an empty database (see
 docs/interoperability/testing.md), so the interop CI job builds only what
-20260926110000_interop_foundation.sql depends on: the Supabase API roles, an
+supabase/migrations-deferred/20260926110000_interop_foundation.sql
+depends on: the Supabase API roles, an
 auth.uid() that reads request.jwt.claims (as Supabase's does), a minimal
 public.app_users, and the real definitions of the helper functions, copied
 from the migration files that define them (the latest definition wins).
@@ -50,7 +51,7 @@ def function_sql(file: str, name: str) -> str:
 
 
 def main() -> None:
-    parts = [PRELUDE, (MIGRATIONS / "20260520000004_generic_rate_limits.sql").read_text()]
+    parts = [PRELUDE, (MIGRATIONS / "20260517153407_generic_rate_limits.sql").read_text()]
     parts += [function_sql(f, n) for f, n in FUNCTIONS]
     parts.append(
         "GRANT EXECUTE ON FUNCTION public.app_current_role(), "
