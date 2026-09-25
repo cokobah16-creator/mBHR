@@ -174,10 +174,18 @@ jobs:
   # Only runs for `main`. Production deploys from `mainone`, so production
   # migrations are applied by hand with the "Database migrations" workflow
   # (db-migrations.yml) instead.
+  #
+  # DISABLED (if: false). No branch named `main` exists, so these two jobs
+  # never ran; but a stray push to `main` would have run an unreviewed
+  # `supabase db push` against production and a Vercel production deploy.
+  # Production migrations go through .github/workflows/db-migrations.yml
+  # (rehearse -> dry-run -> apply); production deploys come from mainone
+  # through Vercel's Git integration. The original condition was:
+  #   github.event_name == 'push' && github.ref == 'refs/heads/main'
   migrate-prod:
     name: Apply DB migrations (prod)
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: false
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -201,10 +209,11 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
+  # DISABLED (if: false), with migrate-prod above; see the note there.
   deploy-prod:
     name: Deploy production
     needs: migrate-prod
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: false
     runs-on: ubuntu-latest
     environment: production
     steps:
