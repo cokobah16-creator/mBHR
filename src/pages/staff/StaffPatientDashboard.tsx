@@ -41,6 +41,7 @@ import { can, type Role } from "@/auth/roles";
 import { useToast } from "@/stores/toast";
 import { generateId } from "@/db";
 import { formatNigerianDate } from "@/utils/dateFormat";
+import { patientMatchesQuery } from "@/utils/patientSearch";
 import { classifyBloodPressure, classifyTemperature } from "@/utils/vitals";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -637,11 +638,10 @@ export function StaffPatientDashboard() {
   }, [isAuthenticated, navigate, loadPatients]);
 
   const filtered = patients.filter((p) => {
-    const q = search.toLowerCase();
+    const q = search.trim().toLowerCase();
     return (
-      `${p.givenName} ${p.familyName}`.toLowerCase().includes(q) ||
-      (p.email ?? "").toLowerCase().includes(q) ||
-      (p.phone ?? "").includes(q)
+      patientMatchesQuery(p, search) ||
+      (q !== "" && (p.email ?? "").toLowerCase().includes(q))
     );
   });
 

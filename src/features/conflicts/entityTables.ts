@@ -14,15 +14,22 @@ export const ENTITY_LOCAL_TABLE: Record<string, string> = {
   patient_preferences: "patientPreferences",
 };
 
+/** This device's table for a record type named by its server table, or null. */
+export function entityLocalTable(entityType: string): string | null {
+  return Object.prototype.hasOwnProperty.call(ENTITY_LOCAL_TABLE, entityType)
+    ? ENTITY_LOCAL_TABLE[entityType]
+    : null;
+}
+
 /**
  * Local table name for a record type, or null when this device has no such
- * table. Record types already named after a local table are accepted as is.
+ * table. Only the server table names above are accepted; any other name,
+ * including a bare local table name, maps to nothing.
  */
 export function localTableFor(
   entityType: string,
   localTables: readonly string[],
 ): string | null {
-  const mapped = ENTITY_LOCAL_TABLE[entityType];
-  if (mapped) return localTables.includes(mapped) ? mapped : null;
-  return localTables.includes(entityType) ? entityType : null;
+  const mapped = entityLocalTable(entityType);
+  return mapped && localTables.includes(mapped) ? mapped : null;
 }

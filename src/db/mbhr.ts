@@ -196,6 +196,13 @@ export interface Prescription {
   lastRejectReason?: string;
   /** Units the server could not cover from stock (dispensed offline). */
   uncoveredQty?: number;
+  /**
+   * 1: the medicine was handed over (saved offline, or reported saved after
+   * the confirm wait) but the server refused the dispense. The dispense
+   * stays recorded on this device and is listed for reconciliation; the
+   * prescription is not reopened.
+   */
+  handoverRefused?: 0 | 1;
 }
 
 export interface Dispense {

@@ -30,16 +30,19 @@ import {
   countOpenCommands,
   countWaitingPermission,
   drainCommands,
+  enqueueCommand,
   registerCommandHandler,
   type CommandStore,
   type DrainSummary,
   type ServerCommand,
 } from "./commandOutbox";
 import { syncErrorCode } from "./errorCode";
+import { advanceCursor, isCursorAhead } from "./cursorGuard";
 import {
   batchFromServer,
   discrepancyFromServer,
   dispenseFromServer,
+  handedOverRefusalStatus,
   isStaleBalance,
   itemFromServer,
   movementFromServer,
@@ -48,6 +51,7 @@ import {
   prescriptionFromServer,
   prescriptionUploadRow,
   recomputeShown,
+  refusedDispenseAction,
   shouldUploadPrescription,
   type ServerBalance,
 } from "./pharmacySyncModel";
@@ -177,16 +181,60 @@ registerCommandHandler("rx_dispense", {
   },
   async onRejected(command, reason) {
     const prescriptionId = argString(command, "p_prescription_id") ?? "";
-    await mbhrDb.transaction("rw", LEDGER_TABLES(), async () => {
-      await mbhrDb.dispenses.where("commandId").equals(command.id).delete();
+    await mbhrDb.transaction("rw", [...LEDGER_TABLES(), mbhrDb.rx_commands], async () => {
+      // Read the stored command, not the copy sent: the confirm wait marks
+      // it as handed over (p_offline) while the call may still be in flight.
+      const stored = await mbhrDb.rx_commands.get(command.id);
+      const handedOver = (stored?.args ?? command.args)?.p_offline === true;
+      const action = refusedDispenseAction(reason, handedOver);
+      const rx = await mbhrDb.prescriptions.get(prescriptionId);
+      const carried = !!rx && rx.pendingCommandId === command.id;
+      await applyBalances(parseBalances(command.result));
+
+      if (action === "resend_offline" && stored) {
+        // Send it again as handed over under a new command id; the dispense
+        // rows and pending stock follow the new command.
+        const resent = await enqueueCommand(rxCommandStore(), {
+          rpc: stored.rpc,
+          args: { ...stored.args, p_offline: true },
+          authorId: stored.authorId,
+          requiredPermission: stored.requiredPermission,
+          entityRefs: stored.entityRefs,
+        });
+        await mbhrDb.dispenses.where("commandId").equals(command.id).modify({ commandId: resent.id });
+        await mbhrDb.stock_movements
+          .where("commandId")
+          .equals(command.id)
+          .filter((m) => m.status === "pending")
+          .modify({ commandId: resent.id });
+        if (rx && carried) await mbhrDb.prescriptions.update(rx.id, { pendingCommandId: resent.id });
+        return;
+      }
+
+      // The server never recorded these stock movements, so the shown stock
+      // goes back to the server's balance either way.
       await mbhrDb.stock_movements
         .where("commandId")
         .equals(command.id)
         .filter((m) => m.status === "pending")
         .delete();
-      await applyBalances(parseBalances(command.result));
-      const rx = await mbhrDb.prescriptions.get(prescriptionId);
-      if (rx && rx.pendingCommandId === command.id) {
+
+      if (action === "keep_handed_over") {
+        // The medicine was given: keep the dispense rows as the record and
+        // list the prescription for reconciliation instead of reopening it.
+        if (rx && carried) {
+          await mbhrDb.prescriptions.update(rx.id, {
+            status: handedOverRefusalStatus(reason),
+            pendingCommandId: undefined,
+            lastRejectReason: reason,
+            handoverRefused: 1,
+          });
+        }
+        return;
+      }
+
+      await mbhrDb.dispenses.where("commandId").equals(command.id).delete();
+      if (rx && carried) {
         // The command carried the prescription. When the server raised an
         // error (no stored result) nothing was saved there, so a
         // prescription it never had is uploaded again at the next sync.
@@ -420,7 +468,9 @@ function overlapFrom(cursor: string): string {
 async function pullTable(spec: PullSpec): Promise<boolean> {
   if (!supabase) return false;
   const cursorId = `pull:${spec.table}`;
-  const stored = (await mbhrDb.rx_cursors.get(cursorId))?.ts;
+  const saved = (await mbhrDb.rx_cursors.get(cursorId))?.ts;
+  // A cursor in the future may have skipped rows: download from the start.
+  const stored = saved && !isCursorAhead(saved) ? saved : undefined;
   // The stored cursor is always a server timestamp string, so the string
   // comparison below compares like with like.
   let since = stored ?? spec.initial?.() ?? "";
@@ -437,12 +487,13 @@ async function pullTable(spec: PullSpec): Promise<boolean> {
     const rows = (Array.isArray(data) ? data : []) as Raw[];
     if (rows.length === 0) break;
     await spec.apply(rows);
-    for (const row of rows) {
-      const ts = row[spec.cursorColumn];
-      if (typeof ts === "string" && ts > since) since = ts;
-    }
+    const now = Date.now();
+    // Not past this device's clock (see cursorGuard).
+    for (const row of rows) since = advanceCursor(since, row[spec.cursorColumn], now);
     await mbhrDb.rx_cursors.put({ id: cursorId, ts: since });
-    if (rows.length < PAGE) break;
+    // A full page that did not move the cursor (future-dated rows) would
+    // come back again unchanged: stop until the next run.
+    if (rows.length < PAGE || since === from) break;
     from = since;
   }
   return true;

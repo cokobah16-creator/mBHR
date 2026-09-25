@@ -7,6 +7,7 @@ import {
   type FlowStage,
 } from "@/services/patientFlow";
 import {
+  compareWaiting,
   normalisePriority,
   promotionPosition,
 } from "@/services/queuePriority";
@@ -73,6 +74,7 @@ interface StageRow {
   stage: string;
   status: string;
   position: number;
+  priority?: string | null;
   updatedAt: Date | string;
   queuedAt?: Date | string;
 }
@@ -103,7 +105,7 @@ export function countByStage(
   return out;
 }
 
-/** Waiting (by queue position) and in-service (earliest called first) rows for one stage. */
+/** Waiting (urgent first, then queue position) and in-service (earliest called first) rows for one stage. */
 export function splitStage<T extends StageRow>(
   items: T[],
   stage: FlowStage,
@@ -111,7 +113,7 @@ export function splitStage<T extends StageRow>(
   const atStage = items.filter((i) => i.stage === stage);
   const waiting = atStage
     .filter((i) => i.status === "waiting")
-    .sort((a, b) => a.position - b.position);
+    .sort(compareWaiting);
   const inService = atStage
     .filter((i) => i.status === "in_progress")
     .sort(

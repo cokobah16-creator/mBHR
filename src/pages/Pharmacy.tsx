@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PharmacySkeleton } from "@/components/ui/Skeleton";
 import { PatientContextHeader } from "@/components/patient/PatientContextHeader";
 import { ensureTodaysVisit } from "@/services/visits";
+import { activePatientFor } from "@/services/activePatient";
 
 export function Pharmacy() {
   const { visitId } = useParams<{ visitId: string }>();
@@ -46,8 +47,11 @@ export function Pharmacy() {
     }
   };
 
-  const handlePatientSelect = async (selectedPatient: Patient) => {
+  const handlePatientSelect = async (chosen: Patient) => {
     try {
+      // A record merged into another is served on the kept record, where
+      // its allergies and history now live.
+      const selectedPatient = await activePatientFor(chosen);
       // Continue today's visit if there is one; otherwise start it.
       const newVisit: Visit = await ensureTodaysVisit(selectedPatient.id);
 

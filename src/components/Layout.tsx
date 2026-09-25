@@ -13,6 +13,7 @@ import { ActiveSiteControl } from "@/components/shell/ActiveSiteControl";
 import { SyncStatusControl } from "@/components/shell/SyncStatusControl";
 import { hasAnyAdminEntry } from "@/features/admin/adminSections";
 import { startBackgroundSync, stopBackgroundSync } from "@/sync/adapter";
+import { useCriticalLabCount } from "@/hooks/useCriticalLabCount";
 import {
   HomeIcon,
   UserGroupIcon,
@@ -110,6 +111,9 @@ interface NavItem {
   name: string;
   href: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  /** Items needing attention (e.g. unreviewed critical lab results). */
+  alertCount?: number;
+  alertLabel?: string;
 }
 
 interface NavGroup {
@@ -218,6 +222,11 @@ export function Layout({ children }: LayoutProps) {
   const hasRole = (...roles: string[]) => !!role && roles.includes(role);
   const hasPerm = (p: Parameters<typeof can>[1]) => !!role && can(role, p);
 
+  // Staff who can open /labs see unreviewed critical results in the shell,
+  // re-read every minute, without having to open or refresh /labs.
+  const criticalLabs = useCriticalLabCount(hasRole("doctor", "nurse", "admin")) ?? 0;
+  const criticalLabsLabel = `${criticalLabs} critical lab result${criticalLabs === 1 ? "" : "s"} not yet reviewed`;
+
   // Navigation mirrors the route guards in App.tsx, so staff only see pages
   // they can open. Grouped by the job being done, not by feature age.
   const navGroups: NavGroup[] = [
@@ -249,7 +258,14 @@ export function Layout({ children }: LayoutProps) {
         { key: "pharmacy", name: t("nav.pharmacy"), href: "/pharmacy", icon: BeakerIcon },
         ...(hasRole("doctor", "nurse", "admin")
           ? [
-              { key: "labs", name: "Labs", href: "/labs", icon: DocumentMagnifyingGlassIcon },
+              {
+                key: "labs",
+                name: "Labs",
+                href: "/labs",
+                icon: DocumentMagnifyingGlassIcon,
+                alertCount: criticalLabs,
+                alertLabel: criticalLabsLabel,
+              },
             ]
           : []),
         ...(hasRole("doctor", "nurse", "volunteer", "registration_lead", "admin")
@@ -357,6 +373,15 @@ export function Layout({ children }: LayoutProps) {
           aria-hidden
         />
         <span className={collapsed ? "md:sr-only" : ""}>{item.name}</span>
+        {item.alertCount ? (
+          <span
+            className={`badge badge-critical ml-auto tabular-nums ${collapsed ? "md:absolute md:right-0.5 md:top-0.5" : ""}`}
+            title={item.alertLabel}
+          >
+            {item.alertCount}
+            <span className="sr-only">: {item.alertLabel}</span>
+          </span>
+        ) : null}
       </>
     );
     return (
@@ -563,7 +588,19 @@ export function Layout({ children }: LayoutProps) {
               <PharmacyOverlay onClose={closeOverlay} role={currentUser?.role} />
             </section>
           ) : (
-            <div className="mx-auto max-w-7xl p-4 sm:p-6">{children}</div>
+            <div className="mx-auto max-w-7xl p-4 sm:p-6">
+              {criticalLabs > 0 && !location.pathname.startsWith("/labs") && (
+                <div className="banner banner-danger mb-4" role="status">
+                  <span>
+                    {criticalLabsLabel}.{" "}
+                    <Link to="/labs" className="font-semibold underline">
+                      Open Labs
+                    </Link>
+                  </span>
+                </div>
+              )}
+              {children}
+            </div>
           )}
         </main>
       </div>

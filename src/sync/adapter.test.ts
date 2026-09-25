@@ -290,6 +290,98 @@ describe("Sync Adapter - Operations Queue Integration", () => {
         value: "2024-01-02T00:00:00.000Z",
       });
     });
+
+    it("does not move the saved cursor past this device's clock", async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      const consultations = db.consultations as unknown as { get: MockFn; put: MockFn };
+      consultations.get.mockResolvedValue(undefined);
+      const settingsPut = db.settings.put as unknown as MockFn;
+      settingsPut.mockClear();
+      const recent = new Date(Date.now() - 60_000).toISOString();
+      mockFrom.mockImplementation((table: string) =>
+        selectChain(
+          table === "consultations"
+            ? [
+                { id: "c1", patient_id: "p1", updated_at: recent },
+                { id: "c2", patient_id: "p1", updated_at: "2999-01-01T00:00:00+00:00" },
+              ]
+            : [],
+        ),
+      );
+
+      const { pullChanges } = await import("./adapter");
+      await pullChanges();
+
+      // Both rows are written; the cursor stops at the row with a real time.
+      expect(consultations.put).toHaveBeenCalledTimes(2);
+      expect(settingsPut).toHaveBeenCalledWith({
+        key: "sync_cursor:consultations",
+        value: recent,
+      });
+    });
+
+    it("downloads from the start when the saved cursor is in the future", async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      const settingsGet = db.settings.get as unknown as MockFn;
+      settingsGet.mockImplementation(async (key: string) =>
+        key === "sync_cursor:consultations"
+          ? { key, value: "2999-01-01T00:00:00.000Z" }
+          : undefined,
+      );
+      const chains: Record<string, { select: MockFn; gt?: MockFn }> = {};
+      mockFrom.mockImplementation((table: string) => {
+        const limit = vi.fn().mockResolvedValue({ data: [], error: null });
+        const order = vi.fn().mockReturnValue({ limit });
+        const gt = vi.fn().mockReturnValue({ order });
+        chains[table] = { select: vi.fn().mockReturnValue({ gt, order }), gt };
+        return chains[table];
+      });
+
+      try {
+        const { pullChanges } = await import("./adapter");
+        await pullChanges();
+
+        // No "updated_at >" filter: every row is read again.
+        expect(chains.consultations.gt).not.toHaveBeenCalled();
+      } finally {
+        settingsGet.mockImplementation(() => Promise.resolve(undefined));
+      }
+    });
+
+    it("stores a downloaded clinical time as a Date", async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      const vitals = db.vitals as unknown as { get: MockFn; put: MockFn };
+      vitals.get.mockResolvedValue(undefined);
+      vitals.put.mockClear();
+      mockFrom.mockImplementation((table: string) =>
+        selectChain(
+          table === "vitals"
+            ? [
+                {
+                  id: "v1",
+                  patient_id: "p1",
+                  taken_at: "2026-03-14T09:30:00+00:00",
+                  updated_at: "2026-03-14T09:31:00+00:00",
+                },
+              ]
+            : [],
+        ),
+      );
+
+      const { pullChanges } = await import("./adapter");
+      await pullChanges();
+
+      expect(vitals.put).toHaveBeenCalledTimes(1);
+      const stored = vitals.put.mock.calls[0][0] as { takenAt: unknown };
+      expect(stored.takenAt).toBeInstanceOf(Date);
+      expect((stored.takenAt as Date).toISOString()).toBe("2026-03-14T09:30:00.000Z");
+    });
   });
 
   // ── Server-authoritative foundation ───────────────────────────────────────
@@ -414,6 +506,31 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       expect(mockFrom).toHaveBeenCalledWith("app_users");
     });
 
+    it("uploads a staff role and admin access only when they were saved on the Users screen", async () => {
+      const { db } = await import("@/db");
+      Object.assign(db, {
+        users: fakeTable([
+          { id: "u1", fullName: "Ada", role: "admin", adminAccess: true, _dirty: 1 },
+          { id: "u2", fullName: "Bayo", role: "doctor", adminAccess: false, _staffEditBy: "u3", _dirty: 1 },
+        ]),
+      });
+      const remote = remoteTable({});
+      mockFrom.mockImplementation(() => remote);
+      const { useAuthStore } = await import("@/stores/auth");
+      const { pushChanges } = await import("./adapter");
+
+      useAuthStore.setState({ currentUser: { id: "u3", role: "admin" } as never });
+      await pushChanges();
+
+      const payloads = remote.upsert.mock.calls.map((c) => c[0] as Row);
+      const ada = payloads.find((p) => p.id === "u1");
+      const bayo = payloads.find((p) => p.id === "u2");
+      expect(ada).toMatchObject({ id: "u1", full_name: "Ada" });
+      expect(ada).not.toHaveProperty("role");
+      expect(ada).not.toHaveProperty("admin_access");
+      expect(bayo).toMatchObject({ id: "u2", role: "doctor", admin_access: false });
+    });
+
     it("keeps the server's row version after an upload and compares versions, not clocks", async () => {
       const { db } = await import("@/db");
       const patients = fakeTable([
@@ -450,6 +567,112 @@ describe("Sync Adapter - Operations Queue Integration", () => {
 
       expect(result.conflicts.map((c) => c.entityId)).toEqual(["p1"]);
       expect(remote.upsert).not.toHaveBeenCalled();
+    });
+
+    it("does not create again a patient deleted on the server", async () => {
+      const { db } = await import("@/db");
+      const patients = fakeTable([
+        // Seen on the server before (holds a server version), now gone there.
+        { id: "p1", givenName: "Ada", _dirty: 1, _serverVersion: 3 },
+        // Registered on this device, never uploaded.
+        { id: "p2", givenName: "Bayo", _dirty: 1 },
+      ]);
+      Object.assign(db, { patients });
+      const remote = remoteTable({ remote: null, version: 1 });
+      mockFrom.mockImplementation((t: string) => (t === "patients" ? remote : remoteTable({})));
+      const { pushChanges } = await import("./adapter");
+
+      const result = await pushChanges();
+
+      expect(remote.upsert).toHaveBeenCalledTimes(1);
+      expect(remote.upsert.mock.calls[0][0]).toMatchObject({ id: "p2" });
+      expect(result.failed).toBe(1);
+      expect(patients.store.get("p1")).toMatchObject({ _dirty: 1 });
+    });
+
+    describe("after a conflict is resolved on this device", () => {
+      const conflict = {
+        entityType: "patients",
+        entityId: "p1",
+        localTimestamp: "2020-01-01T00:00:00Z",
+        remoteTimestamp: "2020-01-02T00:00:00Z",
+        conflicts: [],
+      };
+      const serverRow = {
+        id: "p1",
+        given_name: "Adaeze",
+        row_version: 5,
+        updated_at: "2020-01-02T00:00:00Z",
+      };
+
+      async function setUp() {
+        const { db } = await import("@/db");
+        const patients = fakeTable([
+          { id: "p1", givenName: "Ada", _dirty: 1, _serverVersion: 3 },
+        ]);
+        Object.assign(db, { patients });
+        const remote = remoteTable({ remote: serverRow, version: 6 });
+        mockFrom.mockImplementation((t: string) => (t === "patients" ? remote : remoteTable({})));
+        const { pushChanges } = await import("./adapter");
+        const { resolveConflict } = await import("./conflictResolver");
+        return { patients, remote, pushChanges, resolveConflict };
+      }
+
+      it("uploads this device's copy after keep-local", async () => {
+        const { patients, remote, pushChanges, resolveConflict } = await setUp();
+
+        await resolveConflict(conflict, "keep-local", undefined, undefined, serverRow);
+        const result = await pushChanges();
+
+        expect(result.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+        expect(patients.store.get("p1")).toMatchObject({ _dirty: 0, _serverVersion: 6 });
+      });
+
+      it("uploads a field-by-field choice", async () => {
+        const { patients, remote, pushChanges, resolveConflict } = await setUp();
+
+        await resolveConflict(
+          conflict,
+          "manual",
+          { givenName: "local" },
+          { id: "p1", givenName: "Ada" },
+          serverRow,
+        );
+        const result = await pushChanges();
+
+        expect(result.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+        expect(patients.store.get("p1")).toMatchObject({ givenName: "Ada", _dirty: 0 });
+      });
+
+      it("uploads the next edit after keep-remote", async () => {
+        const { patients, remote, pushChanges, resolveConflict } = await setUp();
+
+        await resolveConflict(conflict, "keep-remote", undefined, undefined, serverRow);
+        expect(patients.store.get("p1")).toMatchObject({
+          givenName: "Adaeze",
+          _serverVersion: 5,
+          _dirty: 0,
+        });
+        expect(patients.store.get("p1")).not.toHaveProperty("row_version");
+
+        await patients.update("p1", { givenName: "Adaeze Obi", _dirty: 1 });
+        const result = await pushChanges();
+
+        expect(result.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+      });
+
+      it("reads the server version for a versioned record only", async () => {
+        const { fetchServerVersion } = await import("./adapter");
+        const remote = remoteTable({ remote: { row_version: 7 } });
+        mockFrom.mockImplementation(() => remote);
+
+        expect(await fetchServerVersion("patients", "p1")).toBe(7);
+        expect(remote.select).toHaveBeenCalledWith("row_version");
+        expect(await fetchServerVersion("vitals", "v1")).toBeUndefined();
+      });
     });
   });
 

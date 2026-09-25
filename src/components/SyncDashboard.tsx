@@ -170,8 +170,10 @@ export function SyncDashboard() {
     if (!(await checkCloudSession())) return;
     setRunning(true);
     try {
-      // Patients and the queue sync through the adapter only; the other
-      // tables through enhanced sync. Run both.
+      // The adapter uploads its tables (patients, queue, visits, vitals,
+      // consultations, dispenses, inventory, allergies, preferences) and
+      // holds back rows in conflict. Enhanced sync uploads only the tables
+      // no other engine uploads, and downloads the rest. Run both.
       const core = await syncNow();
       if (core.conflicts.length > 0) await queueSyncConflicts(core.conflicts);
       const result = await enhancedSync.syncAll();

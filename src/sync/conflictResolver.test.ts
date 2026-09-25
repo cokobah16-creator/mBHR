@@ -61,6 +61,25 @@ describe('Conflict Resolver', () => {
         })
       )
     })
+
+    it('records the server version the decision was made against', async () => {
+      await resolveConflict(mockConflict, 'keep-local', undefined, undefined, {
+        id: 'patient-123',
+        row_version: '12'
+      })
+
+      expect(db.patients.update).toHaveBeenCalledWith(
+        'patient-123',
+        expect.objectContaining({ _dirty: 1, _serverVersion: 12 })
+      )
+    })
+
+    it('leaves the version alone when the server copy was not available', async () => {
+      await resolveConflict(mockConflict, 'keep-local')
+
+      const changes = patients.update.mock.calls[0][1] as Record<string, unknown>
+      expect(changes).not.toHaveProperty('_serverVersion')
+    })
   })
 
   describe('keep-remote strategy', () => {

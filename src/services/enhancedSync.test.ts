@@ -449,7 +449,7 @@ describe("EnhancedSync", () => {
     it("counts refused uploads without failing the run", async () => {
       sync.initialize(VALID_URL, VALID_KEY);
       ALL_LOCAL_TABLES.forEach((name) => setTable(name, makeTable([])));
-      setTable("visits", makeTable([{ id: "v1", _dirty: 1 }]));
+      setTable("careTasks", makeTable([{ id: "t1", _dirty: 1 }]));
       mockFrom.mockImplementation(() => ({
         upsert: vi.fn().mockResolvedValue({ error: { code: "42501" } }),
         select: selectChain({ data: [], error: null }).select,
@@ -489,6 +489,45 @@ describe("EnhancedSync", () => {
       expect(touched).not.toContain("queue");
       expect(patients.update).not.toHaveBeenCalled();
       expect(queue.update).not.toHaveBeenCalled();
+    });
+
+    it("never uploads the other tables the adapter uploads, and leaves them unsent", async () => {
+      sync.initialize(VALID_URL, VALID_KEY);
+      ALL_LOCAL_TABLES.forEach((name) => setTable(name, makeTable([])));
+      const adapterOwned = [
+        "visits",
+        "vitals",
+        "consultations",
+        "dispenses",
+        "inventory",
+        "patientAllergies",
+        "patientPreferences",
+      ];
+      const held = new Map(
+        adapterOwned.map((name) => [name, makeTable([{ id: `${name}-1`, _dirty: 1 }])]),
+      );
+      held.forEach((table, name) => setTable(name, table));
+      const careTasks = makeTable([{ id: "t1", _dirty: 1 }]);
+      setTable("careTasks", careTasks);
+      const upserted: string[] = [];
+      mockFrom.mockImplementation((table: string) => ({
+        upsert: vi.fn(() => {
+          upserted.push(table);
+          return Promise.resolve({ error: null });
+        }),
+        select: selectChain({ data: [], error: null }).select,
+      }));
+
+      const result = await sync.syncAll();
+
+      expect(result.success).toBe(true);
+      expect(upserted).toEqual(["care_tasks"]);
+      expect(result.pushed).toBe(1);
+      held.forEach((table) => expect(table.update).not.toHaveBeenCalled());
+      expect(careTasks.update).toHaveBeenCalledWith(
+        "t1",
+        expect.objectContaining({ _dirty: 0 }),
+      );
     });
   });
 });

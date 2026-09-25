@@ -18,6 +18,7 @@ const { mockDbUsers, mockDbSessions, mockSupabase, mockFrom } = vi.hoisted(() =>
       }),
       put: vi.fn().mockResolvedValue(undefined),
       get: vi.fn().mockResolvedValue(undefined),
+      update: vi.fn().mockResolvedValue(1),
     },
     mockDbSessions: {
       add: vi.fn().mockResolvedValue(undefined),
@@ -180,6 +181,17 @@ describe("useAuthStore", () => {
       const ok = await useAuthStore.getState().login("u-ada", "482913");
 
       expect(ok).toBe(false);
+    });
+
+    it("refuses an account without a staff role, even with a PIN", async () => {
+      mockDbUsers.get.mockResolvedValue({ ...ada, role: "guest" });
+      vi.mocked(verifyPin).mockResolvedValue(true);
+
+      const ok = await useAuthStore.getState().login("u-ada", "482913");
+
+      expect(ok).toBe(false);
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      expect(mockDbSessions.add).not.toHaveBeenCalled();
     });
   });
 
@@ -438,20 +450,99 @@ describe("useAuthStore", () => {
       );
     });
 
-    it("gives no access (not volunteer) when there is no server staff record", async () => {
+    it("refuses an online account with no server staff record: no session, no local record", async () => {
       appUsersLookup({ data: null, error: null });
 
-      await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
+      const ok = await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
 
-      expect(useAuthStore.getState().currentUser?.role).toBe("guest");
+      expect(ok).toBe(false);
+      const state = useAuthStore.getState();
+      expect(state.isAuthenticated).toBe(false);
+      expect(state.currentUser).toBeNull();
+      expect(state.authMode).toBeNull();
+      expect(state.cloudUserId).toBeNull();
+      expect(state.signInRefusal).toBe("not_staff");
+      expect(mockDbUsers.put).not.toHaveBeenCalled();
+      expect(mockDbSessions.add).not.toHaveBeenCalled();
     });
 
-    it("gives no access when the staff record cannot be read", async () => {
+    it("refuses a server staff record with an unknown role", async () => {
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "chw" }, error: null });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
+      expect(useAuthStore.getState().signInRefusal).toBe("not_staff");
+      expect(mockDbUsers.put).not.toHaveBeenCalled();
+      expect(mockDbSessions.add).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the staff record cannot be read and this device does not know the account", async () => {
       appUsersLookup({ data: null, error: { code: "42501" } });
 
-      await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret");
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
+      expect(useAuthStore.getState().signInRefusal).toBe("staff_check_failed");
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      expect(mockDbUsers.put).not.toHaveBeenCalled();
+      expect(mockDbSessions.add).not.toHaveBeenCalled();
+    });
 
-      expect(useAuthStore.getState().currentUser?.role).toBe("guest");
+    it("switches off offline access for a same-id record whose server staff record is gone", async () => {
+      const stored = {
+        id: AUTH_USER.id,
+        fullName: "Ngozi Eze",
+        role: "nurse",
+        email: AUTH_USER.email,
+        pinHash: "hash",
+        pinSalt: "salt",
+        isActive: 1,
+      };
+      mockDbUsers.get.mockResolvedValue(stored);
+      appUsersLookup({ data: null, error: null });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
+
+      expect(useAuthStore.getState().signInRefusal).toBe("not_staff");
+      expect(mockDbUsers.update).toHaveBeenCalledWith(
+        AUTH_USER.id,
+        expect.objectContaining({ isActive: 0, pinHash: "", pinSalt: "" }),
+      );
+      expect(mockDbUsers.put).not.toHaveBeenCalled();
+      expect(mockDbSessions.add).not.toHaveBeenCalled();
+    });
+
+    it("refuses an email-matched device record when the server has no staff record", async () => {
+      const stored = {
+        id: "local-ulid",
+        fullName: "Ngozi Eze",
+        role: "doctor",
+        email: AUTH_USER.email,
+        isActive: 1,
+      };
+      mockDbUsers.filter.mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([stored]),
+        first: vi.fn().mockResolvedValue(stored),
+      });
+      appUsersLookup({ data: null, error: null });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
+      expect(useAuthStore.getState().signInRefusal).toBe("not_staff");
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+      // A device-created record under another id is left for an administrator.
+      expect(mockDbUsers.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a guest record kept on this device when the server cannot be asked", async () => {
+      mockDbUsers.get.mockResolvedValue({
+        id: AUTH_USER.id,
+        fullName: "Ngozi Eze",
+        role: "guest",
+        email: AUTH_USER.email,
+        isActive: 1,
+      });
+      appUsersLookup({ data: null, error: { code: "PGRST000" } });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(false);
+      expect(useAuthStore.getState().signInRefusal).toBe("not_staff");
+      expect(mockDbSessions.add).not.toHaveBeenCalled();
     });
 
     it("follows a role change for an account created by an earlier online sign-in", async () => {

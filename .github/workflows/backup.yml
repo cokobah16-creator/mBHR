@@ -1,7 +1,18 @@
 name: Nightly DB Backup
 
-# Captures a logical pg_dump of the production Supabase Postgres every night,
-# uploads it to a private storage location, and notifies on success/failure.
+# Captures logical dumps of the production Supabase Postgres every night,
+# uploads them to a private storage location, and notifies on success/failure.
+# Each run writes four files with the same timestamp:
+#   mbhr-backup-<ts>-schema.sql.gz     tables, functions, policies (public etc.)
+#   mbhr-backup-<ts>-data.sql.gz       rows of the app schemas (COPY statements)
+#   mbhr-backup-<ts>-auth-data.sql.gz  rows of the auth and storage schemas
+#                                      (sign-in accounts, storage object list)
+#   mbhr-backup-<ts>-roles.sql.gz      database roles
+# Stored files in Storage buckets (photos, documents) are NOT copied here.
+#
+# The data files hold patient records. They must never be printed to the
+# log or uploaded as a GitHub artifact (this repository is public): checks
+# below only print counts and sizes.
 #
 # Requires repository secrets:
 #   SUPABASE_DB_HOST           db.<ref>.supabase.co  (e.g. db.dlogqxzejroeyivfmgcv.supabase.co)
@@ -40,50 +51,114 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          # Fewest patient rows a data dump may hold before the job fails
+          # (repository variable; defaults to 1).
+          MIN_PATIENT_ROWS: ${{ vars.BACKUP_MIN_PATIENT_ROWS || '1' }}
         run: |
           set -euo pipefail
           ts=$(date -u +'%Y%m%dT%H%M%SZ')
-          dump_raw="mbhr-backup-${ts}.sql"
-          dump_file="${dump_raw}.gz"
-          echo "filename=${dump_file}" >> "$GITHUB_OUTPUT"
+          base="mbhr-backup-${ts}"
+          schema_raw="${base}-schema.sql"
+          data_raw="${base}-data.sql"
+          auth_raw="${base}-auth-data.sql"
+          roles_raw="${base}-roles.sql"
 
           # `supabase db dump` routes through the Management API and handles
           # the database connection internally — avoiding the IPv6-only direct
-          # host that GitHub Actions runners cannot reach.
+          # host that GitHub Actions runners cannot reach. Output goes to
+          # files only (-f), never to the log.
           supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-          supabase db dump > "${dump_raw}"
-          gzip "${dump_raw}"
+          supabase db dump -f "${schema_raw}"
+          supabase db dump --data-only --use-copy -f "${data_raw}"
+          supabase db dump --data-only --use-copy --schema auth,storage -f "${auth_raw}"
+          supabase db dump --role-only -f "${roles_raw}"
 
-          size=$(stat -c%s "${dump_file}")
-          echo "size_bytes=${size}" >> "$GITHUB_OUTPUT"
-          # Sanity-check: refuse to upload a dump under 1KB (probably empty).
-          if [ "${size}" -lt 1024 ]; then
-            echo "::error::Dump file is suspiciously small (${size} bytes)"
+          # Checks print only counts and sizes, never file contents.
+          # Schema: must define tables.
+          tables=$(grep -c '^CREATE TABLE' "${schema_raw}" || true)
+          echo "schema_tables=${tables}"
+          if [ "${tables}" -lt 10 ]; then
+            echo "::error::Schema dump defines only ${tables} tables"
             exit 1
           fi
 
-      - name: Upload dump to Supabase Storage
+          # Data: must hold the patients table with at least MIN_PATIENT_ROWS
+          # rows (lines between its COPY statement and the closing "\.").
+          patient_rows=$(awk '
+            /^COPY "?public"?\."?patients"? / { inside = 1; next }
+            inside && /^\\\.$/ { inside = 0; next }
+            inside { n++ }
+            END { print n + 0 }
+          ' "${data_raw}")
+          echo "patient_rows=${patient_rows}"
+          if ! grep -Eq '^COPY "?public"?\."?patients"? ' "${data_raw}"; then
+            echo "::error::Data dump has no rows section for public.patients"
+            exit 1
+          fi
+          if [ "${patient_rows}" -lt "${MIN_PATIENT_ROWS}" ]; then
+            echo "::error::Data dump holds ${patient_rows} patient rows (minimum ${MIN_PATIENT_ROWS})"
+            exit 1
+          fi
+
+          # Auth data: must hold the sign-in accounts.
+          if ! grep -Eq '^COPY "?auth"?\."?users"? ' "${auth_raw}"; then
+            echo "::error::Auth data dump has no rows section for auth.users"
+            exit 1
+          fi
+
+          # Roles: the file must exist (it may be short).
+          test -f "${roles_raw}"
+
+          files=""
+          for raw in "${schema_raw}" "${data_raw}" "${auth_raw}" "${roles_raw}"; do
+            gzip "${raw}"
+            size=$(stat -c%s "${raw}.gz")
+            echo "${raw}.gz: ${size} bytes"
+            files="${files} ${raw}.gz"
+          done
+
+          # Compressed schema or data under 1KB is almost certainly empty.
+          for gz in "${schema_raw}.gz" "${data_raw}.gz"; do
+            size=$(stat -c%s "${gz}")
+            if [ "${size}" -lt 1024 ]; then
+              echo "::error::${gz} is suspiciously small (${size} bytes)"
+              exit 1
+            fi
+          done
+
+          echo "files=${files# }" >> "$GITHUB_OUTPUT"
+          echo "filename=${base}-*.sql.gz" >> "$GITHUB_OUTPUT"
+          echo "size_bytes=$(du -cb ${files} | tail -1 | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dumps to Supabase Storage
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FILES: ${{ steps.dump.outputs.files }}
         run: |
           set -euo pipefail
-          FILE="${{ steps.dump.outputs.filename }}"
 
           # Storage REST API requires the project service_role key (JWT),
           # not the management API personal access token.
           # Bucket "backups" is private and was created once via SQL.
-          HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
-            -X POST \
-            "https://dlogqxzejroeyivfmgcv.supabase.co/storage/v1/object/backups/${FILE}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
-            -H "Content-Type: application/gzip" \
-            --data-binary "@${FILE}")
+          # Only the HTTP status is printed; the response body is discarded.
+          for FILE in ${FILES}; do
+            HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+              -X POST \
+              "https://dlogqxzejroeyivfmgcv.supabase.co/storage/v1/object/backups/${FILE}" \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+              -H "Content-Type: application/gzip" \
+              --data-binary "@${FILE}")
 
-          if [ "${HTTP_STATUS}" != "200" ]; then
-            echo "::error::Storage upload failed with HTTP ${HTTP_STATUS}"
-            exit 1
-          fi
-          echo "Uploaded ${FILE} → backups/${FILE} (HTTP ${HTTP_STATUS})"
+            if [ "${HTTP_STATUS}" != "200" ]; then
+              echo "::error::Storage upload of ${FILE} failed with HTTP ${HTTP_STATUS}"
+              exit 1
+            fi
+            echo "Uploaded ${FILE} → backups/${FILE} (HTTP ${HTTP_STATUS})"
+          done
+
+      - name: Remove local dump files
+        if: always()
+        run: rm -f mbhr-backup-*.sql mbhr-backup-*.sql.gz
 
       - name: Notify Slack on success
         if: success() && env.SLACK_WEBHOOK != ''

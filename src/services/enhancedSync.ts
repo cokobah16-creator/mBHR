@@ -8,6 +8,8 @@ import { toAllergyActiveFlag } from "@/utils/allergyActive";
 import { mergePulledRow } from "@/sync/pullMerge";
 import { markersAfterUpload } from "@/sync/uploadMarkers";
 import { syncErrorCode } from "@/sync/errorCode";
+import { advanceCursor, isCursorAhead } from "@/sync/cursorGuard";
+import { ENHANCED_ONLY_TABLES } from "@/features/conflicts/syncCounts";
 
 export interface TableSyncFailure {
   /** This device's table name. */
@@ -48,6 +50,12 @@ interface TableSyncConfig {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   remoteToLocal: (remote: any) => any;
   hasDirtyFlag: boolean;
+  /**
+   * False when another engine uploads this table (see getTableConfig):
+   * its rows are then downloaded here but never uploaded. Uploads when not
+   * given.
+   */
+  uploads?: boolean;
   /** This device's primary key field; "id" when not given. */
   primaryKey?: string;
 }
@@ -112,7 +120,13 @@ export class EnhancedSync {
     if (inSession) return inSession;
     try {
       const saved = await db.settings.get(PULL_CURSOR_KEY(localTable));
-      if (saved && typeof saved.value === "string" && saved.value) {
+      // A cursor in the future may have skipped rows: start from the oldest.
+      if (
+        saved &&
+        typeof saved.value === "string" &&
+        saved.value &&
+        !isCursorAhead(saved.value)
+      ) {
         return saved.value;
       }
     } catch {
@@ -141,8 +155,22 @@ export class EnhancedSync {
    * with server row versions and the server-owned fields (portal access,
    * merge links, queue tickets). Two engines uploading the same table with
    * different column sets would overwrite each other's changes.
+   *
+   * The same holds for the other tables the adapter uploads (visits,
+   * vitals, consultations, dispenses, inventory, allergies, preferences):
+   * the adapter checks each row against the server copy and holds back the
+   * ones in conflict, so this engine only downloads them. It uploads only
+   * the tables in ENHANCED_ONLY_TABLES.
    */
   private getTableConfig(): TableSyncConfig[] {
+    return this.allTableConfigs().map((config) => ({
+      ...config,
+      uploads:
+        config.hasDirtyFlag && ENHANCED_ONLY_TABLES.includes(config.localTable),
+    }));
+  }
+
+  private allTableConfigs(): TableSyncConfig[] {
     return [
       {
         localTable: "visits",
@@ -622,8 +650,8 @@ export class EnhancedSync {
         );
       }
 
-      // Push dirty records
-      if (config.hasDirtyFlag) {
+      // Push dirty records (only for tables no other engine uploads).
+      if (config.hasDirtyFlag && config.uploads !== false) {
         const dirtyRecords = await table.where("_dirty").equals(1).toArray();
 
         for (const record of dirtyRecords) {
@@ -678,14 +706,14 @@ export class EnhancedSync {
         if (!remoteRecords || remoteRecords.length === 0) break;
 
         let newest = cursor;
+        const now = Date.now();
         // Read and write each row in one transaction so an edit saved on
         // this device in between cannot be overwritten.
         await db.transaction("rw", table, async () => {
           for (const remote of remoteRecords) {
-            // The cursor advances past every row, applied or kept local.
-            if (typeof remote.updated_at === "string" && remote.updated_at > newest) {
-              newest = remote.updated_at;
-            }
+            // The cursor advances past every row, applied or kept local,
+            // but not past this device's clock (see cursorGuard).
+            newest = advanceCursor(newest, remote.updated_at, now);
             const incoming = config.remoteToLocal(remote);
             const localRow = await table.get(incoming[key]);
             // Rows with unsent changes on this device are kept (their upload
@@ -824,7 +852,9 @@ export class EnhancedSync {
   }
 
   async getPendingChangesCount(): Promise<number> {
-    const configs = this.getTableConfig().filter((c) => c.hasDirtyFlag);
+    const configs = this.getTableConfig().filter(
+      (c) => c.hasDirtyFlag && c.uploads !== false,
+    );
 
     const counts = await Promise.all(
       configs.map(async (config) => {

@@ -74,9 +74,18 @@ type PlanConflict = Pick<
   "conflictType" | "entityType" | "entityId" | "candidateIds" | "conflictDetails"
 >;
 
-/** Fields a conflict decision must never overwrite. */
-function isProtectedField(field: string): boolean {
-  return field === "id" || field.startsWith("_");
+/**
+ * Staff account fields a conflict decision may write on this device. Role,
+ * admin access, activity and the device-only sign-in fields (PIN, offline
+ * verification) change only through the Users screen or the server roster.
+ */
+const STAFF_WRITABLE_FIELDS: ReadonlySet<string> = new Set(["fullName", "email", "phone"]);
+
+/** Fields a conflict decision must never overwrite (in `table`, when known). */
+export function isProtectedField(field: string, table?: string | null): boolean {
+  if (field === "id" || field.startsWith("_")) return true;
+  if (table === "users") return !STAFF_WRITABLE_FIELDS.has(field);
+  return false;
 }
 
 /**
@@ -118,10 +127,11 @@ export function planDeviceWrite(input: {
   if (conflict.conflictType === "sync_conflict") {
     if (!snapshot.table) return { kind: "none", reason: "unknown_table" };
     if (!snapshot.record) return { kind: "none", reason: "not_on_device" };
-    if (fields.length === 0) return { kind: "none", reason: "no_fields" };
+    const writable = fields.filter((f) => !isProtectedField(f.field, snapshot.table));
+    if (writable.length === 0) return { kind: "none", reason: "no_fields" };
     const record = snapshot.record;
     const changes: FieldChange[] = [];
-    for (const f of fields) {
+    for (const f of writable) {
       const side = sideForField(strategy, f.field, selections);
       if (!side) return { kind: "none", reason: "incomplete_selection" };
       const current = record[f.field];
@@ -196,11 +206,17 @@ export function planDeviceWrite(input: {
   return { kind: "none", reason: "unsupported_type" };
 }
 
-/** Field values to write for a set of changes (only those that change). */
-export function buildLocalPatch(changes: FieldChange[]): Record<string, unknown> {
+/**
+ * Field values to write for a set of changes (only those that change), in
+ * `table` when known (protected staff account fields are never written).
+ */
+export function buildLocalPatch(
+  changes: FieldChange[],
+  table?: string | null,
+): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   for (const c of changes) {
-    if (c.changesValue && !isProtectedField(c.field)) patch[c.field] = c.next;
+    if (c.changesValue && !isProtectedField(c.field, table)) patch[c.field] = c.next;
   }
   return patch;
 }

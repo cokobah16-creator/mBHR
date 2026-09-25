@@ -539,6 +539,20 @@ export async function getLabResults(orderId: string): Promise<LabResult[]> {
   return ((data ?? []) as unknown as LabResultRow[]).map(mapResultRow);
 }
 
+/** Results for several orders in one read, newest first. */
+export async function getLabResultsForOrders(orderIds: readonly string[]): Promise<LabResult[]> {
+  if (orderIds.length === 0) return [];
+  const { data, error } = await client()
+    .from("lab_results")
+    .select("*")
+    .in("order_id", [...orderIds])
+    .order("result_date", { ascending: false });
+
+  if (error) logAndThrow(error, "getLabResultsForOrders");
+
+  return ((data ?? []) as unknown as LabResultRow[]).map(mapResultRow);
+}
+
 export async function getPendingLabOrders(): Promise<LabOrder[]> {
   const { data, error } = await client()
     .from("lab_orders")

@@ -22,6 +22,7 @@ import type {
   RequiredApproverRole,
   ResolutionStrategy,
 } from "@/services/conflictQueue";
+import { entityLocalTable } from "./entityTables";
 
 export const ALL_ROLES: Role[] = [
   "admin",
@@ -35,9 +36,13 @@ export const ALL_ROLES: Role[] = [
   "lead_clinician",
 ];
 
-/** Extra write permission needed for record types outside clinical care. */
-const RECORD_WRITE_PERMISSION: Record<string, Permission> = {
-  app_users: "users",
+/**
+ * Extra write permission needed for record types outside clinical care,
+ * keyed by this device's table. The record type is mapped to its table
+ * first, so every name for the same table needs the same permission.
+ */
+const TABLE_WRITE_PERMISSION: Record<string, Permission> = {
+  users: "users",
   inventory: "inventory",
 };
 
@@ -50,7 +55,10 @@ export function permissionForSensitivity(phi: PHISensitivity): Permission {
 }
 
 export function recordWritePermission(entityType: string): Permission | null {
-  return RECORD_WRITE_PERMISSION[entityType] ?? null;
+  const table = entityLocalTable(entityType) ?? entityType;
+  return Object.prototype.hasOwnProperty.call(TABLE_WRITE_PERMISSION, table)
+    ? TABLE_WRITE_PERMISSION[table]
+    : null;
 }
 
 export function canResolveConflict(

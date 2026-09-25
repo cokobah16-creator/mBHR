@@ -183,6 +183,14 @@ export function SyncStatusControl() {
         ]);
         localData = local ?? undefined;
         remoteData = remote ?? undefined;
+      } else {
+        // Best effort: the server copy's version, so this device's copy
+        // uploads at the next sync instead of raising the same conflict.
+        // Offline it is skipped and the conflict may be shown again.
+        remoteData =
+          (await fetchRemoteRecord(conflict.entityType, conflict.entityId).catch(
+            () => null,
+          )) ?? undefined;
       }
       await resolveConflict(conflict, strategy, resolution, localData, remoteData);
     } catch (error) {

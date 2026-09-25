@@ -18,6 +18,7 @@ import { keepLocalRevocation, staffFromServerRow } from "./staffRoster";
 import { markersAfterUpload } from "./uploadMarkers";
 import { namedSyncError, syncErrorCode } from "./errorCode";
 import { queueSyncConflicts } from "./queueConflicts";
+import { advanceCursor, isCursorAhead } from "./cursorGuard";
 import {
   countOpenCommands,
   countWaitingPermission,
@@ -339,12 +340,32 @@ const QUEUE_KEEP_WHEN_EMPTY = [
   "assignedName",
 ];
 
+/**
+ * Clinical times the server sends as ISO text. They are stored as Date
+ * objects, like records made on this device, so exports and date queries
+ * read the recorded time.
+ */
+const PULLED_DATE_FIELDS: Partial<Record<Tbl, string[]>> = {
+  visits: ["startedAt"],
+  vitals: ["takenAt"],
+  consultations: ["createdAt"],
+  dispenses: ["dispensedAt"],
+  patient_allergies: ["onsetDate", "createdAt"],
+};
+
 /** Server row -> this device's shape, including server-only rules. */
 function transformPulled(t: Tbl, raw: Row, mapped: Row): Row {
   if (t === "app_users") {
     // Identity, role and active status only: the device-only PIN fields are
     // never part of a staff download (see src/sync/staffRoster.ts).
     return { ...staffFromServerRow(raw) };
+  }
+  for (const field of PULLED_DATE_FIELDS[t] ?? []) {
+    const value = mapped[field];
+    if (typeof value !== "string" || value === "") continue;
+    const date = new Date(value);
+    // An unreadable value is left as it came rather than invented.
+    if (!Number.isNaN(date.getTime())) mapped[field] = date;
   }
   if (t === "patients") {
     // Portal access counts as a server decision only once the server has
@@ -539,6 +560,17 @@ function mayUploadStaffAccounts(): boolean {
   return !!role && can(role, "users");
 }
 
+/** Server columns of a staff row that grant access. */
+const STAFF_PRIVILEGE_COLUMNS = ["role", "admin_access", "admin_permanent"] as const;
+
+/**
+ * The staff row's current values were saved on the Users screen (which
+ * checks the users permission and records who saved them).
+ */
+function staffEditFromUsersScreen(record: Row): boolean {
+  return typeof record._staffEditBy === "string" && record._staffEditBy !== "";
+}
+
 function isPermissionRefusal(error: unknown, status?: number): boolean {
   const code =
     error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
@@ -687,7 +719,8 @@ async function getCursor(table: Tbl): Promise<string> {
 
   const row = await db.settings.get(CURSOR_KEY(table)).catch(() => undefined);
   const ts = row?.value?.ts ?? row?.ts ?? row?.value ?? undefined; // be liberal in what we accept
-  if (typeof ts === "string" && ts) return ts;
+  // A cursor in the future may have skipped rows: download from the start.
+  if (typeof ts === "string" && ts && !isCursorAhead(ts)) return ts;
   return DEFAULT_TS;
 }
 
@@ -700,6 +733,8 @@ async function setCursor(table: Tbl, ts: string) {
 // Detect conflicts by comparing local and remote versions
 type ConflictDetectionResult = {
   hasConflict: boolean;
+  /** The server answered and has no row with this id. */
+  remoteMissing?: boolean;
   conflicts?: ConflictField[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   localData?: any;
@@ -722,7 +757,8 @@ async function detectConflict(
       .eq("id", id)
       .maybeSingle();
 
-    if (error || !remoteData) return { hasConflict: false };
+    if (error) return { hasConflict: false };
+    if (!remoteData) return { hasConflict: false, remoteMissing: true };
 
     const remoteVersion = Number(remoteData.row_version);
     const localVersion = localData._serverVersion;
@@ -781,6 +817,11 @@ async function upsertRow(
 ): Promise<{ error: unknown; status?: number; serverVersion?: number }> {
   if (!sb) return { error: namedSyncError("SyncNotConfigured") };
   const payload = toDB(record, mapToDB[t]);
+  if (t === "app_users" && !staffEditFromUsersScreen(record)) {
+    // Role and admin access travel only with an edit made on the Users
+    // screen; any other local change to a staff row uploads its name only.
+    for (const column of STAFF_PRIVILEGE_COLUMNS) delete payload[column];
+  }
   if (serverLacksFoundation) {
     for (const column of FOUNDATION_COLUMNS[t] ?? []) delete payload[column];
   }
@@ -867,8 +908,8 @@ export async function pushChanges(): Promise<PushSummary> {
       }
 
       // Check for conflicts before pushing (append-only rows cannot conflict)
-      const conflictCheck = APPEND_ONLY.has(t)
-        ? { hasConflict: false as const }
+      const conflictCheck: ConflictDetectionResult = APPEND_ONLY.has(t)
+        ? { hasConflict: false }
         : await detectConflict(t, record.id, record);
 
       if (conflictCheck.hasConflict && conflictCheck.conflicts) {
@@ -880,6 +921,19 @@ export async function pushChanges(): Promise<PushSummary> {
           conflicts: conflictCheck.conflicts,
         });
         continue; // Skip this record, needs manual resolution
+      }
+
+      // A patient this device has seen on the server (it holds a server
+      // version) is no longer there: it was deleted on the server. Do not
+      // create it again from this device's copy; it stays here, unsent.
+      if (
+        t === "patients" &&
+        conflictCheck.remoteMissing === true &&
+        typeof record._serverVersion === "number"
+      ) {
+        console.warn("[sync] a patient deleted on the server was not uploaded again");
+        summary.failed += 1;
+        continue;
       }
 
       // No conflict, proceed with push. Append-only rows: insert if absent,
@@ -1008,11 +1062,12 @@ export async function pullChanges(): Promise<PullSummary> {
 
     const rows = (data ?? []) as Row[];
     let maxTs = since;
+    const now = Date.now();
     if (rows.length > 0) {
       await applyPulledRows(t, table, rows, summary, (row) => {
-        // The cursor advances past every row, applied or kept local.
-        const ts = row.updated_at;
-        if (typeof ts === "string" && ts > maxTs) maxTs = ts;
+        // The cursor advances past every row, applied or kept local, but
+        // not past this device's clock (see cursorGuard).
+        maxTs = advanceCursor(maxTs, row.updated_at, now);
       });
     }
     await setCursor(t, maxTs);
@@ -1260,6 +1315,38 @@ export async function fetchRemoteRecord(
     throw namedSyncError("RemoteReadFailed");
   }
   return (data as Record<string, unknown> | null) ?? null;
+}
+
+/**
+ * The server's current row_version of one record, for tables that carry
+ * one (patients, queue). Used when a conflict is resolved on this device,
+ * so the next upload is compared with the server copy the decision was
+ * made against. Undefined when the table has no version, the record is not
+ * on the server, or the server cannot be reached (the conflict is then
+ * raised again at the next sync).
+ */
+export async function fetchServerVersion(
+  entityType: string,
+  id: string,
+): Promise<number | undefined> {
+  if (!sb || !VERSIONED.has(entityType as Tbl)) return undefined;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return undefined;
+  }
+  try {
+    const { data, error } = await sb
+      .from(entityType)
+      .select("row_version")
+      .eq("id", id)
+      .maybeSingle();
+    if (error || !data) return undefined;
+    const raw = (data as { row_version?: unknown }).row_version;
+    if (raw === null || raw === undefined || raw === "") return undefined;
+    const version = Number(raw);
+    return Number.isFinite(version) ? version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // Auto-sync on network reconnection

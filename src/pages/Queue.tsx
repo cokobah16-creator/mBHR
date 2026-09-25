@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, generateId, Patient, QueueItem } from "@/db";
+import { readQueueForToday } from "@/features/tickets/queueReads";
 import {
   queueManagement,
   QueuePermissionError,
@@ -9,6 +10,7 @@ import {
   QueueValidationError,
 } from "@/services/queueManagement";
 import {
+  compareWaiting,
   downgradeOptions,
   MAX_REASON_LENGTH,
   mayDowngradePriority,
@@ -152,8 +154,9 @@ export function Queue() {
   }, [downgradeOpenFor]);
 
   // One live query drives every number on the page, so counts never drift
-  // from the list.
-  const allQueueItems = useLiveQuery(() => db.queue.toArray(), []);
+  // from the list. It reads active rows and today's changes only, not the
+  // finished history.
+  const allQueueItems = useLiveQuery(() => readQueueForToday(), []);
   const patientIds = useMemo(
     () => [...new Set((allQueueItems ?? []).map((q) => q.patientId))],
     [allQueueItems],
@@ -192,7 +195,7 @@ export function Queue() {
     () =>
       (allQueueItems ?? [])
         .filter((i) => i.stage === selectedStage && i.status !== "done")
-        .sort((a, b) => a.position - b.position)
+        .sort(compareWaiting)
         .map((i) => ({ ...i, patient: patientById.get(i.patientId) })),
     [allQueueItems, selectedStage, patientById],
   );

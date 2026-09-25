@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  compareWaiting,
   downgradeOptions,
   insertionPosition,
   isDowngrade,
@@ -80,6 +81,45 @@ describe("insertionPosition", () => {
 
   it("treats tickets with no stored priority as normal", () => {
     expect(insertionPosition([{ position: 1 }], "urgent")).toBe(1);
+  });
+});
+
+describe("compareWaiting (order shown and called)", () => {
+  const row = (id: string, position: number, priority?: string, queuedAt?: string) => ({
+    id,
+    position,
+    priority,
+    queuedAt,
+  });
+
+  it("calls urgent tickets before non-urgent ones whatever the positions", () => {
+    const order = [row("a", 1, "normal"), row("b", 2), row("u", 4, "urgent"), row("l", 3, "low")]
+      .sort(compareWaiting)
+      .map((r) => r.id);
+    expect(order).toEqual(["u", "a", "b", "l"]);
+  });
+
+  it("keeps position order within urgent and within non-urgent tickets", () => {
+    const order = [row("u2", 2, "urgent"), row("u1", 1, "urgent"), row("l", 3, "low"), row("n", 4, "normal")]
+      .sort(compareWaiting)
+      .map((r) => r.id);
+    expect(order).toEqual(["u1", "u2", "l", "n"]);
+  });
+
+  it("breaks colliding positions by time queued", () => {
+    const order = [
+      row("late", 2, "normal", "2026-09-25T10:05:00Z"),
+      row("early", 2, "normal", "2026-09-25T10:00:00Z"),
+    ]
+      .sort(compareWaiting)
+      .map((r) => r.id);
+    expect(order).toEqual(["early", "late"]);
+  });
+
+  it("matches insertionPosition when positions are consistent", () => {
+    const waiting = [row("u1", 1, "urgent"), row("n1", 2, "normal"), row("n2", 3, "normal")];
+    const pos = insertionPosition(waiting, "urgent");
+    expect(pos).toBe(2);
   });
 });
 

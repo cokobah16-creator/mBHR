@@ -1,4 +1,5 @@
 import { db, type User } from "./index";
+import { isStaffRole } from "@/auth/roles";
 
 /**
  * Two separate ideas about a staff member on this device:
@@ -32,7 +33,8 @@ export async function offlineSignInState(): Promise<OfflineSignInState> {
   const all = await db.users.toArray();
   if (all.length === 0) return { kind: "not-set-up" };
 
-  const active = all.filter((u) => u.isActive === 1);
+  // Active staff only: an account without a staff role never signs in here.
+  const active = all.filter((u) => u.isActive === 1 && isStaffRole(u.role));
   const accounts = active
     .filter((u) => hasDevicePin(u))
     .sort((a, b) => a.fullName.localeCompare(b.fullName));

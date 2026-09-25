@@ -924,3 +924,80 @@ describe("sync needs the signed-in staff member's own online sign-in", () => {
   });
 });
 
+describe("only staff accounts get a staff session on this device", () => {
+  const PORTAL = { id: "portal-patient-1", email: "patient@example.com" };
+
+  it("an online account with no server staff record gets no session, no record and no PIN", async () => {
+    h.onlineAccounts.set(PORTAL.email, { id: PORTAL.id, password: ONLINE_PASSWORD });
+    seedUnsentWork();
+    forgetCalls();
+
+    expect(await onlineSignIn(PORTAL)).toBe(false);
+
+    expect(app.auth.useAuthStore.getState()).toMatchObject({
+      isAuthenticated: false,
+      currentUser: null,
+      authMode: null,
+      cloudUserId: null,
+      signInRefusal: "not_staff",
+    });
+    // No local account was created for it, so it cannot enrol a PIN here.
+    expect(h.main.table("users").rows.has(PORTAL.id)).toBe(false);
+    const { setDevicePin } = await import("@/db/devicePin");
+    await expect(
+      setDevicePin({ userId: PORTAL.id, pin: "135790", confirmPin: "135790" }),
+    ).rejects.toThrow();
+    const { offlineSignInState } = await import("@/db/offlineAccess");
+    const state = await offlineSignInState();
+    const listed = state.kind === "ready" ? state.accounts.map((a) => a.id) : [];
+    expect(listed).not.toContain(PORTAL.id);
+
+    // The online sign-in the password created was ended; nothing syncs.
+    await settle();
+    expect(storedSignInKeys()).toEqual([]);
+    forgetCalls();
+    await expectSyncBlocked();
+  });
+
+  it("an account without a staff role kept on this device cannot sign in with its PIN", async () => {
+    const PIN_GUEST = "135790";
+    h.main.table("users").rows.set(PORTAL.id, {
+      id: PORTAL.id,
+      fullName: "Old guest record",
+      role: "guest",
+      email: PORTAL.email,
+      pinHash: `${PIN_GUEST}@salt-guest`,
+      pinSalt: "salt-guest",
+      isActive: 1,
+    });
+    seedUnsentWork();
+    forgetCalls();
+
+    expect(await pinSignIn(PORTAL, PIN_GUEST)).toBe(false);
+
+    expect(app.auth.useAuthStore.getState().isAuthenticated).toBe(false);
+    const { offlineSignInState } = await import("@/db/offlineAccess");
+    const state = await offlineSignInState();
+    const listed = state.kind === "ready" ? state.accounts.map((a) => a.id) : [];
+    expect(listed).not.toContain(PORTAL.id);
+    expectNoOnlineSessionCreated();
+    await expectSyncBlocked();
+  });
+
+  it("a staff member whose server staff record was removed loses sign-in on this device", async () => {
+    h.serverStaff.delete(ADA.id);
+
+    expect(await onlineSignIn(ADA)).toBe(false);
+
+    expect(app.auth.useAuthStore.getState().signInRefusal).toBe("not_staff");
+    expect(h.main.table("users").rows.get(ADA.id)).toMatchObject({
+      isActive: 0,
+      pinHash: "",
+      pinSalt: "",
+    });
+    await settle();
+    expect(storedSignInKeys()).toEqual([]);
+    expect(await pinSignIn(ADA, PIN_ADA)).toBe(false);
+  });
+});
+
