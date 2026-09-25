@@ -43,10 +43,11 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
 
   loadPatients: async () => {
     try {
-      const patients = await db.patients
-        .orderBy("createdAt")
-        .reverse()
-        .toArray();
+      // A merged-away record is not offered: its history and allergies
+      // live on the kept record.
+      const patients = (
+        await db.patients.orderBy("createdAt").reverse().toArray()
+      ).filter((patient) => !patient.mergeInto);
       console.log(`Loaded ${patients.length} patients from database`);
       set({ patients });
     } catch (error) {
@@ -61,7 +62,9 @@ export const usePatientsStore = create<PatientsState>((set, get) => ({
 
     try {
       const results = await db.patients
-        .filter((patient) => patientMatchesQuery(patient, query))
+        .filter(
+          (patient) => !patient.mergeInto && patientMatchesQuery(patient, query),
+        )
         .toArray();
 
       return results;

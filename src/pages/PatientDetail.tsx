@@ -386,6 +386,25 @@ export function PatientDetail() {
     );
   }
 
+  if (patient.mergeInto) {
+    // Its allergies and history now live on the kept record; new care must
+    // be recorded there, so this record offers no actions.
+    return (
+      <div className="panel">
+        <EmptyState
+          icon={UserIcon}
+          title={`${patient.givenName} ${patient.familyName}: merged record`}
+          description="This record was merged into another record for the same patient. Allergies, history and new care are on the kept record."
+          action={
+            <Link to={`/patients/${patient.mergeInto}`} className="btn-primary">
+              Open the kept record
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
+
   const fullName = `${patient.givenName} ${patient.familyName}`;
   // Only today's open visit with a stage still to do can be continued;
   // anything older is finished care and must not receive new records.

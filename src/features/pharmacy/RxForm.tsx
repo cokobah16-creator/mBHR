@@ -18,6 +18,7 @@ import {
 import type { Tone } from "@/components/ui/StatusBadge";
 import { ExclamationTriangleIcon } from "@heroicons/react/20/solid";
 import { isAllergyActive } from "@/utils/allergyActive";
+import { activePatientFor, activePatientId } from "@/services/activePatient";
 
 interface RxFormProps {
   /** When given, the prescription is written for this patient and visit. */
@@ -64,7 +65,31 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
   const [cancelling, setCancelling] = useState(false);
   const mayPrescribe = canPrescribe(currentUser?.role);
 
-  const effectivePatientId = patientId ?? chosenPatient?.id;
+  // A record merged into another is prescribed for on the kept record, where
+  // its allergies now live. Until the id is resolved there is no patient to
+  // screen or prescribe for.
+  const requestedPatientId = patientId ?? chosenPatient?.id;
+  const [resolved, setResolved] = useState<{ from: string; to: string } | null>(null);
+  useEffect(() => {
+    if (!requestedPatientId) return;
+    let live = true;
+    activePatientId(requestedPatientId)
+      .catch(() => requestedPatientId)
+      .then((to) => {
+        if (live) setResolved({ from: requestedPatientId, to });
+      });
+    return () => {
+      live = false;
+    };
+  }, [requestedPatientId]);
+  const effectivePatientId =
+    requestedPatientId && resolved?.from === requestedPatientId ? resolved.to : undefined;
+
+  const choosePatient = (chosen: Patient) => {
+    activePatientFor(chosen)
+      .catch(() => chosen)
+      .then(setChosenPatient);
+  };
 
   useEffect(() => {
     mbhrDb.pharmacy_items
@@ -81,12 +106,12 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
           ? (
               await db.patientAllergies
                 .where("patientId")
-                .equals(effectivePatientId)
+                .anyOf([...new Set([effectivePatientId, requestedPatientId ?? effectivePatientId])])
                 .filter((a) => isAllergyActive(a) && a.allergyType === "medication")
                 .toArray()
             ).map((a) => a.allergen)
           : [],
-      [effectivePatientId],
+      [effectivePatientId, requestedPatientId],
     ) ?? [];
 
   const existing = useLiveQuery(
@@ -226,7 +251,7 @@ export default function RxForm({ patientId, visitId, embedded = false }: RxFormP
             </div>
           ) : (
             <PatientSearch
-              onPatientSelect={setChosenPatient}
+              onPatientSelect={choosePatient}
               placeholder="Search by name or phone number"
               className="w-full"
             />
