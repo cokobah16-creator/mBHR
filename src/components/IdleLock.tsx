@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { LockClosedIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, LockClosedIcon } from "@heroicons/react/24/outline";
 import { ExclamationCircleIcon } from "@heroicons/react/20/solid";
 import { useAuthStore } from "@/stores/auth";
+import { useAppUpdateStore } from "@/stores/appUpdate";
 import { IDLE_CHECK_MS, STAFF_IDLE_LOCK_MS, isIdleExpired } from "@/auth/idle";
 
 const IDLE_MINUTES = Math.round(STAFF_IDLE_LOCK_MS / 60_000);
@@ -65,6 +66,12 @@ function LockScreen({ fullName }: { fullName: string }) {
   const navigate = useNavigate();
   const unlockSession = useAuthStore((s) => s.unlockSession);
   const logout = useAuthStore((s) => s.logout);
+  // Another window upgraded or erased the local database
+  // (src/db/versionChange.ts). The PIN cannot be checked until this window
+  // reloads, and AppUpdateBanner is hidden under the lock, so say it here.
+  // A reload never unlocks: lockedAt is kept across reloads (restoreActivity
+  // in src/stores/auth.ts), and an erase signs everyone out.
+  const databaseClosed = useAppUpdateStore((s) => s.databaseClosed);
   const [pin, setPin] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -79,7 +86,14 @@ function LockScreen({ fullName }: { fullName: string }) {
     setErr(null);
     setBusy(true);
     try {
-      if (await unlockSession(pin)) return;
+      const result = await unlockSession(pin);
+      if (result === true) return;
+      if (result === "unreadable") {
+        setErr(
+          "Your PIN could not be checked on this device. Reload this window, then try again.",
+        );
+        return;
+      }
       const { isAuthenticated, lockoutUntil } = useAuthStore.getState();
       if (!isAuthenticated) {
         // Too many wrong PINs, or the account was switched off: signed out.
@@ -96,6 +110,43 @@ function LockScreen({ fullName }: { fullName: string }) {
       setBusy(false);
     }
   };
+
+  if (databaseClosed) {
+    return (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center overflow-y-auto bg-canvas px-4 py-8"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="idle-lock-title"
+        aria-describedby="idle-lock-reload"
+      >
+        <div className="panel w-full max-w-sm p-6 space-y-4">
+          <div className="flex items-start gap-3">
+            <LockClosedIcon className="h-6 w-6 shrink-0 text-ink-muted mt-1" aria-hidden />
+            <div className="min-w-0">
+              <h1 id="idle-lock-title" className="text-h2 text-ink">
+                Screen locked: reload this window
+              </h1>
+              <p id="idle-lock-reload" className="mt-1 text-body text-ink-secondary">
+                {databaseClosed === "erased"
+                  ? "This device's data was erased in another window, so this window can no longer be used."
+                  : "A newer version of mBHR was opened in another window, so your PIN cannot be checked until this window reloads."}{" "}
+                Reloading does not unlock anything.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="btn-primary w-full h-12"
+          >
+            <ArrowPathIcon className="h-5 w-5" aria-hidden />
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

@@ -806,6 +806,20 @@ describe("useAuthStore", () => {
       expect(useAuthStore.getState().isAuthenticated).toBe(false);
     });
 
+    it("does not call a PIN wrong, or count it, when the account cannot be read", async () => {
+      signedInAndLocked();
+      // Another window upgraded the database and this window's copy closed.
+      mockDbUsers.get.mockRejectedValueOnce(
+        Object.assign(new Error("closed"), { name: "DatabaseClosedError" }),
+      );
+      vi.mocked(verifyPin).mockResolvedValue(true);
+
+      expect(await useAuthStore.getState().unlockSession("482913")).toBe("unreadable");
+      expect(verifyPin).not.toHaveBeenCalled();
+      expect(useAuthStore.getState()).toMatchObject({ isAuthenticated: true, failedAttempts: 0 });
+      expect(useAuthStore.getState().lockedAt).not.toBeNull();
+    });
+
     it("refuses an unlock while the device is locked out, without checking the PIN", async () => {
       signedInAndLocked({ lockoutUntil: Date.now() + 60_000 });
       vi.mocked(verifyPin).mockResolvedValue(true);

@@ -1,5 +1,6 @@
 import Dexie from "dexie";
 import { db, DB_NAME } from "./index";
+import { APP_DATABASES } from "./appDatabases";
 import { wipeDevice } from "./deviceReset";
 import { verifyPin } from "@/utils/pin";
 
@@ -8,6 +9,9 @@ const UPGRADE_FAILURES = new Set(["UpgradeError", "SchemaError"]);
 
 /** Command states still waiting for the server (src/sync/commandOutbox.ts). */
 const OPEN_COMMAND_STATUSES = new Set(["pending", "waiting_permission"]);
+
+/** Command outboxes: the main database's and the pharmacy one (src/db/mbhr.ts). */
+const COMMAND_TABLES = new Set(["serverCommands", "rx_commands"]);
 
 function errorNames(e: unknown): string[] {
   const names: string[] = [];
@@ -51,28 +55,38 @@ export async function safeOpenDb(): Promise<void> {
   }
 }
 
-/** True for a stored row that has not reached the server yet. */
+/**
+ * True for a stored row that has not reached the server yet: waiting to
+ * upload, a command the server has not answered, or pharmacy stock and
+ * records kept only on this device (localOnly, src/db/mbhr.ts). Pending
+ * stock movements, dispenses and medicine registrations are not counted
+ * again: each is carried by an open rx_commands row.
+ */
 export function isUnsyncedRow(tableName: string, row: unknown): boolean {
   if (!row || typeof row !== "object") return false;
-  const r = row as { _dirty?: unknown; status?: unknown };
-  if (r._dirty === 1) return true;
-  return tableName === "serverCommands" && OPEN_COMMAND_STATUSES.has(String(r.status));
+  const r = row as { _dirty?: unknown; localOnly?: unknown; status?: unknown };
+  if (r._dirty === 1 || r.localOnly === 1) return true;
+  return COMMAND_TABLES.has(tableName) && OPEN_COMMAND_STATUSES.has(String(r.status));
 }
 
 /**
- * Runs `read` on the database as it is stored on this device, opened without
+ * Runs `read` on a database as it is stored on this device, opened without
  * upgrading it (Dexie's dynamic mode), then closes it. null when it cannot
- * be read. Never throws.
+ * be read; `ifMissing` when it was never created here. Never throws.
  */
 async function readStoredDatabase<T>(
+  name: string,
   read: (stored: Dexie) => Promise<T>,
+  ifMissing: T | null = null,
 ): Promise<T | null> {
-  const stored = new Dexie(DB_NAME);
+  const stored = new Dexie(name);
   try {
     await stored.open();
     return await read(stored);
   } catch (e) {
-    console.warn("[db] could not read the stored database:", errorNames(e)[0] ?? "unknown");
+    const names = errorNames(e);
+    if (names.includes("NoSuchDatabaseError")) return ifMissing;
+    console.warn("[db] could not read a stored database:", names[0] ?? "unknown");
     return null;
   } finally {
     stored.close();
@@ -80,18 +94,29 @@ async function readStoredDatabase<T>(
 }
 
 /**
- * How many records on this device have not been synced, read from the
- * stored database. null when it cannot be read: callers must then assume
+ * How many records on this device have not been synced, read from every
+ * database the erase deletes (APP_DATABASES), not only the one that failed
+ * to open. null when any of them cannot be read: callers must then assume
  * some records are unsynced.
  */
 export async function countStoredUnsyncedRecords(): Promise<number | null> {
-  return readStoredDatabase(async (stored) => {
-    let total = 0;
-    for (const table of stored.tables) {
-      total += await table.filter((row) => isUnsyncedRow(table.name, row)).count();
-    }
-    return total;
-  });
+  let total = 0;
+  for (const { name } of APP_DATABASES) {
+    const count = await readStoredDatabase(
+      name,
+      async (stored) => {
+        let unsynced = 0;
+        for (const table of stored.tables) {
+          unsynced += await table.filter((row) => isUnsyncedRow(table.name, row)).count();
+        }
+        return unsynced;
+      },
+      0,
+    );
+    if (count === null) return null;
+    total += count;
+  }
+  return total;
 }
 
 /**
@@ -101,7 +126,7 @@ export async function countStoredUnsyncedRecords(): Promise<number | null> {
  */
 export async function storedAdminPinMatches(pin: string): Promise<boolean | null> {
   if (!/^\d{6}$/.test(pin)) return false;
-  return readStoredDatabase(async (stored) => {
+  return readStoredDatabase(DB_NAME, async (stored) => {
     const admins = await stored
       .table("users")
       .filter((u) => u?.isActive === 1 && u?.role === "admin")

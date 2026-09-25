@@ -75,8 +75,12 @@ interface AuthState {
   checkSessionExpiry: () => boolean;
   /** Locks the signed-in session (inactivity). */
   lockSession: () => void;
-  /** Lifts the lock with the signed-in person's own device PIN. */
-  unlockSession: (pin: string) => Promise<boolean>;
+  /**
+   * Lifts the lock with the signed-in person's own device PIN. "unreadable"
+   * when the account could not be read on this device, so the PIN was not
+   * checked (never reported as a wrong PIN, and not counted as one).
+   */
+  unlockSession: (pin: string) => Promise<boolean | "unreadable">;
 }
 
 /**
@@ -847,7 +851,7 @@ export const useAuthStore = create<AuthState>()(
             "[Auth] Could not read the account to unlock:",
             error instanceof Error ? error.name : typeof error,
           );
-          return false;
+          return "unreadable" as const;
         }
 
         // Switched off, or no PIN here any more, while locked: the lock

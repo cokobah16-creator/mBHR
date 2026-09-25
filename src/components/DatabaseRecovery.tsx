@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 import { ArrowPathIcon, ExclamationCircleIcon } from "@heroicons/react/20/solid";
 import { useAuthStore } from "@/stores/auth";
+import { useAppUpdateStore } from "@/stores/appUpdate";
 import {
   countStoredUnsyncedRecords,
   eraseLocalDatabase,
@@ -14,9 +15,14 @@ import {
  * including any not yet synced, stay on the device. The person can try
  * again. After a failed upgrade only, an administrator can erase the device,
  * with their PIN, after being told how many unsynced records that loses.
+ *
+ * A fixed version of the app may be waiting to take over
+ * (src/lib/serviceWorker.ts). A plain reload keeps the version that failed,
+ * so "Try again" switches to the waiting one when there is one.
  */
 export function DatabaseRecovery({ upgradeFailed }: { upgradeFailed: boolean }) {
   const [showErase, setShowErase] = useState(false);
+  const reloadToUpdate = useAppUpdateStore((s) => s.reloadToUpdate);
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-canvas px-4 py-8">
@@ -56,14 +62,20 @@ export function DatabaseRecovery({ upgradeFailed }: { upgradeFailed: boolean }) 
           </ol>
         </div>
 
+        {reloadToUpdate && (
+          <p className="mt-4 text-body text-ink-secondary">
+            A new version of mBHR is ready and may fix this.
+          </p>
+        )}
+
         <div className="mt-6 flex justify-end">
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={() => (reloadToUpdate ? reloadToUpdate() : window.location.reload())}
             className="btn-primary"
           >
             <ArrowPathIcon className="h-5 w-5" aria-hidden />
-            Try again
+            {reloadToUpdate ? "Update and try again" : "Try again"}
           </button>
         </div>
 

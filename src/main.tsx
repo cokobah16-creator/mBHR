@@ -178,6 +178,12 @@ function renderFatal(msg: string) {
   container.append(h1, h2, p1, p2);
   el.textContent = "";
   el.appendChild(container);
+
+  // A fixed version may be waiting, and a plain reload keeps this one
+  // (src/lib/serviceWorker.ts): offer it here too.
+  const updateNotice = document.createElement("div");
+  el.appendChild(updateNotice);
+  ReactDOM.createRoot(updateNotice).render(<AppUpdateBanner />);
 }
 
 /**
@@ -190,6 +196,7 @@ function renderDatabaseRecovery(upgradeFailed: boolean) {
   ReactDOM.createRoot(el).render(
     <React.StrictMode>
       <DatabaseRecovery upgradeFailed={upgradeFailed} />
+      <AppUpdateBanner />
     </React.StrictMode>,
   );
 }
