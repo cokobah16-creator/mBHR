@@ -50,7 +50,7 @@ def function_sql(file: str, name: str) -> str:
 
 
 def main() -> None:
-    parts = [PRELUDE, (MIGRATIONS / "20260520000004_generic_rate_limits.sql").read_text()]
+    parts = [PRELUDE, (MIGRATIONS / "20260517153407_generic_rate_limits.sql").read_text()]
     parts += [function_sql(f, n) for f, n in FUNCTIONS]
     parts.append(
         "GRANT EXECUTE ON FUNCTION public.app_current_role(), "
