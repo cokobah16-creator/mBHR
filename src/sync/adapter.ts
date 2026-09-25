@@ -1262,6 +1262,38 @@ export async function fetchRemoteRecord(
   return (data as Record<string, unknown> | null) ?? null;
 }
 
+/**
+ * The server's current row_version of one record, for tables that carry
+ * one (patients, queue). Used when a conflict is resolved on this device,
+ * so the next upload is compared with the server copy the decision was
+ * made against. Undefined when the table has no version, the record is not
+ * on the server, or the server cannot be reached (the conflict is then
+ * raised again at the next sync).
+ */
+export async function fetchServerVersion(
+  entityType: string,
+  id: string,
+): Promise<number | undefined> {
+  if (!sb || !VERSIONED.has(entityType as Tbl)) return undefined;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return undefined;
+  }
+  try {
+    const { data, error } = await sb
+      .from(entityType)
+      .select("row_version")
+      .eq("id", id)
+      .maybeSingle();
+    if (error || !data) return undefined;
+    const raw = (data as { row_version?: unknown }).row_version;
+    if (raw === null || raw === undefined || raw === "") return undefined;
+    const version = Number(raw);
+    return Number.isFinite(version) ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Auto-sync on network reconnection
 if (typeof window !== "undefined") {
   window.addEventListener("online", async () => {

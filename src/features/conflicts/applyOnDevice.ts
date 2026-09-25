@@ -7,6 +7,7 @@ import { db, createAuditLog } from "@/db";
 import logger from "@/lib/logger";
 import type { Role } from "@/auth/roles";
 import { requestMerge } from "@/services/patientMerge";
+import { fetchServerVersion } from "@/sync/adapter";
 import { buildLocalPatch, mergeFieldChoicesFor, type DevicePlan } from "./devicePlan";
 import { localTable } from "./localContext";
 
@@ -72,10 +73,15 @@ export async function applyPlanOnDevice(
     const table = localTable(plan.table);
     if (!table) throw namedError("LocalTableUnavailable");
     const patch = buildLocalPatch(plan.changes);
+    // Patients and queue: record the server version this decision was
+    // applied against, so the next upload is not held back as the same
+    // conflict again (skipped when the server cannot be read).
+    const serverVersion = await fetchServerVersion(entityType, plan.recordId);
     const updated = await table.update(plan.recordId, {
       ...patch,
       updatedAt: new Date(),
       _dirty: 1,
+      ...(serverVersion !== undefined ? { _serverVersion: serverVersion } : {}),
     });
     if (!updated) throw namedError("LocalRecordMissing");
     await auditOnDevice(actor, "conflict_resolution_applied", entityType, plan.recordId);

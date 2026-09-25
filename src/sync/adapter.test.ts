@@ -451,6 +451,91 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       expect(result.conflicts.map((c) => c.entityId)).toEqual(["p1"]);
       expect(remote.upsert).not.toHaveBeenCalled();
     });
+
+    describe("after a conflict is resolved on this device", () => {
+      const conflict = {
+        entityType: "patients",
+        entityId: "p1",
+        localTimestamp: "2020-01-01T00:00:00Z",
+        remoteTimestamp: "2020-01-02T00:00:00Z",
+        conflicts: [],
+      };
+      const serverRow = {
+        id: "p1",
+        given_name: "Adaeze",
+        row_version: 5,
+        updated_at: "2020-01-02T00:00:00Z",
+      };
+
+      async function setUp() {
+        const { db } = await import("@/db");
+        const patients = fakeTable([
+          { id: "p1", givenName: "Ada", _dirty: 1, _serverVersion: 3 },
+        ]);
+        Object.assign(db, { patients });
+        const remote = remoteTable({ remote: serverRow, version: 6 });
+        mockFrom.mockImplementation((t: string) => (t === "patients" ? remote : remoteTable({})));
+        const { pushChanges } = await import("./adapter");
+        const { resolveConflict } = await import("./conflictResolver");
+        return { patients, remote, pushChanges, resolveConflict };
+      }
+
+      it("uploads this device's copy after keep-local", async () => {
+        const { patients, remote, pushChanges, resolveConflict } = await setUp();
+
+        await resolveConflict(conflict, "keep-local", undefined, undefined, serverRow);
+        const result = await pushChanges();
+
+        expect(result.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+        expect(patients.store.get("p1")).toMatchObject({ _dirty: 0, _serverVersion: 6 });
+      });
+
+      it("uploads a field-by-field choice", async () => {
+        const { patients, remote, pushChanges, resolveConflict } = await setUp();
+
+        await resolveConflict(
+          conflict,
+          "manual",
+          { givenName: "local" },
+          { id: "p1", givenName: "Ada" },
+          serverRow,
+        );
+        const result = await pushChanges();
+
+        expect(result.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+        expect(patients.store.get("p1")).toMatchObject({ givenName: "Ada", _dirty: 0 });
+      });
+
+      it("uploads the next edit after keep-remote", async () => {
+        const { patients, remote, pushChanges, resolveConflict } = await setUp();
+
+        await resolveConflict(conflict, "keep-remote", undefined, undefined, serverRow);
+        expect(patients.store.get("p1")).toMatchObject({
+          givenName: "Adaeze",
+          _serverVersion: 5,
+          _dirty: 0,
+        });
+        expect(patients.store.get("p1")).not.toHaveProperty("row_version");
+
+        await patients.update("p1", { givenName: "Adaeze Obi", _dirty: 1 });
+        const result = await pushChanges();
+
+        expect(result.conflicts).toEqual([]);
+        expect(remote.upsert).toHaveBeenCalledTimes(1);
+      });
+
+      it("reads the server version for a versioned record only", async () => {
+        const { fetchServerVersion } = await import("./adapter");
+        const remote = remoteTable({ remote: { row_version: 7 } });
+        mockFrom.mockImplementation(() => remote);
+
+        expect(await fetchServerVersion("patients", "p1")).toBe(7);
+        expect(remote.select).toHaveBeenCalledWith("row_version");
+        expect(await fetchServerVersion("vitals", "v1")).toBeUndefined();
+      });
+    });
   });
 
   describe("downloads of server-owned fields", () => {
