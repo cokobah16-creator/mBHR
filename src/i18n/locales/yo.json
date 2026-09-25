@@ -208,6 +208,8 @@
   },
   "simple": {
     "ageHint": "[EN] For a child under 2 you can give the age in months. The date of birth is saved as an estimate from the age.",
+    "ageRangeMonths": "[EN] Age from {{min}} to {{max}} months. For a child of 2 years or more, choose Years.",
+    "ageRangeYears": "[EN] Age from {{min}} to {{max}} years. For a baby under 1 year, choose Months.",
     "chooseAction": "Yan ohun tí o fẹ́ ṣe",
     "directionsExample": "Mu lẹ́ẹ̀mejì lójúmọ́ pẹ̀lú oúnjẹ",
     "dosageExample": "Àpẹẹrẹ: tábìlẹ́ẹ̀tì 1, 5ml",

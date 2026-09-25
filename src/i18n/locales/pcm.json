@@ -113,6 +113,8 @@
   "simple.directionsExample": "Drink am two times for day with food",
   "simple.registerDescription": "Add new sick person small small",
   "simple.ageHint": "[EN] For a child under 2 you can give the age in months. The date of birth is saved as an estimate from the age.",
+  "simple.ageRangeMonths": "[EN] Age from {{min}} to {{max}} months. For a child of 2 years or more, choose Years.",
+  "simple.ageRangeYears": "[EN] Age from {{min}} to {{max}} years. For a baby under 1 year, choose Months.",
   "action.register": "Write Person Name",
   "action.register.description": "Add new person",
   "action.vitals": "Check Body",

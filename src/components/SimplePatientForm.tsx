@@ -307,6 +307,8 @@ export function SimplePatientForm({
               ))}
             </div>
 
+            {/* An age typed outside the range arrives as NaN, so the step
+                stays invalid and the hint shows as an error. */}
             <VisualNumberInput
               key={formData.ageUnit}
               value={formData.age}
@@ -319,6 +321,13 @@ export function SimplePatientForm({
                   ? t("common.years")
                   : t("common.months")
               }
+              hint={t(
+                formData.ageUnit === "years"
+                  ? "simple.ageRangeYears"
+                  : "simple.ageRangeMonths",
+                AGE_LIMITS[formData.ageUnit],
+              )}
+              invalid={!estimatedDob}
               showDots={formData.age <= 10}
             />
             <p className="field-hint text-center">{t("simple.ageHint")}</p>

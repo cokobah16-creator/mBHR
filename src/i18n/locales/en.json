@@ -127,6 +127,8 @@
   "simple.directionsExample": "Take twice daily with food",
   "simple.registerDescription": "Add a new patient step by step",
   "simple.ageHint": "For a child under 2 you can give the age in months. The date of birth is saved as an estimate from the age.",
+  "simple.ageRangeMonths": "Age from {{min}} to {{max}} months. For a child of 2 years or more, choose Years.",
+  "simple.ageRangeYears": "Age from {{min}} to {{max}} years. For a baby under 1 year, choose Months.",
 
   "action.register": "Register Patient",
   "action.register.description": "Add new patient",
