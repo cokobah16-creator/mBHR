@@ -27,6 +27,15 @@ vi.mock("@/services/unifiedPortalEnrollment", () => ({
   bulkEnrollPatients: (...a: unknown[]) => mockBulkEnroll(...a),
 }));
 
+// The page follows the server's answers to its last run (none here).
+vi.mock("dexie-react-hooks", () => ({
+  useLiveQuery: (_query: unknown, _deps: unknown, defaultValue?: unknown) => defaultValue,
+}));
+
+vi.mock("@/services/portalAccess", () => ({
+  listPortalAccessCommandsFor: vi.fn(),
+}));
+
 vi.mock("@/features/admin/useServerStatus", () => ({
   useServerStatus: () => ({
     state: "available",
@@ -122,9 +131,12 @@ describe("BulkPortalMigration", () => {
     await screen.findByText("Ada Obi");
     expect(screen.queryByText(/one-time code/i)).toBeNull();
     expect(
-      screen.getByText(/sign in with their email and password/i),
+      screen.getByText(/sign in with their\s+email and password/i),
     ).toBeInTheDocument();
-    // The fixture's patients have only a phone number: say they must enter it.
-    expect(screen.getByText(/only their phone number/i)).toBeInTheDocument();
+    // The fixture's patients have only a phone number: the server links an
+    // account through the record's email address, so staff add one first.
+    expect(
+      screen.getByText(/only a phone number\s+needs an email address added first/i),
+    ).toBeInTheDocument();
   });
 });

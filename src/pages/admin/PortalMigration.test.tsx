@@ -13,7 +13,17 @@ const { mockFindEligible, mockBulkEnable, session, server } = vi.hoisted(
   }),
 );
 
-vi.mock("@/db", () => ({}));
+vi.mock("@/db", () => ({ db: {} }));
+
+// The page follows the server's answers to its last run with live queries;
+// none are needed here.
+vi.mock("dexie-react-hooks", () => ({
+  useLiveQuery: (_query: unknown, _deps: unknown, defaultValue?: unknown) => defaultValue,
+}));
+
+vi.mock("@/services/portalAccess", () => ({
+  listPortalAccessCommandsFor: vi.fn(),
+}));
 
 vi.mock("@/services/portalEnrollment", () => ({
   findEligiblePatients: (...a: unknown[]) => mockFindEligible(...a),
@@ -72,12 +82,13 @@ describe("PortalMigration invitations", () => {
     mockBulkEnable.mockResolvedValue({
       success: 1,
       failed: 0,
-      serverUpdated: 1,
       errors: [],
+      pending: 1,
+      deviceOnly: 0,
     });
   });
 
-  it("offers invitations when signed in online, and the dialog does not promise every patient a message", async () => {
+  it("offers invitations when signed in online, only to patients the server confirmed", async () => {
     await renderWithOnePatientSelected();
 
     const invite = screen.getByRole("button", {
@@ -87,9 +98,14 @@ describe("PortalMigration invitations", () => {
     fireEvent.click(invite);
 
     const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent(/is requested for each patient/i);
-    expect(dialog).toHaveTextContent(/at most 10 a minute/i);
+    expect(dialog).toHaveTextContent(/only to patients whose access the server has confirmed/i);
     expect(dialog).not.toHaveTextContent(/each patient is sent an invitation/i);
+  });
+
+  it("says patients under 18 are not listed", async () => {
+    await renderWithOnePatientSelected();
+
+    expect(screen.getByText(/patients under 18 are not listed/i)).toBeInTheDocument();
   });
 
   it("turns invitations off after a PIN unlock and says why", async () => {
@@ -108,28 +124,23 @@ describe("PortalMigration invitations", () => {
     ).toBeEnabled();
   });
 
-  it("still enables access without invitations when not signed in online", async () => {
+  it("still asks for access without invitations when not signed in online, and says it is queued", async () => {
     session.state = "signed_out";
-    // Not signed in online: saved on this device only.
-    mockBulkEnable.mockResolvedValue({
-      success: 1,
-      failed: 0,
-      serverUpdated: 0,
-      errors: [],
-    });
     await renderWithOnePatientSelected();
 
     fireEvent.click(screen.getByRole("button", { name: "Enable access only" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Enable access for 1" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/sent to the clinic server when you sign in online/i);
+    fireEvent.click(screen.getByRole("button", { name: "Enable access for 1" }));
 
     await waitFor(() => expect(mockBulkEnable).toHaveBeenCalledTimes(1));
     expect(mockBulkEnable).toHaveBeenCalledWith(
       ["p1"],
       expect.objectContaining({ sendInvitations: false }),
     );
-    const summary = await screen.findByText(/portal access enabled for 1 of 1 patient/i);
-    expect(summary).toHaveTextContent(/for 0 of them/i);
-    expect(summary).toHaveTextContent(/saved on this device only/i);
+    const summary = await screen.findByText(/portal access asked for 1 of 1 patient/i);
+    expect(summary).toHaveTextContent(/sent to the server when you sign in online/i);
+    expect(summary).not.toHaveTextContent(/on this device only/i);
     expect(summary).not.toHaveTextContent(/undefined/);
   });
 
