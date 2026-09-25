@@ -1,5 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { calculateBMI, flagVitals, getFlagColor, getFlagLabel } from "./vitals";
+import {
+  adultVitalRangesApply,
+  assessVitals,
+  calculateBMI,
+  enteredMeasurements,
+  flagVitals,
+  getFlagColor,
+  getFlagLabel,
+  getFlagTone,
+  hasVitalsEntries,
+  PAEDIATRIC_CHECK_FLAG,
+  parseMeasurement,
+} from "./vitals";
+import { vitalsSchema } from "../validation/schemas";
 
 describe("vitals utilities", () => {
   describe("calculateBMI", () => {
@@ -302,5 +315,113 @@ describe("resolveBmi", () => {
     const { resolveBmi } = await import("./vitals");
     expect(resolveBmi({ bmi: 346.9 })).toBeUndefined();
     expect(resolveBmi({ bmi: 23.1 })).toBe(23.1);
+  });
+});
+
+describe("adult thresholds and the patient's age", () => {
+  const now = new Date("2026-09-25T10:00:00");
+
+  it("applies adult thresholds from 18", () => {
+    expect(adultVitalRangesApply("2008-09-20", now)).toBe(true);
+    expect(adultVitalRangesApply("2008-09-30", now)).toBe(false);
+    expect(adultVitalRangesApply("2021-03-01", now)).toBe(false);
+  });
+
+  it("uses the age when the reading was taken", () => {
+    expect(adultVitalRangesApply("2006-01-01", "2022-06-01T09:00:00Z")).toBe(false);
+    expect(adultVitalRangesApply("2006-01-01", new Date("2026-06-01T09:00:00Z"))).toBe(true);
+  });
+
+  it("never treats an unknown age as adult", () => {
+    expect(adultVitalRangesApply("", now)).toBe(false);
+    expect(adultVitalRangesApply(undefined, now)).toBe(false);
+    expect(adultVitalRangesApply(null, now)).toBe(false);
+    expect(adultVitalRangesApply("not-a-date", now)).toBe(false);
+  });
+
+  it("marks a child's reading for a paediatric chart check instead of adult flags", () => {
+    const { bmi, flags } = assessVitals(
+      { pulseBpm: 130, tempC: 36.8, systolic: 95, diastolic: 55, heightCm: 110, weightKg: 19 },
+      { adultRanges: false },
+    );
+    expect(flags).toEqual([PAEDIATRIC_CHECK_FLAG]);
+    expect(flags).not.toContain("high_pulse");
+    expect(flags).not.toContain("low_bp");
+    expect(bmi).toBeCloseTo(15.7, 1);
+  });
+
+  it("marks a child's reading even when adult thresholds would call it normal", () => {
+    expect(assessVitals({ pulseBpm: 72 }, { adultRanges: false }).flags).toEqual([
+      PAEDIATRIC_CHECK_FLAG,
+    ]);
+  });
+
+  it("adds no flag to a child's record without a reading to check", () => {
+    expect(assessVitals({ heightCm: 110 }, { adultRanges: false }).flags).toEqual([]);
+    expect(assessVitals({}, { adultRanges: false }).flags).toEqual([]);
+  });
+
+  it("keeps adult flags when adult thresholds apply", () => {
+    expect(assessVitals({ pulseBpm: 130 }).flags).toEqual(["high_pulse"]);
+    expect(assessVitals({ pulseBpm: 130 }, { adultRanges: true }).flags).toEqual(["high_pulse"]);
+  });
+
+  it("labels the paediatric check as a warning, never as normal", () => {
+    expect(getFlagLabel(PAEDIATRIC_CHECK_FLAG)).toBe("Check paediatric chart");
+    expect(getFlagTone(PAEDIATRIC_CHECK_FLAG)).toBe("warning");
+    expect(getFlagColor(PAEDIATRIC_CHECK_FLAG)).toContain("yellow");
+  });
+});
+
+describe("vitals form values", () => {
+  it("reads an empty field as no measurement, not NaN or 0", () => {
+    expect(parseMeasurement("")).toBeUndefined();
+    expect(parseMeasurement("   ")).toBeUndefined();
+    expect(parseMeasurement(undefined)).toBeUndefined();
+    expect(parseMeasurement(null)).toBeUndefined();
+    expect(parseMeasurement("36.6")).toBe(36.6);
+    expect(parseMeasurement(72)).toBe(72);
+  });
+
+  it("keeps unreadable text as NaN so validation rejects it", () => {
+    expect(parseMeasurement("abc")).toBeNaN();
+    expect(vitalsSchema.safeParse({ tempC: parseMeasurement("abc") }).success).toBe(false);
+  });
+
+  it("accepts a reading with only some measurements entered", () => {
+    const values = {
+      heightCm: parseMeasurement(""),
+      weightKg: parseMeasurement(""),
+      tempC: parseMeasurement("37.2"),
+      pulseBpm: parseMeasurement(""),
+      systolic: parseMeasurement(""),
+      diastolic: parseMeasurement(""),
+      spo2: parseMeasurement("97"),
+    };
+    const parsed = vitalsSchema.safeParse(values);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && enteredMeasurements(parsed.data)).toEqual({ tempC: 37.2, spo2: 97 });
+  });
+
+  it("still rejects systolic at or below diastolic", () => {
+    expect(vitalsSchema.safeParse({ systolic: 80, diastolic: 90 }).success).toBe(false);
+  });
+
+  it("leaves empty and unreadable fields out of the saved record", () => {
+    const record = enteredMeasurements({
+      tempC: 37.2,
+      pulseBpm: undefined,
+      spo2: Number.NaN,
+      systolic: null,
+    });
+    expect(record).toEqual({ tempC: 37.2 });
+    expect("pulseBpm" in record).toBe(false);
+  });
+
+  it("knows when something has been typed, so cancelling asks first", () => {
+    expect(hasVitalsEntries({})).toBe(false);
+    expect(hasVitalsEntries({ heightCm: undefined, weightKg: undefined })).toBe(false);
+    expect(hasVitalsEntries({ spo2: 97 })).toBe(true);
+    expect(hasVitalsEntries({ tempC: Number.NaN })).toBe(true);
   });
 });

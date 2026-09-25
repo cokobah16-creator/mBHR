@@ -6,7 +6,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PatientFlowStepper } from "@/components/patient/PatientFlowStepper";
 import { derivePatientFlow, FLOW_STAGE_LABELS, currentFlowStage } from "@/services/patientFlow";
 import { formatPatientId, patientAge } from "@/utils/patient";
-import { classifyBloodPressure, classifySpO2, classifyTemperature } from "@/utils/vitals";
+import { adultVitalRangesApply, classifyBloodPressure, classifySpO2, classifyTemperature } from "@/utils/vitals";
 import { isAllergyActive } from "@/utils/allergyActive";
 
 const SEX_LABEL: Record<string, string> = {
@@ -122,9 +122,15 @@ export function PatientContextHeader({
   const name = `${patient.givenName} ${patient.familyName}`.trim();
   const age = patientAge(patient.dob);
   const stage = currentFlowStage(steps);
-  const bp = classifyBloodPressure(latestVital?.systolic, latestVital?.diastolic);
-  const temp = classifyTemperature(latestVital?.tempC);
-  const spo2 = classifySpO2(latestVital?.spo2);
+  // Adult categories are not valid for a reading taken under 18 (or at an
+  // unknown age): that reading gets a paediatric-chart prompt instead.
+  const adultVitals =
+    !latestVital || adultVitalRangesApply(patient.dob, latestVital.takenAt);
+  const bp = adultVitals
+    ? classifyBloodPressure(latestVital?.systolic, latestVital?.diastolic)
+    : null;
+  const temp = adultVitals ? classifyTemperature(latestVital?.tempC) : null;
+  const spo2 = adultVitals ? classifySpO2(latestVital?.spo2) : null;
   const location = [patient.lga, patient.state].filter(Boolean).join(", ");
 
   return (
@@ -210,6 +216,13 @@ export function PatientContextHeader({
               <li>
                 <StatusBadge tone={spo2.tone}>
                   SpO₂ {latestVital?.spo2}% · {spo2.label}
+                </StatusBadge>
+              </li>
+            )}
+            {!adultVitals && (
+              <li>
+                <StatusBadge tone="warning">
+                  Vitals: check paediatric chart
                 </StatusBadge>
               </li>
             )}
