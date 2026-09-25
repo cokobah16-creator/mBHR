@@ -153,13 +153,15 @@ function VitalsPanel({
   if (!hasBp && !hasTemp && !hasWeight) return null;
 
   // Rated with the same classification as the staff screens. A child's
-  // readings (or any when the age is unknown) are not rated against adult
-  // ranges: they are shown without a badge and with a note instead.
+  // blood pressure (or any when the age is unknown) is not rated against
+  // adult ranges: it is shown without a badge and with a note instead.
+  // Temperature is rated at every age, as the staff fever and low
+  // temperature flags are.
   const rated = portalRatesVitals(dob, vitals.takenAt);
   const bp = hasBp && rated ? portalBpStatus(vitals.systolic, vitals.diastolic) : null;
-  const temp = hasTemp && rated ? portalTempStatus(vitals.tempC) : null;
+  const temp = hasTemp ? portalTempStatus(vitals.tempC) : null;
   const anyFlag = (bp && bp !== "normal") || (temp && temp !== "normal");
-  const notRated = !rated && (hasBp || hasTemp);
+  const notRated = !rated && hasBp;
 
   return (
     <section className="panel" aria-labelledby="home-vitals">
