@@ -539,15 +539,13 @@ const isClosed = (q: WorklistQuery) =>
 const EMPTY: WorklistPage = { data: [], count: 0 };
 
 describe('getLabWorklist', () => {
-  let original: ((...args: unknown[]) => unknown) | undefined;
-
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
-    original = (await mockedSupabase()).from.getMockImplementation();
   });
 
   afterEach(async () => {
-    (await mockedSupabase()).from.mockImplementation(original);
+    // Puts back the implementation given to vi.fn in the mock at the top.
+    (await mockedSupabase()).from.mockReset();
   });
 
   it('reads every open order page by page, so newer orders past the first page are listed', async () => {
