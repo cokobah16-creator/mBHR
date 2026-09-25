@@ -149,7 +149,9 @@ export const CLINICAL_PATH_RULES = [
 export const CLINICAL_CONTENT_RULES = [
   {
     area: "Server-side clinical rules (database migration)",
-    paths: ["supabase/migrations/**/*.sql"],
+    // migrations-deferred holds migrations kept out of the Supabase CLI's
+    // push until the owner decides (FHIR); they are reviewed the same way.
+    paths: ["supabase/migrations/**/*.sql", "supabase/migrations-deferred/**/*.sql"],
     // "_" counts as a word break, so lab_results.interpretation and
     // app_queue_priority_rank match too.
     pattern:

@@ -254,7 +254,7 @@ const AUD_DELETED = audRow(8, {
 const AUD_OLD = audRow(9, { occurred_at: "2026-07-01T12:00:00+00:00", patient_ids: [P_OTHER.id] });
 
 // ---------------------------------------------------------------------------
-// Database functions (same rules as supabase/migrations/20260926130000_interop_phase2.sql)
+// Database functions (same rules as supabase/migrations-deferred/20260926130000_interop_phase2.sql)
 // ---------------------------------------------------------------------------
 
 const refuse = (code: string, status: number) => new Response(JSON.stringify({ code }), { status });

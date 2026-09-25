@@ -29,7 +29,12 @@ What exists in this repository:
   chip and a read-only Interoperability panel for admins
   ([consent.md](consent.md)).
 - Two migrations: Phase 1 `20260926110000_interop_foundation.sql` and
-  Phase 2 `20260926130000_interop_phase2.sql`, with pgTAP tests.
+  Phase 2 `20260926130000_interop_phase2.sql`, with pgTAP tests. Phase 2
+  and its test live in `supabase/migrations-deferred/`, which the Supabase
+  CLI does not read, so no migration push (including the production
+  reconciliation) can apply it by accident. It stays there until the owner
+  decides FHIR goes live; it is then given a version above production's
+  newest and moved into `supabase/migrations/`.
 
 What is not true yet:
 
@@ -165,8 +170,9 @@ src/interoperability/fhir/
   conformance/   synthetic examples validated by the HL7 validator in CI
 src/interoperability/smart/              SMART scope helpers (not wired in)
 supabase/migrations/20260926110000_interop_foundation.sql   Phase 1
-supabase/migrations/20260926130000_interop_phase2.sql       Phase 2
-supabase/tests/interop_foundation.test.sql, interop_phase2.test.sql
+supabase/migrations-deferred/20260926130000_interop_phase2.sql   Phase 2 (deferred)
+supabase/tests/interop_foundation.test.sql
+supabase/migrations-deferred/tests/interop_phase2.test.sql
 ```
 
 App screens that use the Phase 2 database functions (not the gateway):

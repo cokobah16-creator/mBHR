@@ -2,7 +2,7 @@
  * Consent records for the patient portal's privacy section and the staff
  * "External sharing" chip.
  *
- * Database functions (supabase/migrations/20260926130000_interop_phase2.sql):
+ * Database functions (supabase/migrations-deferred/20260926130000_interop_phase2.sql):
  * - interop_my_consents(): the signed-in portal patient's own records
  * - interop_withdraw_consent(p_consent_id, p_reason): withdraw one record
  * - interop_consent_summary(p_patient_id): the external sharing summary
