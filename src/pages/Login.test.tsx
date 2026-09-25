@@ -43,6 +43,8 @@ vi.mock("@/db/devicePin", () => ({
   setDevicePin: (...args: unknown[]) => mocks.setDevicePin(...args),
 }));
 
+// The real translations, so the legal links show their English labels.
+import "@/i18n";
 import Login from "./Login";
 
 function renderLogin() {

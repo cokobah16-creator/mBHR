@@ -1,7 +1,8 @@
 import type { ReactElement } from "react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import i18n from "@/i18n";
 import { LegalLinks } from "./LegalLinks";
 
 function renderLinks(ui: ReactElement) {
@@ -9,6 +10,10 @@ function renderLinks(ui: ReactElement) {
 }
 
 describe("LegalLinks", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
   it("links to the privacy notice and the terms of use", () => {
     renderLinks(<LegalLinks />);
     const nav = screen.getByRole("navigation", { name: "Legal" });
@@ -16,6 +21,20 @@ describe("LegalLinks", () => {
     expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
       ["Privacy notice", "/privacy"],
       ["Terms of use", "/terms"],
+    ]);
+  });
+
+  it("shows its labels in the chosen language", async () => {
+    await i18n.changeLanguage("ha");
+    renderLinks(<LegalLinks />);
+    const nav = screen.getByRole("navigation", { name: "Bayanan doka" });
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((a) => [a.textContent, a.getAttribute("href")]),
+    ).toEqual([
+      ["Sanarwar sirri", "/privacy"],
+      ["Sharuɗɗan amfani", "/terms"],
     ]);
   });
 

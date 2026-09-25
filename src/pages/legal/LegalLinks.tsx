@@ -1,23 +1,28 @@
 import { Fragment } from "react";
 import { Link } from "react-router-dom";
+import { useT } from "@/hooks/useT";
 
 export interface LegalLinkTarget {
   to: string;
   label: string;
 }
 
-// The privacy notice and the terms of use, in the order shown. Not exported:
-// react-refresh allows only components and primitive constants here.
-const LEGAL_LINK_TARGETS: readonly LegalLinkTarget[] = [
-  { to: "/privacy", label: "Privacy notice" },
-  { to: "/terms", label: "Terms of use" },
+// The privacy notice and the terms of use, in the order shown, with the
+// translation key of each label. Not exported: react-refresh allows only
+// components and primitive constants here.
+const LEGAL_LINK_TARGETS: readonly { to: string; labelKey: string }[] = [
+  { to: "/privacy", labelKey: "legal.links.privacyNotice" },
+  { to: "/terms", labelKey: "legal.links.termsOfUse" },
 ];
 
 const LINK_CLASS =
   "inline-flex min-h-touch-target items-center rounded-md px-2 text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary";
 
 interface LegalLinksProps {
-  /** Name of the link group for screen readers. */
+  /**
+   * Name of the link group for screen readers. Defaults to "Legal", in the
+   * chosen language.
+   */
   label?: string;
   /** Links shown before the privacy notice and terms, such as a home link. */
   before?: readonly LegalLinkTarget[];
@@ -30,19 +35,27 @@ interface LegalLinksProps {
  * Links to the privacy notice and the terms of use, separated by dots. Used
  * on every screen where someone signs in, signs up or sets up a device, and
  * in the signed-in portal menus. Both pages are bundled with the app and
- * precached by the service worker, so the links need no network.
+ * precached by the service worker, so the links need no network. Their
+ * labels follow the chosen language; the pages themselves are in English.
  */
 export function LegalLinks({
-  label = "Legal",
+  label,
   before = [],
   align = "center",
   className = "",
 }: LegalLinksProps) {
-  const links = [...before, ...LEGAL_LINK_TARGETS];
+  const { t } = useT();
+  const links = [
+    ...before,
+    ...LEGAL_LINK_TARGETS.map((link) => ({
+      to: link.to,
+      label: t(link.labelKey),
+    })),
+  ];
   const justify = align === "start" ? "justify-start" : "justify-center";
   return (
     <nav
-      aria-label={label}
+      aria-label={label ?? t("legal.links.label")}
       className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-label ${justify} ${className}`.trim()}
     >
       {links.map((link, i) => (
