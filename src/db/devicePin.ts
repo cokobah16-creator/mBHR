@@ -1,5 +1,6 @@
 import { db, type User } from "./index";
 import { derivePinHash, newSaltB64 } from "@/utils/pin";
+import { isStaffRole } from "@/auth/roles";
 
 export interface DevicePinInput {
   userId: string;
@@ -49,6 +50,10 @@ export async function setDevicePin(input: DevicePinInput): Promise<User> {
   const user = await db.users.get(input.userId);
   if (!user) {
     throw new Error("This account is not on this device");
+  }
+  // Offline access is for active staff only.
+  if (user.isActive !== 1 || !isStaffRole(user.role)) {
+    throw new Error("This account cannot have offline access on this device");
   }
 
   await db.users.update(user.id, fields);

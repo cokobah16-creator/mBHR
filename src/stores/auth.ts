@@ -5,7 +5,7 @@ import { getDeviceId, knownDeviceId } from "@/db/deviceIdentity";
 import { verifyPin } from "@/utils/pin";
 import * as logger from "@/lib/logger";
 import { supabase } from "@/lib/supabase";
-import { rolePermissionMatrix, type Role } from "@/auth/roles";
+import { isStaffRole, rolePermissionMatrix, type Role } from "@/auth/roles";
 import {
   clearStoredSupabaseAuth,
   isSupabaseAuthKey,
@@ -21,7 +21,13 @@ export type SignInRefusal =
    * administrator can resolve it (Users), never a sign-in. */
   | "deactivated_on_device"
   /** The server has switched the account off. */
-  | "deactivated";
+  | "deactivated"
+  /** The online account has no staff record with a staff role on the server
+   * (for example a patient portal account). */
+  | "not_staff"
+  /** The server's staff record could not be read and this device has no
+   * staff record for the account to fall back on. */
+  | "staff_check_failed";
 
 interface AuthState {
   /**
@@ -373,6 +379,7 @@ export const useAuthStore = create<AuthState>()(
           if (
             user &&
             user.isActive === 1 &&
+            isStaffRole(user.role) &&
             user.pinHash &&
             user.pinSalt &&
             (await verifyPin(pin, user.pinHash, user.pinSalt))
@@ -479,7 +486,7 @@ export const useAuthStore = create<AuthState>()(
             await cloudSignOutInFlight;
             set({ signInRefusal: reason });
             await auditSignIn(
-              reason === "deactivated" ? "sign_in_refused_deactivated" : "sign_in_refused_deactivated_on_device",
+              `sign_in_refused_${reason}`,
               user?.id ?? cloudUserId,
               user?.role ?? "unknown",
             );
@@ -518,26 +525,56 @@ export const useAuthStore = create<AuthState>()(
             return await refuse("deactivated");
           }
 
+          // No staff record on the server, or one without a staff role: not
+          // a staff account (a patient portal login, or someone whose staff
+          // record was removed). No session, no local record, no PIN. A
+          // record this device holds under the same online id loses offline
+          // access here too; a later staff directory download that lists
+          // them again switches it back on, and they enrol a new PIN.
+          if (
+            account.status === "missing" ||
+            (account.status === "found" && !isStaffRole(account.role))
+          ) {
+            if (user && user.id === cloudUserId) {
+              try {
+                await db.users.update(user.id, {
+                  isActive: 0,
+                  pinHash: "",
+                  pinSalt: "",
+                  pinEnrolledAt: undefined,
+                  updatedAt: new Date(),
+                });
+              } catch {
+                // Offline sign-in still requires a staff role (see login).
+              }
+            }
+            return await refuse("not_staff");
+          }
+
+          // The server could not be asked: only someone this device already
+          // knows as staff continues, with the role stored here.
+          if (account.status === "error" && (!user || !isStaffRole(user.role))) {
+            return await refuse(user ? "not_staff" : "staff_check_failed");
+          }
+
           // A new device (no local record) builds one from the server's
-          // staff record. A record created that way earlier (same id as
-          // the online account) follows later role changes. Without a server
-          // record the account gets no access, never a default role.
-          // (User["role"] lists the roles created on devices; auditor and
-          // lead_clinician accounts come from the server.)
+          // staff record, and only from it (checked above). A record created
+          // that way earlier (same id as the online account) follows later
+          // role changes. (User["role"] lists the roles created on devices;
+          // auditor and lead_clinician accounts come from the server.)
           if (!user) {
-            const access =
-              account.status === "found" ? account : { role: "guest" as Role };
+            if (account.status !== "found") return await refuse("staff_check_failed");
             const newUser: User = {
               id: cloudUserId,
               fullName:
-                (account.status === "found" ? account.fullName : undefined) ??
+                account.fullName ??
                 data.user.user_metadata?.full_name ??
                 email.split("@")[0],
-              role: access.role as User["role"],
+              role: account.role as User["role"],
               email: data.user.email ?? email,
               pinHash: "",
               pinSalt: "",
-              adminAccess: access.role === "admin",
+              adminAccess: account.role === "admin",
               adminPermanent: false,
               isActive: 1,
               createdAt: new Date(),
@@ -546,8 +583,8 @@ export const useAuthStore = create<AuthState>()(
             await db.users.put(newUser);
             user = newUser;
           } else if (user.id === cloudUserId && account.status !== "error") {
-            // A failed lookup keeps the stored role; a missing server
-            // record removes access.
+            // A failed lookup keeps the stored role (a missing server
+            // record or a non-staff role was refused above).
             const role = (account.status === "found" ? account.role : "guest") as User["role"];
             const fullName =
               (account.status === "found" ? account.fullName : undefined) ?? user.fullName;
@@ -567,6 +604,9 @@ export const useAuthStore = create<AuthState>()(
               user = refreshed;
             }
           }
+
+          // Only a staff role opens a staff session.
+          if (!isStaffRole(user.role)) return await refuse("not_staff");
 
           user = await markVerifiedOnline(
             user,

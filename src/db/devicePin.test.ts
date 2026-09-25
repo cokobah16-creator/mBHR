@@ -111,6 +111,19 @@ describe("setDevicePin", () => {
     ).rejects.toThrow("not on this device");
     expect(mockUsers.update).not.toHaveBeenCalled();
   });
+
+  it("refuses an account without a staff role or that is switched off", async () => {
+    mockRows.push(
+      { ...me, id: "portal", role: "guest" },
+      { ...me, id: "gone", isActive: 0 },
+    );
+    for (const userId of ["portal", "gone"]) {
+      await expect(
+        setDevicePin({ userId, pin: "482913", confirmPin: "482913" }),
+      ).rejects.toThrow("cannot have offline access");
+    }
+    expect(mockUsers.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("clearDevicePin", () => {
