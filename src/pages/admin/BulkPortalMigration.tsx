@@ -8,6 +8,7 @@ import { summarizeCommandOutcomes } from "@/services/portalAccessRules";
 import { can } from "@/auth/roles";
 import { useAuthStore } from "@/stores/auth";
 import { formatNigerianDate } from "@/utils/dateFormat";
+import { ADULT_AGE, isMinor } from "@/utils/patient";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge, type Tone } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -60,6 +61,12 @@ function rowName(p: ServerPatientRow) {
   return `${p.given_name} ${p.family_name}`;
 }
 
+/** A date as YYYY-MM-DD on this device's calendar (the rule isMinor uses). */
+function localYmd(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function BulkPortalMigration() {
   const role = useAuthStore((s) => s.currentUser?.role);
   // Page rule (administrators) and the portal_manage permission.
@@ -100,18 +107,33 @@ export function BulkPortalMigration() {
     setLoading(true);
     setLoadError(false);
     try {
+      const now = new Date();
+      const today = localYmd(now);
+      // Born on or before this day: 18 or older today.
+      const adultCutoff = localYmd(
+        new Date(now.getFullYear() - ADULT_AGE, now.getMonth(), now.getDate()),
+      );
       const { data, error } = await supabase
         .from("patients")
         .select(
           "id, given_name, family_name, dob, email, phone, portal_enabled",
         )
         .or("email.not.is.null,phone.not.is.null")
+        // Children never get portal accounts, so leave them out before the
+        // limit or they would fill the list for good. Keep a missing or
+        // future date of birth: isMinor treats those as "needs review".
+        // (Each .or() is its own filter; the server ANDs them.)
+        .or(`dob.is.null,dob.lte.${adultCutoff},dob.gt.${today}`)
         .eq("portal_enabled", false)
         .order("created_at", { ascending: false })
         .limit(SERVER_LIMIT);
 
       if (error) throw error;
-      setPatients((data as ServerPatientRow[] | null) || []);
+      // Portal accounts are for adults: children are not listed, and
+      // bulkEnrollPatients refuses them. This check also catches the one
+      // day (29 February) when the cutoff above is a day too late.
+      const rows = (data as ServerPatientRow[] | null) || [];
+      setPatients(rows.filter((p) => isMinor(p.dob) !== true));
       setLoaded(true);
     } catch (error) {
       console.error(
@@ -192,7 +214,7 @@ export function BulkPortalMigration() {
       <PageHeader
         breadcrumbs={BREADCRUMBS}
         title="Create portal accounts on the server"
-        description="Create patient portal sign-in accounts for patients in the server database who have an email or phone number."
+        description="Create patient portal accounts on the server for patients who have an email or phone number. Patients still register to sign in."
       />
 
       <div className="card flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:gap-3" aria-live="polite">
@@ -250,8 +272,11 @@ export function BulkPortalMigration() {
                   {plural(results.total)}, and portal access asked for.
                   {results.failed > 0 && ` ${results.failed} failed.`} No
                   invitation was sent: once access is confirmed, tell patients
-                  to register or sign in at the patient portal with their email
-                  or phone number.
+                  to register at the patient portal with the email address on
+                  their record, then sign in with their email and password.
+                  Add an email address first to a record that has only a
+                  phone number: the server links a new portal account to a
+                  record through the record&apos;s email address.
                 </p>
               </div>
               {access && (
@@ -421,7 +446,7 @@ export function BulkPortalMigration() {
           <EmptyState
             icon={UserPlusIcon}
             title="No patients waiting for a portal account"
-            description="Every patient on the server with an email or phone number already has portal access."
+            description="Every patient on the server with an email or phone number already has portal access or is under 18."
           />
         ) : (
           <ul className="divide-y divide-line">
@@ -480,10 +505,17 @@ export function BulkPortalMigration() {
             answer.
           </li>
           <li>
-            Patients sign in with their email or phone number and a one-time
-            code.
+            Patients register at the patient portal with an email address,
+            their name, date of birth and a password, then sign in with their
+            email and password. The server links the new account to their
+            record when the record has that email address, the same date of
+            birth and portal access on, so a record with only a phone number
+            needs an email address added first.
           </li>
           <li>Only patients with an email or phone number can be enrolled.</li>
+          <li>
+            Patients under 18 are not listed: portal accounts are for adults.
+          </li>
           <li>
             Patients whose email or phone number is already registered in the
             portal are skipped and listed as failed.

@@ -2,16 +2,11 @@
 
 ## Current Status
 
-✅ **Your system is working correctly!**
+Patient portal email is sent by the `send-otp-email` Edge Function through Resend.
 
-The email invitation system is fully functional and running in **demo mode**. This means:
+Until the `RESEND_API_KEY` secret is set, the function runs in **demo mode**: it sends no email and answers `{"success": true, "demo": true}`. It logs only that it ran in demo mode. It never logs the address, the code or the invitation's text.
 
-- Edge Functions are deployed and active
-- Patient portal accounts are being created successfully
-- OTP codes are being generated
-- The only missing piece is the email API key to actually send emails
-
-**Why emails aren't being sent:** The system is designed to fail gracefully. When no email API key is found, it logs OTP codes to the Supabase console instead of sending emails. This is a feature, not a bug - it allows full testing without requiring external dependencies.
+When no email is sent, the patient record still gives staff a registration link to share by hand.
 
 ---
 
@@ -19,10 +14,47 @@ The email invitation system is fully functional and running in **demo mode**. Th
 
 ### Access the Diagnostics Tool
 
-1. Log into your mBHR app as an admin
+1. Sign in online to your mBHR app as an admin, with your email and password. A PIN unlock is not enough: the function refuses callers who are not signed in online.
 2. Navigate to: `/admin/email-diagnostics`
 3. Click "Send Test Email" to verify current status
 4. The tool will show if you're in demo mode or if emails are being sent
+
+---
+
+## Who Can Call the Function
+
+`send-otp-email` sends email only for a staff member signed in online. The app calls it with `supabase.functions.invoke`, which sends the signed-in person's access token. After a PIN unlock there is no online sign-in, so the app sends the public anon key, and the function answers 401.
+
+| Request body | Who may send it | Sent by |
+|---|---|---|
+| `{ "purpose": "portal_invitation", "patientId" }` (portal invitation) | registration_lead, lead_clinician, admin (`portal_invite`, checked in the database by `portal_invitation_begin()`) | "Send portal invitation" on a patient record, and "Enable and send invitations" at `/admin/portal-migration` |
+| `{ "email", "otp" }` (sample sign-in code) | admin | The test on `/admin/email-diagnostics` |
+| `{ "email", "subject", "message" }` (old free-text mode) | nobody: refused with 400 `message_mode_removed` | older app versions |
+
+For an invitation the server looks up the patient's stored email address and builds the subject, text and registration link itself, and only when the server has portal access on for that patient. The role is read from `app_users` on the server. A role in the token or the request is ignored. No patient-facing flow calls this function.
+
+The function answers:
+
+- **401 `not_authenticated`:** no online sign-in, an expired one, or the anon key.
+- **403 `not_permitted`:** the role may not send this email, or the account is deactivated or missing from `app_users`.
+- **400:** the body is not a JSON object, the purpose is unknown, the old free-text mode was used, `email` is not one plain address, `otp` is not 4 to 8 digits, or an invitation has no valid `patientId`.
+- **404, 409, 422:** the invitation was refused: the patient is not on the server, was merged away, has portal access off, or has no email address.
+- **405:** any method other than POST or OPTIONS. A CORS preflight (OPTIONS) gets an empty 200 with the CORS headers.
+- **429 `rate_limited`:** more than 10 requests in a minute from one IP address, or too many invitations from one account or to one patient.
+
+Every value placed in the HTML email (the code, the patient's name) is escaped, so it shows as text and cannot add HTML such as link tags, images or scripts. The plain-text part is sent as written.
+
+To call it by hand, use the access token of a staff user signed in online, not the anon key:
+
+```bash
+curl -X POST https://YOUR_PROJECT_REF.supabase.co/functions/v1/send-otp-email \
+  -H "Authorization: Bearer STAFF_USER_ACCESS_TOKEN" \
+  -H "apikey: YOUR_ANON_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "otp": "123456"}'
+```
+
+The `otp` request needs an admin's token.
 
 ---
 
@@ -97,7 +129,7 @@ npx supabase secrets list
 
 ### Step 4: Test Email Delivery
 
-1. **Go to:** `/admin/email-diagnostics` in your app
+1. **Sign in online** as an admin, then **go to:** `/admin/email-diagnostics` in your app
 2. **Enter** your email address in the test field
 3. **Click** "Send Test Email"
 4. **Check** your email inbox (and spam folder!)
@@ -183,7 +215,7 @@ mBHR Patient Portal <noreply@mbhr.health>
 
 ## Troubleshooting
 
-### Problem: "Demo mode: OTP logged to console"
+### Problem: "Demo mode: RESEND_API_KEY is not set, so no email was sent."
 
 **Cause:** API key not detected by Edge Function
 
@@ -194,6 +226,18 @@ mBHR Patient Portal <noreply@mbhr.health>
 3. Wait 30-60 seconds for Edge Function to reload
 4. Try sending test email again
 5. Check Supabase Edge Function logs for any errors
+
+---
+
+### Problem: "The server refused the request"
+
+**Cause:** The function only sends email for staff signed in online (401), and only for roles allowed to send that email (403).
+
+**Solution:**
+
+1. Sign out, then sign in online with your email and password. A PIN unlock is not enough.
+2. For the test on `/admin/email-diagnostics`, use an admin account.
+3. If it still says your account was not accepted, check that your `app_users` row has the right role and is active.
 
 ---
 
@@ -258,15 +302,17 @@ mBHR Patient Portal <noreply@mbhr.health>
 3. **Click** "Logs" tab
 4. **See real-time logs** of:
    - Function invocations
-   - Success/failure messages
-   - Error details
-   - OTP codes (in demo mode only)
+   - Whether each email was accepted by Resend, with its Resend message ID
+   - Demo mode notices
+   - Resend errors, as the HTTP status and error name only
+
+The logs never contain the recipient address (in full or masked), the code, the invitation's text, or the caller's user id or role. Use the Resend dashboard to see who an email went to.
 
 ---
 
 ## What the Email Looks Like
 
-When a patient receives the OTP email, they'll see:
+The sample sign-in code email sent by the test on `/admin/email-diagnostics` looks like this. Patients are not sent code emails; they get the invitation email with a registration link.
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -318,12 +364,14 @@ When a patient receives the OTP email, they'll see:
 
 ### Built-in Security
 
-✅ **Rate Limiting:** 200 OTP requests per hour per contact method
-✅ **OTP Expiration:** Codes expire after 10 minutes
-✅ **Account Lockout:** 5 failed attempts = 1 hour lockout
-✅ **Hashed Storage:** OTPs stored as SHA-256 hashes
-✅ **Secure Transport:** All communications over HTTPS
-✅ **Audit Logging:** All access attempts logged to database
+What `send-otp-email` does today:
+
+- **Staff only:** a staff member signed in online, with a role allowed to send that email (see [Who Can Call the Function](#who-can-call-the-function)).
+- **Rate limiting:** 10 requests a minute per IP address; invitations are also limited per account and per patient.
+- **One recipient:** a code email's `email` must be one plain address; lists and display names are refused. An invitation goes only to the address stored on the patient's record.
+- **Escaped content:** the code and the patient's name are HTML-escaped in the HTML email.
+- **Private logs:** no address, code, invitation text, or caller id or role in the function logs.
+- **Transport:** requests to Supabase and Resend use HTTPS.
 
 ### Best Practices
 
@@ -414,7 +462,7 @@ Use this checklist to verify your setup:
 - [ ] Verified email template looks professional
 - [ ] Sent invitation to Kristopher
 - [ ] Kristopher received invitation email
-- [ ] Tested full login flow with OTP
+- [ ] Tested registration from the invitation link
 
 ---
 
@@ -423,11 +471,10 @@ Use this checklist to verify your setup:
 Once email delivery is working:
 
 1. **Test the Full Flow:**
-   - Have Kristopher try logging in at `/patient/login`
-   - Enter email: `cokobah16@gmail.com`
-   - Check email for OTP code
-   - Enter OTP to complete login
-   - Verify access to patient portal dashboard
+   - Have Kristopher open the registration link in his invitation email
+   - He finishes registering with his date of birth and a password
+   - He logs in at `/patient/login` with his email and password
+   - Patient login does not use an emailed code
 
 2. **Enable Portal for Other Patients:**
    - Go to patient records
@@ -485,8 +532,7 @@ Once email delivery is working:
 
 **Result:**
 
-- ✅ Professional email invitations sent automatically
-- ✅ Secure OTP delivery to patients
+- ✅ Portal invitation emails sent when staff signed in online send them
 - ✅ 3,000 free emails per month
 - ✅ Ready for production use
 

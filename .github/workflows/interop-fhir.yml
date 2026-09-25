@@ -1,0 +1,131 @@
+name: FHIR R4 interoperability
+
+# Checks for the /fhir/R4 gateway (src/interoperability) and the interop
+# schema migration. Read-only: nothing here touches Supabase or Vercel.
+#
+#   gateway      unit and security tests, then the HL7 FHIR Validator over
+#                the gateway's example output (resources, a searchset
+#                Bundle, an OperationOutcome and the CapabilityStatement)
+#   interop-db   the interop migration on a plain PostgreSQL 16 with pgTAP:
+#                applied twice (idempotent), its pgTAP file, the documented
+#                rollback, and applied again
+
+on:
+  pull_request:
+    paths:
+      - "src/interoperability/**"
+      - "api/fhir.ts"
+      - "vercel.json"
+      - "scripts/fhir-r4-examples.ts"
+      - "scripts/fhir-validator-report.mjs"
+      - "scripts/ci/interop_db_base.py"
+      - "supabase/migrations/20260926110000_interop_foundation.sql"
+      - "supabase/tests/interop_foundation.test.sql"
+      - ".github/workflows/interop-fhir.yml"
+  push:
+    branches:
+      - mainone
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    name: FHIR gateway tests and R4 validation
+    runs-on: ubuntu-latest
+    env:
+      VALIDATOR_VERSION: "6.10.4"
+      VALIDATOR_SHA256: "1106b9d58f9e363e47bea7c4fc065841e5fc91fe9d062775c3bfdd212bd653cc"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit and security tests
+        run: npx vitest run src/interoperability
+
+      - name: Write example output
+        run: npx tsx scripts/fhir-r4-examples.ts fhir-examples
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache FHIR packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.fhir
+          key: fhir-packages-r4-${{ env.VALIDATOR_VERSION }}
+
+      - name: Download the HL7 FHIR Validator (pinned, checksum verified)
+        run: |
+          curl -fsSL -o validator_cli.jar \
+            "https://github.com/hapifhir/org.hl7.fhir.core/releases/download/${VALIDATOR_VERSION}/validator_cli.jar"
+          echo "${VALIDATOR_SHA256}  validator_cli.jar" | sha256sum -c -
+
+      # The validator's own exit code is ignored; the report step decides,
+      # failing on any error or fatal issue and listing warnings.
+      - name: Validate against FHIR R4 (4.0.1)
+        run: |
+          java -jar validator_cli.jar fhir-examples/*.json -version 4.0.1 -output validation.json || true
+          test -s validation.json
+
+      - name: Report
+        run: node scripts/fhir-validator-report.mjs validation.json
+
+  interop-db:
+    name: Interop migration on PostgreSQL 16 (pgTAP)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start PostgreSQL 16 with pgTAP
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-16-pgtap libtap-parser-sourcehandler-pgtap-perl
+          sudo systemctl start postgresql
+          sudo -u postgres createdb interop_ci
+          # As on Supabase, extensions (pgTAP here) are found through search_path.
+          sudo -u postgres psql -q -c 'ALTER DATABASE interop_ci SET search_path = public, extensions'
+
+      - name: Dependencies of the migration (real helper definitions, stub auth)
+        run: |
+          python3 scripts/ci/interop_db_base.py > /tmp/base.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/base.sql
+
+      - name: Apply the migration twice
+        run: |
+          cp supabase/migrations/20260926110000_interop_foundation.sql /tmp/up.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up.sql
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up.sql
+
+      - name: pgTAP
+        run: |
+          cp supabase/tests/interop_foundation.test.sql /tmp/interop_foundation.test.sql
+          sudo -u postgres psql -q -d interop_ci -c 'CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions'
+          sudo -u postgres pg_prove -d interop_ci /tmp/interop_foundation.test.sql
+
+      - name: Rollback, then apply again
+        run: |
+          sed -n '/^-- Rollback/,/^-- Dropping/p' supabase/migrations/20260926110000_interop_foundation.sql \
+            | grep -E '^--   (DROP|DELETE)' | sed 's/^--   //' > /tmp/down.sql
+          test "$(wc -l < /tmp/down.sql)" -eq 5
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/down.sql
+          test "$(sudo -u postgres psql -At -d interop_ci -c "select count(*) from pg_namespace where nspname = 'interop'")" = "0"
+          test "$(sudo -u postgres psql -At -d interop_ci -c "select count(*) from pg_proc where proname like 'fhir\_%'")" = "0"
+          sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d interop_ci -f /tmp/up.sql

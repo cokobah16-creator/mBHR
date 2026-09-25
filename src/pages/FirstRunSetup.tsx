@@ -9,6 +9,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { isOnlineSyncEnabled } from "@/sync/adapter";
 import * as logger from "@/lib/logger";
+import { LegalLinks } from "@/pages/legal/LegalLinks";
 
 /**
  * First-run setup: creates the administrator account on a device that has none.
@@ -241,6 +242,8 @@ export default function FirstRunSetup() {
             </div>
           </form>
         </div>
+
+        <LegalLinks className="mt-6" />
       </div>
     </div>
   );

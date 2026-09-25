@@ -12,17 +12,16 @@ import {
   PER_RECIPIENT_LIMIT,
   PER_USER_LIMIT,
 } from "../_shared/security/smsRateLimit.ts";
+import { validEmail, validId, validOtp } from "../_shared/security/recipient.ts";
+import { escapeHtml } from "../_shared/security/html.ts";
 import {
-  maskEmail,
-  validEmail,
-  validId,
-  validOtp,
-} from "../_shared/security/recipient.ts";
+  OTP_SENDER_ROLES,
+  routeEmailRequest,
+} from "../_shared/security/emailRequest.ts";
 import {
   invitationEmail,
   invitationOrigin,
   invitationRefusal,
-  PORTAL_INVITATION_PURPOSE,
   registrationLink,
 } from "../_shared/security/portalInvitation.ts";
 import {
@@ -33,9 +32,6 @@ import {
 // Sends email through Resend (RESEND_API_KEY; demo mode without it).
 //
 // Two kinds of email:
-// - A verification code { email, otp }: a 4 to 8 digit code in a fixed
-//   template, for the admin email diagnostics page only: the caller must be
-//   a signed-in, active administrator.
 // - A patient portal invitation { purpose: "portal_invitation", patientId,
 //   appOrigin? }: only a signed-in staff member whose role holds
 //   'portal_invite' (registration_lead, lead_clinician, admin). The database
@@ -44,10 +40,40 @@ import {
 //   email address and records who sent the invitation; the outcome is
 //   recorded after Resend answers (public.portal_invitation_finish). The
 //   subject, text and link are built here from the patient record: the
-//   caller cannot choose the address or the words.
+//   caller cannot choose the address or the words. Neither checks the
+//   patient's age yet: the app refuses an invitation for a patient under 18
+//   (src/services/portalEnrollment.ts).
+// - A verification code { email, otp }: a 4 to 8 digit code in a fixed
+//   template. Only a signed-in administrator (OTP_SENDER_ROLES in
+//   ../_shared/security/emailRequest.ts), checked before the address or the
+//   code is looked at. Its one caller is the admin email check
+//   (src/pages/admin/EmailDiagnostics.tsx, admin only in App.tsx). No
+//   patient flow sends email codes: patient self-service OTP (requestOTP in
+//   src/services/patientPortalAuth.ts) is a disabled stub.
 // The old free-text mode ({ email, subject, message }) is refused: it let
 // any caller send any text to any address.
-// Logs never carry an email address in full or an invitation's text.
+//
+// Who is calling is read from app_users (staffAuth.ts); a role in the token
+// or the body is never trusted, and the anon key gets 401.
+//
+// Content: every value placed in an HTML body (the code, the patient's
+// name) is escaped with ../_shared/security/html.ts. Text bodies stay plain.
+//
+// Requests: POST only (a CORS preflight OPTIONS gets an empty 200, anything
+// else 405); 10 a minute per IP address, checked before sign-in (JSON 429
+// with Retry-After).
+//
+// Logs never contain an email address (in full or masked), a code, an
+// invitation's text, or the caller's user id or role.
+
+// requireStaff's own messages talk about SMS; these replace them. 403 also
+// covers a deactivated account or one missing from app_users, so the
+// message names the account, not only the role.
+const AUTH_MESSAGES: Record<string, string> = {
+  not_authenticated:
+    "Sign in online with a staff account to send email. A PIN unlock is not enough.",
+  not_permitted: "Your staff account cannot send this email.",
+};
 
 interface EmailRequest {
   email?: unknown;
@@ -245,8 +271,10 @@ async function sendInvitationEmail(
     });
   }
 
+  // No address, name or caller in the log: the invitation id leads to them
+  // in public.portal_invitation_events for those allowed to read it.
   console.log(
-    `Portal invitation email accepted by Resend - To: ${maskEmail(email)}, ID: ${sent.id ?? "n/a"}, Invitation: ${grant.invitationId}, By: ${auth.userId} (${auth.role})`,
+    `Portal invitation email accepted by Resend - ID: ${sent.id ?? "n/a"}, Invitation: ${grant.invitationId}`,
   );
   const invitationRecorded = await finish("sent", "provider_accepted", "resend", sent.id);
   return reply(200, { success: true, messageId: sent.id, invitationRecorded });
@@ -265,17 +293,28 @@ Deno.serve(async (req: Request) => {
       headers: { ...jsonHeaders, ...extra },
     });
 
+  if (req.method !== "POST") {
+    return reply(405, { success: false, error: "method_not_allowed" });
+  }
+
   const rl = await enforceRateLimit(req, {
     bucket: "edge_otp_email",
     keyStrategy: "ip",
     max: 10,
     windowSeconds: 60,
   });
-  if (!rl.allowed && rl.response) {
-    return new Response(rl.response.body, {
-      status: rl.response.status,
-      headers: { ...corsHeaders, "Retry-After": String(rl.retryAfter ?? 60) },
-    });
+  if (!rl.allowed) {
+    const retryAfter = rl.retryAfter ?? 60;
+    return reply(
+      429,
+      {
+        success: false,
+        error: "rate_limited",
+        scope: "ip",
+        retry_after_seconds: retryAfter,
+      },
+      { "Retry-After": String(retryAfter) },
+    );
   }
 
   try {
@@ -286,39 +325,31 @@ Deno.serve(async (req: Request) => {
       return reply(400, { success: false, error: "The request body must be JSON" });
     }
 
-    if (body.purpose === PORTAL_INVITATION_PURPOSE) {
+    const route = routeEmailRequest(body);
+    if (route.kind === "refused") {
+      return reply(route.status, {
+        success: false,
+        error: route.error,
+        ...(route.message ? { message: route.message } : {}),
+      });
+    }
+    if (route.kind === "invitation") {
       return await sendInvitationEmail(req, body, reply);
     }
-    if (body.purpose !== undefined && body.purpose !== null) {
-      return reply(400, { success: false, error: "invalid_purpose" });
+
+    // The verification code email: a signed-in administrator only, checked
+    // before the address or the code is looked at.
+    const auth = await requireStaff(req, getServiceClient(), OTP_SENDER_ROLES);
+    if (!auth.ok) {
+      return reply(auth.status, {
+        success: false,
+        error: auth.error,
+        message: AUTH_MESSAGES[auth.error] ?? auth.message,
+      });
     }
 
     if (body.otp === undefined || body.otp === null || body.otp === "") {
-      if (body.subject !== undefined || body.message !== undefined) {
-        // The free-text mode is gone: invitations are built on the server.
-        return reply(400, {
-          success: false,
-          error: "message_mode_removed",
-          message:
-            'Portal invitations are built by the server: send purpose "portal_invitation" and a patientId.',
-        });
-      }
       return reply(400, { success: false, error: "An otp is required" });
-    }
-
-    // Test emails come from the admin diagnostics page only.
-    const admin = await requireStaff(req, getServiceClient(), ["admin"]);
-    if (!admin.ok) {
-      return reply(admin.status, {
-        success: false,
-        error: admin.error,
-        message:
-          admin.status === 401
-            ? "Sign in online with an administrator account to send a test email."
-            : admin.status === 403
-              ? "Only an administrator can send test emails."
-              : admin.message,
-      });
     }
 
     const email = validEmail(body.email);
@@ -337,15 +368,14 @@ Deno.serve(async (req: Request) => {
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
 
     if (!resendApiKey) {
-      console.warn("RESEND_API_KEY not configured. Running in demo mode.");
-      console.log(`Demo Mode - Email OTP for ${maskEmail(email)}: ${otp}`);
-      console.log(
-        "To enable real email delivery, add RESEND_API_KEY to Edge Function secrets",
+      // Nothing identifying: no address, code or caller.
+      console.warn(
+        "send-otp-email demo mode: RESEND_API_KEY is not set, so the sign-in code email was not sent.",
       );
       return reply(200, {
         success: true,
         demo: true,
-        message: "Demo mode: Check server logs",
+        message: "Demo mode: RESEND_API_KEY is not set, so no email was sent.",
       });
     }
 
@@ -374,7 +404,7 @@ Deno.serve(async (req: Request) => {
                 <p>Hello,</p>
                 <p>You requested a verification code to access your mBHR Patient Portal account.
                    Please use the code below to complete your login:</p>
-                <div class="otp-code">${otp}</div>
+                <div class="otp-code">${escapeHtml(otp)}</div>
                 <p>This code will expire in <strong>10 minutes</strong>.</p>
                 <div class="warning">
                   <strong>Security Notice:</strong> Never share this code with anyone.

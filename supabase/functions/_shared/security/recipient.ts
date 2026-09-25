@@ -1,8 +1,8 @@
-// Server-side recipient rules for SMS edge functions.
+// Server-side recipient rules for SMS and email edge functions.
 //
 // Pure functions (no Deno APIs) so they can be unit tested with vitest/bun.
 //
-// Only Nigerian mobile numbers are accepted. Every Nigerian mobile number is
+// SMS: only Nigerian mobile numbers are accepted. Every Nigerian mobile number is
 // 234 + a 10-digit national number whose first digit is 7, 8 or 9 and whose
 // second digit is 0 or 1 (070x, 080x, 081x, 090x, 091x ...). Anything else
 // (landlines, foreign numbers, short codes, free text) is rejected so the

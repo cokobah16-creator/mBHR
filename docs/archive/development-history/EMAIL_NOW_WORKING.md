@@ -1,8 +1,10 @@
 # ✅ EMAIL IS NOW WORKING!
 
+> **Archived note:** a real Resend API key was once written in this file. It has been removed; `re_your_api_key` below is a placeholder. Never commit a real key.
+
 ## What I Just Fixed
 
-Your Resend API key (`re_YOUR_RESEND_API_KEY`) has been:
+Your Resend API key (`re_your_api_key`) has been:
 
 1. ✅ **Updated in the edge function code** (line 35)
 2. ✅ **Deployed to Supabase** (function is LIVE)
@@ -34,7 +36,7 @@ Your Resend API key (`re_YOUR_RESEND_API_KEY`) has been:
 
 **Before:** The edge function had an old/invalid API key hardcoded as a fallback
 
-**Now:** Your NEW valid API key is in the function: `re_YOUR_RESEND_API_KEY`
+**Now:** Your NEW valid API key is in the function: `re_your_api_key`
 
 **Result:** Emails send immediately, no configuration needed
 
@@ -79,7 +81,7 @@ Your Resend API key (`re_YOUR_RESEND_API_KEY`) has been:
 
 5. **Verify API Key is Valid**
    - Go to: https://resend.com/dashboard/api-keys
-   - Make sure `re_YOUR_RESEND_API_KEY` is listed
+   - Make sure `re_your_api_key` is listed
    - Check it's not disabled or expired
 
 ---

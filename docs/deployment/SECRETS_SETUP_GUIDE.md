@@ -2,33 +2,34 @@
 
 ## Current Status: ✅ Working in Demo Mode
 
-The edge functions are **already deployed and working** in demo mode. No secrets are required for testing!
+Once deployed, the edge functions work in demo mode. The behaviour below is that of the current `send-otp-email`; deploy it with the Database migrations workflow (`apply`) or `supabase functions deploy send-otp-email`. No secrets are required for testing!
 
 ### Demo Mode Features
 
-- ✅ Edge functions respond successfully
-- ✅ OTP codes are logged to Supabase Edge Function logs
-- ✅ No external API calls required
-- ✅ Perfect for development and testing
+This section is about email (`send-otp-email`).
+
+- ✅ The function answers with `"success": true, "demo": true`
+- ✅ No email is sent and no external API is called
+- ✅ The logs say only that demo mode ran. They never contain the address, the code or the invitation's text
+- ✅ Fine for development and testing
 
 ### How Demo Mode Works
 
-When secrets are not configured:
+When `RESEND_API_KEY` is not set:
 
-1. Patient requests OTP via phone or email
-2. Edge function generates the OTP
-3. Instead of sending SMS/Email, it logs: `OTP for [contact]: [code]`
-4. Returns success response with `demo: true` flag
-5. Developer views OTP in Supabase Function Logs
+1. A staff member signed in online sends a portal invitation from a patient record, or an admin sends the test on `/admin/email-diagnostics`. The function refuses anyone not signed in online, even in demo mode. A PIN unlock is not enough.
+2. The function checks the request, then finds no Resend key
+3. It sends nothing and returns success with the `demo: true` flag
+4. It logs a demo mode notice with nothing that identifies the patient
+
+No patient flow emails a sign-in code. Patients get an invitation with a registration link, register with their date of birth and a password, and log in at `/patient/login` with their email and password.
 
 **To test demo mode:**
 
-1. Go to patient portal: `/patient`
-2. Click "Create Account" or "Login"
-3. Enter phone/email
-4. Check Supabase Dashboard → Edge Functions → Logs
-5. Copy the OTP from logs
-6. Paste into verification form
+1. Sign in online as an admin, with your email and password
+2. Go to `/admin/email-diagnostics`
+3. Send a test email
+4. The page says demo mode is on and no email was sent
 
 ---
 
@@ -190,9 +191,9 @@ RESEND_API_KEY=re_xxxxxxxxxxxxx
 
 ✅ **No setup needed!** Just use demo mode:
 
-1. Patient portal works immediately
-2. Check Supabase logs for OTP codes
-3. Perfect for UAT and development
+1. Staff can turn on portal access and share registration links by hand
+2. No email is sent, and no codes appear in the logs
+3. Fine for UAT and development
 
 ### For Small Pilot (Week 1-2)
 
@@ -200,14 +201,14 @@ Recommended: **Resend only** ($0)
 
 - Set up free Resend account
 - Configure `RESEND_API_KEY`
-- Use email OTP only
+- Send portal invitations by email. Patients with no email get an SMS invitation only once an SMS provider is set up too; until then staff share the registration link
 - 3,000 emails/month free
 
 ### For Production Launch
 
 Recommended: **Resend + Twilio** (~$15-20/month)
 
-- Resend for email OTP
+- Resend for portal invitation emails
 - Twilio for SMS OTP
 - Covers ~500 patients/month
 - Scale as needed
@@ -253,11 +254,13 @@ curl -X POST https://your-project.supabase.co/functions/v1/send-otp-sms \
 
 ### 2. Rate Limiting
 
-Already implemented in the code:
+What `send-otp-email` does today:
 
-- Max 3 OTP requests per 15 minutes
-- Account lockout after 5 failed attempts
-- Prevents abuse and reduces costs
+- Sends only for a staff member signed in online, with a role allowed to send that email
+- At most 10 requests a minute from one IP address
+- One plain recipient address per request
+
+See `docs/deployment/EMAIL_SETUP_GUIDE.md` for who may call it and what it answers.
 
 ### 3. Monitoring
 
@@ -307,7 +310,7 @@ Set up alerts for:
 ## Cost Optimization Tips
 
 1. **Email First Strategy**
-   - Use email OTP as primary method
+   - Send portal invitations by email first
    - SMS as fallback for users without email
    - Saves ~90% on messaging costs
 
@@ -340,7 +343,7 @@ Set up alerts for:
 ### Phase 2: Soft Launch (Week 1 - $0-10)
 
 - Set up Resend (free)
-- Email OTP only
+- Email invitations only
 - 20-50 patients
 - Collect feedback
 

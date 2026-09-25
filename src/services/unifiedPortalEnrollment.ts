@@ -2,12 +2,19 @@
  * Unified Portal Enrollment Service
  *
  * Connects staff registration with patient portal access.
- * When staff register a patient with email/phone, automatically creates portal account.
+ * Creates portal accounts on the server, from the registration form's
+ * portal box (only when staff tick it) and BulkPortalMigration.
+ *
+ * Portal accounts are for adults: every entry point here refuses a patient
+ * under 18 by date of birth (isMinor). A record with no date of birth, or
+ * one that cannot be read, is not refused.
  */
 
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
 import { drainServerCommands } from "@/sync/adapter";
+import { isMinor } from "@/utils/patient";
+import { MINOR_PORTAL_ACCESS_MESSAGE } from "@/pages/legal/policyMeta";
 import { safeErrorLabel } from "./logSafe";
 import {
   getPortalAccessCommands,
@@ -61,13 +68,19 @@ function serverUnavailableReason(): string | null {
 
 /**
  * Enroll a patient in the portal (creates portal user account)
- * Called automatically when staff registers a patient with contact info
+ * Called from the registration form when staff tick portal access for a
+ * patient with contact info, and by bulkEnrollPatients and
+ * sendPortalInvitation below. Refused for a patient under 18.
  */
 export async function enrollPatientInPortal(
   data: PatientEnrollmentData,
 ): Promise<EnrollmentResult> {
   try {
     const { patientId, givenName, familyName, dob, phone, email, sex } = data;
+
+    if (isMinor(dob) === true) {
+      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
+    }
 
     if (!phone && !email) {
       return {
@@ -281,6 +294,10 @@ export async function sendPortalInvitation(
       };
     }
 
+    if (isMinor(patient.dob) === true) {
+      return { success: false, error: MINOR_PORTAL_ACCESS_MESSAGE };
+    }
+
     if (!patient.email && !patient.phone) {
       return {
         success: false,
@@ -350,7 +367,7 @@ export async function sendPortalInvitation(
 }
 
 /**
- * Check if patient can be enrolled in portal
+ * Check if patient can be enrolled in portal (never a patient under 18)
  */
 export async function canEnrollInPortal(patientId: string): Promise<{
   canEnroll: boolean;
@@ -359,12 +376,16 @@ export async function canEnrollInPortal(patientId: string): Promise<{
   try {
     const { data: patient } = await supabase
       .from("patients")
-      .select("email, phone, portal_enabled")
+      .select("email, phone, portal_enabled, dob")
       .eq("id", patientId)
       .single();
 
     if (!patient) {
       return { canEnroll: false, reason: "Patient not found" };
+    }
+
+    if (isMinor(patient.dob) === true) {
+      return { canEnroll: false, reason: MINOR_PORTAL_ACCESS_MESSAGE };
     }
 
     if (patient.portal_enabled) {
@@ -403,6 +424,10 @@ export interface BulkEnrollResult {
   };
 }
 
+/**
+ * A patient under 18 is listed as failed with the reason: no account is
+ * made and no access is asked for.
+ */
 export async function bulkEnrollPatients(patientIds: string[]): Promise<BulkEnrollResult> {
   if (patientIds.length === 0) return { success: 0, failed: 0, errors: [] };
 
@@ -451,6 +476,12 @@ export async function bulkEnrollPatients(patientIds: string[]): Promise<BulkEnro
     if (!patient) {
       failed++;
       errors.push({ patientId, error: "Patient not found" });
+      continue;
+    }
+
+    if (isMinor(patient.dob) === true) {
+      failed++;
+      errors.push({ patientId, error: MINOR_PORTAL_ACCESS_MESSAGE });
       continue;
     }
 

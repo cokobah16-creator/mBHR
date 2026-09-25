@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 // --- mocks ---
@@ -33,6 +39,11 @@ vi.mock("@/services/patientService", () => ({
 
 import { PatientRegister } from "./PatientRegister";
 import { registerPatientPortalAccount } from "@/services/patientPortalAuth";
+import {
+  PRIVACY_VERSION,
+  TERMS_VERSION,
+  UNDER_18_SIGN_UP_MESSAGE,
+} from "@/pages/legal/policyMeta";
 
 let sessionStore: Record<string, string> = {};
 vi.stubGlobal("sessionStorage", {
@@ -70,6 +81,39 @@ function renderRegister() {
   );
 }
 
+const CONSENT_BOX_IDS = ["consent-terms", "consent-privacy", "consent-records"];
+
+function consentBox(id: string) {
+  return document.getElementById(id) as HTMLInputElement;
+}
+
+function tickConsents(ids: string[] = CONSENT_BOX_IDS) {
+  for (const id of ids) fireEvent.click(consentBox(id));
+}
+
+/** 1 January, ten years ago: someone under 18 whatever today's date is. */
+function childDob(): string {
+  return `${new Date().getFullYear() - 10}-01-01`;
+}
+
+function fillValidForm() {
+  fireEvent.change(screen.getByLabelText(/full name/i), {
+    target: { value: "Ada Obi" },
+  });
+  fireEvent.change(screen.getByLabelText(/email/i), {
+    target: { value: "ada@test.com" },
+  });
+  fireEvent.change(screen.getByLabelText(/date of birth/i), {
+    target: { value: "1990-01-01" },
+  });
+  fireEvent.change(screen.getByLabelText(/6-digit pin/i), {
+    target: { value: "555444" },
+  });
+  fireEvent.change(screen.getByLabelText(/confirm pin/i), {
+    target: { value: "555444" },
+  });
+}
+
 describe("PatientRegister (offline mode)", () => {
   beforeEach(() => {
     sessionStore = {};
@@ -100,7 +144,7 @@ describe("PatientRegister (offline mode)", () => {
     fireEvent.change(screen.getByLabelText(/confirm pin/i), {
       target: { value: "654321" },
     });
-    fireEvent.click(document.getElementById("consent")!);
+    tickConsents();
     fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
 
     await waitFor(() => {
@@ -160,7 +204,7 @@ describe("PatientRegister (offline mode)", () => {
     fireEvent.change(screen.getByLabelText(/confirm pin/i), {
       target: { value: "112233" },
     });
-    fireEvent.click(document.getElementById("consent")!);
+    tickConsents();
     fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
 
     await waitFor(() => {
@@ -194,7 +238,7 @@ describe("PatientRegister (offline mode)", () => {
     fireEvent.change(screen.getByLabelText(/confirm pin/i), {
       target: { value: "555444" },
     });
-    fireEvent.click(document.getElementById("consent")!);
+    tickConsents();
     fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
 
     await waitFor(() => expect(capturedArgs.length).toBeGreaterThan(0));
@@ -203,5 +247,123 @@ describe("PatientRegister (offline mode)", () => {
     // email and dob also forwarded correctly
     expect(capturedArgs[1]).toBe("ada@test.com");
     expect(capturedArgs[2]).toBe("1990-01-01");
+  });
+
+  it("shows three separate consent boxes, all unticked", () => {
+    renderRegister();
+    const terms = screen.getByRole("checkbox", {
+      name: /i agree to the terms of use/i,
+    }) as HTMLInputElement;
+    const privacy = screen.getByRole("checkbox", {
+      name: /i have read the privacy notice/i,
+    }) as HTMLInputElement;
+    const records = screen.getByRole("checkbox", {
+      name: /i consent to seeing my health records in this portal/i,
+    }) as HTMLInputElement;
+
+    expect(terms.checked).toBe(false);
+    expect(privacy.checked).toBe(false);
+    expect(records.checked).toBe(false);
+    // Each box links to its own document (the page footer has links too).
+    const linkIn = (id: string) =>
+      within(document.querySelector(`label[for="${id}"]`) as HTMLElement)
+        .getByRole("link")
+        .getAttribute("href");
+    expect(linkIn("consent-terms")).toBe("/terms");
+    expect(linkIn("consent-privacy")).toBe("/privacy");
+  });
+
+  it.each(CONSENT_BOX_IDS)(
+    "does not create the account while %s is unticked",
+    async (missing) => {
+      renderRegister();
+      fillValidForm();
+      tickConsents(CONSENT_BOX_IDS.filter((id) => id !== missing));
+      fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(consentBox(missing).getAttribute("aria-invalid")).toBe("true");
+      });
+      expect(screen.getByText(/tick this box/i)).toBeTruthy();
+      expect(registerPatientPortalAccount).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes the accepted terms and privacy versions with the time", async () => {
+    let capturedArgs: unknown[] = [];
+    vi.mocked(registerPatientPortalAccount).mockImplementation(
+      async (...args) => {
+        capturedArgs = args;
+        return { success: false, error: "test" };
+      },
+    );
+
+    renderRegister();
+    fillValidForm();
+    tickConsents();
+    const before = Date.now();
+    fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => expect(capturedArgs.length).toBeGreaterThan(0));
+    const acceptance = capturedArgs[6] as {
+      termsVersion: string;
+      privacyVersion: string;
+      acceptedAt: string;
+    };
+    expect(acceptance.termsVersion).toBe(TERMS_VERSION);
+    expect(acceptance.privacyVersion).toBe(PRIVACY_VERSION);
+    expect(Date.parse(acceptance.acceptedAt)).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it("requires a date of birth", async () => {
+    renderRegister();
+    fillValidForm();
+    fireEvent.change(screen.getByLabelText(/date of birth/i), {
+      target: { value: "" },
+    });
+    tickConsents();
+    fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Date of birth is required")).toBeTruthy();
+    });
+    expect(registerPatientPortalAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not create an account for someone under 18", async () => {
+    renderRegister();
+    fillValidForm();
+    fireEvent.change(screen.getByLabelText(/date of birth/i), {
+      target: { value: childDob() },
+    });
+    tickConsents();
+    fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(UNDER_18_SIGN_UP_MESSAGE)).toBeTruthy();
+    });
+    // The message sends parents to clinic staff, not to People you care
+    // for, which cannot reach a child's clinic record.
+    expect(UNDER_18_SIGN_UP_MESSAGE).toMatch(/clinic staff/i);
+    expect(UNDER_18_SIGN_UP_MESSAGE).not.toMatch(/people you care for/i);
+    expect(
+      screen.getByLabelText(/date of birth/i).getAttribute("aria-invalid"),
+    ).toBe("true");
+    expect(registerPatientPortalAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a date of birth in the future", async () => {
+    renderRegister();
+    fillValidForm();
+    fireEvent.change(screen.getByLabelText(/date of birth/i), {
+      target: { value: `${new Date().getFullYear() + 1}-01-01` },
+    });
+    tickConsents();
+    fireEvent.submit(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/real date of birth/i)).toBeTruthy();
+    });
+    expect(registerPatientPortalAccount).not.toHaveBeenCalled();
   });
 });

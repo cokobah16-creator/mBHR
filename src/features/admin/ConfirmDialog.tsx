@@ -18,6 +18,8 @@ interface ConfirmDialogProps {
   /** While true the dialog cannot be dismissed and the buttons are disabled. */
   busy?: boolean;
   busyLabel?: string;
+  /** Keeps the confirm button disabled, for example until a required box is ticked. */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -39,6 +41,7 @@ export function ConfirmDialog({
   tone = "primary",
   busy = false,
   busyLabel,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -117,7 +120,7 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             className={tone === "danger" ? "btn-danger" : "btn-primary"}
           >
             {busy ? (busyLabel ?? "Working…") : confirmLabel}

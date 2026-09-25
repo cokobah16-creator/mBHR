@@ -137,6 +137,9 @@ export default defineConfig(({ command, mode }) => {
         injectRegister: null,
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,mp3}"],
+          // The FHIR interface and server functions are not app pages: a
+          // browser opening them must reach the server, not the cached app.
+          navigateFallbackDenylist: [/^\/fhir\//, /^\/api\//],
           maximumFileSizeToCacheInBytes: 3000000,
           // A waiting version takes over only on the app's SKIP_WAITING
           // message. A first install still controls the open page at once,

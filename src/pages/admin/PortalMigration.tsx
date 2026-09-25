@@ -4,6 +4,11 @@
  * - Filter patients who have a phone number or email by registration date,
  *   state and contact method
  * - Select patients, confirm, and enable access (optionally sending invitations)
+ * - Patients under 18 are not listed (findEligiblePatients) and are refused
+ *   if asked for (enablePortalAccess)
+ * - Access changes are queued and sent under the online sign-in of the
+ *   staff member who made them; invitations need that sign-in too, so the
+ *   page says so and turns "Enable and send invitations" off without it
  * - Honest progress and a result summary with each failure's reason
  * - Download a CSV report of the run
  */
@@ -35,6 +40,7 @@ import { ConfirmDialog } from "@/features/admin/ConfirmDialog";
 import { canManagePortalEnrollment } from "@/features/admin/adminSections";
 import { useServerStatus } from "@/features/admin/useServerStatus";
 import type { ServerState } from "@/features/admin/serverStatus";
+import { ONLINE_SIGN_IN_HINT, useCloudSession } from "@/lib/cloudSession";
 import {
   buildRunCsv,
   groupFailureReasons,
@@ -100,6 +106,12 @@ export function PortalMigration() {
   // the service and by the server).
   const canInvite = canRun && !!role && can(role, "portal_invite");
   const server = useServerStatus();
+  // After a PIN unlock there is no online sign-in: queued changes wait for
+  // it, and the server refuses to send invitations.
+  const cloudSession = useCloudSession();
+  const notSignedInOnline =
+    server.state !== "not-configured" && cloudSession === "signed_out";
+  const canSendInvitations = server.available && !notSignedInOnline;
 
   const [filters, setFilters] = useState<MigrationFilters>({
     contactMethod: "any",
@@ -199,7 +211,7 @@ export function PortalMigration() {
 
   const handleStartMigration = async (sendInvitations: boolean) => {
     setConfirming(null);
-    if (!canRun || (sendInvitations && !canInvite)) return;
+    if (!canRun || (sendInvitations && (!canInvite || !canSendInvitations))) return;
     const targets: BulkRunTarget[] = eligiblePatients
       .filter((p) => selectedPatients.has(p.id))
       .map((p) => ({ id: p.id, name: patientName(p) }));
@@ -297,7 +309,8 @@ export function PortalMigration() {
             Which patients
           </h2>
           <span className="text-caption text-ink-muted">
-            Patients without portal access who have a phone number or email
+            Patients without portal access who have a phone number or email.
+            Patients under 18 are not listed: portal accounts are for adults.
           </span>
         </div>
         <div className="panel-body grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -385,9 +398,11 @@ export function PortalMigration() {
         <span id="migration-invite-hint" className="text-caption text-ink-muted">
           {canRun && !canInvite
             ? portalInviteRefusal()
-            : server.available
-              ? "Invitations are sent by email, or by SMS when a patient has no email."
-              : "Invitations need the server and an internet connection. You can still ask for access now; it is sent at the next sync, and invitations can go out from each patient's record once the server confirms."}
+            : notSignedInOnline
+              ? `You are not signed in online, so the server will not send invitations. You can still ask for access now: it is queued and sent to the server when you sign in online. To send invitations, sign in online. ${ONLINE_SIGN_IN_HINT}`
+              : server.available
+                ? "Invitations are sent by email, or by SMS when a patient has no email."
+                : "Invitations need the server and an internet connection. You can still ask for access now; it is sent at the next sync, and invitations can go out from each patient's record once the server confirms."}
         </span>
       </div>
 
@@ -452,7 +467,9 @@ export function PortalMigration() {
                   {run.failed > 0 && ` ${run.failed} failed.`}{" "}
                   {server.state === "not-configured"
                     ? "Saved on this device only: no server is connected."
-                    : "Saved on this device. The clinic server decides; its answers show below as they arrive."}
+                    : notSignedInOnline
+                      ? "Saved on this device and queued. You are not signed in online, so the changes are sent to the server when you sign in online. The clinic server decides; its answers show below as they arrive."
+                      : "Saved on this device. The clinic server decides; its answers show below as they arrive."}
                 </p>
               </div>
               {accessSummary && server.state !== "not-configured" && (
@@ -596,7 +613,7 @@ export function PortalMigration() {
               type="button"
               onClick={() => setConfirming({ sendInvitations: true })}
               disabled={
-                !canInvite || selectedCount === 0 || running || !server.available
+                !canInvite || selectedCount === 0 || running || !canSendInvitations
               }
               aria-describedby="migration-invite-hint"
               className="btn-primary"
@@ -625,7 +642,7 @@ export function PortalMigration() {
           <EmptyState
             icon={UserGroupIcon}
             title="No eligible patients"
-            description="Every patient matching these filters already has portal access or has no phone number or email. Change the filters or add contact details on a patient's record."
+            description="Every patient matching these filters already has portal access, has no phone number or email, or is under 18. Change the filters or add contact details on a patient's record."
           />
         ) : (
           <div className="overflow-x-auto">
@@ -725,7 +742,9 @@ export function PortalMigration() {
           Portal access is asked for {plural(selectedCount, "patient")}
           {server.state === "not-configured"
             ? " on this device. No server is connected, so nothing is uploaded and patients cannot use the online portal until one is."
-            : ". The change is saved on this device and sent to the clinic server, which confirms it (or refuses it, for example when access was turned off there more recently). Patients can use the portal once the server confirms."}
+            : notSignedInOnline
+              ? ". The change is saved on this device and queued. You are not signed in online, so it is sent to the clinic server when you sign in online. The server confirms it (or refuses it, for example when access was turned off there more recently). Patients can use the portal once the server confirms."
+              : ". The change is saved on this device and sent to the clinic server, which confirms it (or refuses it, for example when access was turned off there more recently). Patients can use the portal once the server confirms."}
         </p>
         {confirming?.sendInvitations && (
           <p>
