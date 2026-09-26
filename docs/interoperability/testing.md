@@ -162,7 +162,7 @@ the two interop migrations depend on:
 | File | Plan | Covers |
 | --- | --- | --- |
 | `supabase/migrations-deferred/tests/interop_foundation.test.sql` | 42 | Phase 1: the `interop` schema is closed to API roles; anon is refused; role and permissions come from the database; the audit actor is `auth.uid()`; argument checks; non-staff get no role; the rate limit; the audit trail is append-only; consent deletion and withdrawal rules; terminology review rules |
-| `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 276 | Phase 2, in ten sections (below) |
+| `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 277 | Phase 2, in ten sections (below) |
 
 Sections of `interop_phase2.test.sql`:
 
@@ -182,7 +182,9 @@ Sections of `interop_phase2.test.sql`:
    One sign-in linked to two people: each page lists and withdraws only
    its own patient's records.
 7. Consent history, audit rows and the consent guards; the directives
-   JSON says whether a rule names one recipient, never who.
+   JSON says whether a rule names one recipient, never who; the staff
+   summary reads a verified permit for one named recipient as limited
+   (never allowed) and a refusal for one as refused in part.
 8. `patients.fhir_id` is kept once set.
 9. The audit rate bucket.
 10. An auditor: audit events and the admin status; an admin with `users`;

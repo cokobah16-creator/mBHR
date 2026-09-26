@@ -154,6 +154,9 @@ export function isNamedRefusal(item: PatientConsentItem): boolean {
 export function consentTitle(item: PatientConsentItem): string {
   if (item.kind === "unclear") return UNCLEAR_LABEL[item.topic];
   if (item.kind === "refusal" && !isNamedRefusal(item)) return OTHER_CHOICE_LABEL[item.topic];
+  // A permission for one recipient the list cannot name would read as a
+  // permission for everyone outside mBHR.
+  if (item.kind === "permission" && item.permitNamesRecipient) return OTHER_CHOICE_LABEL[item.topic];
   const label = item.kind === "refusal" ? REFUSAL_LABEL[item.topic] : TOPIC_LABEL[item.topic];
   const named = item.kind === "refusal" ? item.refuses : item.permits;
   // No suffix that repeats the topic ("for research (for research)").
@@ -164,9 +167,10 @@ export function consentTitle(item: PatientConsentItem): string {
   return purposes ? `${label} (${purposes})` : label;
 }
 
-/** The line under the title, or null (a permission has none). */
+/** The line under the title, or null (a plain permission has none). */
 export function consentNote(item: PatientConsentItem): string | null {
   if (item.kind === "unclear") return PRIVACY_COPY.unclear;
+  if (item.kind === "permission" && item.permitNamesRecipient) return PRIVACY_COPY.askStaffAbout;
   if (item.kind !== "refusal") return null;
   const ask = isNamedRefusal(item) ? PRIVACY_COPY.askStaff : PRIVACY_COPY.askStaffAbout;
   return item.alsoPermits ? `${PRIVACY_COPY.alsoAllows} ${ask}` : ask;

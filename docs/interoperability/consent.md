@@ -295,7 +295,12 @@ them can block care.
     dialog says: "mBHR will record that you withdrew this permission. It
     will no longer count as your permission. You cannot undo this here.
     To give permission again, ask clinic staff." Withdrawing sends the
-    page's patient id (`interop_withdraw_consent()`).
+    page's patient id (`interop_withdraw_consent()`). A permission with a
+    rule for one specific recipient (`names_recipient` true) reads "A
+    choice about how your records are shared" (research: "A choice about
+    how your records are used for research") with "Ask clinic staff about
+    it.", because the portal cannot say who the recipient is; it keeps
+    its Withdraw button.
   - A record with any "do not" rule is a refusal and has no Withdraw
     button. It reads "You asked us not to share your records outside
     mBHR" (research: "You asked us not to use your records for research")
@@ -333,8 +338,8 @@ them can block care.
   - `refused_partly`: "The patient refused some sharing outside mBHR."
   - `permitted`: "The patient allowed sharing outside mBHR, with no
     limits."
-  - `limited`: "The patient's permission covers only some records or
-    uses."
+  - `limited`: "The patient's permission covers only some recipients,
+    records or uses."
   - `pending_verification`: "A permission is recorded, but staff have not
     checked it yet."
   - `withdrawn`: "A permission to share outside mBHR was withdrawn." (It

@@ -13,7 +13,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(276);
+SELECT plan(277);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (as the migration owner)
@@ -70,7 +70,7 @@ VALUES
   ('pgtap-p2-bx', 'Bayo', 'Phase', '08000990006');
 INSERT INTO public.patients (id, given_name, family_name, phone)
 SELECT 'pgtap-p2-c' || g, 'Case', 'Phase', '0800099' || lpad((300 + g)::text, 4, '0')
-  FROM generate_series(1, 14) AS g;
+  FROM generate_series(1, 15) AS g;
 INSERT INTO public.patients (id, given_name, family_name, phone)
 SELECT 'pgtap-p2-l' || g, 'Loop', 'Phase', '0800099' || lpad((100 + g)::text, 4, '0')
   FROM generate_series(1, 12) AS g;
@@ -1078,7 +1078,7 @@ SELECT is(
   'shared phone: S2''s record was not changed');
 
 -- ---------------------------------------------------------------------------
--- 7. Consent history, audit rows and guards (as the owner)
+-- 7. Consent history, audit rows and guards (as the owner; a few calls as a signed-in staff member)
 -- ---------------------------------------------------------------------------
 SELECT is(
   (SELECT string_agg(event || ':' || changed_by_kind, ',' ORDER BY changed_at)
@@ -1203,6 +1203,20 @@ SELECT is(
      FROM public.interop_consent_summary('pgtap-p2-c14') AS s),
   'allowed/permitted/allowed',
   'summary: beside it, a verified permit that names no one is allowed as before');
+RESET ROLE;
+-- A refusal for one named recipient still refuses (as the evaluator), and
+-- the chip reads it as a refusal in part, since it names one recipient.
+INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
+VALUES ('pgtap-p2-c15', 'active', 'patient-privacy', 'pgtap-named-deny', 'paper_form');
+INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type, actor_reference)
+SELECT id, 'deny', 'organization', 'Organization/pgtap-named-hospital'
+  FROM interop.consent_records WHERE category = 'pgtap-named-deny';
+SET LOCAL ROLE authenticated;
+SELECT is(
+  (SELECT concat_ws('/', s ->> 'sharing_state', s ->> 'sharing_reason', s ->> 'external_sharing')
+     FROM public.interop_consent_summary('pgtap-p2-c15') AS s),
+  'restricted/refused_partly/not_allowed',
+  'summary: a refusal for one named recipient is not_allowed, and the chip reads it as refused in part');
 RESET ROLE;
 SELECT lives_ok(
   $$UPDATE interop.consent_records SET status = 'rejected' WHERE category = 'pgtap-new'$$,

@@ -72,6 +72,12 @@ export interface PatientConsentItem {
   refuses: ConsentPurpose[];
   /** A refusal that also permits something (shown, never hidden). */
   alsoPermits: boolean;
+  /**
+   * True when a permit names one specific recipient. The function says only
+   * that it does (names_recipient), never who, so the portal cannot describe
+   * it without making it sound broader than the patient agreed.
+   */
+  permitNamesRecipient: boolean;
   state: ConsentState;
   /** When it started (effective_from, else when it was recorded). */
   since: string | null;
@@ -207,6 +213,9 @@ export function parseMyConsents(data: unknown, now: Date = new Date()): PatientC
       refusesOutside: outsideDenies.length > 0,
       refuses: purposesOf(outsideDenies, "deny"),
       alsoPermits: hasDeny && hasPermit,
+      // interop_my_consents always sends the flag; only an explicit true
+      // changes the wording, so the choice is never shown as general.
+      permitNamesRecipient: provisions.some((p) => p.provision_type === "permit" && p.names_recipient === true),
       state,
       since: toTimestamp(r.effective_from) ?? toTimestamp(r.recorded_at) ?? toTimestamp(r.created_at),
       withdrawnAt: toTimestamp(r.withdrawn_at),
@@ -314,7 +323,7 @@ export type SharingReason =
   | "withdrawn" // a permission to share outside mBHR was withdrawn, and nothing newer applies
   | "refused" // a refusal in force, with no limit (verified or not)
   | "refused_partly" // a refusal in force, limited to some purposes, uses or records
-  | "limited" // the only permits in force are limited (purpose, type, ...)
+  | "limited" // the only permits in force are limited (purpose, type, one recipient, ...)
   | "pending_verification" // a permit in force that staff have not verified
   | "not_started" // a permit that is not in force yet
   | "no_permission"; // nothing permits sharing
@@ -372,7 +381,7 @@ export const SHARING_REASON_TEXT: Record<SharingReason, string> = {
   withdrawn: "A permission to share outside mBHR was withdrawn.",
   refused: "The patient asked us not to share their records outside mBHR.",
   refused_partly: "The patient refused some sharing outside mBHR.",
-  limited: "The patient's permission covers only some records or uses.",
+  limited: "The patient's permission covers only some recipients, records or uses.",
   pending_verification: "A permission is recorded, but staff have not checked it yet.",
   not_started: "A permission is recorded, but it has not started yet.",
   no_permission: "No permission to share outside mBHR is in force.",

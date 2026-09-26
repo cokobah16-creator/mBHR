@@ -104,13 +104,15 @@
 --   - interop_consent_summary follows the gateway's consent evaluator for
 --     external sharing (scope patient-privacy; actor external_system,
 --     organization, any or unset; no security label; a deny wins; a permit
---     counts only when verified). The design's rule (external_system /
+--     counts only when verified and naming no specific recipient). The
+--     design's rule (external_system /
 --     organization only, purpose not TREAT, any scope, denies ignored,
 --     unverified permits count) disagreed with what the gateway enforces.
 --     It adds pending_verification (boolean) to the design's keys, and
 --     sharing_state / sharing_reason for the staff chip: 'allowed' only for
 --     a verified, in-force permit with no limit (no purpose, action,
---     resource type, data class or security label) and no refusal;
+--     resource type, data class, security label or specific recipient) and
+--     no refusal;
 --     'withdrawn'; otherwise 'restricted', with the reason.
 --   - The chip counts a refusal only where the gateway's evaluator would
 --     apply it: an external-actor deny on an active, started, not
@@ -118,9 +120,9 @@
 --     deny on a draft or proposed record, or one that has not started yet,
 --     is not counted (the evaluator ignores it too), so the chip can read
 --     Allowed beside it until it is active and started. A refusal limited
---     by purpose, action, resource type, data class or security label is
---     'refused_partly', and a verified full permit beside it is not
---     'allowed'.
+--     by purpose, action, resource type, data class, security label or one
+--     specific recipient is 'refused_partly', and a verified full permit
+--     beside it is not 'allowed'.
 --   - 'withdrawn' (sharing_reason and the older external_sharing key) only
 --     when a withdrawn patient-privacy record had a permit for an external
 --     actor and no deny: a withdrawn refusal, an empty record or a care
@@ -1788,11 +1790,13 @@ COMMENT ON FUNCTION public.interop_consent_summary(text) IS
   'gateway consent evaluator for external sharing: patient-privacy scope; active, not '
   'withdrawn, in-period records; in-period provisions without a security label whose actor '
   'type is external_system, organization, any or unset. not_allowed when any such deny '
-  'exists; allowed when such a permit is on a verified record; withdrawn when neither and a '
+  'exists; allowed when such a permit, naming no specific recipient, is on a verified record; '
+  'withdrawn when neither and a '
   'withdrawn patient-privacy record had an external permit and no deny; otherwise '
   'not_allowed. pending_verification: only unverified permits exist. sharing_state (for the '
   'staff chip): allowed only for a verified, in-force permit with no limit (purpose, action, '
-  'resource type, data class, security label) and no refusal in force; withdrawn; otherwise '
+  'resource type, data class, security label or one specific recipient) and no refusal in '
+  'force; withdrawn; otherwise '
   'restricted. sharing_reason, first match: refused (a deny in force, no limit), '
   'refused_partly (a limited deny in force), permitted, limited, pending_verification, '
   'withdrawn (a withdrawn external permit with no deny), not_started, no_permission. A deny '
