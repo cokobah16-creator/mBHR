@@ -434,7 +434,7 @@ an empty file and a stored path outside the patient's folder all answer
 
 | | |
 | --- | --- |
-| Source | `interop.consent_records` with `interop.consent_provisions`, read through `fhir_consent_directives()`, which never returns account ids (recorded, verified or withdrawn by), the withdrawal reason, who signed (`granted_by` and relationship), the source document or a provision's actor reference. |
+| Source | `interop.consent_records` with `interop.consent_provisions`, read through `fhir_consent_directives()`, which never returns account ids (recorded, verified or withdrawn by), the withdrawal reason, who signed (`granted_by` and relationship), the source document or a provision's actor reference (only `names_recipient`: whether a rule names one specific recipient). |
 | FHIR id | `consent_records.id` (uuid). |
 | status | The stored consent-state code (table below); a withdrawn record is `inactive` (or stays `entered-in-error`). Missing or not a code → **withheld** (Consent.status is required and has no `unknown`). |
 | scope | The stored consentscope code (adr, research, patient-privacy, treatment) with its R4 display. |
@@ -443,17 +443,22 @@ an empty file and a stored path outside the patient's folder all answer
 | dateTime | `recorded_at`: when the record was entered in the register. |
 | policy | `policy.uri` = the recorded policy. R4 requires a policy or a policy rule (invariant ppc-1) and mBHR records no rule, so a record that cites no policy is **withheld**. |
 | verification | Only from the recorded flag: verified true (with its date when recorded), or verified false. Who verified is never published. |
-| provision | Root: the record's effective period, no type. One nested provision per stored rule, in stored order, with only what was recorded: `type` (permit or deny), `period`, `actor` (the kind of recipient as a local `consent-actor-type` code, with a display-only reference; `any` means no actor element), `action` (consentaction), `purpose` (v3 ActReason, no display), `class` (an R4 resource type, or a local `consent-resource-type` or `consent-data-class` code) and `securityLabel` (local `consent-security-label`). |
+| provision | Root: the record's effective period, no type. One nested provision per stored rule, in stored order, with only what was recorded: `type` (permit or deny), `period`, `actor` (the kind of recipient as a local `consent-actor-type` code, with a display-only reference; `any` means no actor element; a rule that names one specific recipient withholds the record, below), `action` (consentaction), `purpose` (v3 ActReason, no display), `class` (an R4 resource type, or a local `consent-resource-type` or `consent-data-class` code) and `securityLabel` (local `consent-security-label`). |
 | Never published | `performer`, `organization`, `source[x]`, `policyRule`, and every column listed under Source as not returned. |
 | Searches | `_id`, `patient`, `status`, `scope`. |
 | Who reads | Staff with consult, portal_manage or audit_access; a patient sees their own. |
 
 A directive is published whole or not at all. When a stored rule cannot
 be shown in R4 without changing its meaning (a code outside the register's
-own lists, an unreadable or reversed period, a resource type **and** a
-data class on one rule, which FHIR would read as either one), the record
-is withheld: leaving out a condition would make a permit look broader than
-the patient agreed. A searchset says how many were left out.
+own lists; an unreadable or reversed period; a resource type **and** a
+data class on one rule, which FHIR would read as either one; a rule for
+one named recipient, such as one hospital in `actor_reference`, which is
+never published and without which the rule would read as a rule for every
+recipient of that kind), the record is withheld: leaving out a condition
+would make a permit look broader than the patient agreed. Only
+`names_recipient` false shows that a rule names no one: true, missing or
+not a boolean withholds the record. A searchset says how many were left
+out.
 
 `CONSENT_STATUS` maps each stored code to itself (draft, proposed, active,
 rejected, inactive, entered-in-error). An active record whose period has

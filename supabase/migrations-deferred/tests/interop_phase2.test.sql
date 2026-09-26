@@ -13,7 +13,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(272);
+SELECT plan(276);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (as the migration owner)
@@ -70,7 +70,7 @@ VALUES
   ('pgtap-p2-bx', 'Bayo', 'Phase', '08000990006');
 INSERT INTO public.patients (id, given_name, family_name, phone)
 SELECT 'pgtap-p2-c' || g, 'Case', 'Phase', '0800099' || lpad((300 + g)::text, 4, '0')
-  FROM generate_series(1, 13) AS g;
+  FROM generate_series(1, 14) AS g;
 INSERT INTO public.patients (id, given_name, family_name, phone)
 SELECT 'pgtap-p2-l' || g, 'Loop', 'Phase', '0800099' || lpad((100 + g)::text, 4, '0')
   FROM generate_series(1, 12) AS g;
@@ -483,6 +483,7 @@ SELECT ok(
   (SELECT jsonb_array_length(d) = 1 AND d -> 0 ->> 'id' = current_setting('pgtap_p2.c_a')
           AND (d -> 0 ->> 'verified')::boolean AND jsonb_array_length(d -> 0 -> 'provisions') = 1
           AND d -> 0 -> 'provisions' -> 0 ->> 'actor_type' = 'external_system'
+          AND d -> 0 -> 'provisions' -> 0 -> 'names_recipient' = 'false'::jsonb
      FROM public.fhir_consent_directives(ARRAY['pgtap-p2-a']) AS d),
   'directives: staff read a patient''s consent with its provisions');
 SELECT ok(
@@ -1147,6 +1148,62 @@ SELECT lives_ok(
   $$INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type)
     SELECT id, 'deny', 'any' FROM interop.consent_records WHERE category = 'pgtap-new'$$,
   'provisions: they are added in the transaction that created their consent');
+-- Rules for one named recipient (interop_record_consent refuses
+-- actor_reference; a direct insert can store it): the JSON says that a
+-- rule names one, never who.
+INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
+VALUES ('pgtap-p2-c1', 'draft', 'patient-privacy', 'pgtap-named', 'paper_form');
+INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type, actor_reference, created_at)
+SELECT r.id, v.t, 'organization', v.ref, now() + v.n * interval '1 second'
+  FROM interop.consent_records AS r,
+       (VALUES (1, 'permit', 'Organization/pgtap-named-hospital'), (2, 'deny', 'Organization/pgtap-named-hospital'),
+               (3, 'permit', '  '), (4, 'permit', NULL)) AS v(n, t, ref)
+ WHERE r.category = 'pgtap-named';
+SELECT is(
+  (SELECT string_agg(p ->> 'names_recipient', ',' ORDER BY n)
+     FROM jsonb_array_elements(interop.consent_directives_json(ARRAY(
+            SELECT id FROM interop.consent_records WHERE category = 'pgtap-named')) -> 0 -> 'provisions')
+          WITH ORDINALITY AS e(p, n)),
+  'true,true,false,false',
+  'directives: names_recipient says whether a rule names one recipient (a blank or missing reference names none)');
+SELECT ok(
+  (SELECT NOT EXISTS (SELECT 1 FROM jsonb_array_elements(d -> 0 -> 'provisions') AS p WHERE p ? 'actor_reference')
+          AND position('pgtap-named-hospital' IN d::text) = 0
+     FROM interop.consent_directives_json(ARRAY(
+            SELECT id FROM interop.consent_records WHERE category = 'pgtap-named')) AS d),
+  'directives: the named recipient itself is never returned');
+-- The summary follows the evaluator: a verified permit for one named
+-- recipient allows nothing, and the chip shows it as limited.
+INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
+VALUES ('pgtap-p2-c14', 'active', 'patient-privacy', 'pgtap-named-sum', 'paper_form'),
+       ('pgtap-p2-c14', 'active', 'patient-privacy', 'pgtap-open-sum', 'paper_form');
+INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type, actor_reference)
+SELECT id, 'permit', 'organization', 'Organization/pgtap-named-hospital'
+  FROM interop.consent_records WHERE category = 'pgtap-named-sum';
+INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type)
+SELECT id, 'permit', 'organization'
+  FROM interop.consent_records WHERE category = 'pgtap-open-sum';
+UPDATE interop.consent_records
+   SET verified = true, verified_by = '99990000-0000-4000-8000-000000000001', verified_at = now()
+ WHERE category = 'pgtap-named-sum';
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-000000000001","role":"authenticated"}';
+SELECT is(
+  (SELECT concat_ws('/', s ->> 'sharing_state', s ->> 'sharing_reason', s ->> 'external_sharing')
+     FROM public.interop_consent_summary('pgtap-p2-c14') AS s),
+  'restricted/limited/not_allowed',
+  'summary: a verified permit for one named recipient is not allowed, and the chip shows it as limited');
+RESET ROLE;
+UPDATE interop.consent_records
+   SET verified = true, verified_by = '99990000-0000-4000-8000-000000000001', verified_at = now()
+ WHERE category = 'pgtap-open-sum';
+SET LOCAL ROLE authenticated;
+SELECT is(
+  (SELECT concat_ws('/', s ->> 'sharing_state', s ->> 'sharing_reason', s ->> 'external_sharing')
+     FROM public.interop_consent_summary('pgtap-p2-c14') AS s),
+  'allowed/permitted/allowed',
+  'summary: beside it, a verified permit that names no one is allowed as before');
+RESET ROLE;
 SELECT lives_ok(
   $$UPDATE interop.consent_records SET status = 'rejected' WHERE category = 'pgtap-new'$$,
   'status: a draft consent can be rejected');

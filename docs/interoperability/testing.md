@@ -28,7 +28,7 @@ Locally, where `npm install` is not possible, the same files run under Bun:
 bun test src/interoperability
 ```
 
-With Bun this is 19 files and 672 tests (672 pass, 0 fail). Vitest is
+With Bun this is 19 files and 678 tests (678 pass, 0 fail). Vitest is
 what CI uses; the Bun run is a local convenience.
 
 Files in `src/interoperability/fhir/__tests__/` (plus
@@ -40,8 +40,8 @@ Files in `src/interoperability/fhir/__tests__/` (plus
 | `gateway.test.ts` | The whole request path: feature flag, metadata, authentication, authorisation, enumeration protection, reads, searches, errors and request limits |
 | `guard.test.ts` | The routing guard (`routeRequest`), keyset paging, `LIKE` escaping, reference checks in the validator |
 | `authorize.test.ts` | The order of the 12 steps, the restrictions handed to modules, and the consent step, including `consentStep()` on a governed purpose |
-| `consentPolicy.test.ts` | `evaluateConsent()`: which accesses consent governs, default-deny, withdrawal and expiry, parsing of directives |
-| `consentResource.test.ts` | Consent status maps, mapper, who may read, searches, patient self-access, nothing forbidden is served |
+| `consentPolicy.test.ts` | `evaluateConsent()`: which accesses consent governs, default-deny, withdrawal and expiry, a permit for one named recipient never permits, parsing of directives |
+| `consentResource.test.ts` | Consent status maps, mapper, who may read, searches, patient self-access, nothing forbidden is served, a rule for one named recipient withholds the record |
 | `consentDirectiveLoader.test.ts` | The consent step's directive lookup: the named patient's merge family, directives read as the named patient's, more than 100 refused (503) |
 | `framework.test.ts` | Configuration and flags, search parameter parsing, the access decision, the CapabilityStatement |
 | `mappers.test.ts` | Patient, Encounter, vital-sign Observation and Condition mapping; the structural validator; the conformance examples |
@@ -162,7 +162,7 @@ the two interop migrations depend on:
 | File | Plan | Covers |
 | --- | --- | --- |
 | `supabase/migrations-deferred/tests/interop_foundation.test.sql` | 42 | Phase 1: the `interop` schema is closed to API roles; anon is refused; role and permissions come from the database; the audit actor is `auth.uid()`; argument checks; non-staff get no role; the rate limit; the audit trail is append-only; consent deletion and withdrawal rules; terminology review rules |
-| `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 272 | Phase 2, in ten sections (below) |
+| `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 276 | Phase 2, in ten sections (below) |
 
 Sections of `interop_phase2.test.sql`:
 
@@ -181,7 +181,8 @@ Sections of `interop_phase2.test.sql`:
    share, never a refusal, a treatment consent or an advance directive.
    One sign-in linked to two people: each page lists and withdraws only
    its own patient's records.
-7. Consent history, audit rows and the consent guards.
+7. Consent history, audit rows and the consent guards; the directives
+   JSON says whether a rule names one recipient, never who.
 8. `patients.fhir_id` is kept once set.
 9. The audit rate bucket.
 10. An auditor: audit events and the admin status; an admin with `users`;

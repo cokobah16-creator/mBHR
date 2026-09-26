@@ -22,7 +22,7 @@ const directive = (id: string, patientId: string, type: "permit" | "deny") => ({
   scope: "research",
   verified: true,
   withdrawn: false,
-  provisions: [{ id: `${id}-p`, provision_type: type, action: "access", purpose: "HRESCH" }],
+  provisions: [{ id: `${id}-p`, provision_type: type, names_recipient: false, action: "access", purpose: "HRESCH" }],
 });
 
 const research = (directives: Parameters<typeof evaluateConsent>[1]) =>

@@ -95,9 +95,12 @@ For an access class that needs consent:
 7. A matching **deny** wins at once, `consent_deny_provision`. It counts
    even when the directive is not verified yet: a patient's refusal is
    honoured before staff check the form.
-8. A matching **permit** counts only when the directive is verified. Then
-   the answer is permit, `consent_permit_provision`, with the consent id
-   and provision id.
+8. A matching **permit** counts only when the directive is verified and
+   the permit names no specific recipient (`names_recipient` is false).
+   mBHR cannot tell whether a requester is the one recipient a patient
+   named, so such a permit never grants access; a deny that names a
+   recipient still refuses (step 7). Then the answer is permit,
+   `consent_permit_provision`, with the consent id and provision id.
 9. Otherwise the answer is deny: `consent_withdrawn` if a withdrawn
    directive in that scope was seen, else `consent_expired` if an expired
    one was seen, else `no_consent_permit`.
@@ -207,7 +210,7 @@ them. Each checks the caller itself.
 
 | Function | Who may call it | What it does |
 | --- | --- | --- |
-| `fhir_consent_directives()` | staff with `consult`, `portal_manage` or `audit_access` (any patient); a portal patient (own records, including records merged into theirs) | Directives and provisions for named patient ids or consent ids (one is required). Used by the gateway. Never returns account ids, the withdrawal reason, who signed, the source document or a provision's actor reference. |
+| `fhir_consent_directives()` | staff with `consult`, `portal_manage` or `audit_access` (any patient); a portal patient (own records, including records merged into theirs) | Directives and provisions for named patient ids or consent ids (one is required). Used by the gateway. Never returns account ids, the withdrawal reason, who signed, the source document or a provision's actor reference (only `names_recipient`: whether a rule names one specific recipient). |
 | `interop_record_consent()` | staff with `portal_manage` or `consult` | Records a directive with up to 20 provisions. Status draft, proposed or active. The patient must exist and must not be merged away. `policy_uri` may be empty. |
 | `interop_verify_consent()` | staff with `portal_manage` or `consult` | Marks a draft, proposed or active record verified. A withdrawn record cannot be verified. |
 | `interop_withdraw_consent(p_consent_id, p_reason, p_patient_id)` | staff with `portal_manage` or `consult`; or the portal patient whose record it is (including records merged into theirs) | Withdraws a record, with an optional reason of at most 500 characters. Status becomes inactive (entered-in-error stays). A repeat returns false. A portal patient may withdraw only a permission to share: scope patient-privacy or research, and no deny provision (the database also accepts a record with no provisions, which the portal does not offer). A refusal, a treatment consent or an advance directive is changed with clinic staff: the patient gets 42501, whatever the record's status. `p_patient_id` is optional and names the page's patient. When given, the record must be that patient's or a record merged into it (42501 otherwise, for staff too), and a patient must name one of their own portal records (42501 otherwise). A malformed id is refused (22023). The portal always sends it, so a sign-in linked to two people (a shared phone) withdraws only for the person the page shows. Without it, a patient may still withdraw a permission of any person linked to the sign-in, and staff are not limited. |
@@ -232,8 +235,10 @@ not withdrawn and not ended, and their provisions for someone outside
 mBHR (actor `external_system`, `organization`, `any` or unset) that have
 not ended. A provision is **in force** when its record is active and has
 started, and the provision itself has started. A provision is
-**limited** when it names a purpose, action, resource type, data class or
-security label.
+**limited** when it names a purpose, action, resource type, data class,
+security label or one specific recipient. For `external_sharing`, a
+permit that names one specific recipient is not counted, as in the
+evaluator.
 
 `sharing_reason`, first match wins:
 
@@ -373,7 +378,10 @@ mapping is in [resource-mapping.md](resource-mapping.md#consent--the-consent-reg
 - A record is published whole or not at all. A record with no
   `policy_uri` is not published (R4 needs a policy or a policy rule), and
   neither is a record whose rules cannot be shown without changing their
-  meaning. A searchset says how many were left out.
+  meaning. That includes a rule for one named recipient (for example one
+  hospital): the recipient is never published, and without it the rule
+  would read as a rule for every recipient of that kind. A searchset says
+  how many were left out.
 - Every searchset carries a note that an empty or short result is not
   evidence that the patient agreed to or refused anything.
 

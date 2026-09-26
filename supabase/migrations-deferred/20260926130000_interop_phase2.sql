@@ -1202,7 +1202,11 @@ CREATE TRIGGER consent_records_history
 -- ----------------------------------------------------------------------------
 -- Never includes recorded_by, verified_by, withdrawn_by (account ids),
 -- withdrawal_reason, granted_by, granted_by_relationship,
--- source_document_id or provision actor_reference.
+-- source_document_id or provision actor_reference. A provision's
+-- names_recipient says only whether it names one specific recipient
+-- (actor_reference set and not blank), never who: the gateway withholds
+-- such a consent rather than publish the rule for every recipient of
+-- that kind.
 CREATE OR REPLACE FUNCTION interop.consent_directives_json(p_ids uuid[])
 RETURNS jsonb
 LANGUAGE sql
@@ -1231,6 +1235,8 @@ AS $$
                       'id', p.id,
                       'provision_type', p.provision_type,
                       'actor_type', p.actor_type,
+                      'names_recipient', p.actor_reference IS NOT NULL
+                                         AND btrim(p.actor_reference) <> '',
                       'action', p.action,
                       'purpose', p.purpose,
                       'data_class', p.data_class,
@@ -1249,7 +1255,8 @@ $$;
 
 COMMENT ON FUNCTION interop.consent_directives_json(uuid[]) IS
   'Internal: consent records and provisions as a JSON array ordered by id, without account '
-  'ids, withdrawal reasons, granted_by, source documents or actor references.';
+  'ids, withdrawal reasons, granted_by, source documents or actor references (names_recipient '
+  'says only whether a provision names one).';
 
 -- ----------------------------------------------------------------------------
 -- 8e. fhir_consent_directives (FHIR Consent source)
@@ -1613,8 +1620,10 @@ COMMENT ON FUNCTION public.interop_my_consents(text) IS
 --   type and data class are not weighed (they depend on the request).
 --   'not_allowed' when any counted deny provision exists (a patient's
 --     refusal counts before it is verified, and it wins over permits);
---   'allowed' when a counted permit provision is on a verified record (the
---     evaluator ignores unverified permits);
+--   'allowed' when a counted permit provision is on a verified record and
+--     names no specific recipient (the evaluator ignores unverified
+--     permits, and permits for one named recipient: it cannot tell whether
+--     a requester is that recipient);
 --   'withdrawn' when neither, and a withdrawn permission exists (below);
 --   'not_allowed' otherwise.
 -- pending_verification: a counted permit exists only on unverified records.
@@ -1624,7 +1633,8 @@ COMMENT ON FUNCTION public.interop_my_consents(text) IS
 -- (external_system, organization, any or unset) that have not ended. A
 -- provision is "in force" when its record is active and started and the
 -- provision has started. "Limited": it names a purpose, action, resource
--- type, data class or security label. First match wins:
+-- type, data class, security label or one specific recipient. First match
+-- wins:
 --   'restricted' / 'refused'          a deny in force with no limit;
 --   'restricted' / 'refused_partly'   a deny in force with a limit (a
 --                                     verified full permit beside it is
@@ -1695,6 +1705,7 @@ BEGIN
        AND (r.effective_until IS NULL OR r.effective_until > now())
        AND (p.actor_type IS NULL OR p.actor_type IN ('external_system', 'organization', 'any'))
        AND p.security_label IS NULL
+       AND NOT (p.provision_type = 'permit' AND COALESCE(btrim(p.actor_reference), '') <> '')
        AND (p.effective_from IS NULL OR p.effective_from <= now())
        AND (p.effective_until IS NULL OR p.effective_until > now()))
   SELECT COALESCE(bool_or(c.provision_type = 'deny'), false),
@@ -1709,7 +1720,8 @@ BEGIN
             AND (r.effective_from IS NULL OR r.effective_from <= now())
             AND (p.effective_from IS NULL OR p.effective_from <= now())) AS in_force,
            (p.purpose IS NOT NULL OR p.action IS NOT NULL OR p.resource_type IS NOT NULL
-            OR p.data_class IS NOT NULL OR p.security_label IS NOT NULL) AS limited
+            OR p.data_class IS NOT NULL OR p.security_label IS NOT NULL
+            OR COALESCE(btrim(p.actor_reference), '') <> '') AS limited
       FROM interop.consent_records AS r
       JOIN interop.consent_provisions AS p ON p.consent_id = r.id
      WHERE r.patient_id = ANY (v_family)

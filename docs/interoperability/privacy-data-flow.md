@@ -129,7 +129,8 @@ gateway is not involved. What crosses:
   provisions. Never returned:
   `recorded_by`, `verified_by`, `withdrawn_by` (account ids),
   `withdrawal_reason`, `granted_by`, `source_document_id` or
-  `actor_reference`.
+  `actor_reference` (only `names_recipient`, whether a provision names
+  one specific recipient; the gateway does not publish such a consent).
 - **Changes** (`interop_record_consent`, `interop_verify_consent`,
   `interop_withdraw_consent`): the arguments go to the database (for a
   withdrawal: the consent id, an optional reason and the page's patient

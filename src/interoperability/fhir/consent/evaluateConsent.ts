@@ -43,6 +43,12 @@ export interface ConsentProvision {
   id: string;
   provision_type: "permit" | "deny";
   actor_type: string | null;
+  /**
+   * True when the rule names one specific recipient (or the function did
+   * not say). mBHR cannot tell whether a requester is that recipient, so
+   * such a permit never grants access; a deny still refuses.
+   */
+  names_recipient: boolean;
   action: string | null;
   purpose: string | null;
   data_class: string | null;
@@ -198,8 +204,9 @@ export function evaluateConsent(
       if (p.provision_type === "deny") {
         return { decision: "deny", accessClass: cls, consentId: d.id, provisionId: p.id, reason: "consent_deny_provision" };
       }
-      // A permit counts only once the directive has been verified.
-      if (p.provision_type === "permit" && d.verified && !permit) {
+      // A permit counts only once the directive has been verified, and
+      // only when it names no specific recipient.
+      if (p.provision_type === "permit" && d.verified && !p.names_recipient && !permit) {
         permit = { consentId: d.id, provisionId: p.id };
       }
     }
@@ -233,6 +240,8 @@ export function parseDirectives(raw: unknown): ConsentDirective[] {
         id: pid,
         provision_type: type,
         actor_type: str(p.actor_type),
+        // Only an explicit false proves the rule names no one.
+        names_recipient: p.names_recipient !== false,
         action: str(p.action),
         purpose: str(p.purpose),
         data_class: str(p.data_class),

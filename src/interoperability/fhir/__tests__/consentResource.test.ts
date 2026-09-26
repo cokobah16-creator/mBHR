@@ -38,6 +38,7 @@ import {
   consentModule,
   definition,
   hasActorRule,
+  withheldNote,
 } from "../resources/consent";
 import { fakeSupabase, makeToken, type FakeOptions, type FakeUser, type RpcHandler } from "./fakeSupabase";
 import { PATIENT_A, PATIENT_B } from "./fixtures";
@@ -67,8 +68,10 @@ const PATIENT_C = {
 };
 
 // Values the function never returns (account ids, the withdrawal reason,
-// who signed, the source document, a provision's actor reference). They
-// are present on the fixture rows to prove the mapper never copies them.
+// who signed, the source document, a provision's actor reference: it says
+// only whether one is recorded, names_recipient). They are present on the
+// fixture rows (the actor reference on the rules that name a recipient, and
+// on one published rule below) to prove the mapper never copies them.
 const RECORDED_BY = "aaaaaaaa-0000-4000-8000-00000000000a";
 const VERIFIED_BY = "aaaaaaaa-0000-4000-8000-00000000000b";
 const WITHDRAWN_BY = "aaaaaaaa-0000-4000-8000-00000000000c";
@@ -85,6 +88,7 @@ const SECRETS = [
   "guardian-relationship",
   SOURCE_DOCUMENT,
   ACTOR_REFERENCE,
+  "names_recipient",
   "paper_form",
   "source_type",
   "recorded_by",
@@ -114,7 +118,7 @@ const PROVISION_PERMIT = {
   id: "d0000000-0000-4000-8000-000000000001",
   provision_type: "permit",
   actor_type: "any",
-  actor_reference: ACTOR_REFERENCE,
+  names_recipient: false,
   action: "access",
   purpose: "TREAT",
   data_class: null,
@@ -128,6 +132,7 @@ const PROVISION_DENY = {
   id: "d0000000-0000-4000-8000-000000000002",
   provision_type: "deny",
   actor_type: null,
+  names_recipient: false,
   action: "disclose",
   purpose: "HRESCH",
   data_class: "laboratory",
@@ -216,6 +221,8 @@ const C2 = {
     },
   ],
 };
+/** What a rule for one named recipient carries (the reference only on the fixture: the function never returns it). */
+const NAMED = { names_recipient: true, actor_reference: ACTOR_REFERENCE };
 /** A patient record that does not exist (deleted, or not visible). */
 const ORPHAN = { ...A1, id: "c0a5e000-0000-4000-8000-000000000008", patient_id: "01HZZGONE00000000000000000", provisions: [] };
 
@@ -371,16 +378,48 @@ describe("Consent mapper", () => {
     });
   });
 
-  it("publishes each actor kind as recorded, and never a specific actor", () => {
+  it("publishes each actor kind as recorded when the rule names no specific recipient", () => {
     for (const [code, label] of Object.entries(CONSENT_ACTOR_TYPES)) {
       const rule = mapProvision({ ...PROVISION_PERMIT, actor_type: code }) as ConsentProvisionRule;
       expect(rule.actor).toEqual([
         { role: { coding: [{ system: "https://mbhr.app/codes/consent-actor-type", code, display: label }] }, reference: { display: label } },
       ]);
-      expect(JSON.stringify(rule)).not.toContain(ACTOR_REFERENCE);
       expect(backToColumns(rule).actor_type).toBe(code);
     }
     expect((mapProvision({ ...PROVISION_PERMIT, actor_type: null }) as ConsentProvisionRule).actor).toBeUndefined();
+  });
+
+  it("withholds a directive with a rule for one named recipient (permit or deny), or a rule that does not say", () => {
+    // The recipient is never published; without it the rule would cover
+    // every recipient of that kind, broader than the patient agreed.
+    const withheld = { resource: null, withheld: "not_expressible" };
+    for (const base of [PROVISION_PERMIT, PROVISION_DENY]) {
+      for (const actor_type of [...Object.keys(CONSENT_ACTOR_TYPES), "any", null]) {
+        const row = { ...A1, provisions: [{ ...base, actor_type, ...NAMED }] };
+        expect(mapConsentRecord(row, ctx), `${base.provision_type} ${actor_type}`).toEqual(withheld);
+      }
+    }
+    // Only an explicit false proves the rule names no one.
+    const flagless: Record<string, unknown> = { ...PROVISION_PERMIT };
+    delete flagless.names_recipient;
+    const unclear: Record<string, unknown>[] = [
+      flagless,
+      ...[null, undefined, "false", 0, "no"].map((v) => ({ ...PROVISION_PERMIT, names_recipient: v })),
+    ];
+    for (const p of unclear) {
+      expect(mapConsentRecord({ ...A1, provisions: [PROVISION_DENY, p] }, ctx), String(p.names_recipient)).toEqual(withheld);
+    }
+    // false: published as before (every element: above).
+    expect(mapConsentRecord(A1, ctx).resource?.provision?.provision).toHaveLength(2);
+  });
+
+  it("never copies a stray actor reference onto a published rule", () => {
+    // The function never returns actor_reference; if a row carried one
+    // anyway beside names_recipient false, it still stays out of the output.
+    const stray = { ...PROVISION_PERMIT, actor_type: "organization", actor_reference: ACTOR_REFERENCE };
+    const out = mapConsentRecord({ ...A1, provisions: [stray, PROVISION_DENY] }, ctx);
+    expect(out.resource?.provision?.provision).toHaveLength(2);
+    expect(JSON.stringify(out)).not.toContain(ACTOR_REFERENCE);
   });
 
   it("keeps a resource type that is not a FHIR R4 type under the local system", () => {
@@ -867,6 +906,18 @@ describe("Consent at the gateway: ids and failures", () => {
     for (const r of [readC1.json, readC2.json, ...matches(search)]) {
       if (r?.resourceType === "Consent") expect(r.provision.provision[0].actor).toEqual([actor]);
     }
+  });
+
+  it("never serves a directive with a rule for one named recipient: a read is 404, a search counts it as left out", async () => {
+    const good = { ...A1, id: "c0a5e000-0000-4000-8000-00000000000a", patient_id: PATIENT_C.id };
+    const permit = { ...good, id: "c0a5e000-0000-4000-8000-00000000000b", provisions: [{ ...PROVISION_PERMIT, actor_type: "organization", ...NAMED }] };
+    const deny = { ...good, id: "c0a5e000-0000-4000-8000-00000000000c", provisions: [{ ...PROVISION_DENY, actor_type: "organization", ...NAMED }] };
+    const { call, served } = setup({ rpcs: { fhir_consent_directives: directivesRpc([good, permit, deny]) } });
+    for (const r of [permit, deny]) expect((await call(`/fhir/R4/Consent/${r.id}`, DOCTOR)).status, r.id).toBe(404);
+    const { json } = await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_C.fhir_id}`, DOCTOR);
+    expect(ids(json)).toEqual([good.id]);
+    expect(outcomes(json)).toContainEqual(withheldNote(2));
+    expect(served.join("\n")).not.toContain(ACTOR_REFERENCE);
   });
 
   it("says in the CapabilityStatement notes whether actor rules are served", () => {
