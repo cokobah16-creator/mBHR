@@ -30,6 +30,7 @@ import type {
   TelevisitStatus,
 } from "@/services/televisits";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
+import { localIsoDate } from "./account/outreachCache";
 import {
   appointmentRequestStatusInfo,
   appointmentStatusInfo,
@@ -679,7 +680,7 @@ export function Telehealth() {
                   onChange={(e) => setPreferredDate(e.target.value)}
                   required
                   disabled={submitting}
-                  min={new Date().toISOString().split("T")[0]}
+                  min={localIsoDate()}
                   className="input-field"
                 />
               </div>
