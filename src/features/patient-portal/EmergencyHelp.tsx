@@ -6,6 +6,7 @@ import {
   InformationCircleIcon,
 } from "@heroicons/react/24/outline";
 import { readPortalUser } from "./portalSession";
+import { useT } from "@/hooks/useT";
 
 interface EmergencyHelpProps {
   onClose: () => void;
@@ -23,6 +24,7 @@ const FOCUSABLE =
  * health worker, so it says so instead of pretending.
  */
 export function EmergencyHelp({ onClose }: EmergencyHelpProps) {
+  const { t } = useT();
   const dialogRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<HTMLAnchorElement>(null);
   const onCloseRef = useRef(onClose);
@@ -93,14 +95,14 @@ export function EmergencyHelp({ onClose }: EmergencyHelpProps) {
               aria-hidden
             />
             <h2 id="emergency-help-title" className="text-h1 text-danger-fg">
-              Emergency help
+              {t("portal.sos.title")}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="btn-ghost text-danger-fg hover:text-danger-fg"
-            aria-label="Close emergency help"
+            aria-label={t("portal.sos.closeLabel")}
           >
             <XMarkIcon className="h-6 w-6" aria-hidden />
           </button>
@@ -108,8 +110,7 @@ export function EmergencyHelp({ onClose }: EmergencyHelpProps) {
 
         <div className="space-y-4 px-5 py-5">
           <p id="emergency-help-desc" className="text-body text-ink">
-            If someone is badly hurt, cannot breathe, or is very unwell right
-            now, call for help or go to the nearest hospital or health centre.
+            {t("portal.sos.intro")}
           </p>
 
           <div>
@@ -119,22 +120,21 @@ export function EmergencyHelp({ onClose }: EmergencyHelpProps) {
               className="btn-danger min-h-[56px] w-full text-h3"
             >
               <PhoneIcon className="h-6 w-6" aria-hidden />
-              Call {EMERGENCY_NUMBER}
+              {t("portal.sos.call", { number: EMERGENCY_NUMBER })}
             </a>
             <p className="mt-1.5 text-center text-caption text-ink-muted">
-              {EMERGENCY_NUMBER} is Nigeria&apos;s free emergency number.
+              {t("portal.sos.numberNote", { number: EMERGENCY_NUMBER })}
             </p>
           </div>
 
           {patientId && (
             <div className="rounded-lg border border-line bg-surface-sunken p-4">
-              <p className="text-label text-ink-secondary">Your patient ID</p>
+              <p className="text-label text-ink-secondary">{t("portal.sos.patientId")}</p>
               <p className="mt-1 break-all font-mono text-h3 text-ink">
                 {patientId}
               </p>
               <p className="mt-1 text-caption text-ink-muted">
-                Show this to a health worker so they can find your outreach
-                record.
+                {t("portal.sos.patientIdNote")}
               </p>
             </div>
           )}
@@ -144,11 +144,7 @@ export function EmergencyHelp({ onClose }: EmergencyHelpProps) {
               className="mt-0.5 h-5 w-5 shrink-0"
               aria-hidden
             />
-            <p>
-              This portal cannot call or alert anyone for you. Messages to the
-              clinic are not checked all the time, so do not use them in an
-              emergency.
-            </p>
+            <p>{t("portal.sos.cannotAlert")}</p>
           </div>
 
           <button
@@ -156,7 +152,7 @@ export function EmergencyHelp({ onClose }: EmergencyHelpProps) {
             onClick={onClose}
             className="btn-secondary w-full"
           >
-            Close
+            {t("portal.sos.close")}
           </button>
         </div>
       </div>

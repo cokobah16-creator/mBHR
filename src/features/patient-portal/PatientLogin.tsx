@@ -15,18 +15,22 @@ import { AuthShell } from "./account/AuthShell";
 import { completePortalSignIn } from "@/services/portalCompleteSignIn";
 import { env } from "@/config/env";
 import { parseCodeChannels } from "@/services/portalCodeSignIn";
+import { useT } from "@/hooks/useT";
 
-const SIGN_IN_FAILED_MESSAGE =
-  "We couldn't sign you in. Check your internet connection and try again.";
+const SIGN_IN_FAILED_MESSAGE = "portal.login.err.failed";
+
+// An error shown on the page: a message key, or text from the account
+// service shown as it comes.
+type LoginError = { key: string } | { raw: string } | null;
 
 const onlineSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
-  credential: z.string().min(6, "Password must be at least 6 characters"),
+  email: z.string().email("portal.login.err.email"),
+  credential: z.string().min(6, "portal.login.err.password"),
 });
 
 const offlineSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
-  credential: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
+  email: z.string().email("portal.login.err.email"),
+  credential: z.string().regex(/^\d{6}$/, "portal.login.err.pin"),
 });
 
 type LoginForm = z.infer<typeof onlineSchema>;
@@ -34,8 +38,10 @@ type LoginForm = z.infer<typeof onlineSchema>;
 export function PatientLogin() {
   const navigate = useNavigate();
   const { login } = useAuth();
+  const { t } = useT();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<LoginError>(null);
+  const errorText = error ? ("raw" in error ? error.raw : t(error.key)) : "";
   const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
   const codeSignInOn =
     isSupabaseEnabled && parseCodeChannels(env.VITE_PORTAL_CODE_CHANNELS).length > 0;
@@ -54,19 +60,15 @@ export function PatientLogin() {
         msg.includes("invalid login") ||
         msg.includes("invalid credentials")
       ) {
-        setError("Email or password is incorrect. Please try again.");
+        setError({ key: "portal.login.err.incorrect" });
       } else if (msg.includes("email not confirmed")) {
-        setError(
-          "Please check your email and confirm your account before logging in.",
-        );
+        setError({ key: "portal.login.err.unconfirmed" });
       } else if (msg.includes("too many requests")) {
-        setError(
-          "Too many login attempts. Please wait a moment and try again.",
-        );
+        setError({ key: "portal.login.err.tooMany" });
       } else {
         // Never show the provider's own text: it is technical and may
         // repeat what was typed.
-        setError(SIGN_IN_FAILED_MESSAGE);
+        setError({ key: SIGN_IN_FAILED_MESSAGE });
       }
       return;
     }
@@ -77,7 +79,7 @@ export function PatientLogin() {
     if (!supabase) return;
     const result = await completePortalSignIn(supabase);
     if (result.kind === "refused") {
-      setError(result.message);
+      setError({ raw: result.message });
       return;
     }
     navigate("/patient/dashboard");
@@ -97,13 +99,17 @@ export function PatientLogin() {
       );
       navigate("/patient/dashboard");
     } else {
-      setError(result?.error || "No account found. Please register first.");
+      setError(
+        result?.error
+          ? { raw: result.error }
+          : { key: "portal.login.err.noAccount" },
+      );
     }
   };
 
   const handleSubmit = async (data: LoginForm) => {
     setLoading(true);
-    setError("");
+    setError(null);
     try {
       if (isSupabaseEnabled) {
         await handleSupabaseLogin(data);
@@ -111,7 +117,7 @@ export function PatientLogin() {
         await handleOfflineLogin(data);
       }
     } catch {
-      setError("An unexpected error occurred. Please try again.");
+      setError({ key: "portal.login.err.unexpected" });
     } finally {
       setLoading(false);
     }
@@ -128,12 +134,12 @@ export function PatientLogin() {
   return (
     <AuthShell>
       <div className="mb-6">
-        <h1 className="text-h1 text-ink">Patient portal login</h1>
+        <h1 className="text-h1 text-ink">{t("portal.login.title")}</h1>
         <p className="mt-1 text-body text-ink-muted">
           {isSupabaseEnabled ? (
-            <>Log in with your email and password.</>
+            t("portal.login.introPassword")
           ) : (
-            <>Log in with your email and 6-digit PIN.</>
+            t("portal.login.introPin")
           )}
         </p>
       </div>
@@ -142,20 +148,18 @@ export function PatientLogin() {
         <div className="banner banner-info mb-5">
           <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <div className="space-y-1">
-            <p className="font-medium">This device is in offline mode</p>
+            <p className="font-medium">{t("portal.login.offlineTitle")}</p>
             <p className="text-label font-normal">
-              Your account and records are stored on this device only. Email
-              invitations are not available without an internet connection, so
-              register directly with the link below.
+              {t("portal.login.offlineBody")}
             </p>
           </div>
         </div>
       )}
 
-      {error && (
+      {errorText && (
         <div className="banner banner-danger mb-5" role="alert">
           <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-          <p>{error}</p>
+          <p>{errorText}</p>
         </div>
       )}
 
@@ -166,7 +170,7 @@ export function PatientLogin() {
       >
         <div>
           <label htmlFor="email" className="field-label">
-            Email Address
+            {t("portal.login.email")}
           </label>
           <input
             {...form.register("email")}
@@ -181,21 +185,21 @@ export function PatientLogin() {
           />
           {errors.email && (
             <p id="email-error" className="field-error">
-              {errors.email.message}
+              {t(String(errors.email.message))}
             </p>
           )}
         </div>
 
         <div>
           <label htmlFor="credential" className="field-label">
-            {isSupabaseEnabled ? "Password" : "6-Digit PIN"}
+            {isSupabaseEnabled ? t("portal.login.password") : t("portal.login.pin")}
           </label>
           <input
             {...form.register("credential")}
             type="password"
             id="credential"
             inputMode={isSupabaseEnabled ? undefined : "numeric"}
-            placeholder={isSupabaseEnabled ? "Your password" : "••••••"}
+            placeholder={isSupabaseEnabled ? t("portal.login.passwordPlaceholder") : "••••••"}
             maxLength={isSupabaseEnabled ? undefined : 6}
             className="input-field"
             disabled={loading}
@@ -206,24 +210,23 @@ export function PatientLogin() {
           {isSupabaseEnabled ? (
             <div className="mt-1 flex items-center justify-between gap-3">
               <p id={hintId} className="field-hint mt-0">
-                The password you chose when you registered.
+                {t("portal.login.passwordHint")}
               </p>
               <Link
                 to="/patient/forgot-password"
                 className="inline-flex min-h-touch-target shrink-0 items-center text-label text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
-                Forgot password?
+                {t("portal.login.forgot")}
               </Link>
             </div>
           ) : (
             <p id={hintId} className="field-hint">
-              Enter the 6-digit PIN you chose when you registered. Forgot it?
-              Ask clinic staff to help you reset it.
+              {t("portal.login.pinHint")}
             </p>
           )}
           {errors.credential && (
             <p id="credential-error" className="field-error">
-              {errors.credential.message}
+              {t(String(errors.credential.message))}
             </p>
           )}
         </div>
@@ -239,11 +242,11 @@ export function PatientLogin() {
                 className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"
                 aria-hidden
               />
-              Logging in...
+              {t("portal.login.loggingIn")}
             </>
           ) : (
             <>
-              Login
+              {t("portal.login.submit")}
               <ArrowRightIcon className="h-5 w-5" aria-hidden />
             </>
           )}
@@ -254,17 +257,17 @@ export function PatientLogin() {
             to="/patient/sign-in-code"
             className="btn-secondary w-full"
           >
-            Sign in with a code instead
+            {t("portal.login.useCode")}
           </Link>
         )}
 
         <p className="text-center text-body text-ink-secondary">
-          Don&apos;t have an account?{" "}
+          {t("portal.login.noAccount")}{" "}
           <Link
             to="/patient/register"
             className="font-medium text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
-            Register here
+            {t("portal.login.register")}
           </Link>
         </p>
       </form>

@@ -233,7 +233,10 @@ export function SecureMessaging() {
             schema: "public",
             table: "patient_secure_messages",
             // Only this patient's rows. Realtime does not apply row security
-            // to deletions, so the filter must be here, not only on the server.
+            // to deletions, so without this filter a patient could be told of
+            // other patients' deletes. A delete event carries only the row id,
+            // so it never matches the filter: deleted messages drop off at the
+            // next refresh, not live.
             filter: `patient_id=eq.${patientId}`,
           },
           () => {
