@@ -14,24 +14,21 @@ import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
 import { appendUnique, formatPortalLongDate } from "./portalStatus";
 import { readPortalUser } from "./portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 
 const PAGE_SIZE = 10;
 
-const PAGE_TITLE = "Your visits";
-const PAGE_DESCRIPTION =
-  "Visits recorded by the outreach team. A visit shows here once it is finished and uploaded from the clinic's device.";
-
-const LOAD_FAILED = "We could not load your visits. Please try again.";
+// Error messages are kept as translation keys so the loader does not depend on `t`.
+const LOAD_FAILED = "portal.visits.loadFailed";
 
 /** Why the visits were not loaded, when the notice is not a failure. */
 type NotLoaded = Extract<PortalDataError, "offline" | "unavailable">;
 
 function NotConnectedNotice() {
+  const { t } = useT();
   return (
-    <PortalNotice tone="info" title="Visit history is not available here">
-      This portal is not connected to the clinic&apos;s online records, so
-      your full visit history cannot be shown. Your home page shows what
-      is saved on this device.
+    <PortalNotice tone="info" title={t("portal.visits.notConnectedTitle")}>
+      {t("portal.visits.notConnected")}
     </PortalNotice>
   );
 }
@@ -41,18 +38,22 @@ function VitalsSummary({
 }: {
   vitals: NonNullable<PatientMedicalRecord["vitals"]>;
 }) {
+  const { t } = useT();
   const items: { label: string; value: string }[] = [];
   if (vitals.systolic && vitals.diastolic) {
     items.push({
-      label: "Blood pressure",
+      label: t("portal.visit.bloodPressure"),
       value: `${vitals.systolic}/${vitals.diastolic} mmHg`,
     });
   }
   if (vitals.pulseBpm) {
-    items.push({ label: "Heart rate", value: `${vitals.pulseBpm} per minute` });
+    items.push({
+      label: t("portal.visit.heartRate"),
+      value: t("portal.visits.perMinute", { value: vitals.pulseBpm }),
+    });
   }
   if (vitals.tempC) {
-    items.push({ label: "Temperature", value: `${vitals.tempC}°C` });
+    items.push({ label: t("portal.visit.temperature"), value: `${vitals.tempC}°C` });
   }
   if (items.length === 0) return null;
   return (
@@ -68,6 +69,7 @@ function VitalsSummary({
 }
 
 export function MedicalHistory() {
+  const { t } = useT();
   const online = useOnlineStatus();
   const [records, setRecords] = useState<PatientMedicalRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,11 +88,11 @@ export function MedicalHistory() {
     try {
       const portalUser = readPortalUser();
       if (!portalUser) {
-        setError("We could not find your sign-in on this phone. Please log in again.");
+        setError("portal.visits.noSignIn");
         return;
       }
       if (!portalUser.patientId || !portalUser.id) {
-        setError("Your sign-in details are incomplete. Please log in again.");
+        setError("portal.visits.signInIncomplete");
         return;
       }
 
@@ -146,25 +148,25 @@ export function MedicalHistory() {
 
   if (!isSupabaseEnabled) {
     return (
-      <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
+      <PortalPage title={t("portal.visits.title")} description={t("portal.visits.description")}>
         <NotConnectedNotice />
         <Link to="/patient/dashboard" className="btn-secondary">
-          Go to home
+          {t("portal.visits.goHome")}
         </Link>
       </PortalPage>
     );
   }
 
   if (loading && records.length === 0) {
-    return <PortalListSkeleton label="Loading your visits" />;
+    return <PortalListSkeleton label={t("portal.state.loading.visits")} />;
   }
 
   return (
-    <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
+    <PortalPage title={t("portal.visits.title")} description={t("portal.visits.description")}>
       {(!online || notLoaded === "offline") && (
         <PortalNotice
           tone="offline"
-          title="You are offline"
+          title={t("portal.visits.offlineTitle")}
           action={
             online ? (
               <button
@@ -174,14 +176,14 @@ export function MedicalHistory() {
                 className="btn-secondary"
               >
                 <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                Try again
+                {t("portal.error.retry")}
               </button>
             ) : undefined
           }
         >
           {records.length > 0
-            ? "You are seeing the visits loaded when this phone was last online. They may be out of date. Connect to the internet to load more."
-            : "Connect to the internet to see your visits."}
+            ? t("portal.visits.offlineStale")
+            : t("portal.visits.offlineEmpty")}
         </PortalNotice>
       )}
 
@@ -198,12 +200,12 @@ export function MedicalHistory() {
                 className="btn-secondary"
               >
                 <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                Try again
+                {t("portal.error.retry")}
               </button>
             ) : undefined
           }
         >
-          {error}
+          {t(error)}
         </PortalNotice>
       )}
 
@@ -211,13 +213,13 @@ export function MedicalHistory() {
         <div className="panel">
           <EmptyState
             icon={CalendarIcon}
-            title="No visits yet"
-            description="After you are seen at an outreach and the visit is finished, it will show here. If you think a visit is missing, ask the outreach team at your next visit."
+            title={t("portal.visits.emptyTitle")}
+            description={t("portal.visits.emptyBody")}
           />
         </div>
       ) : (
         records.length > 0 && (
-          <ul className="space-y-3" aria-label="Visits, newest first">
+          <ul className="space-y-3" aria-label={t("portal.visits.listLabel")}>
             {records.map((record) => (
               <li key={record.visitId}>
                 <Link
@@ -243,7 +245,7 @@ export function MedicalHistory() {
                     {record.consultation &&
                       record.consultation.diagnoses?.length > 0 && (
                         <p className="mt-2 text-body">
-                          <span className="text-ink-muted">Diagnosis: </span>
+                          <span className="text-ink-muted">{t("portal.visits.diagnosisLabel")} </span>
                           <span className="font-medium text-ink">
                             {record.consultation.diagnoses.join(", ")}
                           </span>
@@ -251,7 +253,7 @@ export function MedicalHistory() {
                       )}
                     {record.consultation?.providerName && (
                       <p className="text-body text-ink-muted">
-                        Seen by {record.consultation.providerName}
+                        {t("portal.visit.seenBy", { name: record.consultation.providerName })}
                       </p>
                     )}
 
@@ -259,7 +261,7 @@ export function MedicalHistory() {
                       record.prescriptions.length > 0 && (
                         <div className="mt-2">
                           <p className="text-caption text-ink-muted">
-                            Medicines given
+                            {t("portal.visit.medicinesGiven")}
                           </p>
                           <ul className="mt-1 flex flex-wrap gap-1.5">
                             {record.prescriptions.map((rx, idx) => (
@@ -278,7 +280,7 @@ export function MedicalHistory() {
                     className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted"
                     aria-hidden
                   />
-                  <span className="sr-only">Open visit details</span>
+                  <span className="sr-only">{t("portal.visits.openVisit")}</span>
                 </Link>
               </li>
             ))}
@@ -294,12 +296,12 @@ export function MedicalHistory() {
             disabled={loading || !online}
             className="btn-secondary"
           >
-            {loading ? "Loading…" : "Show older visits"}
+            {loading ? t("portal.visits.loadingShort") : t("portal.visits.showOlder")}
           </button>
         </div>
       )}
       <p className="sr-only" aria-live="polite">
-        {loading && records.length > 0 ? "Loading older visits" : ""}
+        {loading && records.length > 0 ? t("portal.visits.loadingOlder") : ""}
       </p>
     </PortalPage>
   );

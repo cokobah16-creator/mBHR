@@ -8,6 +8,7 @@ import {
   portalRejectionMessage,
   portalSignInDecision,
   portalSignInRefusalMessage,
+  reconcileStoredPortalUser,
   summarizeBulkAccess,
   summarizeCommandOutcomes,
   LOCAL_PORTAL_CACHE_MAX_AGE_MS,
@@ -328,5 +329,25 @@ describe("summarizeCommandOutcomes", () => {
     expect(summary.applied).toBe(1);
     expect(summary.waiting).toBe(1);
     expect(summary.refused).toEqual([{ patientId: "c", message: expect.stringMatching(/merged/) }]);
+  });
+});
+
+describe("reconcileStoredPortalUser", () => {
+  const stored = JSON.stringify({ id: "u1", patientId: "old", givenName: "Ada" });
+
+  it("re-points a stored record the server no longer lists (merged away)", () => {
+    const next = reconcileStoredPortalUser(stored, ["kept"]);
+    expect(JSON.parse(next!)).toEqual({ id: "u1", patientId: "kept", givenName: "Ada" });
+  });
+
+  it("changes nothing when the stored record is still allowed", () => {
+    expect(reconcileStoredPortalUser(stored, ["other", "old"])).toBeNull();
+  });
+
+  it("changes nothing without a stored user, a readable one, or an allowed record", () => {
+    expect(reconcileStoredPortalUser(null, ["kept"])).toBeNull();
+    expect(reconcileStoredPortalUser("{not json", ["kept"])).toBeNull();
+    expect(reconcileStoredPortalUser("[]", ["kept"])).toBeNull();
+    expect(reconcileStoredPortalUser(stored, [])).toBeNull();
   });
 });

@@ -27,7 +27,10 @@ import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import type { SupabaseClient, User as SupabaseUser } from "@supabase/supabase-js";
 import { clearStoredSupabaseAuth } from "@/lib/supabaseAuthStorage";
 import { fetchPortalAccessStatus } from "@/services/portalSignIn";
-import type { PortalSignInCheck } from "@/services/portalAccessRules";
+import {
+  reconcileStoredPortalUser,
+  type PortalSignInCheck,
+} from "@/services/portalAccessRules";
 import { AuthCallback } from "@/components/AuthCallback";
 import {
   PageSkeleton,
@@ -402,6 +405,26 @@ function clearStoredPortalUser(): void {
   }
 }
 
+/**
+ * Re-point the portal patient kept in this browser when the server no longer
+ * lists it (for example after two records were merged), and drop a caregiver
+ * profile chosen for the old record. Storage may be blocked: nothing to do.
+ */
+function keepStoredPortalPatientAllowed(patientIds: string[]): void {
+  try {
+    const next = reconcileStoredPortalUser(
+      localStorage.getItem("patient_portal_user"),
+      patientIds,
+    );
+    if (next) {
+      localStorage.setItem("patient_portal_user", next);
+      localStorage.removeItem("patient_active_profile");
+    }
+  } catch {
+    // Storage blocked.
+  }
+}
+
 function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
   const [isValidating, setIsValidating] = React.useState(true);
   const [isValid, setIsValid] = React.useState(false);
@@ -441,6 +464,11 @@ function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
               setIsValid(false);
               setIsValidating(false);
               return;
+            }
+            if (access.kind === "allowed") {
+              // Follow a merge: the portal pages read the patient id kept on
+              // this device, so point it at a record the server allows.
+              keepStoredPortalPatientAllowed(access.patientIds);
             }
           }
           setIsValid(true);

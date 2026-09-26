@@ -364,3 +364,28 @@ export function summarizeCommandOutcomes(
   }
   return summary;
 }
+
+/**
+ * The stored portal user (patient_portal_user JSON) re-pointed at a record
+ * the server says this sign-in may open, when the stored one is no longer
+ * among them (for example after clinic staff merged two records). Null when
+ * nothing needs to change or the stored value cannot be read.
+ */
+export function reconcileStoredPortalUser(
+  raw: string | null,
+  allowedPatientIds: readonly string[],
+): string | null {
+  if (!raw || allowedPatientIds.length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const user = parsed as Record<string, unknown>;
+  if (typeof user.patientId === "string" && allowedPatientIds.includes(user.patientId)) {
+    return null;
+  }
+  return JSON.stringify({ ...user, patientId: allowedPatientIds[0] });
+}

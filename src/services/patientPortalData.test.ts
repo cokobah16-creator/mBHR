@@ -6,6 +6,8 @@ import {
   getVisitDetails,
   loadPatientDashboard,
   loadVisitDetails,
+  newestRow,
+  toMedicalRecord,
   getPatientNotifications,
   markNotificationAsRead,
   getPatientMessages,
@@ -383,5 +385,70 @@ describe("explicit error flags", () => {
       data: null,
       error: "not_found",
     });
+  });
+});
+
+describe("visit records", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("loads a visit that has more than one set of measurements and notes", async () => {
+    mockTables({
+      visits: { data: { id: "v1", started_at: "2026-09-01T08:00:00Z" }, error: null },
+      vitals: {
+        data: [
+          { visit_id: "v1", pulse_bpm: 70, taken_at: "2026-09-01T08:10:00Z" },
+          { visit_id: "v1", pulse_bpm: 88, taken_at: "2026-09-01T09:30:00Z" },
+        ],
+        error: null,
+      },
+      consultations: {
+        data: [
+          { visit_id: "v1", soap_plan: "first", created_at: "2026-09-01T08:20:00Z" },
+          { visit_id: "v1", soap_plan: "second", created_at: "2026-09-01T09:40:00Z" },
+        ],
+        error: null,
+      },
+      dispenses: { data: [], error: null },
+    });
+    const result = await loadVisitDetails("u", "patient-id", "v1");
+    expect(result.error).toBeUndefined();
+    expect(result.visit?.vitals?.pulseBpm).toBe(88);
+    expect(result.visit?.consultation?.plan).toBe("second");
+  });
+
+  it("shows no date for a medicine given without a recorded time", () => {
+    const record = toMedicalRecord(
+      { id: "v1", started_at: "2026-09-01T08:00:00Z" },
+      [],
+      [],
+      [
+        { item_name: "Paracetamol", dispensed_at: null },
+        { item_name: "ORS", dispensed_at: "2026-09-01T10:00:00Z" },
+      ],
+    );
+    expect(record.prescriptions?.[0].dispensedAt).toBeUndefined();
+    expect(record.prescriptions?.[1].dispensedAt).toEqual(new Date("2026-09-01T10:00:00Z"));
+  });
+
+  it("drops empty diagnosis entries and tolerates a missing list", () => {
+    const withList = toMedicalRecord({ id: "v1", started_at: "2026-09-01" }, [], [
+      { provisional_dx: ["Malaria", "", "  "] },
+    ], []);
+    expect(withList.consultation?.diagnoses).toEqual(["Malaria"]);
+    const without = toMedicalRecord({ id: "v1", started_at: "2026-09-01" }, [], [
+      { provisional_dx: null },
+    ], []);
+    expect(without.consultation?.diagnoses).toEqual([]);
+  });
+
+  it("picks the newest row by the first readable time", () => {
+    const rows = [
+      { id: "a", taken_at: null, updated_at: "2026-09-02T00:00:00Z" },
+      { id: "b", taken_at: "2026-09-01T00:00:00Z" },
+    ];
+    expect(newestRow(rows, ["taken_at", "updated_at"])?.id).toBe("a");
+    expect(newestRow([], ["taken_at"])).toBeUndefined();
   });
 });

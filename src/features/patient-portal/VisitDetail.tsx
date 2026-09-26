@@ -14,23 +14,23 @@ import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
 import { formatPortalDate, formatPortalLongDate } from "./portalStatus";
 import { clearPortalSession, readPortalUser } from "./portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-
-const BACK_CRUMB = { label: "Your visits", to: "/patient/medical-history" };
+import { useT } from "@/hooks/useT";
 
 function BackLink() {
+  const { t } = useT();
   return (
     <Link to="/patient/medical-history" className="btn-secondary">
       <ArrowLeftIcon className="h-5 w-5" aria-hidden />
-      Back to your visits
+      {t("portal.visit.back")}
     </Link>
   );
 }
 
 function NotConnectedNotice() {
+  const { t } = useT();
   return (
-    <PortalNotice tone="info" title="Visit details are not available here">
-      This portal is not connected to the clinic&apos;s online records, so
-      visit details cannot be shown.
+    <PortalNotice tone="info" title={t("portal.visit.notConnectedTitle")}>
+      {t("portal.visit.notConnected")}
     </PortalNotice>
   );
 }
@@ -68,12 +68,14 @@ function NoteBlock({ label, text }: { label: string; text: string }) {
 }
 
 export function VisitDetail() {
+  const { t } = useT();
+  const backCrumb = { label: t("portal.visits.title"), to: "/patient/medical-history" };
   const navigate = useNavigate();
   const online = useOnlineStatus();
   const { visitId } = useParams<{ visitId: string }>();
   const [visit, setVisit] = useState<PatientMedicalRecord | null>(null);
   const [loading, setLoading] = useState(true);
-  // A problem with the link itself (no visit id).
+  // A problem with the link itself (no visit id), as a translation key.
   const [error, setError] = useState("");
   // Why the visit did not load: "not_found" only when the server answered
   // that it has no such visit for this patient.
@@ -129,7 +131,7 @@ export function VisitDetail() {
   useEffect(() => {
     if (!visitId) {
       setLoading(false);
-      setError("This link does not point to a visit.");
+      setError("portal.visit.badLink");
       return;
     }
     if (!isSupabaseEnabled) {
@@ -143,7 +145,7 @@ export function VisitDetail() {
 
   if (!isSupabaseEnabled) {
     return (
-      <PortalPage title="Visit details" breadcrumbs={[BACK_CRUMB, { label: "Visit" }]}>
+      <PortalPage title={t("portal.visit.detailsTitle")} breadcrumbs={[backCrumb, { label: t("portal.visit.crumb") }]}>
         <NotConnectedNotice />
         <BackLink />
       </PortalPage>
@@ -153,7 +155,7 @@ export function VisitDetail() {
   // A refresh of the visit already on screen (e.g. after reconnecting) keeps
   // it visible; a different visit never shows here while loading.
   if (loading && !visit) {
-    return <PortalListSkeleton label="Loading visit details" rows={3} />;
+    return <PortalListSkeleton label={t("portal.state.loading.visit")} rows={3} />;
   }
 
   if (!visit) {
@@ -166,36 +168,35 @@ export function VisitDetail() {
           className="btn-secondary"
         >
           <ArrowPathIcon className="h-5 w-5" aria-hidden />
-          Try again
+          {t("portal.error.retry")}
         </button>
       ) : undefined;
     let notice: ReactNode;
     if (error) {
-      notice = <PortalNotice tone="danger">{error}</PortalNotice>;
+      notice = <PortalNotice tone="danger">{t(error)}</PortalNotice>;
     } else if (loadError === "not_found") {
       notice = (
-        <PortalNotice tone="warning" title="We could not find this visit">
-          It may not be uploaded from the clinic&apos;s device yet. Your
-          visits page lists the visits that are ready to see.
+        <PortalNotice tone="warning" title={t("portal.visit.notFoundTitle")}>
+          {t("portal.visit.notFound")}
         </PortalNotice>
       );
     } else if (loadError === "unavailable") {
       notice = <NotConnectedNotice />;
     } else if (loadError === "offline" || !online) {
       notice = (
-        <PortalNotice tone="offline" title="You are offline" action={retry}>
-          Connect to the internet to see this visit.
+        <PortalNotice tone="offline" title={t("portal.visits.offlineTitle")} action={retry}>
+          {t("portal.visit.offlineEmpty")}
         </PortalNotice>
       );
     } else {
       notice = (
         <PortalNotice tone="danger" action={retry}>
-          We could not load this visit. Please try again.
+          {t("portal.visit.loadFailed")}
         </PortalNotice>
       );
     }
     return (
-      <PortalPage title="Visit details" breadcrumbs={[BACK_CRUMB, { label: "Visit" }]}>
+      <PortalPage title={t("portal.visit.detailsTitle")} breadcrumbs={[backCrumb, { label: t("portal.visit.crumb") }]}>
         {notice}
         <BackLink />
       </PortalPage>
@@ -208,49 +209,49 @@ export function VisitDetail() {
   if (vitals) {
     if (vitals.systolic && vitals.diastolic) {
       vitalItems.push({
-        label: "Blood pressure",
+        label: t("portal.visit.bloodPressure"),
         value: `${vitals.systolic}/${vitals.diastolic}`,
         unit: "mmHg",
       });
     }
     if (vitals.pulseBpm) {
       vitalItems.push({
-        label: "Heart rate",
+        label: t("portal.visit.heartRate"),
         value: `${vitals.pulseBpm}`,
-        unit: "beats per minute",
+        unit: t("portal.visit.bpm"),
       });
     }
     if (vitals.tempC) {
       vitalItems.push({
-        label: "Temperature",
+        label: t("portal.visit.temperature"),
         value: `${vitals.tempC}`,
         unit: "°C",
       });
     }
     if (vitals.spo2) {
       vitalItems.push({
-        label: "Oxygen level (SpO2)",
+        label: t("portal.visit.oxygen"),
         value: `${vitals.spo2}`,
         unit: "%",
       });
     }
     if (vitals.heightCm) {
       vitalItems.push({
-        label: "Height",
+        label: t("portal.visit.height"),
         value: `${vitals.heightCm}`,
         unit: "cm",
       });
     }
     if (vitals.weightKg) {
       vitalItems.push({
-        label: "Weight",
+        label: t("portal.visit.weight"),
         value: `${vitals.weightKg}`,
         unit: "kg",
       });
     }
     if (vitals.bmi) {
       vitalItems.push({
-        label: "BMI",
+        label: t("portal.visit.bmi"),
         value: vitals.bmi.toFixed(1),
         unit: "kg/m²",
       });
@@ -262,34 +263,32 @@ export function VisitDetail() {
 
   return (
     <PortalPage
-      title={`Visit on ${shortDate}`}
-      breadcrumbs={[BACK_CRUMB, { label: shortDate }]}
+      title={t("portal.visit.title", { date: shortDate })}
+      breadcrumbs={[backCrumb, { label: shortDate }]}
       description={
         <>
-          Recorded by the outreach team at your visit on{" "}
-          {formatPortalLongDate(visit.visitDate)}.
+          {t("portal.visit.recordedOn", { date: formatPortalLongDate(visit.visitDate) })}
           {consultation?.providerName && (
-            <> Seen by {consultation.providerName}.</>
+            <> {t("portal.visit.seenBy", { name: consultation.providerName })}.</>
           )}
         </>
       }
     >
       {!online && (
-        <PortalNotice tone="offline" title="You are offline">
-          You are seeing this visit as it was loaded when this phone was last
-          online. It may be out of date.
+        <PortalNotice tone="offline" title={t("portal.visits.offlineTitle")}>
+          {t("portal.visit.offlineStale")}
         </PortalNotice>
       )}
 
       {visit.chiefComplaint && (
         <p className="text-body text-ink-secondary">
-          <span className="text-ink-muted">Reason for visit: </span>
+          <span className="text-ink-muted">{t("portal.visit.reason")} </span>
           {visit.chiefComplaint}
         </p>
       )}
 
       {vitalItems.length > 0 && (
-        <Section id="visit-vitals" title="Measurements">
+        <Section id="visit-vitals" title={t("portal.visit.measurements")}>
           <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {vitalItems.map((item) => (
               <div
@@ -307,17 +306,17 @@ export function VisitDetail() {
             ))}
           </dl>
           <p className="mt-3 text-caption text-ink-muted">
-            Talk to your clinician if you have questions about these numbers.
+            {t("portal.visit.measurementsNote")}
           </p>
         </Section>
       )}
 
       {consultation && (
-        <Section id="visit-consultation" title="What the clinician recorded">
+        <Section id="visit-consultation" title={t("portal.visit.recorded")}>
           <div className="space-y-4">
             {diagnoses.length > 0 && (
               <div>
-                <h3 className="text-label text-ink-secondary">Diagnosis</h3>
+                <h3 className="text-label text-ink-secondary">{t("portal.visit.diagnosis")}</h3>
                 <ul className="mt-1 flex flex-wrap gap-2">
                   {diagnoses.map((diagnosis, idx) => (
                     <li
@@ -332,31 +331,31 @@ export function VisitDetail() {
             )}
             {consultation.subjective && (
               <NoteBlock
-                label="What you told the clinician"
+                label={t("portal.visit.yourConcern")}
                 text={consultation.subjective}
               />
             )}
             {consultation.objective && (
               <NoteBlock
-                label="What the clinician found"
+                label={t("portal.visit.objective")}
                 text={consultation.objective}
               />
             )}
             {consultation.assessment && (
               <NoteBlock
-                label="Clinician's assessment"
+                label={t("portal.visit.assessment")}
                 text={consultation.assessment}
               />
             )}
             {consultation.plan && (
-              <NoteBlock label="Treatment plan" text={consultation.plan} />
+              <NoteBlock label={t("portal.visit.plan")} text={consultation.plan} />
             )}
           </div>
         </Section>
       )}
 
       {visit.prescriptions && visit.prescriptions.length > 0 && (
-        <Section id="visit-medicines" title="Medicines given">
+        <Section id="visit-medicines" title={t("portal.visit.medicinesGiven")}>
           <ul className="divide-y divide-line">
             {visit.prescriptions.map((rx, idx) => (
               <li
@@ -376,7 +375,7 @@ export function VisitDetail() {
                 )}
                 {rx.dispensedAt && (
                   <p className="mt-0.5 text-caption text-ink-muted">
-                    Given on {formatPortalDate(rx.dispensedAt)}
+                    {t("portal.visit.givenOn", { date: formatPortalDate(rx.dispensedAt) })}
                   </p>
                 )}
               </li>
@@ -387,7 +386,7 @@ export function VisitDetail() {
 
       {!vitals && !consultation && (visit.prescriptions?.length ?? 0) === 0 && (
         <PortalNotice tone="info">
-          No measurements, notes or medicines were recorded for this visit.
+          {t("portal.visit.nothingRecorded")}
         </PortalNotice>
       )}
 
@@ -395,7 +394,7 @@ export function VisitDetail() {
         <BackLink />
         <Link to="/patient/messages" className="btn-secondary">
           <ChatBubbleLeftRightIcon className="h-5 w-5" aria-hidden />
-          Ask the clinic about this visit
+          {t("portal.visit.ask")}
         </Link>
       </div>
     </PortalPage>
