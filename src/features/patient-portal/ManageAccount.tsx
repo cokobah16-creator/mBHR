@@ -23,17 +23,14 @@ import {
   type PortalSessionUser,
 } from "./account/portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 
 type AccountTab = "profile" | "notifications" | "security";
 
-const TABS: { id: AccountTab; label: string }[] = [
-  { id: "profile", label: "Your details" },
-  { id: "notifications", label: "Reminders" },
-  { id: "security", label: "Security" },
-];
+const TAB_IDS: AccountTab[] = ["profile", "notifications", "security"];
 
 function isAccountTab(id: string): id is AccountTab {
-  return TABS.some((t) => t.id === id);
+  return (TAB_IDS as string[]).includes(id);
 }
 
 interface NotificationPrefs {
@@ -43,38 +40,21 @@ interface NotificationPrefs {
   labResults: boolean;
 }
 
-const NOTIFICATION_OPTIONS: {
-  key: keyof NotificationPrefs;
-  title: string;
-  description: string;
-}[] = [
-  {
-    key: "emailReminders",
-    title: "Email reminders",
-    description: "Appointment reminders sent to your email address",
-  },
-  {
-    key: "smsReminders",
-    title: "Text message reminders",
-    description: "Appointment reminders sent by SMS to your phone",
-  },
-  {
-    key: "appointmentAlerts",
-    title: "Appointment updates",
-    description: "A message when an upcoming appointment is booked or changed",
-  },
-  {
-    key: "labResults",
-    title: "Test results",
-    description: "A message when new test results are ready to view",
-  },
+// Labels live under portal.account.pref.<key>.title / .body.
+const NOTIFICATION_OPTIONS: (keyof NotificationPrefs)[] = [
+  "emailReminders",
+  "smsReminders",
+  "appointmentAlerts",
+  "labResults",
 ];
 
 const IDS = "account";
 
 export function ManageAccount() {
   const navigate = useNavigate();
+  const { t } = useT();
   const isOnline = useOnlineStatus();
+  const tabs = TAB_IDS.map((id) => ({ id, label: t(`portal.account.tab.${id}`) }));
   const [activeTab, setActiveTab] = useState<AccountTab>("profile");
   const [portalUser, setPortalUser] = useState<PortalSessionUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -161,13 +141,13 @@ export function ManageAccount() {
 
       setNotifMessage({
         tone: "success",
-        text: "Your reminder choices were saved to your online account.",
+        text: t("portal.account.prefsSaved"),
       });
     } catch (err) {
       logger.error("[ManageAccount] save preferences failed:", errorName(err));
       setNotifMessage({
         tone: "danger",
-        text: "Your reminder choices were not saved. Check your internet connection and try again.",
+        text: t("portal.account.prefsNotSaved"),
       });
     } finally {
       setSaving(false);
@@ -186,7 +166,7 @@ export function ManageAccount() {
       if (!email) {
         setSecurityMessage({
           tone: "danger",
-          text: "There is no email address on this account. Ask clinic staff to help you reset your password.",
+          text: t("portal.account.noEmail"),
         });
         return;
       }
@@ -194,7 +174,7 @@ export function ManageAccount() {
       if (result.ok) {
         setSecurityMessage({
           tone: "success",
-          text: `If ${email} is the email address on your account, a reset link is on its way. Check your inbox and spam folder.`,
+          text: t("portal.account.resetSent", { email }),
         });
       } else {
         setSecurityMessage({ tone: "danger", text: result.message });
@@ -203,7 +183,7 @@ export function ManageAccount() {
       logger.error("[ManageAccount] password reset failed:", errorName(err));
       setSecurityMessage({
         tone: "danger",
-        text: "We could not send a reset link. Check your internet connection and try again.",
+        text: t("portal.account.resetFailed"),
       });
     } finally {
       setSendingReset(false);
@@ -225,17 +205,17 @@ export function ManageAccount() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
       <PageHeader
-        title="Manage account"
-        description="Your details, reminder choices and account security."
+        title={t("portal.account.title")}
+        description={t("portal.account.description")}
       />
 
       <div className="panel">
         <Tabs
-          tabs={TABS}
+          tabs={tabs}
           active={activeTab}
           onChange={onTabChange}
           idPrefix={IDS}
-          label="Account sections"
+          label={t("portal.account.sections")}
           className="px-2"
         />
 
@@ -253,18 +233,20 @@ export function ManageAccount() {
                 <div className="flex items-start gap-3">
                   <UserGroupIcon className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
                   <div>
-                    <p className="text-body font-medium text-ink">People you care for</p>
+                    <p className="text-body font-medium text-ink">
+                      {t("portal.account.caregiverTitle")}
+                    </p>
                     <p className="text-caption text-ink-muted">
-                      See, add or remove profiles for family members you look after.
+                      {t("portal.account.caregiverBody")}
                     </p>
                   </div>
                 </div>
                 <Link
                   to="/patient/caregiver/add"
                   className="btn-secondary"
-                  aria-label="Manage people you care for"
+                  aria-label={t("portal.account.caregiverManageLabel")}
                 >
-                  Manage
+                  {t("portal.account.manage")}
                 </Link>
               </div>
             </div>
@@ -273,18 +255,15 @@ export function ManageAccount() {
           {activeTab === "notifications" && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-h2 text-ink">Reminders</h2>
+                <h2 className="text-h2 text-ink">{t("portal.account.tab.notifications")}</h2>
                 <p className="mt-1 text-body text-ink-muted">
-                  Choose how you would like to hear from the clinic.
+                  {t("portal.account.remindersIntro")}
                 </p>
                 {isSupabaseEnabled && (
                   <p className="mt-2 flex items-start gap-2 text-caption text-ink-muted">
                     <InformationCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
                     <span>
-                      Your choices are saved to your online account as a record
-                      of your wishes. Reminders the clinic sends do not check
-                      them automatically yet, so tell clinic staff if you do not
-                      want to be contacted a certain way.
+                      {t("portal.account.remindersNote")}
                     </span>
                   </p>
                 )}
@@ -294,9 +273,7 @@ export function ManageAccount() {
                 <div className="banner banner-info">
                   <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
                   <p>
-                    Reminder choices are kept in your online account. This
-                    device is not connected to one, so they cannot be changed
-                    here.
+                    {t("portal.account.remindersNotConnected")}
                   </p>
                 </div>
               ) : prefsLoadFailed ? (
@@ -304,8 +281,7 @@ export function ManageAccount() {
                   <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
                   <div className="space-y-3">
                     <p>
-                      We could not load your reminder choices. Nothing has been
-                      changed.
+                      {t("portal.account.prefsLoadFailed")}
                     </p>
                     <button
                       type="button"
@@ -313,31 +289,31 @@ export function ManageAccount() {
                       className="btn-secondary"
                     >
                       <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                      Try again
+                      {t("portal.error.retry")}
                     </button>
                   </div>
                 </div>
               ) : (
                 <>
                   <fieldset className="space-y-2">
-                    <legend className="sr-only">Reminder choices</legend>
-                    {NOTIFICATION_OPTIONS.map((o) => {
-                      const id = `notif-${o.key}`;
+                    <legend className="sr-only">{t("portal.account.prefsLegend")}</legend>
+                    {NOTIFICATION_OPTIONS.map((key) => {
+                      const id = `notif-${key}`;
                       return (
                         <label
-                          key={o.key}
+                          key={key}
                           htmlFor={id}
                           className="flex min-h-touch-target cursor-pointer items-start gap-3 rounded-md border border-line p-3 transition-colors hover:bg-surface-hover"
                         >
                           <input
                             id={id}
                             type="checkbox"
-                            checked={notifications[o.key]}
+                            checked={notifications[key]}
                             onChange={(e) => {
                               setNotifMessage(null);
                               setNotifications({
                                 ...notifications,
-                                [o.key]: e.target.checked,
+                                [key]: e.target.checked,
                               });
                             }}
                             disabled={saving}
@@ -345,10 +321,10 @@ export function ManageAccount() {
                           />
                           <span>
                             <span className="block text-body font-medium text-ink">
-                              {o.title}
+                              {t(`portal.account.pref.${key}.title`)}
                             </span>
                             <span className="block text-caption text-ink-muted">
-                              {o.description}
+                              {t(`portal.account.pref.${key}.body`)}
                             </span>
                           </span>
                         </label>
@@ -373,7 +349,7 @@ export function ManageAccount() {
 
                   {!isOnline && (
                     <p className="text-caption text-ink-muted">
-                      You are offline. Saving needs an internet connection.
+                      {t("portal.account.offlineSave")}
                     </p>
                   )}
 
@@ -384,7 +360,7 @@ export function ManageAccount() {
                       disabled={saving || !isOnline}
                       className="btn-primary"
                     >
-                      {saving ? "Saving…" : "Save reminder choices"}
+                      {saving ? t("portal.account.saving") : t("portal.account.savePrefs")}
                     </button>
                   </div>
                 </>
@@ -397,14 +373,12 @@ export function ManageAccount() {
               <section aria-labelledby="security-password-title" className="space-y-3">
                 <h2 id="security-password-title" className="flex items-center gap-2 text-h2 text-ink">
                   <KeyIcon className="h-5 w-5 text-ink-muted" aria-hidden />
-                  {isSupabaseEnabled ? "Password" : "PIN"}
+                  {isSupabaseEnabled ? t("portal.account.password") : t("portal.account.pin")}
                 </h2>
                 {isSupabaseEnabled ? (
                   <>
                     <p className="text-body text-ink-secondary">
-                      We will email you a link to choose a new password. Once you
-                      change it, you will be logged out on every device,
-                      including this one.
+                      {t("portal.account.passwordIntro")}
                     </p>
                     <div aria-live="polite">
                       {securityMessage && (
@@ -426,20 +400,17 @@ export function ManageAccount() {
                       disabled={sendingReset || !isOnline}
                       className="btn-primary"
                     >
-                      {sendingReset ? "Sending…" : "Email me a reset link"}
+                      {sendingReset ? t("portal.account.sending") : t("portal.account.sendReset")}
                     </button>
                     {!isOnline && (
                       <p className="text-caption text-ink-muted">
-                        You are offline. Sending a reset link needs an internet
-                        connection.
+                        {t("portal.account.offlineReset")}
                       </p>
                     )}
                   </>
                 ) : (
                   <p className="text-body text-ink-secondary">
-                    You log in on this device with the 6-digit PIN you chose when
-                    you registered. To change or reset your PIN, ask clinic staff
-                    to help you.
+                    {t("portal.account.pinIntro")}
                   </p>
                 )}
               </section>
@@ -449,15 +420,14 @@ export function ManageAccount() {
                 className="space-y-3 border-t border-line pt-6"
               >
                 <h2 id="security-devices-title" className="text-h2 text-ink">
-                  Where you are logged in
+                  {t("portal.account.devicesTitle")}
                 </h2>
                 <div className="flex items-center gap-3 rounded-md border border-line bg-surface-sunken p-3">
                   <DevicePhoneMobileIcon className="h-6 w-6 shrink-0 text-ink-muted" aria-hidden />
                   <div>
-                    <p className="text-body font-medium text-ink">This device</p>
+                    <p className="text-body font-medium text-ink">{t("portal.account.thisDevice")}</p>
                     <p className="text-caption text-ink-muted">
-                      Logged in now. On a shared phone or computer, log out from
-                      the menu when you finish.
+                      {t("portal.account.thisDeviceBody")}
                     </p>
                   </div>
                 </div>
