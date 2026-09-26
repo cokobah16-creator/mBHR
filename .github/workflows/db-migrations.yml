@@ -7,7 +7,9 @@ name: Database migrations
 #             patient data) into a throwaway local Supabase stack, marks the
 #             migrations production already has as applied, applies the
 #             pending ones there, then runs the pgTAP tests in supabase/tests.
-#             Writes nothing to production.
+#             The copy has production's grants exactly, plus its storage
+#             buckets and storage access rules (from storage, only the
+#             buckets table's rows are read). Writes nothing to production.
 #   dry-run   Shows what `apply` would apply to production.
 #   apply     Applies the pending migrations to production, then redeploys the
 #             edge functions that depend on them. Needs the phrase
@@ -208,11 +210,22 @@ jobs:
 
       # ---- rehearse ---------------------------------------------------------
 
-      - name: Copy production's schema (no rows)
+      - name: Copy production's schema and storage bucket settings (no patient rows)
         if: inputs.action == 'rehearse'
         run: |
           supabase db dump --linked --role-only -f "$RUNNER_TEMP/roles.sql"
           supabase db dump --linked -f "$RUNNER_TEMP/schema.sql"
+          # The dump above leaves out the storage schema, which Supabase
+          # manages. The tests need two things from it: its access rules
+          # (structure) and the bucket settings (rows of storage.buckets).
+          # The data dump excludes every other storage table, found in the
+          # structure dump, so no file name or path is read from production,
+          # including from tables a newer storage version adds.
+          supabase db dump --linked --schema storage -f "$RUNNER_TEMP/storage-schema.sql"
+          excludes=$(python3 .github/scripts/rehearse_storage_copy.py --exclude-args "$RUNNER_TEMP/storage-schema.sql")
+          # shellcheck disable=SC2086 # one word per flag
+          supabase db dump --linked --data-only --schema storage $excludes \
+            -f "$RUNNER_TEMP/storage-data.sql"
 
       - name: Start an empty local Supabase stack
         if: inputs.action == 'rehearse'
@@ -233,7 +246,17 @@ jobs:
           grep -vE '"?(postgres|supabase_[a-z_]+|authenticator|anon|authenticated|service_role|pgbouncer|dashboard_user|pgsodium_[a-z_]+)"?( |;|$)' \
             "$RUNNER_TEMP/roles.sql" > "$RUNNER_TEMP/roles-custom.sql" || true
           psql "$LOCAL_DB" -q -f "$RUNNER_TEMP/roles-custom.sql" || true
-          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/schema.sql"
+          # Without this the copy gives anon and signed-in users every table
+          # and function production keeps from them (see the file).
+          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -f .github/scripts/rehearse_reset_default_privileges.sql
+          # VERBOSITY=terse: an error names the problem without echoing the
+          # statement or row it came from into this public log.
+          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -v VERBOSITY=terse -f "$RUNNER_TEMP/schema.sql"
+          # Production's storage buckets and storage access rules. Prints only counts.
+          python3 .github/scripts/rehearse_storage_copy.py \
+            "$RUNNER_TEMP/storage-schema.sql" "$RUNNER_TEMP/storage-data.sql" \
+            > "$RUNNER_TEMP/storage-copy.sql"
+          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -v VERBOSITY=terse -f "$RUNNER_TEMP/storage-copy.sql"
 
       - name: Mark the migrations production has as applied locally
         if: inputs.action == 'rehearse'
