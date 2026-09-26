@@ -19,17 +19,16 @@ import {
   resolveActivePatientId,
 } from "./portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 
 interface MedicineItem {
   key: string;
   name: string;
   dosage: string | null;
   directions: string | null;
-  givenAt: string | Date;
+  givenAt: string | Date | null;
   visitId: string | null;
 }
-
-const PAGE_TITLE = "Your medicines";
 
 // getPatientDashboard returns at most this many medicines from this device.
 const LOCAL_MEDICINES_LIMIT = 10;
@@ -40,6 +39,7 @@ const LOCAL_MEDICINES_LIMIT = 10;
  * a secure message or an appointment request.
  */
 export function PrescriptionRefills() {
+  const { t } = useT();
   const online = useOnlineStatus();
   const [medicines, setMedicines] = useState<MedicineItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,9 +52,7 @@ export function PrescriptionRefills() {
     try {
       const portalUser = readPortalUser();
       if (!portalUser || !portalUser.patientId) {
-        setError(
-          "We could not find your sign-in on this phone. Please log in again.",
-        );
+        setError("portal.visits.noSignIn");
         return;
       }
 
@@ -62,11 +60,7 @@ export function PrescriptionRefills() {
         const res = await getMedications(portalUser.patientId);
         if (res.error || !res.data) {
           // Offline, the "You are offline" notice already explains it.
-          setError(
-            navigator.onLine
-              ? "We could not load your medicines. Please try again."
-              : "",
-          );
+          setError(navigator.onLine ? "portal.medicines.loadFailed" : "");
           return;
         }
         setMedicines(
@@ -87,7 +81,7 @@ export function PrescriptionRefills() {
           resolveActivePatientId(portalUser, readActiveProfile()),
         );
         if (!data) {
-          setError("We could not load your medicines. Please try again.");
+          setError("portal.medicines.loadFailed");
           return;
         }
         setMedicines(
@@ -111,7 +105,7 @@ export function PrescriptionRefills() {
       setError(
         isSupabaseEnabled && !navigator.onLine
           ? ""
-          : "We could not load your medicines. Please try again.",
+          : "portal.medicines.loadFailed",
       );
     } finally {
       setLoading(false);
@@ -130,20 +124,20 @@ export function PrescriptionRefills() {
   }, [canLoad, loadMedicines]);
 
   if (loading && !loaded) {
-    return <PortalListSkeleton label="Loading your medicines" />;
+    return <PortalListSkeleton label={t("portal.state.loading.medicines")} />;
   }
 
   const description = isSupabaseEnabled
-    ? "Medicines the outreach pharmacy recorded as given to you, newest first."
-    : "Medicines the outreach pharmacy saved on this device for you, newest first.";
+    ? t("portal.medicines.description")
+    : t("portal.medicines.descriptionLocal");
 
   return (
-    <PortalPage title={PAGE_TITLE} description={description}>
+    <PortalPage title={t("portal.medicines.title")} description={description}>
       {isSupabaseEnabled && !online && (
-        <PortalNotice tone="offline" title="You are offline">
+        <PortalNotice tone="offline" title={t("portal.visits.offlineTitle")}>
           {loaded
-            ? "You are seeing the medicines loaded when this phone was last online. They may be out of date."
-            : "Connect to the internet to see your medicines."}
+            ? t("portal.medicines.offlineStale")
+            : t("portal.medicines.offlineEmpty")}
         </PortalNotice>
       )}
 
@@ -158,12 +152,12 @@ export function PrescriptionRefills() {
                 className="btn-secondary"
               >
                 <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                Try again
+                {t("portal.error.retry")}
               </button>
             ) : undefined
           }
         >
-          {error}
+          {t(error)}
         </PortalNotice>
       )}
 
@@ -171,21 +165,20 @@ export function PrescriptionRefills() {
         <div className="panel">
           <EmptyState
             icon={ArchiveBoxIcon}
-            title="No medicines recorded yet"
-            description="Medicines given to you at an outreach visit will show here once the pharmacy records them."
+            title={t("portal.medicines.emptyTitle")}
+            description={t("portal.medicines.emptyBody")}
           />
         </div>
       )}
 
       {!isSupabaseEnabled && medicines.length >= LOCAL_MEDICINES_LIMIT && (
         <p className="text-caption text-ink-muted">
-          Showing the {LOCAL_MEDICINES_LIMIT} most recent medicines saved on
-          this device.
+          {t("portal.medicines.localLimit", { count: LOCAL_MEDICINES_LIMIT })}
         </p>
       )}
 
       {medicines.length > 0 && (
-        <ul className="panel divide-y divide-line" aria-label="Your medicines">
+        <ul className="panel divide-y divide-line" aria-label={t("portal.medicines.title")}>
           {medicines.map((med) => (
             <li key={med.key} className="p-4">
               <h2 className="text-h3 text-ink">{med.name}</h2>
@@ -194,18 +187,20 @@ export function PrescriptionRefills() {
               )}
               {med.directions && (
                 <p className="mt-1 text-body text-ink">
-                  <span className="text-ink-muted">How to take it: </span>
+                  <span className="text-ink-muted">{t("portal.medicines.howToTake")} </span>
                   {med.directions}
                 </p>
               )}
               <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-ink-muted">
-                <span>Given on {formatPortalDate(med.givenAt)}</span>
+                {med.givenAt && formatPortalDate(med.givenAt) && (
+                  <span>{t("portal.visit.givenOn", { date: formatPortalDate(med.givenAt) })}</span>
+                )}
                 {med.visitId && isSupabaseEnabled && (
                   <Link
                     to={`/patient/visit/${med.visitId}`}
                     className="inline-flex min-h-touch-target items-center text-label text-primary-fg underline-offset-2 hover:underline"
                   >
-                    See the visit
+                    {t("portal.medicines.seeVisit")}
                   </Link>
                 )}
               </p>
@@ -217,16 +212,14 @@ export function PrescriptionRefills() {
       <section className="panel" aria-labelledby="refill-title">
         <div className="panel-header">
           <h2 id="refill-title" className="panel-title">
-            Need more of a medicine?
+            {t("portal.medicines.refillTitle")}
           </h2>
         </div>
         <div className="panel-body space-y-3">
           {isSupabaseEnabled ? (
             <>
               <p className="text-body text-ink-secondary">
-                You cannot order a refill in the portal. Send a message to the
-                clinic team or ask for an appointment. The clinic team can tell
-                you what to do next.
+                {t("portal.medicines.refillBody")}
               </p>
               <div className="flex flex-wrap gap-2">
                 <Link
@@ -235,21 +228,20 @@ export function PrescriptionRefills() {
                   className="btn-primary"
                 >
                   <ChatBubbleLeftRightIcon className="h-5 w-5" aria-hidden />
-                  Message the clinic
+                  {t("portal.medicines.messageClinic")}
                 </Link>
                 <Link
                   to="/patient/appointments/request"
                   className="btn-secondary"
                 >
                   <CalendarDaysIcon className="h-5 w-5" aria-hidden />
-                  Ask for an appointment
+                  {t("portal.medicines.askAppointment")}
                 </Link>
               </div>
             </>
           ) : (
             <p className="text-body text-ink-secondary">
-              You cannot order a refill in the portal. Ask the outreach team at
-              your next visit.
+              {t("portal.medicines.refillBodyLocal")}
             </p>
           )}
         </div>
