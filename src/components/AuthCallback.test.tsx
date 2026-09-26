@@ -23,7 +23,7 @@ vi.mock("@/lib/supabaseClient", () => ({
   },
 }));
 
-vi.mock("@/features/patient-portal/account/completeSignIn", () => ({
+vi.mock("@/services/portalCompleteSignIn", () => ({
   completePortalSignIn: auth.complete,
 }));
 

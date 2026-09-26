@@ -11,6 +11,9 @@
  * Anything short of "access is on" refuses: this device's sign-in is ended
  * and the patient gets the server's reason in plain words. The server's
  * row-level security guards the records either way.
+ *
+ * Lives in services, not features/patient-portal: /auth/callback is part
+ * of the startup bundle, which must not import the portal's own chunk.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {

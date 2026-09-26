@@ -22,7 +22,7 @@ vi.mock("@/services/portalCodeSignIn", async (orig) => {
   return { ...actual, sendPortalCode: mocks.send, verifyPortalCode: mocks.verify };
 });
 
-vi.mock("./account/completeSignIn", () => ({
+vi.mock("@/services/portalCompleteSignIn", () => ({
   completePortalSignIn: mocks.complete,
 }));
 

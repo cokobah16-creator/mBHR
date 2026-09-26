@@ -12,7 +12,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { AuthShell } from "./account/AuthShell";
-import { completePortalSignIn } from "./account/completeSignIn";
+import { completePortalSignIn } from "@/services/portalCompleteSignIn";
 import { env } from "@/config/env";
 import { parseCodeChannels } from "@/services/portalCodeSignIn";
 

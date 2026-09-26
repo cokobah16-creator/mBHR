@@ -17,7 +17,7 @@ import { useNavigate } from "react-router-dom";
 import { ExclamationCircleIcon } from "@heroicons/react/24/outline";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
-import { completePortalSignIn } from "@/features/patient-portal/account/completeSignIn";
+import { completePortalSignIn } from "@/services/portalCompleteSignIn";
 
 const OFFLINE_MESSAGE =
   "This device is offline, so we could not finish signing you in. Connect to the internet, then sign in with your email and password.";

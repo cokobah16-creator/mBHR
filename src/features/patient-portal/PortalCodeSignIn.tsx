@@ -20,7 +20,7 @@ import {
   type VerifyCodeResult,
 } from "@/services/portalCodeSignIn";
 import { AuthShell } from "./account/AuthShell";
-import { completePortalSignIn } from "./account/completeSignIn";
+import { completePortalSignIn } from "@/services/portalCompleteSignIn";
 import { OTPInput } from "./OTPInput";
 import { PatientFriendlyAlert } from "./ui/PatientFriendlyAlert";
 import { PortalField } from "./ui/PortalField";
