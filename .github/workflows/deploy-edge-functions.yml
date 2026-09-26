@@ -1,8 +1,9 @@
 name: Deploy edge functions
 
 # Manual: Actions > Deploy edge functions > Run workflow.
-# Automatic: a pull request that changes staff-admin or the shared function
-# code runs only the check below for staff-admin (no secrets, no deploy).
+# Automatic: a pull request that changes staff-admin, auth-send-sms or the
+# shared function code runs only the check below for those two functions (no
+# secrets, no deploy).
 #
 #   check   Type-checks one edge function with Deno. Needs no secrets and no
 #           approval, and writes nothing anywhere. Runs from any branch, so it
@@ -24,7 +25,11 @@ name: Deploy edge functions
 # their own machine.
 #
 # JWT verification stays on: the CLI checks the caller's JWT by default and
-# this workflow never passes --no-verify-jwt.
+# this workflow passes --no-verify-jwt for one function only, auth-send-sms.
+# Supabase Auth calls that hook without a user JWT; the function refuses every
+# call that is not signed with the project's hook secret (Standard Webhooks
+# signature, checked in _shared/sms/authSmsHook.ts), and refuses all calls
+# while that secret is unset. See docs/deployment/AUTH_SMS_HOOK.md.
 #
 # No function may be declared in supabase/config.toml ([functions.<name>]):
 # with "Deploy to production" on in Supabase's GitHub integration, a declared
@@ -41,6 +46,7 @@ on:
   pull_request:
     paths:
       - "supabase/functions/staff-admin/**"
+      - "supabase/functions/auth-send-sms/**"
       - "supabase/functions/_shared/**"
       - "supabase/config.toml"
       - ".github/workflows/deploy-edge-functions.yml"
@@ -59,6 +65,7 @@ on:
         type: choice
         options:
           - staff-admin
+          - auth-send-sms
           - send-otp-email
           - send-otp-sms
           - send-sms-reminder
@@ -80,12 +87,16 @@ permissions:
 
 jobs:
   check:
-    name: Check (${{ inputs.function || 'staff-admin' }})
+    name: Check (${{ matrix.fn }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # A pull request has no inputs: it checks staff-admin and auth-send-sms.
+        fn: ${{ fromJSON(github.event_name == 'pull_request' && '["staff-admin","auth-send-sms"]' || format('["{0}"]', inputs.function)) }}
     env:
-      # A pull request has no inputs: it checks staff-admin.
-      FN: ${{ inputs.function || 'staff-admin' }}
+      FN: ${{ matrix.fn }}
       TYPECHECK: ${{ github.event_name == 'pull_request' || inputs.typecheck }}
     steps:
       - name: Checkout
@@ -190,7 +201,14 @@ jobs:
 
       - name: Deploy the function to production
         if: inputs.action == 'deploy'
-        run: supabase functions deploy "$FN" --project-ref "$SUPABASE_PROJECT_REF"
+        run: |
+          if [ "$FN" = "auth-send-sms" ]; then
+            # Called by Supabase Auth without a user JWT; the function checks
+            # the hook signature itself (see the note at the top).
+            supabase functions deploy "$FN" --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          else
+            supabase functions deploy "$FN" --project-ref "$SUPABASE_PROJECT_REF"
+          fi
 
       - name: Functions deployed on production afterwards
         if: inputs.action == 'deploy'
