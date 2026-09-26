@@ -77,7 +77,7 @@ import { MAX_KEYSET_ROUNDS, UUID, checkCursorKey, one, patientNotes } from "./sh
  * checker accepts them, with no other change here.
  */
 function actorRulesAccepted(): boolean {
-  const rule = mapProvision({ provision_type: "deny", actor_type: "external_system", action: "disclose" });
+  const rule = mapProvision({ provision_type: "deny", actor_type: "external_system", names_recipient: false, action: "disclose" });
   if (typeof rule === "symbol") return false;
   const sample = {
     resourceType: "Consent",
@@ -151,7 +151,7 @@ export const definition: ResourceDefinition = {
     "Staff with consult, portal_manage or audit_access may read consents.",
     "A withdrawn consent is kept and published as inactive: it is never deleted and never shown as active.",
     "Who recorded, verified or withdrew a consent, the reason for a withdrawal, who signed it and its source document are never published; neither is a performer.",
-    "A rule's actor names the kind of recipient recorded (for example External system), never a specific one.",
+    "A rule's actor names the kind of recipient recorded (for example External system), never a specific one. A consent with a rule for one specific recipient is therefore not published: it would read as a rule for every recipient of that kind.",
     "A consent that cites no policy (FHIR requires one) or whose rules cannot be shown without changing their meaning is not published; a searchset says how many were left out.",
     ...(ACTOR_RULES_SERVED
       ? []

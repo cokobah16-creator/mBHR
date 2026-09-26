@@ -104,13 +104,15 @@
 --   - interop_consent_summary follows the gateway's consent evaluator for
 --     external sharing (scope patient-privacy; actor external_system,
 --     organization, any or unset; no security label; a deny wins; a permit
---     counts only when verified). The design's rule (external_system /
+--     counts only when verified and naming no specific recipient). The
+--     design's rule (external_system /
 --     organization only, purpose not TREAT, any scope, denies ignored,
 --     unverified permits count) disagreed with what the gateway enforces.
 --     It adds pending_verification (boolean) to the design's keys, and
 --     sharing_state / sharing_reason for the staff chip: 'allowed' only for
 --     a verified, in-force permit with no limit (no purpose, action,
---     resource type, data class or security label) and no refusal;
+--     resource type, data class, security label or specific recipient) and
+--     no refusal;
 --     'withdrawn'; otherwise 'restricted', with the reason.
 --   - The chip counts a refusal only where the gateway's evaluator would
 --     apply it: an external-actor deny on an active, started, not
@@ -118,9 +120,9 @@
 --     deny on a draft or proposed record, or one that has not started yet,
 --     is not counted (the evaluator ignores it too), so the chip can read
 --     Allowed beside it until it is active and started. A refusal limited
---     by purpose, action, resource type, data class or security label is
---     'refused_partly', and a verified full permit beside it is not
---     'allowed'.
+--     by purpose, action, resource type, data class, security label or one
+--     specific recipient is 'refused_partly', and a verified full permit
+--     beside it is not 'allowed'.
 --   - 'withdrawn' (sharing_reason and the older external_sharing key) only
 --     when a withdrawn patient-privacy record had a permit for an external
 --     actor and no deny: a withdrawn refusal, an empty record or a care
@@ -1202,7 +1204,11 @@ CREATE TRIGGER consent_records_history
 -- ----------------------------------------------------------------------------
 -- Never includes recorded_by, verified_by, withdrawn_by (account ids),
 -- withdrawal_reason, granted_by, granted_by_relationship,
--- source_document_id or provision actor_reference.
+-- source_document_id or provision actor_reference. A provision's
+-- names_recipient says only whether it names one specific recipient
+-- (actor_reference set and not blank), never who: the gateway withholds
+-- such a consent rather than publish the rule for every recipient of
+-- that kind.
 CREATE OR REPLACE FUNCTION interop.consent_directives_json(p_ids uuid[])
 RETURNS jsonb
 LANGUAGE sql
@@ -1231,6 +1237,8 @@ AS $$
                       'id', p.id,
                       'provision_type', p.provision_type,
                       'actor_type', p.actor_type,
+                      'names_recipient', p.actor_reference IS NOT NULL
+                                         AND btrim(p.actor_reference) <> '',
                       'action', p.action,
                       'purpose', p.purpose,
                       'data_class', p.data_class,
@@ -1249,7 +1257,8 @@ $$;
 
 COMMENT ON FUNCTION interop.consent_directives_json(uuid[]) IS
   'Internal: consent records and provisions as a JSON array ordered by id, without account '
-  'ids, withdrawal reasons, granted_by, source documents or actor references.';
+  'ids, withdrawal reasons, granted_by, source documents or actor references (names_recipient '
+  'says only whether a provision names one).';
 
 -- ----------------------------------------------------------------------------
 -- 8e. fhir_consent_directives (FHIR Consent source)
@@ -1613,8 +1622,10 @@ COMMENT ON FUNCTION public.interop_my_consents(text) IS
 --   type and data class are not weighed (they depend on the request).
 --   'not_allowed' when any counted deny provision exists (a patient's
 --     refusal counts before it is verified, and it wins over permits);
---   'allowed' when a counted permit provision is on a verified record (the
---     evaluator ignores unverified permits);
+--   'allowed' when a counted permit provision is on a verified record and
+--     names no specific recipient (the evaluator ignores unverified
+--     permits, and permits for one named recipient: it cannot tell whether
+--     a requester is that recipient);
 --   'withdrawn' when neither, and a withdrawn permission exists (below);
 --   'not_allowed' otherwise.
 -- pending_verification: a counted permit exists only on unverified records.
@@ -1624,7 +1635,8 @@ COMMENT ON FUNCTION public.interop_my_consents(text) IS
 -- (external_system, organization, any or unset) that have not ended. A
 -- provision is "in force" when its record is active and started and the
 -- provision has started. "Limited": it names a purpose, action, resource
--- type, data class or security label. First match wins:
+-- type, data class, security label or one specific recipient. First match
+-- wins:
 --   'restricted' / 'refused'          a deny in force with no limit;
 --   'restricted' / 'refused_partly'   a deny in force with a limit (a
 --                                     verified full permit beside it is
@@ -1695,6 +1707,7 @@ BEGIN
        AND (r.effective_until IS NULL OR r.effective_until > now())
        AND (p.actor_type IS NULL OR p.actor_type IN ('external_system', 'organization', 'any'))
        AND p.security_label IS NULL
+       AND NOT (p.provision_type = 'permit' AND COALESCE(btrim(p.actor_reference), '') <> '')
        AND (p.effective_from IS NULL OR p.effective_from <= now())
        AND (p.effective_until IS NULL OR p.effective_until > now()))
   SELECT COALESCE(bool_or(c.provision_type = 'deny'), false),
@@ -1709,7 +1722,8 @@ BEGIN
             AND (r.effective_from IS NULL OR r.effective_from <= now())
             AND (p.effective_from IS NULL OR p.effective_from <= now())) AS in_force,
            (p.purpose IS NOT NULL OR p.action IS NOT NULL OR p.resource_type IS NOT NULL
-            OR p.data_class IS NOT NULL OR p.security_label IS NOT NULL) AS limited
+            OR p.data_class IS NOT NULL OR p.security_label IS NOT NULL
+            OR COALESCE(btrim(p.actor_reference), '') <> '') AS limited
       FROM interop.consent_records AS r
       JOIN interop.consent_provisions AS p ON p.consent_id = r.id
      WHERE r.patient_id = ANY (v_family)
@@ -1776,11 +1790,13 @@ COMMENT ON FUNCTION public.interop_consent_summary(text) IS
   'gateway consent evaluator for external sharing: patient-privacy scope; active, not '
   'withdrawn, in-period records; in-period provisions without a security label whose actor '
   'type is external_system, organization, any or unset. not_allowed when any such deny '
-  'exists; allowed when such a permit is on a verified record; withdrawn when neither and a '
+  'exists; allowed when such a permit, naming no specific recipient, is on a verified record; '
+  'withdrawn when neither and a '
   'withdrawn patient-privacy record had an external permit and no deny; otherwise '
   'not_allowed. pending_verification: only unverified permits exist. sharing_state (for the '
   'staff chip): allowed only for a verified, in-force permit with no limit (purpose, action, '
-  'resource type, data class, security label) and no refusal in force; withdrawn; otherwise '
+  'resource type, data class, security label or one specific recipient) and no refusal in '
+  'force; withdrawn; otherwise '
   'restricted. sharing_reason, first match: refused (a deny in force, no limit), '
   'refused_partly (a limited deny in force), permitted, limited, pending_verification, '
   'withdrawn (a withdrawn external permit with no deny), not_started, no_permission. A deny '

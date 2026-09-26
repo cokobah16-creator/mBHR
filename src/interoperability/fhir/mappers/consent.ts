@@ -6,7 +6,8 @@
 // public.fhir_consent_directives, which returns each record with its
 // provisions and never returns account ids (recorded_by, verified_by,
 // withdrawn_by), the withdrawal reason, who signed (granted_by and the
-// relationship), the source document or a provision's actor reference.
+// relationship), the source document or a provision's actor reference
+// (names_recipient says only whether a provision names one).
 //
 // What is published, and what is not:
 //
@@ -33,7 +34,8 @@
 //     type: mBHR records none (its default-deny for sharing is mBHR policy,
 //     not the patient's statement). One nested provision per stored
 //     provision, in the stored order, with only what was recorded: type,
-//     period, actor (the kind of recipient only), action (consentaction),
+//     period, actor (the kind of recipient; a rule naming one specific
+//     recipient withholds the record, below), action (consentaction),
 //     purpose (v3 ActReason), class (resource type or mBHR data class) and
 //     securityLabel.
 //   - performer, organization, source[x] and policyRule are never filled:
@@ -42,10 +44,12 @@
 //
 // A directive is published whole or not at all. When a stored rule cannot
 // be shown in R4 without changing its meaning (a code outside the
-// register's own lists, an unreadable period, a resource type AND a data
-// class on one rule, which FHIR would read as either one), the record is
-// withheld: leaving out a condition would make a permit look broader than
-// the patient agreed to. Resource modules say how many were left out.
+// register's own lists; an unreadable period; a resource type AND a data
+// class on one rule, which FHIR would read as either one; a rule for one
+// named recipient, which would read as a rule for every recipient of that
+// kind), the record is withheld: leaving out a condition would make a
+// permit look broader than the patient agreed to. Resource modules say how
+// many were left out.
 
 import type { CodeableConcept, Coding, Period, Reference, Resource } from "../types/fhir";
 import { applyStatusMap } from "../terminology/statusMaps";
@@ -263,14 +267,20 @@ export function mapProvision(p: unknown): ConsentProvisionRule | Invalid {
   if (period === INVALID) return INVALID;
   if (period) rule.period = period;
 
+  // A rule for one named recipient (actor_reference) cannot be shown: the
+  // recipient is never published, and without it the rule would cover
+  // every recipient of that kind. Only an explicit false proves it names
+  // none; a missing or unreadable flag withholds too.
+  if (p.names_recipient !== false) return INVALID;
+
   const actorType = recorded(p, "actor_type");
   if (actorType === INVALID) return INVALID;
   if (actorType !== undefined && actorType !== "any") {
     const label = Object.prototype.hasOwnProperty.call(CONSENT_ACTOR_TYPES, actorType) ? CONSENT_ACTOR_TYPES[actorType] : null;
     if (!label) return INVALID;
-    // R4 requires actor.reference. mBHR stores the kind of recipient only
-    // (a specific actor is never published), so the reference is a
-    // display naming that kind, and the role carries the recorded code.
+    // R4 requires actor.reference. The rule names no specific recipient
+    // (checked above), so the reference is a display naming the kind of
+    // recipient, and the role carries the recorded code.
     rule.actor = [
       {
         role: { coding: [{ system: LOCAL_CONSENT.actorType, code: actorType, display: label }] },

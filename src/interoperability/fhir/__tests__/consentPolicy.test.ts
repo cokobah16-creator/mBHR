@@ -21,6 +21,7 @@ const provision = (over: Partial<ConsentProvision> = {}): ConsentProvision => ({
   id: "p0000000-0000-4000-8000-000000000001",
   provision_type: "permit",
   actor_type: null,
+  names_recipient: false,
   action: null,
   purpose: null,
   data_class: null,
@@ -167,5 +168,42 @@ describe("parseDirectives", () => {
     expect(parsed[0].verified).toBe(false);
     expect(parsed[0].provisions.map((p) => p.id)).toEqual(["p2"]);
     expect(parseDirectives({ not: "an array" })).toEqual([]);
+  });
+
+  it("reads names_recipient as false only when the function says false", () => {
+    const flags = [false, true, undefined, null, "false", 0];
+    const parsed = parseDirectives([
+      {
+        id: "c1",
+        patient_id: PATIENT,
+        status: "active",
+        scope: "patient-privacy",
+        verified: true,
+        provisions: flags.map((names_recipient, i) => ({ id: `p${i}`, provision_type: "permit", names_recipient })),
+      },
+    ]);
+    expect(parsed[0].provisions.map((p) => p.names_recipient)).toEqual([false, true, true, true, true, true]);
+  });
+});
+
+describe("a rule naming one specific recipient", () => {
+  // mBHR cannot tell whether a requester is the recipient the patient named.
+  it("never permits, even when verified and otherwise matching", () => {
+    const named = [directive({ provisions: [provision({ actor_type: "organization", names_recipient: true })] })];
+    expect(evaluateConsent(external, named, on)).toMatchObject({ decision: "deny", reason: "no_consent_permit" });
+    const open = [directive({ provisions: [provision({ actor_type: "organization" })] })];
+    expect(evaluateConsent(external, open, on).decision).toBe("permit");
+  });
+
+  it("still refuses when it is a deny", () => {
+    const named = [
+      directive({
+        provisions: [
+          provision({ actor_type: "organization" }),
+          provision({ id: "p0000000-0000-4000-8000-000000000002", provision_type: "deny", actor_type: "organization", names_recipient: true }),
+        ],
+      }),
+    ];
+    expect(evaluateConsent(external, named, on)).toMatchObject({ decision: "deny", reason: "consent_deny_provision" });
   });
 });

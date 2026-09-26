@@ -49,7 +49,7 @@ describe("ExternalSharingChip", () => {
       "restricted",
       "limited",
       "Restricted",
-      "The patient's permission covers only some records or uses.",
+      "The patient's permission covers only some recipients, records or uses.",
     ],
     ["restricted", "no_permission", "Restricted", "No permission to share outside mBHR is in force."],
     ["withdrawn", "withdrawn", "Withdrawn", "A permission to share outside mBHR was withdrawn."],

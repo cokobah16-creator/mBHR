@@ -81,6 +81,7 @@ describe("parseMyConsents", () => {
       refusesOutside: false,
       refuses: [],
       alsoPermits: false,
+      permitNamesRecipient: false,
       state: "in_place",
       since: "2026-01-01T00:00:00Z",
       withdrawnAt: null,
@@ -344,7 +345,7 @@ describe("consent summary", () => {
       parseConsentSummary({ sharing_state: "restricted", sharing_reason: "refused_partly" })?.reason,
     ).toBe("refused_partly");
     expect(chipFor("restricted", "limited")?.hint).toContain(
-      "The patient's permission covers only some records or uses.",
+      "The patient's permission covers only some recipients, records or uses.",
     );
     expect(chipFor("restricted", "pending_verification")?.hint).toContain("staff have not checked it yet");
     expect(chipFor("restricted", "not_started")?.hint).toContain("it has not started yet");

@@ -425,10 +425,12 @@ is switched on anywhere real data exists. Full rules:
       or entered-in-error state for vitals. Confirm that a saved reading is
       a completed measurement.
 - [ ] **Pulse is published as LOINC "Heart rate" (8867-4) and SpO₂ as
-      arterial oxygen saturation by pulse oximetry (2708-6 and 59408-5)**,
-      the codes the FHIR vital signs profile requires, with mBHR's own
-      column name kept alongside. Confirm these match how outreach readings
-      are taken.
+      LOINC "Oxygen saturation in Arterial blood" (2708-6) plus "Oxygen
+      saturation in Arterial blood by Pulse oximetry" (59408-5)**. The FHIR
+      vital signs profile requires 8867-4 and 2708-6; 59408-5 is mBHR's
+      addition, because SpO₂ is read with a pulse oximeter. mBHR's own column name is kept alongside. mBHR does not
+      record how a reading was taken. Confirm these match how outreach
+      readings are taken.
 - [ ] **Diagnosis status is carried over exactly.** A provisional or
       differential diagnosis stays provisional or differential; only
       diagnoses in the `conditions` table are exported. Provisional
@@ -524,11 +526,11 @@ Changes to what Phase 1 published (2.5)
       still sent as active. Nothing in mBHR writes this table yet. Confirm
       both, before anything starts writing diagnoses there.
 - [ ] **A diagnosis end date is sent only beside an ended status**
-      (inactive, remission or resolved), as FHIR requires. Beside active,
-      recurrence or relapse it was already left out; it is now also left
-      out when no status is sent (entered in error, or a status that is
-      missing or not recognised). An ended status is never guessed from the
-      date. Confirm.
+      (inactive, remission or resolved), as FHIR requires. Phase 1 sent a
+      stored end date beside any status. It is now left out beside active,
+      recurrence or relapse, and when no status is sent (entered in error,
+      or a status that is missing or not recognised). An ended status is
+      never guessed from the date. Confirm.
 - [ ] **An estimated date of birth is sent as an exact date** (unchanged
       from Phase 1). Quick registration turns an age into 1 January of the
       birth year, or the 1st of the birth month, and the "estimated" mark
@@ -549,10 +551,13 @@ Allergies
       risk"), although mBHR stores no reason and the same action is used for
       wrong-patient or duplicate entries. The app hides inactive allergies.
       Publish them as inactive, or leave them out?
-- [ ] **Severity.** Life-threatening becomes criticality `high` and
-      reaction severity `severe` (the top of the FHIR scale). Severe and
-      moderate become the same reaction severity; `mild` is left out because
-      the form pre-selects it. Should `severe` also be criticality `high`?
+- [ ] **Severity.** Life-threatening becomes criticality `high` and,
+      when a reaction was typed, reaction severity `severe` (the top of the
+      FHIR scale). Severe and moderate are sent as reaction severity
+      `severe` and `moderate`, but only when a reaction was typed, so a
+      severe allergy with no reaction typed carries no rating. `mild` is
+      left out because the form pre-selects it. Should `severe` also be
+      criticality `high`?
 - [ ] **No verification status is published.** mBHR does not record
       whether an allergy was confirmed (the old export said "confirmed").
 - [ ] **An allergy's type "medication" is not published as a category.**
@@ -567,10 +572,16 @@ Allergies
 Medicines
 
 - [ ] **A dispense is never published as `completed` and carries no
-      hand-over time.** mBHR does not record a hand-over; the only
-      `completed` values were set by a migration for every older row.
-      Should a recorded dispense count as a hand-over (then `completed`,
-      with the dispense time)?
+      hand-over time.** mBHR has no separate hand-over record. The
+      prescription dispensing screen (Pharmacy > Dispense, `/rx/dispense`)
+      asks staff to confirm who they hand the medicine to before
+      dispensing; the visit dispensing form (`/pharmacy`) does not, and its
+      dispenses have no prescription. The held-back migration
+      `20260503010200` would mark every dispense that exists when it is
+      applied as `completed` and copy its dispense time into
+      `when_handed_over`; the gateway ignores both. Should a
+      recorded dispense count as a hand-over (then `completed`, with the
+      dispense time)?
 - [ ] **Prescription status.** Open is `active` (mBHR sets no expiry, so an
       old open prescription stays active), dispensed is `completed` (every
       line given, not the course finished), partial is `unknown`, void is
@@ -581,8 +592,9 @@ Medicines
 
 Laboratory
 
-- [ ] **A result is `preliminary` until a clinician reviews it**, then
-      `final`. A result with no value is never final. Normal, abnormal and
+- [ ] **A result is `preliminary` until someone with the review
+      permission reviews it** (a doctor, lead clinician or admin; an admin
+      need not be a clinician), then `final`. A result with no value is never final. Normal, abnormal and
       critical become N, A and AA; H and L are never inferred, and an
       unreviewed "normal" is left out (older rows may carry the form's old
       default). Confirm.
@@ -616,8 +628,10 @@ Consents, staff and sites
 
 - [ ] **Consents are published exactly as recorded.** A withdrawn consent is
       `inactive` and kept. An unverified one is marked unverified. One with
-      no policy, or with a rule the register cannot express exactly, is not
-      published at all rather than shown broader than the patient agreed.
+      no policy, or with a rule the shared format cannot show exactly
+      (including a rule that names one specific recipient), is not
+      published at all rather than shown broader than the patient agreed;
+      a search says how many were left out.
 - [ ] **Staff are published by name and mBHR access role only** (the role is
       not a qualification). Confirm "Administrator" and "Lead clinician" as
       the role names.
@@ -694,6 +708,7 @@ clinician must sign off, or write "None" and say why.
 
 | Date | Pull request | What changed | Files | Checklist item (section 2) | Clinician sign-off |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-26 | FHIR sign-off follow-up: consent for one named recipient | None for staff or patients: the `/fhir/R4` gateway stays off and the consent register is not on production yet. A consent with a rule for one specific recipient (for example one hospital) is no longer published as a rule for every recipient of that kind: the whole consent is withheld, and a search says how many were left out. Such a permit never grants access in the consent check, and the staff "External sharing" badge shows it as limited, not allowed; a refusal that names one recipient still refuses, and the badge gives it as "refused in part" rather than "refused". In the patient portal's Privacy section, such a permission reads "A choice about how your records are shared" with "Ask clinic staff about it", instead of a general permission to share outside mBHR. Six items in 2.5 and 2.7 were reworded to match the code (oxygen codes, diagnosis end date history, allergy reaction severity, dispense hand-over, who reviews a lab result, consents). No threshold, range, dose or matching rule changed. | `src/interoperability/fhir/mappers/consent.ts`, `src/interoperability/fhir/resources/consent.ts`, `src/interoperability/fhir/consent/evaluateConsent.ts`, `supabase/migrations-deferred/20260926130000_interop_phase2.sql`, `src/services/interopConsent.ts`, `src/features/patient-portal/privacyCopy.ts`, this file | 2.5 "Pulse is published as LOINC…"; 2.7 "A diagnosis end date is sent only beside an ended status", "Severity", "A dispense is never published as `completed`…", "A result is `preliminary` until…", "Consents are published exactly as recorded" | Pending |
 | 2026-09-25 | FHIR R4 interoperability Phase 2 | None for staff or patients: the `/fhir/R4` gateway stays off (`FHIR_ENABLED` unset). When switched on it would also publish allergies, medicines, laboratory orders, results and reports, documents, consents, staff, sites, provenance and access history. How each status, value and code is represented (an empty allergy list is not NKA, an allergy's pre-selected type "medication" is not sent as a category, a dispense is never shown as handed over, a result is preliminary until reviewed, a patient's report is never final, no invented codes) is listed for review in 2.7, together with changes to what Phase 1 published (a blood pressure with one half measured is now sent, sex "other" and name or phone "use" are left out, visits added afterwards on the staff dashboard ("Portal entry") have no start time, a visit status stored with spaces around it is unknown, a stored "confirmed" diagnosis carries no verification status). No threshold, range, dose or matching rule is created. | `src/interoperability/fhir/mappers/*`, `src/interoperability/fhir/terminology/**`, `src/interoperability/fhir/resources/*` | 2.7 (all items) | Pending |
 | 2026-09-25 | Audit follow-up: portal note and registration wording | The patient portal note shown beside an unrated blood pressure said none of the readings were rated, although temperature is rated at every age; it now says only blood pressure is not rated for children or without a date of birth. Row 44 now describes the registration form as shipped (the box starts unticked, typing never ticks it, locked off for under-18s). No threshold, range, dose or rule changed. | `i18n/locales/*.json (portal.vital.notRated)`, this file | 2.2 rows 39 and 44 | Pending |
 | 2026-09-25 | Audit follow-up: clinical safety and shared-tablet privacy | Vitals: optional measurements, visible save failures, confirm before discarding; height and weight no longer rated against the heart-rate range; adult heart-rate, blood-pressure and BMI flags not applied to under-18s (fever, low temperature and low SpO2 still flagged at every age); a failed allergy read is never shown as none. Pharmacy: every allergy type screened; allergens the app cannot screen need a check by hand; an older consultation is dated and marked as not today's. Labs: patients identified by MBHR ID, sex and age; no collection or result entry for patients not on the device; every open order loaded; blank values refused. Registration and portal: infants and estimated birth dates; siblings not called the same person; no duplicate visits or consultations from a double tap; portal consent can be unticked; portal badges use the staff categories. Also (no clinical rule): idle screen lock, route guards by permission, no automatic erasing of device records, server answers kept out of browser caches, prompt-style app updates, sync conflicts decided on server timestamps. No threshold, range, dose or matching rule was created. | `src/utils/vitals.ts`, `src/components/VitalsForm.tsx`, `src/components/EnhancedVitalsInput.tsx`, `src/components/patient/PatientContextHeader.tsx`, `src/utils/allergyMatch.ts`, `src/features/pharmacy/*`, `src/components/DispenseForm.tsx`, `src/pages/Pharmacy.tsx`, `src/features/labs/*`, `src/services/labs.ts`, `src/features/patient-portal/*`, `src/components/SimplePatientForm.tsx`, `src/components/PatientForm.tsx`, `src/components/SoapForm.tsx`, `src/utils/dedupeMatch.ts`, `src/services/visits.ts`, `scripts/check-clinical-logic-change.mjs` | 2.2 rows 23 to 44; 2.6 | Pending |

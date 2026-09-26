@@ -164,3 +164,21 @@ describe("privacy section wording", () => {
     }
   });
 });
+
+describe("a permission for one named recipient", () => {
+  it("is not described as a permission for everyone outside mBHR", () => {
+    const named = item([{ provision_type: "permit", actor_type: "organization", purpose: "TREAT", names_recipient: true }]);
+    expect(named.permitNamesRecipient).toBe(true);
+    expect(consentTitle(named)).toBe("A choice about how your records are shared");
+    expect(consentNote(named)).toBe(PRIVACY_COPY.askStaffAbout);
+    // Withdrawing it only narrows sharing, so it can still be withdrawn.
+    expect(named.canWithdraw).toBe(true);
+  });
+
+  it("keeps the usual wording when the rule names no one", () => {
+    const open = item([{ provision_type: "permit", actor_type: "organization", purpose: "TREAT", names_recipient: false }]);
+    expect(open.permitNamesRecipient).toBe(false);
+    expect(consentTitle(open)).not.toBe("A choice about how your records are shared");
+    expect(consentNote(open)).toBeNull();
+  });
+});
