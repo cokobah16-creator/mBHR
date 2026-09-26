@@ -201,7 +201,8 @@ export default function ForgotPassword({ audience }: { audience: ResetAudience }
               {isStaff && (
                 <p className="text-caption text-ink-muted">
                   This resets the password for online sign-in. Offline PINs are
-                  reset by an administrator under Users.
+                  reset by an administrator under Users. New staff: use the
+                  link in your invitation email instead.
                 </p>
               )}
               {backLink}

@@ -55,6 +55,18 @@ describe("ForgotPassword", () => {
     expect(screen.queryByText(/check your email/i)).toBeNull();
   });
 
+  it("tells new staff to use their invitation email", () => {
+    renderPage("staff");
+    expect(
+      screen.getByText(/New staff: use the link in your invitation email instead\./),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the staff note to patients", () => {
+    renderPage("patient");
+    expect(screen.queryByText(/invitation email/)).toBeNull();
+  });
+
   it("links back to the right login page", () => {
     renderPage("patient");
     expect(screen.getByRole("link", { name: /back to sign in/i })).toHaveAttribute(

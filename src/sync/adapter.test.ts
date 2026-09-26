@@ -518,11 +518,12 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       expect(mockFrom).toHaveBeenCalledWith("app_users");
     });
 
-    it("uploads a staff role and admin access only when they were saved on the Users screen", async () => {
+    it("never uploads a staff role or admin flags", async () => {
       const { db } = await import("@/db");
       Object.assign(db, {
         users: fakeTable([
-          { id: "u1", fullName: "Ada", role: "admin", adminAccess: true, _dirty: 1 },
+          { id: "u1", fullName: "Ada", role: "admin", adminAccess: true, adminPermanent: true, _dirty: 1 },
+          // Saved on the Users screen: still no role or admin flags.
           { id: "u2", fullName: "Bayo", role: "doctor", adminAccess: false, _staffEditBy: "u3", _dirty: 1 },
         ]),
       });
@@ -538,9 +539,32 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       const ada = payloads.find((p) => p.id === "u1");
       const bayo = payloads.find((p) => p.id === "u2");
       expect(ada).toMatchObject({ id: "u1", full_name: "Ada" });
-      expect(ada).not.toHaveProperty("role");
-      expect(ada).not.toHaveProperty("admin_access");
-      expect(bayo).toMatchObject({ id: "u2", role: "doctor", admin_access: false });
+      expect(bayo).toMatchObject({ id: "u2", full_name: "Bayo" });
+      for (const payload of [ada, bayo]) {
+        expect(payload).not.toHaveProperty("role");
+        expect(payload).not.toHaveProperty("admin_access");
+        expect(payload).not.toHaveProperty("admin_permanent");
+      }
+    });
+
+    it("builds the operations queue's upload (the conflict-resolution path) without a staff role or admin flags", async () => {
+      const { uploadPayload } = await import("./adapter");
+
+      expect(
+        uploadPayload("app_users", {
+          id: "u1",
+          fullName: "Ada",
+          role: "admin",
+          adminAccess: true,
+          adminPermanent: true,
+          _staffEditBy: "u3",
+        }),
+      ).toEqual({ id: "u1", full_name: "Ada" });
+      // Other records keep every mapped column.
+      expect(uploadPayload("patients", { id: "p1", givenName: "Ada", _dirty: 1 })).toEqual({
+        id: "p1",
+        given_name: "Ada",
+      });
     });
 
     it("keeps the server's row version after an upload and compares versions, not clocks", async () => {

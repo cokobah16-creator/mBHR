@@ -17,7 +17,8 @@ import { isIdleExpired } from "@/auth/idle";
 
 /**
  * Why the last online sign-in was refused although the email and password
- * were right. null when it was not refused for one of these reasons.
+ * were right (account_disabled: whatever password was typed). null when it
+ * was not refused for one of these reasons.
  */
 export type SignInRefusal =
   /** An administrator deactivated the account on this device; only an
@@ -30,7 +31,11 @@ export type SignInRefusal =
   | "not_staff"
   /** The server's staff record could not be read and this device has no
    * staff record for the account to fall back on. */
-  | "staff_check_failed";
+  | "staff_check_failed"
+  /** An administrator disabled the staff account (Users, Disable): the
+   * server refuses its sign-in whatever password is typed, so this is not
+   * a wrong password and is never counted as one. */
+  | "account_disabled";
 
 interface AuthState {
   /**
@@ -513,6 +518,16 @@ export const useAuthStore = create<AuthState>()(
             password,
           });
 
+          // Disabled by an administrator (Users, Disable blocks the login):
+          // the server refuses it whatever password is typed, so it is not
+          // a wrong password and does not count towards the lockout. No
+          // online sign-in was created, so there is nothing to end.
+          if (error?.code === "user_banned") {
+            logger.warn("Online login refused: account disabled");
+            set({ signInRefusal: "account_disabled" });
+            return false;
+          }
+
           if (error || !data.user) {
             logger.error("Online login error:", error?.name ?? "no user");
             state.incrementFailedAttempts();
@@ -523,16 +538,27 @@ export const useAuthStore = create<AuthState>()(
 
           // This device's record for the person: the one with the online
           // account's id (synced from the server directory or created by an
-          // earlier online sign-in), else an active one with the same email.
+          // earlier online sign-in).
           const normalizedEmail = email.toLowerCase();
-          let user =
-            (await db.users.get(cloudUserId)) ??
-            (await db.users
-              .filter(
-                (u) =>
-                  u.isActive === 1 && u.email?.toLowerCase() === normalizedEmail,
-              )
-              .first());
+          let user: User | undefined = await db.users.get(cloudUserId);
+
+          // An active record with the same email but another id was made on
+          // a device (Add Staff before staff accounts were created on the
+          // server). It is looked up whether or not a record under the online
+          // id exists too (the staff directory download usually made one).
+          // It never opens this session: its role and PIN were never
+          // confirmed by the server. The session uses the record under the
+          // online account's id (built from the server's staff record when
+          // there is none), and this one is switched off once that sign-in
+          // succeeds (below).
+          const sameEmailRecord = await db.users
+            .filter(
+              (u) =>
+                u.isActive === 1 &&
+                u.id !== cloudUserId &&
+                u.email?.toLowerCase() === normalizedEmail,
+            )
+            .first();
 
           const refuse = async (reason: SignInRefusal): Promise<false> => {
             // The password was right, but this account may not work here:
@@ -562,9 +588,10 @@ export const useAuthStore = create<AuthState>()(
           // Switched off on the server: no session, and no offline sign-in
           // on this device either (offlineSignInState lists active staff only).
           if (account.status === "found" && account.deactivated) {
-            if (user) {
+            for (const record of [user, sameEmailRecord]) {
+              if (!record) continue;
               try {
-                await db.users.update(user.id, { isActive: 0, updatedAt: new Date() });
+                await db.users.update(record.id, { isActive: 0, updatedAt: new Date() });
               } catch {
                 // The roster pull switches it off at the next sync too.
               }
@@ -590,7 +617,9 @@ export const useAuthStore = create<AuthState>()(
             account.status === "missing" ||
             (account.status === "found" && !isStaffRole(account.role))
           ) {
-            if (user && user.id === cloudUserId) {
+            // (user, when set, is always the record under the online id: a
+            // same-email record under another id is left for an administrator.)
+            if (user) {
               try {
                 await db.users.update(user.id, {
                   isActive: 0,
@@ -614,11 +643,12 @@ export const useAuthStore = create<AuthState>()(
             return await refuse("staff_check_failed");
           }
 
-          // A new device (no local record) builds one from the server's
-          // staff record, and only from it (checked above). A record created
-          // that way earlier (same id as the online account) follows later
-          // role changes. (User["role"] lists the roles created on devices;
-          // auditor and lead_clinician accounts come from the server.)
+          // A new device (no record under the online account's id) builds
+          // one from the server's staff record, and only from it (checked
+          // above). A record created that way earlier (same id as the online
+          // account) follows later role changes. (User["role"] lists the
+          // roles created on devices; auditor and lead_clinician accounts
+          // come from the server.)
           if (!user) {
             if (account.status !== "found") return await refuse("staff_check_failed");
             const newUser: User = {
@@ -639,7 +669,7 @@ export const useAuthStore = create<AuthState>()(
             };
             await db.users.put(newUser);
             user = newUser;
-          } else if (user.id === cloudUserId && account.status !== "error") {
+          } else if (account.status !== "error") {
             // A failed lookup keeps the stored role (a missing server
             // record or a non-staff role was refused above).
             const role = (account.status === "found" ? account.role : "guest") as User["role"];
@@ -665,10 +695,21 @@ export const useAuthStore = create<AuthState>()(
           // Only a staff role opens a staff session.
           if (!isStaffRole(user.role)) return await refuse("not_staff");
 
-          user = await markVerifiedOnline(
-            user,
-            account.status === "found" && user.id === cloudUserId,
-          );
+          // The server confirmed this staff account: the same-email device
+          // record no longer offers an offline sign-in (this person now
+          // signs in under their online account), whether or not this device
+          // already had a record under the online id. No disabledLocallyAt:
+          // an administrator did not switch it off, so the Users screen does
+          // not ask for a review.
+          if (sameEmailRecord && account.status === "found") {
+            try {
+              await db.users.update(sameEmailRecord.id, { isActive: 0, updatedAt: new Date() });
+            } catch {
+              // Best effort: it never opens an online session either way.
+            }
+          }
+
+          user = await markVerifiedOnline(user, account.status === "found");
 
           const session: Session = {
             id: generateId(),

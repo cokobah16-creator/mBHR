@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   edgeFunctionErrorBody,
+  edgeFunctionJsonBody,
   edgeFunctionStatus,
   staffAuthRefusal,
 } from "./edgeFunctionErrors";
@@ -79,5 +80,50 @@ describe("edgeFunctionErrorBody", () => {
   it("returns null when there is no Response", async () => {
     expect(await edgeFunctionErrorBody({ message: "fn error" })).toBeNull();
     expect(await edgeFunctionErrorBody(undefined)).toBeNull();
+  });
+});
+
+describe("edgeFunctionJsonBody", () => {
+  it("returns the whole reply, including fn and the error code", async () => {
+    const body = await edgeFunctionJsonBody(
+      httpError(409, {
+        success: false,
+        error: "own_account",
+        message: "You can't disable your own account.",
+        fn: "staff-admin",
+      }),
+    );
+    expect(body).toEqual({
+      success: false,
+      error: "own_account",
+      message: "You can't disable your own account.",
+      fn: "staff-admin",
+    });
+  });
+
+  it("keeps extra fields such as retry_after_seconds", async () => {
+    const body = await edgeFunctionJsonBody(
+      httpError(429, { fn: "staff-admin", error: "rate_limited", retry_after_seconds: 120 }),
+    );
+    expect(body?.fn).toBe("staff-admin");
+    expect(body?.retry_after_seconds).toBe(120);
+  });
+
+  it("returns null for a body that is not a JSON object", async () => {
+    const notJson = {
+      context: new Response("<html>Not Found</html>", { status: 404 }),
+    };
+    expect(await edgeFunctionJsonBody(notJson)).toBeNull();
+    expect(await edgeFunctionJsonBody(httpError(500, ["a", "b"]))).toBeNull();
+    expect(await edgeFunctionJsonBody(httpError(500, "text"))).toBeNull();
+    expect(await edgeFunctionJsonBody(httpError(500, null))).toBeNull();
+  });
+
+  it("returns null when the body was already read or there is no Response", async () => {
+    const used = httpError(400, { fn: "staff-admin" });
+    await used.context.text();
+    expect(await edgeFunctionJsonBody(used)).toBeNull();
+    expect(await edgeFunctionJsonBody({ message: "fn error" })).toBeNull();
+    expect(await edgeFunctionJsonBody(undefined)).toBeNull();
   });
 });

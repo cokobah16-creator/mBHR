@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   ASSIGNABLE_ROLES,
+  staffNameError,
   validateStaffForm,
   describeRoleAccess,
   lostAccess,
@@ -108,5 +109,60 @@ describe("role access descriptions", () => {
       "release lab results to patients",
     ]);
     expect(lostAccess("nurse", "doctor")).toEqual([]);
+  });
+});
+
+describe("validateStaffForm in invite mode (Add Staff online)", () => {
+  const invite: StaffFormValues = {
+    fullName: "Amina Bello",
+    role: "nurse",
+    email: "amina@example.org",
+    phone: "",
+    pin: "",
+    confirmPin: "",
+  };
+  const serverRoles = ["volunteer", "nurse", "doctor", "pharmacist"];
+
+  it("accepts a name, an email and a listed role with no PIN", () => {
+    expect(validateStaffForm(invite, "invite", serverRoles)).toEqual({});
+  });
+
+  it("requires an email address", () => {
+    expect(validateStaffForm({ ...invite, email: "  " }, "invite", serverRoles).email).toBeTruthy();
+    expect(
+      validateStaffForm({ ...invite, email: "not-an-email" }, "invite", serverRoles).email,
+    ).toBeTruthy();
+  });
+
+  it("ignores the PIN and phone fields", () => {
+    const e = validateStaffForm(
+      { ...invite, pin: "12", confirmPin: "99", phone: "call me" },
+      "invite",
+      serverRoles,
+    );
+    expect(e).toEqual({});
+  });
+
+  it("only accepts a role the server listed", () => {
+    expect(validateStaffForm({ ...invite, role: "admin" }, "invite", serverRoles).role).toBe(
+      "Choose one of the listed roles.",
+    );
+    expect(
+      validateStaffForm({ ...invite, role: "registration_lead" }, "invite", serverRoles).role,
+    ).toBeTruthy();
+    expect(validateStaffForm({ ...invite, role: "doctor" }, "invite", serverRoles).role).toBeUndefined();
+    expect(validateStaffForm({ ...invite, role: "nurse" }, "invite", []).role).toBeTruthy();
+  });
+
+  it("checks the name the way the server does", () => {
+    expect(validateStaffForm({ ...invite, fullName: "A" }, "invite", serverRoles).fullName).toBeTruthy();
+    expect(
+      validateStaffForm({ ...invite, fullName: "<b>Amina</b>" }, "invite", serverRoles).fullName,
+    ).toBeTruthy();
+    expect(
+      validateStaffForm({ ...invite, fullName: "x".repeat(121) }, "invite", serverRoles).fullName,
+    ).toBeTruthy();
+    expect(staffNameError("  Amina   Bello  ")).toBeUndefined();
+    expect(staffNameError("")).toBeTruthy();
   });
 });

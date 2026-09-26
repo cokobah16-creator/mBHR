@@ -60,7 +60,10 @@ function activeLockout(): number | null {
   return until && until > Date.now() ? until : null;
 }
 
-/** Why an online sign-in with the right password was still refused. */
+/**
+ * Why an online sign-in was refused although the password was right (or,
+ * for a disabled account, whatever password was typed).
+ */
 function refusalError(reason: SignInRefusal): LoginError {
   switch (reason) {
     case "deactivated_on_device":
@@ -73,7 +76,13 @@ function refusalError(reason: SignInRefusal): LoginError {
       return {
         title: "This is not a staff account",
         detail:
-          "The email and password are right, but your organisation has no staff record with a staff role for this account, so it cannot open the staff app. Patients sign in through the patient portal. Ask an administrator if you think this is wrong.",
+          "The email and password are right, but this login has no staff account. Patients sign in through the patient portal. If you're staff, ask your administrator to check your account under Users.",
+      };
+    case "account_disabled":
+      return {
+        title: "This account has been disabled",
+        detail:
+          "An administrator has disabled your staff account. Ask them if you think this is wrong.",
       };
     case "staff_check_failed":
       return {
@@ -433,7 +442,7 @@ export default function Login() {
                 </p>
                 <p className="text-caption mt-0.5">
                   {onlineAvailable
-                    ? "Connect to the internet and sign in with an authorized staff account to set up offline access."
+                    ? "Connect to the internet and sign in with the staff account your administrator created for you to set up offline access."
                     : "Online sign-in is not set up in this build, so set up this device with its first administrator. They can then add everyone else under Users."}
                 </p>
               </div>
@@ -686,6 +695,14 @@ export default function Login() {
                   >
                     {loading ? "Signing in…" : "Sign In"}
                   </button>
+
+                  {mode === "online" && (
+                    <p className="text-caption text-ink-muted">
+                      New staff member? Your administrator creates your account
+                      and emails you a link to set your password. You can't
+                      create a staff account yourself.
+                    </p>
+                  )}
                 </form>
               )}
             </>

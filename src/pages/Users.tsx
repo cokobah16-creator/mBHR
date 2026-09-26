@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth'
 import { can, getRoleDisplayName } from '@/auth/roles'
 import { UserManagement } from '@/components/UserManagement'
+import { STAFF_COPY } from '@/features/admin/staffAccountView'
+import { isOnlineSyncEnabled } from '@/sync/adapter'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { LockClosedIcon } from '@heroicons/react/24/outline'
 
@@ -45,7 +47,11 @@ export function Users() {
       <PageHeader
         breadcrumbs={BREADCRUMBS}
         title="Staff accounts"
-        description="Who can sign in on this device, their role and whether the account is active."
+        description={
+          isOnlineSyncEnabled()
+            ? STAFF_COPY.subtitle
+            : 'Who can sign in on this device, their role and whether the account is active.'
+        }
       />
       <UserManagement />
     </div>

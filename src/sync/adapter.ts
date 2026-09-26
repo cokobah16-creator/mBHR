@@ -579,11 +579,18 @@ function mayUploadStaffAccounts(): boolean {
 const STAFF_PRIVILEGE_COLUMNS = ["role", "admin_access", "admin_permanent"] as const;
 
 /**
- * The staff row's current values were saved on the Users screen (which
- * checks the users permission and records who saved them).
+ * The server columns a device uploads for one of its records. A staff row
+ * (app_users) never carries its role or admin flags: only the server's
+ * staff account service (Users screen, staff-admin) changes who may do
+ * what, so a device upload changes a staff member's name only. Every upload
+ * path builds its row here.
  */
-function staffEditFromUsersScreen(record: Row): boolean {
-  return typeof record._staffEditBy === "string" && record._staffEditBy !== "";
+export function uploadPayload(t: SyncTable, record: Row): Row {
+  const payload: Row = toDB(record, mapToDB[t]);
+  if (t === "app_users") {
+    for (const column of STAFF_PRIVILEGE_COLUMNS) delete payload[column];
+  }
+  return payload;
 }
 
 function isPermissionRefusal(error: unknown, status?: number): boolean {
@@ -843,12 +850,7 @@ async function upsertRow(
   record: any,
 ): Promise<{ error: unknown; status?: number; serverVersion?: number }> {
   if (!sb) return { error: namedSyncError("SyncNotConfigured") };
-  const payload = toDB(record, mapToDB[t]);
-  if (t === "app_users" && !staffEditFromUsersScreen(record)) {
-    // Role and admin access travel only with an edit made on the Users
-    // screen; any other local change to a staff row uploads its name only.
-    for (const column of STAFF_PRIVILEGE_COLUMNS) delete payload[column];
-  }
+  const payload = uploadPayload(t, record);
   if (serverLacksFoundation) {
     for (const column of FOUNDATION_COLUMNS[t] ?? []) delete payload[column];
   }
@@ -1255,7 +1257,9 @@ export async function processOperationsQueue(): Promise<ConflictData[]> {
 
     // Process operation based on type
     if (operation.type === "create" || operation.type === "update") {
-      const payload = toDB(operation.data, mapToDB[table as Tbl]);
+      // Built like every other upload: a staff row never carries its role
+      // or admin flags.
+      const payload = uploadPayload(table as Tbl, operation.data);
       const { error } = await sb!
         .from(table)
         .upsert(payload, { onConflict: "id" });
