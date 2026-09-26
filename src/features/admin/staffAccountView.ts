@@ -575,6 +575,13 @@ function deviceNoteFor(account: AccountView, device: User | null): DeviceNote | 
  * One row per person: every server account (with its record on this device,
  * when there is one), then the records on this device the server does not
  * list. Without an overview, every record on this device is a row.
+ *
+ * Two switched-off records the server does not list are left out, as they
+ * are nobody to act on:
+ * - a device-only record whose email belongs to a server account. It is
+ *   that person's older entry here, retired when they signed in online, and
+ *   the person is their server row;
+ * - a record the server no longer has ("missing"). It has no access here.
  */
 export function mergeStaffRows(
   deviceUsers: User[],
@@ -628,23 +635,53 @@ export function mergeStaffRows(
     if (serverIds.has(u.id.toLowerCase())) continue;
     const email = normEmail(u.email);
     const deviceOnly = isDeviceOnlyRecord(u, serverIds);
+    const source: StaffRowSource = deviceOnly
+      ? "device_only"
+      : downloadedAfter(u, checkedAt)
+        ? "unchecked"
+        : "missing";
+    const sameEmailServerAccount = deviceOnly && email !== null && serverEmails.has(email);
+    if (u.isActive !== 1 && (source === "missing" || sameEmailServerAccount)) continue;
     rows.push({
       id: u.id,
       fullName: u.fullName,
       role: u.role,
       email: u.email?.trim() || null,
-      source: deviceOnly
-        ? "device_only"
-        : downloadedAfter(u, checkedAt)
-          ? "unchecked"
-          : "missing",
+      source,
       account: null,
       device: u,
       deviceNote: null,
-      sameEmailServerAccount: deviceOnly && email !== null && serverEmails.has(email),
+      sameEmailServerAccount,
     });
   }
   return rows;
+}
+
+/**
+ * Records still switched on here that the server has removed: they came from
+ * the server, and its whole list, read after they were downloaded, no longer
+ * has them. The Users screen switches them off, as a download of the whole
+ * staff directory does (src/sync/staffRoster.ts). That download cannot tell
+ * the whole directory from one row, so an organisation left with one
+ * account relies on this. Nothing when the list may be incomplete, and
+ * never the signed-in person or a record with changes not yet uploaded.
+ */
+export function removedFromServer(
+  rows: StaffRow[],
+  overview: OverviewResponse | null,
+  currentUserId: string | null | undefined,
+): User[] {
+  if (!overview || overview.health.truncated) return [];
+  const self = currentUserId?.toLowerCase();
+  return rows
+    .filter(
+      (r) =>
+        r.source === "missing" &&
+        r.device?.isActive === 1 &&
+        r.id.toLowerCase() !== self &&
+        (r.device as unknown as { _dirty?: unknown })._dirty !== 1,
+    )
+    .map((r) => r.device as User);
 }
 
 /** Badge text, caption and tone for any row. */

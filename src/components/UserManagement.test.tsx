@@ -356,3 +356,41 @@ describe("UserManagement, server mode", () => {
     await waitFor(() => expect(mocks.reload).toHaveBeenCalled());
   });
 });
+
+describe("UserManagement, one row per person", () => {
+  const GONE_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
+  it("switches off a record the server has removed, then leaves it out", async () => {
+    serverMode("ready", [account()]);
+    const gone = {
+      id: GONE_ID,
+      fullName: "Old Admin",
+      role: "admin",
+      pinHash: "",
+      pinSalt: "",
+      isActive: 1,
+      _syncedAt: "2026-09-01T00:00:00.000Z",
+      createdAt: new Date("2025-09-30T05:44:00.000Z"),
+      updatedAt: new Date("2025-09-30T05:44:00.000Z"),
+    };
+    mocks.toArray.mockResolvedValueOnce([gone]).mockResolvedValue([{ ...gone, isActive: 0 }]);
+    render(<UserManagement />);
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith(GONE_ID, { isActive: 0 }));
+    await waitFor(() => expect(screen.queryByText("Old Admin")).toBeNull());
+    expect(screen.getAllByText("Ada Okafor").length).toBeGreaterThan(0);
+  });
+
+  it("leaves out a person's older device-only entry once it is switched off", async () => {
+    serverMode("ready", [account()]);
+    mocks.toArray.mockResolvedValue([
+      { ...TUNDE_DEVICE_ONLY, fullName: "Ada (old tablet entry)", email: "ADA@clinic.ng", isActive: 0 },
+    ]);
+    render(<UserManagement />);
+
+    await waitFor(() => expect(mocks.toArray).toHaveBeenCalled());
+    expect(screen.getAllByText("Ada Okafor").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Ada (old tablet entry)")).toBeNull();
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+});

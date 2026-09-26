@@ -21,6 +21,7 @@ import {
   inviteRoleOptions,
   isDeviceOnlyRecord,
   mergeStaffRows,
+  removedFromServer,
   resendResultMessage,
   resetPasswordResultMessage,
   rowActions,
@@ -165,6 +166,33 @@ describe("mergeStaffRows", () => {
     expect(rowStatusLabel(rows[3]).label).toBe("Not on the server");
   });
 
+  it("leaves out switched-off records that are nobody to act on", () => {
+    const rows = mergeStaffRows(
+      [
+        synced({ id: NURSE_ID }),
+        // This person's older entry, retired when they signed in online.
+        device({ id: ULID_ID, fullName: "Old Amina", email: "amina@example.org", isActive: 0 }),
+        // Removed from the server and already off here.
+        synced({ id: "44444444-4444-4444-8444-444444444444", fullName: "Gone Person", isActive: 0 }),
+        // Switched off here by hand, never on the server: still listed.
+        device({ id: OTHER_ID, fullName: "Chidi Okafor", isActive: 0, disabledLocallyAt: new Date() }),
+      ],
+      overview([account()]),
+    );
+    expect(rows.map((r) => [r.fullName, r.source])).toEqual([
+      ["Amina Bello", "server"],
+      ["Chidi Okafor", "device_only"],
+    ]);
+  });
+
+  it("without an overview, still lists switched-off records", () => {
+    const rows = mergeStaffRows(
+      [device({ id: ULID_ID, email: "amina@example.org", isActive: 0 })],
+      null,
+    );
+    expect(rows).toHaveLength(1);
+  });
+
   it("does not call a record removed when it was downloaded after the list was read", () => {
     const fresh = {
       ...device({ id: OTHER_ID, fullName: "New Person" }),
@@ -205,6 +233,41 @@ describe("mergeStaffRows", () => {
     );
     expect(row.deviceNote).toBe("needs_review");
     expect(serverRow(account(), synced({ id: NURSE_ID })).deviceNote).toBeNull();
+  });
+});
+
+describe("removedFromServer", () => {
+  const GONE_ID = "44444444-4444-4444-8444-444444444444";
+  const gone = () => synced({ id: GONE_ID, fullName: "Gone Person" });
+
+  it("returns records the server no longer lists that are still on here", () => {
+    const list = overview([account()]);
+    const rows = mergeStaffRows([synced({ id: NURSE_ID }), gone()], list);
+    expect(removedFromServer(rows, list, ADMIN_ID).map((u) => u.id)).toEqual([GONE_ID]);
+  });
+
+  it("returns nothing when the server's list may be incomplete", () => {
+    const list = overview([account()]);
+    list.health.truncated = true;
+    const rows = mergeStaffRows([gone()], list);
+    expect(removedFromServer(rows, list, ADMIN_ID)).toEqual([]);
+    expect(removedFromServer(mergeStaffRows([gone()], null), null, ADMIN_ID)).toEqual([]);
+  });
+
+  it("never returns the signed-in person, a record with changes to upload, or one made here", () => {
+    const list = overview([account()]);
+    const dirty = { ...gone(), _dirty: 1 } as unknown as User;
+    const rows = mergeStaffRows(
+      [dirty, synced({ id: ADMIN_ID.toUpperCase() }), device({ id: ULID_ID }), device({ id: OTHER_ID })],
+      list,
+    );
+    expect(removedFromServer(rows, list, ADMIN_ID)).toEqual([]);
+  });
+
+  it("does not return a record downloaded after the list was read", () => {
+    const list = overview([account()]);
+    const fresh = { ...gone(), _syncedAt: "2026-09-25T00:05:00.000Z" } as unknown as User;
+    expect(removedFromServer(mergeStaffRows([fresh], list), list, ADMIN_ID)).toEqual([]);
   });
 });
 

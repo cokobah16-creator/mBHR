@@ -6,6 +6,7 @@ const { authState, mocks } = vi.hoisted(() => {
   const mocks = {
     offlineSignInState: vi.fn(),
     deviceAccount: vi.fn(),
+    olderDeviceEntry: vi.fn(),
     isOnlineSyncEnabled: vi.fn(),
     setDevicePin: vi.fn(),
     pullStaffRoster: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock("@/sync/staffRoster", () => ({
 vi.mock("@/db/offlineAccess", () => ({
   offlineSignInState: () => mocks.offlineSignInState(),
   deviceAccount: (id: string) => mocks.deviceAccount(id),
+  olderDeviceEntry: (u: unknown) => mocks.olderDeviceEntry(u),
   hasDevicePin: (u: { pinHash?: string; pinSalt?: string } | null | undefined) =>
     !!u?.pinHash && !!u?.pinSalt,
 }));
@@ -117,6 +119,7 @@ beforeEach(() => {
   mocks.isOnlineSyncEnabled.mockReturnValue(true);
   mocks.pullStaffRoster.mockResolvedValue({ ok: true, staff: 3, deactivated: 0 });
   mocks.deviceAccount.mockResolvedValue(undefined);
+  mocks.olderDeviceEntry.mockResolvedValue(undefined);
 });
 
 describe("Login on a device that has never been set up", () => {
@@ -195,6 +198,38 @@ describe("Login on a device that has never been set up", () => {
     });
     expect(authState.setCurrentUser).toHaveBeenCalledWith(withPin);
     expect(authState.updateActivity).toHaveBeenCalled();
+  });
+
+  it("says the PIN is for the same account, and what it replaces", async () => {
+    const signedIn = { ...ada, email: "ada@clinic.ng", pinHash: "", pinSalt: "" };
+    authState.loginOnline.mockImplementation(async () => {
+      authState.currentUser = signedIn;
+      return true;
+    });
+    mocks.deviceAccount.mockResolvedValue(signedIn);
+    mocks.olderDeviceEntry.mockResolvedValue({
+      ...ada,
+      id: "01J8ZX3K5N6P7Q8R9S0T1V2W3X",
+      fullName: "Ada Bello",
+      email: "ADA@clinic.ng",
+      isActive: 0,
+    });
+
+    renderLogin();
+    await screen.findByText(NOT_SET_UP);
+    signInOnline();
+
+    expect(
+      await screen.findByText(
+        "You are signed in as Ada Okafor (ada@clinic.ng). This is your account, not a new one: the PIN lets you sign in to it on this device without internet.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "It replaces the older offline PIN this device had for you as Ada Bello.",
+      ),
+    ).toBeInTheDocument();
+    expect(mocks.olderDeviceEntry).toHaveBeenCalledWith(signedIn);
   });
 
   it("signs the person out if they cancel enrollment", async () => {
