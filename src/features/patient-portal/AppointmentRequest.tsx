@@ -12,6 +12,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import * as logger from "@/lib/logger";
 import { getPatientAppointments } from "@/services/appointments";
+import { cancelTelevisitRequest as cancelPortalRequest } from "@/services/televisits";
 import type { Appointment } from "@/services/appointments";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -26,6 +27,7 @@ import {
 } from "./portalStatus";
 import { clearPortalSession, readPortalUser } from "./portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { localIsoDate } from "./account/outreachCache";
 import { Skeleton } from "@/components/ui/Skeleton";
 
 const appointmentTypes = [
@@ -96,6 +98,10 @@ interface AppointmentRequestRow {
 
 const REQUESTS_SHOWN = 10;
 
+// Only the columns this page shows: never the clinic's own working fields.
+const REQUEST_COLUMNS =
+  "id, appointment_type, preferred_date_1, preferred_time_1, reason, status, review_notes, visit_mode, created_at";
+
 const PAGE_DESCRIPTION =
   "See your booked appointments and ask the clinic for a new one. A request is not a booking: the clinic team will contact you to confirm a time.";
 
@@ -123,6 +129,10 @@ export function AppointmentRequest() {
   const [overviewLoading, setOverviewLoading] = useState(!!supabase);
   const [overviewLoaded, setOverviewLoaded] = useState(false);
   const [overviewError, setOverviewError] = useState("");
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState("");
+  const [cancelled, setCancelled] = useState(false);
 
   const form = useForm<AppointmentForm>({
     resolver: zodResolver(appointmentSchema),
@@ -130,7 +140,8 @@ export function AppointmentRequest() {
   });
   const { errors } = form.formState;
 
-  const minDate = new Date().toISOString().split("T")[0];
+  // Today on this phone's calendar (not UTC, which is a day behind before 1am WAT).
+  const minDate = localIsoDate();
   const isRequestRoute = location.pathname.endsWith("/request");
 
   const loadOverview = useCallback(async () => {
@@ -147,7 +158,7 @@ export function AppointmentRequest() {
         getPatientAppointments(portalUser.patientId),
         supabase
           .from("patient_appointment_requests")
-          .select("*")
+          .select(REQUEST_COLUMNS)
           .eq("patient_id", portalUser.patientId)
           .order("created_at", { ascending: false })
           .limit(REQUESTS_SHOWN),
@@ -189,6 +200,31 @@ export function AppointmentRequest() {
   useEffect(() => {
     if (success) successRef.current?.focus();
   }, [success]);
+
+  // Only a request still waiting for the clinic can be cancelled; the
+  // server refuses anything else and the page then says so.
+  const handleCancelRequest = async (requestId: string) => {
+    if (!navigator.onLine || cancellingId) return;
+    setCancellingId(requestId);
+    setCancelError("");
+    setCancelled(false);
+    try {
+      await cancelPortalRequest(requestId);
+      setConfirmCancelId(null);
+      setCancelled(true);
+      await loadOverview();
+    } catch (err) {
+      logger.error(
+        "Error cancelling appointment request:",
+        err instanceof Error ? err.name : "unknown",
+      );
+      setCancelError(
+        "The request was not cancelled. Check your connection and try again.",
+      );
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   const handleSubmit = async (data: AppointmentForm) => {
     if (!supabase) return;
@@ -403,9 +439,22 @@ export function AppointmentRequest() {
           </p>
         ) : (
           <ul className="divide-y divide-line">
+            {cancelled && (
+              <li className="p-4">
+                <PortalNotice tone="success">Your request has been cancelled.</PortalNotice>
+              </li>
+            )}
+            {cancelError && (
+              <li className="p-4">
+                <PortalNotice tone="danger">{cancelError}</PortalNotice>
+              </li>
+            )}
             {requests.map((req) => {
               const status = appointmentRequestStatusInfo(req.status);
               const video = req.visit_mode === "televisit";
+              const canCancel = req.status === "pending";
+              const isConfirming = confirmCancelId === req.id;
+              const isCancelling = cancellingId === req.id;
               return (
                 <li key={req.id} className="p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -434,6 +483,45 @@ export function AppointmentRequest() {
                       </span>
                       {req.review_notes}
                     </p>
+                  )}
+                  {canCancel && !isConfirming && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCancelError("");
+                        setCancelled(false);
+                        setConfirmCancelId(req.id);
+                      }}
+                      disabled={!online || Boolean(cancellingId)}
+                      className="btn-secondary mt-3"
+                    >
+                      Cancel request
+                    </button>
+                  )}
+                  {canCancel && isConfirming && (
+                    <div className="mt-3 flex flex-col gap-3 rounded-md border border-warning-line bg-warning-soft p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-body font-medium text-warning-fg">
+                        Cancel this request?
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmCancelId(null)}
+                          disabled={isCancelling}
+                          className="btn-secondary"
+                        >
+                          Keep request
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelRequest(req.id)}
+                          disabled={!online || isCancelling}
+                          className="btn-danger"
+                        >
+                          {isCancelling ? "Cancelling…" : "Yes, cancel"}
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </li>
               );
