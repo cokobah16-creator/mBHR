@@ -8,9 +8,8 @@ name: Database migrations
 #             migrations production already has as applied, applies the
 #             pending ones there, then runs the pgTAP tests in supabase/tests.
 #             The copy has production's grants exactly, plus its storage
-#             buckets and storage access rules (bucket settings only; the
-#             tables of stored files are never read). Writes nothing to
-#             production.
+#             buckets and storage access rules (from storage, only the
+#             buckets table's rows are read). Writes nothing to production.
 #   dry-run   Shows what `apply` would apply to production.
 #   apply     Applies the pending migrations to production, then redeploys the
 #             edge functions that depend on them. Needs the phrase
@@ -219,12 +218,13 @@ jobs:
           # The dump above leaves out the storage schema, which Supabase
           # manages. The tests need two things from it: its access rules
           # (structure) and the bucket settings (rows of storage.buckets).
-          # The tables of stored files are excluded, so no file name or path
-          # is read from production.
+          # The data dump excludes every other storage table, found in the
+          # structure dump, so no file name or path is read from production,
+          # including from tables a newer storage version adds.
           supabase db dump --linked --schema storage -f "$RUNNER_TEMP/storage-schema.sql"
-          supabase db dump --linked --data-only --schema storage \
-            -x storage.objects -x storage.prefixes \
-            -x storage.s3_multipart_uploads -x storage.s3_multipart_uploads_parts \
+          excludes=$(python3 .github/scripts/rehearse_storage_copy.py --exclude-args "$RUNNER_TEMP/storage-schema.sql")
+          # shellcheck disable=SC2086 # one word per flag
+          supabase db dump --linked --data-only --schema storage $excludes \
             -f "$RUNNER_TEMP/storage-data.sql"
 
       - name: Start an empty local Supabase stack
@@ -249,12 +249,14 @@ jobs:
           # Without this the copy gives anon and signed-in users every table
           # and function production keeps from them (see the file).
           psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -f .github/scripts/rehearse_reset_default_privileges.sql
-          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/schema.sql"
+          # VERBOSITY=terse: an error names the problem without echoing the
+          # statement or row it came from into this public log.
+          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -v VERBOSITY=terse -f "$RUNNER_TEMP/schema.sql"
           # Production's storage buckets and storage access rules. Prints only counts.
           python3 .github/scripts/rehearse_storage_copy.py \
             "$RUNNER_TEMP/storage-schema.sql" "$RUNNER_TEMP/storage-data.sql" \
             > "$RUNNER_TEMP/storage-copy.sql"
-          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/storage-copy.sql"
+          psql "$LOCAL_DB" -q -v ON_ERROR_STOP=1 -v VERBOSITY=terse -f "$RUNNER_TEMP/storage-copy.sql"
 
       - name: Mark the migrations production has as applied locally
         if: inputs.action == 'rehearse'
