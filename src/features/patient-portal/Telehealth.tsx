@@ -29,6 +29,7 @@ import type {
   TelevisitRequestStatus,
   TelevisitStatus,
 } from "@/services/televisits";
+import { useT } from "@/hooks/useT";
 import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
 import { localIsoDate } from "./account/outreachCache";
 import {
@@ -78,17 +79,16 @@ function isUpcoming(visit: Televisit, now: Date): boolean {
   );
 }
 
-function timeSlotLabel(slot?: string): string {
-  switch (slot) {
-    case "morning":
-      return "Morning (8:00 AM - 12:00 PM)";
-    case "afternoon":
-      return "Afternoon (12:00 PM - 5:00 PM)";
-    case "evening":
-      return "Evening (5:00 PM - 8:00 PM)";
-    default:
-      return slot || "Any time";
+const TIME_SLOTS = ["morning", "afternoon", "evening"] as const;
+
+function timeSlotLabel(
+  t: (key: string, fallback?: string) => string,
+  slot?: string,
+): string {
+  if ((TIME_SLOTS as readonly string[]).includes(slot ?? "")) {
+    return t(`portal.tv.slot.${slot}`);
   }
+  return slot || t("portal.tv.slot.any");
 }
 
 function errorName(err: unknown): string {
@@ -97,6 +97,7 @@ function errorName(err: unknown): string {
 
 export function Telehealth() {
   const navigate = useNavigate();
+  const { t } = useT();
   const [patientId, setPatientId] = useState<string | null>(null);
   const [available, setAvailable] = useState(isTelevisitServiceAvailable);
   const [visits, setVisits] = useState<Televisit[]>([]);
@@ -169,7 +170,7 @@ export function Telehealth() {
       setLoaded(true);
     } catch (err) {
       logger.error("Error loading televisits:", errorName(err));
-      setLoadError("We could not load your video visits. Please try again.");
+      setLoadError("portal.tv.loadFailed");
     } finally {
       setLoading(false);
     }
@@ -246,15 +247,11 @@ export function Telehealth() {
       setRequestReason("");
       setPreferredDate("");
       setPreferredTime("");
-      setSuccessMessage(
-        "Request sent. The clinic team will review it. When they book a time, it will show on this page.",
-      );
+      setSuccessMessage(t("portal.tv.sent"));
       await loadData();
     } catch (err) {
       logger.error("Error requesting televisit:", errorName(err));
-      setRequestError(
-        "Your request was not sent. Check your connection and try again.",
-      );
+      setRequestError(t("portal.tv.notSent"));
     } finally {
       setSubmitting(false);
     }
@@ -267,13 +264,11 @@ export function Telehealth() {
     try {
       await cancelTelevisitRequest(requestId);
       setConfirmCancelId(null);
-      setSuccessMessage("Your request has been cancelled.");
+      setSuccessMessage(t("portal.tv.cancelled"));
       await loadData();
     } catch (err) {
       logger.error("Error cancelling televisit request:", errorName(err));
-      setCancelError(
-        "The request was not cancelled. Check your connection and try again.",
-      );
+      setCancelError(t("portal.tv.cancelFailed"));
     } finally {
       setCancellingId(null);
     }
@@ -302,7 +297,7 @@ export function Telehealth() {
     declinedRequests.length > 0;
 
   if (loading) {
-    return <PortalListSkeleton label="Loading your video visits" rows={3} />;
+    return <PortalListSkeleton label={t("portal.tv.loading")} rows={3} />;
   }
 
   const requestButton = (
@@ -313,14 +308,14 @@ export function Telehealth() {
       className="btn-primary"
     >
       <CalendarDaysIcon className="h-5 w-5" aria-hidden />
-      Ask for a video visit
+      {t("portal.tv.ask")}
     </button>
   );
 
   return (
     <PortalPage
-      title="Video visits"
-      description="Talk to a health worker by video from your phone. Visits the clinic books for you show here."
+      title={t("portal.tv.title")}
+      description={t("portal.tv.description")}
       actions={requestButton}
     >
       {!available && (
@@ -328,15 +323,15 @@ export function Telehealth() {
           tone={isSupabaseEnabled ? "offline" : "info"}
           title={
             isSupabaseEnabled
-              ? "You are offline"
-              : "Video visits are not available here"
+              ? t("portal.tv.offlineTitle")
+              : t("portal.tv.notConnectedTitle")
           }
         >
           {isSupabaseEnabled
             ? loaded
-              ? "You are seeing what was loaded before the connection dropped. Asking for, joining and cancelling video visits need an internet connection."
-              : "Video visits need an internet connection. Connect to see, ask for, join or cancel them."
-            : "This portal is not connected to the clinic's online system, so video visits cannot be used here."}
+              ? t("portal.tv.offlineStale")
+              : t("portal.tv.offlineEmpty")
+            : t("portal.tv.notConnected")}
         </PortalNotice>
       )}
 
@@ -347,7 +342,7 @@ export function Telehealth() {
             type="button"
             onClick={() => setSuccessMessage("")}
             className="btn-ghost -my-2 -mr-2"
-            aria-label="Dismiss message"
+            aria-label={t("portal.tv.dismiss")}
           >
             <XMarkIcon className="h-5 w-5" aria-hidden />
           </button>
@@ -364,11 +359,11 @@ export function Telehealth() {
               className="btn-secondary"
             >
               <ArrowPathIcon className="h-5 w-5" aria-hidden />
-              Try again
+              {t("portal.error.retry")}
             </button>
           }
         >
-          {loadError}
+          {t(loadError)}
         </PortalNotice>
       )}
 
@@ -376,7 +371,7 @@ export function Telehealth() {
         <section className="panel" aria-labelledby="tv-upcoming">
           <div className="panel-header">
             <h2 id="tv-upcoming" className="panel-title">
-              Upcoming video visits
+              {t("portal.tv.upcoming")}
             </h2>
           </div>
           <ul className="divide-y divide-line">
@@ -395,7 +390,7 @@ export function Telehealth() {
                       <p className="flex items-center gap-1.5 text-body tabular-nums text-ink-secondary">
                         <ClockIcon className="h-4 w-4 shrink-0" aria-hidden />
                         {formatPortalTime(visit.scheduledAt)} ·{" "}
-                        {visit.durationMinutes} minutes
+                        {t("portal.appt.minutes", { count: visit.durationMinutes })}
                       </p>
                     </div>
                     <StatusBadge tone={status.tone} icon>
@@ -405,7 +400,7 @@ export function Telehealth() {
 
                   {visit.reason && (
                     <p className="text-body text-ink-secondary">
-                      <span className="text-ink-muted">Reason: </span>
+                      <span className="text-ink-muted">{t("portal.tv.reason")} </span>
                       {visit.reason}
                     </p>
                   )}
@@ -414,9 +409,9 @@ export function Telehealth() {
                     <div className="flex flex-col gap-3 rounded-lg border border-success-line bg-success-soft p-4 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-body text-success-fg">
                         <span className="font-medium">
-                          Your video visit is open.
+                          {t("portal.tv.openNow")}
                         </span>{" "}
-                        Join now to talk to the health worker.
+                        {t("portal.tv.joinNowHint")}
                       </p>
                       <button
                         type="button"
@@ -424,16 +419,14 @@ export function Telehealth() {
                         className="btn-primary"
                       >
                         <VideoCameraIcon className="h-5 w-5" aria-hidden />
-                        Join video visit
+                        {t("portal.tv.join")}
                       </button>
                     </div>
                   )}
 
                   {canJoin && !hasLink && (
                     <PortalNotice tone="warning">
-                      The link for this video visit is not ready yet. Refresh
-                      this page closer to the time, or send the clinic a
-                      message.
+                      {t("portal.tv.linkNotReady")}
                     </PortalNotice>
                   )}
 
@@ -442,8 +435,10 @@ export function Telehealth() {
                       <button type="button" disabled className="btn-secondary">
                         <ClockIcon className="h-5 w-5" aria-hidden />
                         {available
-                          ? `Join opens at ${formatPortalTime(televisitJoinOpensAt(visit))}`
-                          : "Joining needs an internet connection"}
+                          ? t("portal.tv.joinOpensAt", {
+                              time: formatPortalTime(televisitJoinOpensAt(visit)),
+                            })
+                          : t("portal.tv.joinNeedsInternet")}
                       </button>
                     </div>
                   )}
@@ -458,7 +453,7 @@ export function Telehealth() {
         <section className="panel" aria-labelledby="tv-requests">
           <div className="panel-header">
             <h2 id="tv-requests" className="panel-title">
-              Your requests
+              {t("portal.appt.requests")}
             </h2>
           </div>
 
@@ -480,11 +475,13 @@ export function Telehealth() {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-body font-medium text-ink">
-                        Video visit request
+                        {t("portal.tv.request")}
                       </p>
                       <p className="text-body text-ink-secondary">
-                        Preferred: {formatPortalDate(request.preferredDate)} ·{" "}
-                        {timeSlotLabel(request.preferredTime)}
+                        {t("portal.appt.preferred", {
+                          date: formatPortalDate(request.preferredDate),
+                        })}{" "}
+                        · {timeSlotLabel(t, request.preferredTime)}
                       </p>
                     </div>
                     <StatusBadge tone={status.tone} icon>
@@ -494,7 +491,7 @@ export function Telehealth() {
 
                   {request.reason && (
                     <p className="text-body text-ink-secondary">
-                      <span className="text-ink-muted">Reason: </span>
+                      <span className="text-ink-muted">{t("portal.tv.reason")} </span>
                       {request.reason}
                     </p>
                   )}
@@ -502,7 +499,7 @@ export function Telehealth() {
                   {request.status === "declined" && request.reviewNotes && (
                     <p className="rounded-md bg-surface-sunken p-3 text-body text-ink">
                       <span className="text-ink-muted">
-                        Note from the clinic:{" "}
+                        {t("portal.appt.clinicNote")}{" "}
                       </span>
                       {request.reviewNotes}
                     </p>
@@ -518,14 +515,14 @@ export function Telehealth() {
                       disabled={!available || Boolean(cancellingId)}
                       className="btn-secondary"
                     >
-                      Cancel request
+                      {t("portal.appt.cancelRequest")}
                     </button>
                   )}
 
                   {canCancel && isConfirming && (
                     <div className="flex flex-col gap-3 rounded-md border border-warning-line bg-warning-soft p-3 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-body font-medium text-warning-fg">
-                        Cancel this video visit request?
+                        {t("portal.tv.cancelConfirm")}
                       </p>
                       <div className="flex flex-wrap gap-2">
                         <button
@@ -534,7 +531,7 @@ export function Telehealth() {
                           disabled={isCancelling}
                           className="btn-secondary"
                         >
-                          Keep request
+                          {t("portal.appt.keepRequest")}
                         </button>
                         <button
                           type="button"
@@ -542,7 +539,9 @@ export function Telehealth() {
                           disabled={!available || isCancelling}
                           className="btn-danger"
                         >
-                          {isCancelling ? "Cancelling…" : "Yes, cancel"}
+                          {isCancelling
+                            ? t("portal.appt.cancelling")
+                            : t("portal.appt.yesCancel")}
                         </button>
                       </div>
                     </div>
@@ -558,7 +557,7 @@ export function Telehealth() {
         <section className="panel" aria-labelledby="tv-past">
           <div className="panel-header">
             <h2 id="tv-past" className="panel-title">
-              Past video visits
+              {t("portal.tv.past")}
             </h2>
           </div>
           <ul className="divide-y divide-line">
@@ -574,7 +573,7 @@ export function Telehealth() {
                       </p>
                       {visit.reason && (
                         <p className="text-body text-ink-secondary">
-                          <span className="text-ink-muted">Reason: </span>
+                          <span className="text-ink-muted">{t("portal.tv.reason")} </span>
                           {visit.reason}
                         </p>
                       )}
@@ -594,8 +593,8 @@ export function Telehealth() {
         <div className="panel">
           <EmptyState
             icon={VideoCameraIcon}
-            title="No video visits yet"
-            description="Ask for a video visit and the clinic team will review it. When they book a time, it will show here."
+            title={t("portal.tv.emptyTitle")}
+            description={t("portal.tv.emptyBody")}
             action={requestButton}
           />
         </div>
@@ -604,17 +603,17 @@ export function Telehealth() {
       <section className="panel" aria-labelledby="tv-how">
         <div className="panel-header">
           <h2 id="tv-how" className="panel-title">
-            How video visits work
+            {t("portal.tv.howTitle")}
           </h2>
         </div>
         <ol className="panel-body list-decimal space-y-1.5 pl-9 text-body text-ink-secondary">
-          <li>Ask for a video visit and choose a day that suits you.</li>
-          <li>The clinic team reviews your request.</li>
-          <li>When they book a time, it shows on this page.</li>
+          <li>{t("portal.tv.how1")}</li>
+          <li>{t("portal.tv.how2")}</li>
+          <li>{t("portal.tv.how3")}</li>
           <li>
-            The Join button opens {TELEVISIT_JOIN_WINDOW_BEFORE_MIN} minutes
-            before the start time. You need a phone with internet and a
-            camera.
+            {t("portal.tv.how4", {
+              count: TELEVISIT_JOIN_WINDOW_BEFORE_MIN,
+            })}
           </li>
         </ol>
       </section>
@@ -635,14 +634,14 @@ export function Telehealth() {
           >
             <div className="mb-4 flex items-start justify-between gap-3">
               <h2 id="tv-request-title" className="text-h1 text-ink">
-                Ask for a video visit
+                {t("portal.tv.ask")}
               </h2>
               <button
                 type="button"
                 onClick={closeRequestModal}
                 disabled={submitting}
                 className="btn-ghost -mr-2 -mt-1"
-                aria-label="Close"
+                aria-label={t("portal.tv.close")}
               >
                 <XMarkIcon className="h-6 w-6" aria-hidden />
               </button>
@@ -651,7 +650,7 @@ export function Telehealth() {
             <form onSubmit={handleRequestSubmit} className="space-y-4">
               <div>
                 <label htmlFor="televisit-reason" className="field-label">
-                  Reason for the video visit (required)
+                  {t("portal.tv.reasonLabel")}
                 </label>
                 <textarea
                   ref={reasonRef}
@@ -665,13 +664,13 @@ export function Telehealth() {
                   className="input-field"
                 />
                 <p id="televisit-reason-hint" className="field-hint">
-                  A short description of your health concern.
+                  {t("portal.tv.reasonHint")}
                 </p>
               </div>
 
               <div>
                 <label htmlFor="televisit-date" className="field-label">
-                  Preferred day (required)
+                  {t("portal.tv.dayLabel")}
                 </label>
                 <input
                   id="televisit-date"
@@ -687,7 +686,7 @@ export function Telehealth() {
 
               <div>
                 <label htmlFor="televisit-time" className="field-label">
-                  Preferred time (required)
+                  {t("portal.tv.timeLabel")}
                 </label>
                 <select
                   id="televisit-time"
@@ -697,18 +696,17 @@ export function Telehealth() {
                   disabled={submitting}
                   className="input-field"
                 >
-                  <option value="">Select time</option>
-                  <option value="morning">Morning (8:00 AM - 12:00 PM)</option>
-                  <option value="afternoon">
-                    Afternoon (12:00 PM - 5:00 PM)
-                  </option>
-                  <option value="evening">Evening (5:00 PM - 8:00 PM)</option>
+                  <option value="">{t("portal.tv.timePlaceholder")}</option>
+                  {TIME_SLOTS.map((slot) => (
+                    <option key={slot} value={slot}>
+                      {t(`portal.tv.slot.${slot}`)}
+                    </option>
+                  ))}
                 </select>
               </div>
 
               <PortalNotice tone="info">
-                This is a request, not a booking. The clinic team will review
-                it, and the booked time will show on this page.
+                {t("portal.tv.notABooking")}
               </PortalNotice>
 
               {requestError && (
@@ -722,14 +720,14 @@ export function Telehealth() {
                   disabled={submitting}
                   className="btn-secondary flex-1"
                 >
-                  Cancel
+                  {t("action.cancel")}
                 </button>
                 <button
                   type="submit"
                   disabled={submitting || !available}
                   className="btn-primary flex-1"
                 >
-                  {submitting ? "Sending…" : "Send request"}
+                  {submitting ? t("portal.appt.sending") : t("portal.appt.send")}
                 </button>
               </div>
             </form>
