@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import i18n from "@/i18n";
 
 const mocks = vi.hoisted(() => ({
   select: vi.fn(),
@@ -38,6 +39,10 @@ const PENDING = {
   visit_mode: "in_person",
   created_at: "2026-09-25T10:00:00Z",
 };
+
+beforeAll(async () => {
+  await i18n.changeLanguage("en");
+});
 
 beforeEach(() => {
   mocks.select.mockReset();
@@ -87,5 +92,17 @@ describe("AppointmentRequest", () => {
         "The request was not cancelled. Check your connection and try again.",
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe("AppointmentRequest labels", () => {
+  it("shows a stored type in the patient's words and keeps unknown ones as stored", async () => {
+    mocks.rows = [
+      { ...PENDING, id: "r3", status: "approved", appointment_type: "Prenatal Care" },
+      { ...PENDING, id: "r4", status: "approved", appointment_type: "Dental check" },
+    ];
+    renderPage();
+    expect(await screen.findByText("Prenatal Care")).toBeInTheDocument();
+    expect(screen.getByText("Dental check")).toBeInTheDocument();
   });
 });

@@ -27,34 +27,41 @@ import {
 } from "./portalStatus";
 import { clearPortalSession, readPortalUser } from "./portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 import { localIsoDate } from "./account/outreachCache";
 import { Skeleton } from "@/components/ui/Skeleton";
 
-const appointmentTypes = [
-  "General Consultation",
-  "Follow-up Visit",
-  "Chronic Disease Management",
-  "Immunization",
-  "Health Screening",
-  "Prenatal Care",
-  "Pediatric Care",
-  "Mental Health",
-  "Injury Assessment",
-  "Other",
+// Stored values stay in English (the clinic reads them); labels are translated.
+const appointmentTypes: { value: string; key: string }[] = [
+  { value: "General Consultation", key: "portal.appt.type.general" },
+  { value: "Follow-up Visit", key: "portal.appt.type.followUp" },
+  { value: "Chronic Disease Management", key: "portal.appt.type.chronic" },
+  { value: "Immunization", key: "portal.appt.type.immunization" },
+  { value: "Health Screening", key: "portal.appt.type.screening" },
+  { value: "Prenatal Care", key: "portal.appt.type.prenatal" },
+  { value: "Pediatric Care", key: "portal.appt.type.pediatric" },
+  { value: "Mental Health", key: "portal.appt.type.mentalHealth" },
+  { value: "Injury Assessment", key: "portal.appt.type.injury" },
+  { value: "Other", key: "portal.appt.type.other" },
 ];
 
-const timeSlots = [
-  "Morning (8am - 12pm)",
-  "Afternoon (12pm - 4pm)",
-  "Evening (4pm - 7pm)",
-  "Any time",
+const timeSlots: { value: string; key: string }[] = [
+  { value: "Morning (8am - 12pm)", key: "portal.appt.slot.morning" },
+  { value: "Afternoon (12pm - 4pm)", key: "portal.appt.slot.afternoon" },
+  { value: "Evening (4pm - 7pm)", key: "portal.appt.slot.evening" },
+  { value: "Any time", key: "portal.appt.slot.any" },
 ];
+
+/** The translation key for a stored type or time slot, when it is a known one. */
+function storedLabelKey(value: string | null | undefined): string | undefined {
+  return [...appointmentTypes, ...timeSlots].find((o) => o.value === value)?.key;
+}
 
 const appointmentSchema = z.object({
-  appointmentType: z.string().min(1, "Please select appointment type"),
+  appointmentType: z.string().min(1, "portal.appt.err.type"),
   preferredDate1: z
     .string()
-    .min(1, "Please select at least one preferred date"),
+    .min(1, "portal.appt.err.date"),
   preferredTime1: z.string().optional(),
   preferredDate2: z.string().optional(),
   preferredTime2: z.string().optional(),
@@ -62,11 +69,11 @@ const appointmentSchema = z.object({
   preferredTime3: z.string().optional(),
   reason: z
     .string()
-    .min(10, "Please provide a reason (at least 10 characters)")
-    .max(500, "Reason must be less than 500 characters"),
+    .min(10, "portal.appt.err.reasonShort")
+    .max(500, "portal.appt.err.reasonLong"),
   notes: z
     .string()
-    .max(1000, "Notes must be less than 1000 characters")
+    .max(1000, "portal.appt.err.notesLong")
     .optional(),
 });
 
@@ -102,9 +109,6 @@ const REQUESTS_SHOWN = 10;
 const REQUEST_COLUMNS =
   "id, appointment_type, preferred_date_1, preferred_time_1, reason, status, review_notes, visit_mode, created_at";
 
-const PAGE_DESCRIPTION =
-  "See your booked appointments and ask the clinic for a new one. A request is not a booking: the clinic team will contact you to confirm a time.";
-
 function OverviewSkeleton() {
   return (
     <div className="panel space-y-3 p-4" aria-hidden>
@@ -116,6 +120,12 @@ function OverviewSkeleton() {
 }
 
 export function AppointmentRequest() {
+  const { t } = useT();
+  const pageDescription = t("portal.appt.description");
+  const label = (value: string | null | undefined) => {
+    const k = storedLabelKey(value);
+    return k ? t(k) : value ?? "";
+  };
   const navigate = useNavigate();
   const location = useLocation();
   const online = useOnlineStatus();
@@ -173,11 +183,7 @@ export function AppointmentRequest() {
         err instanceof Error ? err.name : "unknown",
       );
       // Offline, the "You are offline" notice already explains it.
-      setOverviewError(
-        navigator.onLine
-          ? "We could not load your appointments and requests. Please try again."
-          : "",
-      );
+      setOverviewError(navigator.onLine ? "portal.appt.loadFailed" : "");
     } finally {
       setOverviewLoading(false);
     }
@@ -218,9 +224,7 @@ export function AppointmentRequest() {
         "Error cancelling appointment request:",
         err instanceof Error ? err.name : "unknown",
       );
-      setCancelError(
-        "The request was not cancelled. Check your connection and try again.",
-      );
+      setCancelError("portal.appt.cancelFailed");
     } finally {
       setCancellingId(null);
     }
@@ -229,9 +233,7 @@ export function AppointmentRequest() {
   const handleSubmit = async (data: AppointmentForm) => {
     if (!supabase) return;
     if (!navigator.onLine) {
-      setError(
-        "You are offline, so your request was not sent. Connect to the internet and try again.",
-      );
+      setError("portal.appt.offlineNotSent");
       return;
     }
     setLoading(true);
@@ -270,9 +272,7 @@ export function AppointmentRequest() {
           "Error creating appointment request:",
           insertError instanceof Error ? insertError.name : "insert failed",
         );
-        setError(
-          "Your request was not sent. Check your connection and try again.",
-        );
+        setError("portal.appt.notSent");
         return;
       }
 
@@ -284,9 +284,7 @@ export function AppointmentRequest() {
         "Error in appointment request:",
         err instanceof Error ? err.name : "unknown",
       );
-      setError(
-        "Your request was not sent. Check your connection and try again.",
-      );
+      setError("portal.appt.notSent");
     } finally {
       setLoading(false);
     }
@@ -294,14 +292,12 @@ export function AppointmentRequest() {
 
   if (!supabase) {
     return (
-      <PortalPage title="Appointments" description={PAGE_DESCRIPTION}>
-        <PortalNotice tone="info" title="Appointments are not available here">
-          This portal is not connected to the clinic&apos;s online system, so
-          you cannot see or request appointments here. Ask the outreach team
-          at your next visit.
+      <PortalPage title={t("portal.appt.title")} description={pageDescription}>
+        <PortalNotice tone="info" title={t("portal.appt.notConnectedTitle")}>
+          {t("portal.appt.notConnected")}
         </PortalNotice>
         <Link to="/patient/dashboard" className="btn-secondary">
-          Go to home
+          {t("portal.visits.goHome")}
         </Link>
       </PortalPage>
     );
@@ -317,10 +313,10 @@ export function AppointmentRequest() {
   const overview = (
     <>
       {!online && (
-        <PortalNotice tone="offline" title="You are offline">
+        <PortalNotice tone="offline" title={t("portal.visits.offlineTitle")}>
           {overviewLoaded
-            ? "You are seeing the appointments loaded when this phone was last online. They may be out of date."
-            : "Connect to the internet to see your appointments."}
+            ? t("portal.appt.offlineStale")
+            : t("portal.appt.offlineEmpty")}
         </PortalNotice>
       )}
 
@@ -335,37 +331,37 @@ export function AppointmentRequest() {
                 className="btn-secondary"
               >
                 <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                Try again
+                {t("portal.error.retry")}
               </button>
             ) : undefined
           }
         >
-          {overviewError}
+          {t(overviewError)}
         </PortalNotice>
       )}
 
       <section className="panel" aria-labelledby="upcoming-title">
         <div className="panel-header">
           <h2 id="upcoming-title" className="panel-title">
-            Upcoming appointments
+            {t("portal.appt.upcoming")}
           </h2>
         </div>
         {overviewLoading && !overviewLoaded ? (
           <div className="p-4">
             <span role="status" className="sr-only">
-              Loading your appointments
+              {t("portal.state.loading.appointments")}
             </span>
             <OverviewSkeleton />
           </div>
         ) : !overviewLoaded ? (
           <p className="panel-body text-body text-ink-muted">
-            Not loaded yet.
+            {t("portal.appt.notLoaded")}
           </p>
         ) : appointments.length === 0 ? (
           <EmptyState
             icon={CalendarDaysIcon}
-            title="No upcoming appointments"
-            description="When the clinic books an appointment for you, it will show here."
+            title={t("portal.appt.noUpcomingTitle")}
+            description={t("portal.appt.noUpcomingBody")}
           />
         ) : (
           <ul className="divide-y divide-line">
@@ -382,7 +378,7 @@ export function AppointmentRequest() {
                       <p className="text-body tabular-nums text-ink-secondary">
                         {formatPortalTime(appt.scheduledAt)}
                         {appt.durationMinutes
-                          ? ` · ${appt.durationMinutes} minutes`
+                          ? ` · ${t("portal.appt.minutes", { count: appt.durationMinutes })}`
                           : ""}
                       </p>
                       <p className="mt-1 flex items-center gap-1.5 text-body text-ink-secondary">
@@ -392,7 +388,7 @@ export function AppointmentRequest() {
                             aria-hidden
                           />
                         )}
-                        {video ? "Video visit" : appt.appointmentType}
+                        {video ? t("portal.home.videoVisit") : label(appt.appointmentType)}
                       </p>
                     </div>
                     <StatusBadge tone={status.tone} icon>
@@ -404,7 +400,7 @@ export function AppointmentRequest() {
                       to="/patient/telehealth"
                       className="mt-2 inline-flex min-h-touch-target items-center text-label text-primary-fg underline-offset-2 hover:underline"
                     >
-                      Open video visits
+                      {t("portal.appt.openVideo")}
                     </Link>
                   )}
                 </li>
@@ -417,11 +413,11 @@ export function AppointmentRequest() {
       <section className="panel" aria-labelledby="requests-title">
         <div className="panel-header">
           <h2 id="requests-title" className="panel-title">
-            Your requests
+            {t("portal.appt.requests")}
           </h2>
           {requests.length >= REQUESTS_SHOWN && (
             <span className="text-caption text-ink-muted">
-              Latest {REQUESTS_SHOWN} shown
+              {t("portal.appt.latestShown", { count: REQUESTS_SHOWN })}
             </span>
           )}
         </div>
@@ -431,22 +427,22 @@ export function AppointmentRequest() {
           </div>
         ) : !overviewLoaded ? (
           <p className="panel-body text-body text-ink-muted">
-            Not loaded yet.
+            {t("portal.appt.notLoaded")}
           </p>
         ) : requests.length === 0 ? (
           <p className="panel-body text-body text-ink-muted">
-            You have not asked for an appointment in the portal yet.
+            {t("portal.appt.noRequests")}
           </p>
         ) : (
           <ul className="divide-y divide-line">
             {cancelled && (
               <li className="p-4">
-                <PortalNotice tone="success">Your request has been cancelled.</PortalNotice>
+                <PortalNotice tone="success">{t("portal.appt.cancelled")}</PortalNotice>
               </li>
             )}
             {cancelError && (
               <li className="p-4">
-                <PortalNotice tone="danger">{cancelError}</PortalNotice>
+                <PortalNotice tone="danger">{t(cancelError)}</PortalNotice>
               </li>
             )}
             {requests.map((req) => {
@@ -460,16 +456,16 @@ export function AppointmentRequest() {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-body font-medium text-ink">
-                        {video ? "Video visit" : req.appointment_type}
+                        {video ? t("portal.home.videoVisit") : label(req.appointment_type)}
                       </p>
                       <p className="text-body text-ink-secondary">
-                        Preferred: {formatPortalDate(req.preferred_date_1)}
+                        {t("portal.appt.preferred", { date: formatPortalDate(req.preferred_date_1) })}
                         {req.preferred_time_1
-                          ? ` · ${req.preferred_time_1}`
+                          ? ` · ${label(req.preferred_time_1)}`
                           : ""}
                       </p>
                       <p className="text-caption text-ink-muted">
-                        Sent on {formatPortalDate(req.created_at)}
+                        {t("portal.appt.sentOn", { date: formatPortalDate(req.created_at) })}
                       </p>
                     </div>
                     <StatusBadge tone={status.tone} icon>
@@ -479,7 +475,7 @@ export function AppointmentRequest() {
                   {req.review_notes && (
                     <p className="mt-2 rounded-md bg-surface-sunken p-3 text-body text-ink">
                       <span className="text-ink-muted">
-                        Note from the clinic:{" "}
+                        {t("portal.appt.clinicNote")}{" "}
                       </span>
                       {req.review_notes}
                     </p>
@@ -495,13 +491,13 @@ export function AppointmentRequest() {
                       disabled={!online || Boolean(cancellingId)}
                       className="btn-secondary mt-3"
                     >
-                      Cancel request
+                      {t("portal.appt.cancelRequest")}
                     </button>
                   )}
                   {canCancel && isConfirming && (
                     <div className="mt-3 flex flex-col gap-3 rounded-md border border-warning-line bg-warning-soft p-3 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-body font-medium text-warning-fg">
-                        Cancel this request?
+                        {t("portal.appt.cancelConfirm")}
                       </p>
                       <div className="flex flex-wrap gap-2">
                         <button
@@ -510,7 +506,7 @@ export function AppointmentRequest() {
                           disabled={isCancelling}
                           className="btn-secondary"
                         >
-                          Keep request
+                          {t("portal.appt.keepRequest")}
                         </button>
                         <button
                           type="button"
@@ -518,7 +514,7 @@ export function AppointmentRequest() {
                           disabled={!online || isCancelling}
                           className="btn-danger"
                         >
-                          {isCancelling ? "Cancelling…" : "Yes, cancel"}
+                          {isCancelling ? t("portal.appt.cancelling") : t("portal.appt.yesCancel")}
                         </button>
                       </div>
                     </div>
@@ -545,10 +541,9 @@ export function AppointmentRequest() {
           aria-hidden
         />
         <div className="min-w-0 flex-1">
-          <h2 className="text-h2 text-ink">Request sent to the clinic</h2>
+          <h2 className="text-h2 text-ink">{t("portal.appt.sentTitle")}</h2>
           <p className="mt-1 text-body text-ink-secondary">
-            This is not a booking yet. The clinic team will contact you to
-            confirm a time. You can follow it under &quot;Your requests&quot;.
+            {t("portal.appt.sentBody")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <button
@@ -559,10 +554,10 @@ export function AppointmentRequest() {
               }}
               className="btn-secondary"
             >
-              Ask for another appointment
+              {t("portal.appt.askAnother")}
             </button>
             <Link to="/patient/dashboard" className="btn-secondary">
-              Back to home
+              {t("portal.appt.backHome")}
             </Link>
           </div>
         </div>
@@ -577,20 +572,19 @@ export function AppointmentRequest() {
     >
       <div className="panel-header">
         <h2 id="request-form-title" className="panel-title">
-          Ask for an appointment
+          {t("portal.medicines.askAppointment")}
         </h2>
       </div>
       <div className="panel-body space-y-5">
         {!online && (
           <PortalNotice tone="offline">
-            You are offline. You can fill in this form, but it can only be sent
-            when you are connected to the internet.
+            {t("portal.appt.offlineForm")}
           </PortalNotice>
         )}
 
         <div>
           <label htmlFor="appointmentType" className="field-label">
-            Type of appointment (required)
+            {t("portal.appt.typeLabel")}
           </label>
           <select
             {...form.register("appointmentType")}
@@ -600,37 +594,35 @@ export function AppointmentRequest() {
             aria-invalid={errors.appointmentType ? true : undefined}
             aria-describedby={describe("appointmentType")}
           >
-            <option value="">Select appointment type</option>
+            <option value="">{t("portal.appt.typePlaceholder")}</option>
             {appointmentTypes.map((type) => (
-              <option key={type} value={type}>
-                {type}
+              <option key={type.value} value={type.value}>
+                {t(type.key)}
               </option>
             ))}
           </select>
           {errors.appointmentType && (
             <p id="appointmentType-error" className="field-error">
-              {errors.appointmentType.message}
+              {t(errors.appointmentType.message ?? "")}
             </p>
           )}
         </div>
 
         <fieldset className="space-y-4 border-t border-line pt-5">
-          <legend className="text-h3 text-ink">Days that suit you</legend>
+          <legend className="text-h3 text-ink">{t("portal.appt.daysLegend")}</legend>
           <p className="text-body text-ink-muted">
-            Give up to 3 days. More choices make it easier for the clinic to
-            find a time.
+            {t("portal.appt.daysHint")}
           </p>
 
           {([1, 2, 3] as const).map((n) => {
             const dateField = `preferredDate${n}` as const;
             const timeField = `preferredTime${n}` as const;
-            const choice =
-              n === 1 ? "First choice" : n === 2 ? "Second choice" : "Third choice";
+
             return (
               <div key={n} className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <label htmlFor={dateField} className="field-label">
-                    {choice} date{n === 1 ? " (required)" : " (optional)"}
+                    {t(`portal.appt.choice${n}Date`)}
                   </label>
                   <input
                     {...form.register(dateField)}
@@ -644,13 +636,13 @@ export function AppointmentRequest() {
                   />
                   {errors[dateField] && (
                     <p id={`${dateField}-error`} className="field-error">
-                      {errors[dateField]?.message}
+                      {t(errors[dateField]?.message ?? "")}
                     </p>
                   )}
                 </div>
                 <div>
                   <label htmlFor={timeField} className="field-label">
-                    {choice} time of day
+                    {t(`portal.appt.choice${n}Time`)}
                   </label>
                   <select
                     {...form.register(timeField)}
@@ -658,10 +650,10 @@ export function AppointmentRequest() {
                     className={fieldClass}
                     disabled={loading}
                   >
-                    <option value="">Any time</option>
+                    <option value="">{t("portal.appt.slot.any")}</option>
                     {timeSlots.map((slot) => (
-                      <option key={slot} value={slot}>
-                        {slot}
+                      <option key={slot.value} value={slot.value}>
+                        {t(slot.key)}
                       </option>
                     ))}
                   </select>
@@ -674,7 +666,7 @@ export function AppointmentRequest() {
         <div className="space-y-4 border-t border-line pt-5">
           <div>
             <label htmlFor="reason" className="field-label">
-              Reason for the visit (required)
+              {t("portal.appt.reasonLabel")}
             </label>
             <textarea
               {...form.register("reason")}
@@ -687,18 +679,17 @@ export function AppointmentRequest() {
             />
             {errors.reason && (
               <p id="reason-error" className="field-error">
-                {errors.reason.message}
+                {t(errors.reason.message ?? "")}
               </p>
             )}
             <p id="reason-count" className="field-hint">
-              Describe how you feel or what you need. {form.watch("reason")?.length || 0} / 500
-              characters
+              {t("portal.appt.reasonHint", { count: form.watch("reason")?.length || 0 })}
             </p>
           </div>
 
           <div>
             <label htmlFor="notes" className="field-label">
-              Anything else the clinic should know (optional)
+              {t("portal.appt.notesLabel")}
             </label>
             <textarea
               {...form.register("notes")}
@@ -711,18 +702,17 @@ export function AppointmentRequest() {
             />
             {errors.notes && (
               <p id="notes-error" className="field-error">
-                {errors.notes.message}
+                {t(errors.notes.message ?? "")}
               </p>
             )}
           </div>
         </div>
 
         <PortalNotice tone="info">
-          This is a request, not a confirmed appointment. The clinic team will
-          review it and contact you to confirm a time.
+          {t("portal.appt.notABooking")}
         </PortalNotice>
 
-        {error && <PortalNotice tone="danger">{error}</PortalNotice>}
+        {error && <PortalNotice tone="danger">{t(error)}</PortalNotice>}
 
         <div className="flex flex-wrap gap-2">
           <button
@@ -730,7 +720,7 @@ export function AppointmentRequest() {
             disabled={loading || !online}
             className="btn-primary"
           >
-            {loading ? "Sending…" : "Send request"}
+            {loading ? t("portal.appt.sending") : t("portal.appt.send")}
           </button>
           <button
             type="button"
@@ -738,7 +728,7 @@ export function AppointmentRequest() {
             className="btn-secondary"
             disabled={loading}
           >
-            Cancel
+            {t("portal.conditions.cancel")}
           </button>
         </div>
       </div>
@@ -746,7 +736,7 @@ export function AppointmentRequest() {
   );
 
   return (
-    <PortalPage title="Appointments" description={PAGE_DESCRIPTION}>
+    <PortalPage title={t("portal.appt.title")} description={pageDescription}>
       {isRequestRoute ? (
         <>
           {formSection}
