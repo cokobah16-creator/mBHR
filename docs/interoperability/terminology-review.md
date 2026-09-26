@@ -36,7 +36,7 @@ Clinical representation choices are listed for clinician review in
 | DiagnosticReport.category | `http://terminology.hl7.org/CodeSystem/v2-0074` | `LAB` |
 | Encounter.class | `http://terminology.hl7.org/CodeSystem/v3-ActCode` | `AMB` ambulatory |
 | Condition.clinicalStatus | `http://terminology.hl7.org/CodeSystem/condition-clinical` | the stored code, one of active, recurrence, relapse, inactive, remission, resolved |
-| Condition.verificationStatus | `http://terminology.hl7.org/CodeSystem/condition-ver-status` | the stored code, one of unconfirmed, provisional, differential, refuted, entered-in-error ("confirmed" is the column's default and is left out) |
+| Condition.verificationStatus | `http://terminology.hl7.org/CodeSystem/condition-ver-status` | the stored code, one of unconfirmed, provisional, differential, confirmed, refuted, entered-in-error (left out when none was recorded) |
 | Condition.category | `http://terminology.hl7.org/CodeSystem/condition-category` | `problem-list-item`, `encounter-diagnosis` |
 | Condition.category | `http://hl7.org/fhir/us/core/CodeSystem/condition-category` | `health-concern` (defined by US Core, not by base R4) |
 | Condition.severity | `http://snomed.info/sct` | `255604002` Mild, `6736007` Moderate (severity modifier), `24484000` Severe |
@@ -201,7 +201,7 @@ Points for review in this table:
 | Allergens and reactions | text | mBHR has no allergen code list. A text such as "Penicillin, codeine" stays one record. |
 | Allergy verification status and type | left out | Not recorded. |
 | Allergy category for the type "medication" | left out | The allergy form pre-selects "medication", so a stored "medication" cannot be told apart from "not chosen". Only food and environmental, which someone chose, are sent. |
-| Diagnosis verification status "confirmed" | left out | It is the `conditions` column's default, so it may just mean that nobody recorded one; the two cannot be told apart. |
+| Diagnosis clinical status, verification status and category not recorded | left out | The held-back `conditions` table has no default for them, so nothing is filled in; a missing one means none was recorded. |
 | Diagnoses in consultations | not published | `consultations.provisional_dx` is a text array with no stable id per diagnosis. |
 | Staff roles | local code only | An mBHR role is an access role an admin assigns, not a qualification. It is never mapped to SNOMED CT or HL7 v2 practitioner codes. |
 | Organization and Location type | left out | Not recorded in a codable form. |

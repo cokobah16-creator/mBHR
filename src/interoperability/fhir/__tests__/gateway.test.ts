@@ -337,6 +337,28 @@ describe("searches", () => {
     expect(note.resource.issue[0].severity).toBe("information");
   });
 
+  it("sends a diagnosis only with what was recorded: nothing filled in, a stored 'confirmed' as confirmed", async () => {
+    const UNMARKED = { ...CONDITION_A, id: "c0000000-0000-4000-8000-00000000000c", clinical_status: null, verification_status: null, category: null };
+    const CONFIRMED = { ...CONDITION_A, id: "c0000000-0000-4000-8000-00000000000d", verification_status: "confirmed" };
+    const { call } = setup({
+      tables: { patients: [PATIENT_A, PATIENT_B], visits: [VISIT_A], vitals: [VITALS_A, VITALS_B], conditions: [CONDITION_A, UNMARKED, CONFIRMED] },
+    });
+    const unmarked = await body(await call(`/fhir/R4/Condition/${UNMARKED.id}`, { token: DOCTOR }));
+    expect(unmarked.resourceType).toBe("Condition");
+    expect(unmarked.clinicalStatus).toBeUndefined();
+    expect(unmarked.verificationStatus).toBeUndefined();
+    expect(unmarked.category).toBeUndefined();
+    const confirmed = await body(await call(`/fhir/R4/Condition/${CONFIRMED.id}`, { token: DOCTOR }));
+    expect(confirmed.verificationStatus).toEqual({
+      coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code: "confirmed" }],
+    });
+    // A diagnosis with no recorded clinical status matches no clinical-status search.
+    const active = await body(await call(`/fhir/R4/Condition?patient=Patient/${PATIENT_A.fhir_id}&clinical-status=active`, { token: DOCTOR }));
+    expect(matchIds(active)).toEqual([CONDITION_A.id, CONFIRMED.id]);
+    const all = await body(await call(`/fhir/R4/Condition?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR }));
+    expect(matchIds(all)).toEqual([CONDITION_A.id, UNMARKED.id, CONFIRMED.id]);
+  });
+
   it("adds verified terminology mappings to the local code", async () => {
     const { call } = setup({ terminology: [{ local_code: "MAL", fhir_system: "http://hl7.org/fhir/sid/icd-10", fhir_code: "B54", fhir_display: null }] });
     const c = await body(await call(`/fhir/R4/Condition/${CONDITION_A.id}`, { token: DOCTOR }));

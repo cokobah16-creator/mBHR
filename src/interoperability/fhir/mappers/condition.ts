@@ -1,14 +1,16 @@
 // public.conditions -> Condition
 //
 // mBHR's conditions table already stores FHIR-shaped statuses, so they are
-// carried over exactly: a provisional or differential diagnosis stays
-// provisional or differential, never confirmed. The one exception is a
-// stored verification_status 'confirmed': it is the column's default, so it
-// cannot be told apart from a row written without a verification status,
-// and it is left out (see VERIFICATION below). The code is published under
-// mBHR's local condition code system unless interop.terminology_map holds a
-// reviewed ('verified') mapping for it, in which case that coding is added
-// next to the local one. Free-text notes and the recorder are not published.
+// carried over exactly: provisional stays provisional, differential stays
+// differential, confirmed stays confirmed. The table fills in none of
+// clinical_status, verification_status or category (20260125091822 has no
+// DEFAULT on them), so a stored value is one someone chose, a missing one is
+// left out, and nothing is filled in here. A problem-list diagnosis with no
+// clinical status is published without one: R4 con-3 is a warning, and no
+// status is invented. The code is published under mBHR's local condition
+// code system unless interop.terminology_map holds a reviewed ('verified')
+// mapping for it, in which case that coding is added next to the local one.
+// Free-text notes and the recorder are not published.
 //
 // Not yet published: consultations.provisional_dx (a text array on the
 // consultation, with no stable per-diagnosis id). See resource-mapping.md.
@@ -45,18 +47,17 @@ const CLINICAL = ["active", "recurrence", "relapse", "inactive", "remission", "r
 /** The clinical statuses an abatement may stand beside (R4 con-4). */
 const ENDED = ["inactive", "remission", "resolved"];
 /**
- * The verification codes published as stored. "confirmed" is not one of
- * them: public.conditions.verification_status has DEFAULT 'confirmed'
- * (20260125091822_add_immunizations_conditions_sdoh.sql), so a stored
- * 'confirmed' may just mean that nobody recorded a verification status;
- * the two cannot be told apart. It is left out, never published as a
- * confirmed diagnosis. Condition search offers no verification-status
- * parameter, so search cannot disagree with this.
+ * The verification codes published as stored: every condition-ver-status
+ * code. public.conditions.verification_status has no default (owner
+ * decision, CLINICAL_LOGIC_CHANGES.md 2.7), so a stored value, 'confirmed'
+ * included, was recorded by someone; a missing one is left out, never
+ * assumed confirmed.
  */
 const VERIFICATION = [
   "unconfirmed",
   "provisional",
   "differential",
+  "confirmed",
   "refuted",
   "entered-in-error",
 ];

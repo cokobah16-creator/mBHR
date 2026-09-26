@@ -123,8 +123,8 @@ export function mapEncounterStatus(raw: unknown): EncounterStatus {
 
 // ---------------------------------------------------------------------------
 // Condition.clinicalStatus / verificationStatus <- public.conditions
-// (the table already stores FHIR codes; anything else is left out, and so
-// is a stored verification status 'confirmed', the column's default)
+// (the table already stores FHIR codes and fills in none of them; anything
+// else is left out)
 // ---------------------------------------------------------------------------
 
 const CONDITION_CLINICAL_CODES = ["active", "recurrence", "relapse", "inactive", "remission", "resolved"] as const;
@@ -156,17 +156,11 @@ export const CONDITION_VERIFICATION_STATUS: StatusMap<(typeof CONDITION_VERIFICA
   source: "public.conditions.verification_status",
   valueSet: "http://hl7.org/fhir/ValueSet/condition-ver-status",
   allowed: CONDITION_VERIFICATION_CODES,
-  // Every code except "confirmed", the column's default (see unrecognised
-  // and mappers/condition.ts).
-  rules: CONDITION_VERIFICATION_CODES.filter((code) => code !== "confirmed").map((code) => ({
+  rules: CONDITION_VERIFICATION_CODES.map((code) => ({
     source: [code],
     fhir: code,
-    reason: "Stored as the FHIR code by the app; a provisional or differential diagnosis is never shown as confirmed.",
+    reason: "Stored as the FHIR code by whoever recorded the diagnosis; a provisional or differential diagnosis is never shown as confirmed.",
   })),
   missing: { fhir: null, reason: "Not recorded: left out, never assumed confirmed." },
-  unrecognised: {
-    fhir: null,
-    reason:
-      "'confirmed' is the column's default (DEFAULT 'confirmed'), so it may just mean that nobody recorded a verification status; the two cannot be told apart. It is left out, never shown as confirmed. Any other value is not a FHIR verification status: left out, not guessed.",
-  },
+  unrecognised: { fhir: null, reason: "Not a FHIR verification status: left out, not guessed." },
 };

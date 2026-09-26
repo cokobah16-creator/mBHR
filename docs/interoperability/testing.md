@@ -28,7 +28,7 @@ Locally, where `npm install` is not possible, the same files run under Bun:
 bun test src/interoperability
 ```
 
-With Bun this is 19 files and 678 tests (678 pass, 0 fail). Vitest is
+With Bun this is 19 files and 680 tests (680 pass, 0 fail). Vitest is
 what CI uses; the Bun run is a local convenience.
 
 Files in `src/interoperability/fhir/__tests__/` (plus
@@ -126,7 +126,7 @@ Document and consent cases are in `documents.test.ts` and
 The `gateway` job, after the unit tests:
 
 1. writes the gateway's own output for synthetic data with
-   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 53 examples from
+   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 54 examples from
    `src/interoperability/fhir/conformance/examples.ts` (the published
    resource shapes, searchset Bundles including one with no match and so
    no `entry`, an OperationOutcome and the CapabilityStatement);
@@ -219,6 +219,12 @@ check against the real schema is the manual **Actions → Database
 migrations → rehearse** workflow (`db-migrations.yml`), which needs the
 owner's approval. Whether it has been run for Phase 2 is not recorded
 here: treat it as not run until the owner confirms.
+
+The job does not apply the held-back diagnosis table (`conditions`, in
+`20260125091822`). Its rule that clinical status, verification status and
+category have no default (owner decision, CLINICAL_LOGIC_CHANGES.md 2.7)
+is checked by reading the SQL in `scripts/ci/conditions-no-defaults.test.ts`,
+which runs with the app's tests (`npm run test:run` in `build.yml`).
 
 ## Running locally
 

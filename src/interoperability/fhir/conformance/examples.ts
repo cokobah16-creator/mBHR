@@ -577,6 +577,11 @@ export function conformanceExamples(): Record<string, Resource> {
     { ...CONDITION, id: "c0ffee00-0000-4000-8000-000000000004", verification_status: "confirmed", severity: "severe" },
     ctx,
   )!;
+  // A diagnosis nobody marked: no clinical status, verification status or category is filled in.
+  const unmarked = mapCondition(
+    { ...CONDITION, id: "c0ffee00-0000-4000-8000-000000000005", clinical_status: null, verification_status: null, category: null },
+    ctx,
+  )!;
 
   const out: Record<string, Resource> = {
     "Patient-example": patient,
@@ -586,6 +591,7 @@ export function conformanceExamples(): Record<string, Resource> {
     "Condition-entered-in-error": enteredInError,
     "Condition-resolved-mild": resolvedMild,
     "Condition-active-severe": activeSevere,
+    "Condition-unmarked": unmarked,
     "CapabilityStatement-mbhr": capabilityStatement(EXAMPLE_BASE_URL) as Resource,
     "OperationOutcome-forbidden": operationOutcome("forbidden", "The requested resource is not available to this client."),
     "Bundle-observation-search": searchsetBundle({

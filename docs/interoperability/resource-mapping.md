@@ -189,9 +189,9 @@ Served by the same Observation module, after vital signs.
 | | |
 | --- | --- |
 | FHIR id | `conditions.id` (uuid) |
-| clinicalStatus | `clinical_status` (already condition-clinical codes); left out when missing or not a code, and on an `entered-in-error` record (invariant con-5). |
-| verificationStatus | `verification_status` (already condition-ver-status codes): provisional stays provisional, differential stays differential. Left out when missing, not a code, or "confirmed": the column defaults to "confirmed", so a stored "confirmed" may just mean nobody recorded one; the two cannot be told apart. |
-| category | `problem-list-item`, `encounter-diagnosis` (R4 condition-category); `health-concern` (US Core code system). |
+| clinicalStatus | `clinical_status` as recorded (already condition-clinical codes); left out when none was recorded or not a code, and on an `entered-in-error` record (invariant con-5). Never filled in: the table has no default, so a diagnosis nobody marked is not sent as active. A problem-list-item with no clinical status is sent without one (R4 con-3 is a warning; none is invented). |
+| verificationStatus | `verification_status` as recorded (already condition-ver-status codes): provisional stays provisional, differential stays differential, confirmed stays confirmed. Left out when none was recorded or not a code; never assumed confirmed. The table has no default (owner decision, CLINICAL_LOGIC_CHANGES.md 2.7), so a stored value is one someone chose. |
+| category | `problem-list-item`, `encounter-diagnosis` (R4 condition-category); `health-concern` (US Core code system). Left out when none was recorded: the table has no default. |
 | severity | mild/moderate/severe → SNOMED CT 255604002 / 6736007 / 24484000 (R4 condition-severity value set). |
 | code | local `https://mbhr.app/codes/condition|<condition_code>` with `condition_name` as display and text; plus any **verified** mapping from `interop.terminology_map` (domain `condition`). |
 | onset / abatement | `onset_date`; `abatement_date` only beside a published clinical status of inactive, remission or resolved (invariant con-4). It is **left out** beside active, recurrence or relapse, and when no clinical status is published (entered in error, or a missing or unknown stored value): an ended status is never inferred from the date. |

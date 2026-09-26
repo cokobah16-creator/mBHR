@@ -26,9 +26,9 @@
       - `patient_id` (text) - Reference to patient
       - `condition_code` (text) - ICD-10 or SNOMED code
       - `condition_name` (text) - Display name
-      - `clinical_status` (text) - active, recurrence, relapse, inactive, remission, resolved
-      - `verification_status` (text) - unconfirmed, provisional, differential, confirmed
-      - `category` (text) - problem-list-item, encounter-diagnosis, health-concern
+      - `clinical_status` (text) - active, recurrence, relapse, inactive, remission, resolved; no default (NULL = not recorded)
+      - `verification_status` (text) - unconfirmed, provisional, differential, confirmed, refuted, entered-in-error; no default
+      - `category` (text) - problem-list-item, encounter-diagnosis, health-concern; no default
       - `severity` (text) - mild, moderate, severe
       - `onset_date` (date) - When condition started
       - `abatement_date` (date) - When condition resolved
@@ -88,9 +88,9 @@ CREATE TABLE IF NOT EXISTS conditions (
   patient_id text NOT NULL,
   condition_code text,
   condition_name text NOT NULL,
-  clinical_status text DEFAULT 'active' CHECK (clinical_status IN ('active', 'recurrence', 'relapse', 'inactive', 'remission', 'resolved')),
-  verification_status text DEFAULT 'confirmed' CHECK (verification_status IN ('unconfirmed', 'provisional', 'differential', 'confirmed', 'refuted', 'entered-in-error')),
-  category text DEFAULT 'problem-list-item' CHECK (category IN ('problem-list-item', 'encounter-diagnosis', 'health-concern')),
+  clinical_status text CHECK (clinical_status IN ('active', 'recurrence', 'relapse', 'inactive', 'remission', 'resolved')),
+  verification_status text CHECK (verification_status IN ('unconfirmed', 'provisional', 'differential', 'confirmed', 'refuted', 'entered-in-error')),
+  category text CHECK (category IN ('problem-list-item', 'encounter-diagnosis', 'health-concern')),
   severity text CHECK (severity IN ('mild', 'moderate', 'severe')),
   onset_date date,
   abatement_date date,
@@ -299,3 +299,12 @@ COMMENT ON TABLE sdoh_observations IS 'Social Determinants of Health observation
 COMMENT ON COLUMN immunizations.vaccine_code IS 'CVX vaccine code from CDC';
 COMMENT ON COLUMN conditions.condition_code IS 'ICD-10-CM or SNOMED CT code';
 COMMENT ON COLUMN sdoh_observations.category IS 'SDOH domain: housing, food, transportation, employment, education, social, financial, safety';
+
+-- Owner decision (docs/clinical/CLINICAL_LOGIC_CHANGES.md 2.7, 2026-09-26):
+-- a diagnosis's clinical status, verification status and category are never
+-- filled in. A blank stays NULL, so FHIR publishes only what staff chose.
+-- CREATE TABLE IF NOT EXISTS keeps an older copy's defaults; this removes them.
+ALTER TABLE conditions
+  ALTER COLUMN clinical_status DROP DEFAULT,
+  ALTER COLUMN verification_status DROP DEFAULT,
+  ALTER COLUMN category DROP DEFAULT;

@@ -232,28 +232,47 @@ describe("Condition mapper", () => {
     expect(c.verificationStatus).toBeUndefined();
   });
 
-  it("leaves out a stored 'confirmed', the column's default, and publishes every other verification code", () => {
-    // public.conditions.verification_status has DEFAULT 'confirmed': a row
-    // written without one is not a confirmed diagnosis.
+  it("publishes every verification code as recorded, 'confirmed' included, and none when none was recorded", () => {
+    // public.conditions.verification_status has no default (owner decision,
+    // CLINICAL_LOGIC_CHANGES.md 2.7): a stored 'confirmed' was chosen by staff.
     const c = mapCondition({ ...CONDITION_A, verification_status: "confirmed" }, ctx)!;
-    expect("verificationStatus" in c).toBe(false);
+    expect(c.verificationStatus).toStrictEqual({
+      coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code: "confirmed" }],
+    });
     expect(c.clinicalStatus?.coding?.[0].code).toBe("active"); // unchanged
     expect(validateResource(c)).toEqual([]);
-    for (const raw of ["Confirmed", " confirmed "]) {
+    for (const raw of ["Confirmed", "CONFIRMED"]) {
       expect("verificationStatus" in mapCondition({ ...CONDITION_A, verification_status: raw }, ctx)!, raw).toBe(false);
     }
-    for (const code of ["unconfirmed", "provisional", "differential", "refuted", "entered-in-error"]) {
+    for (const code of ["unconfirmed", "provisional", "differential", "confirmed", "refuted", "entered-in-error"]) {
       expect(mapCondition({ ...CONDITION_A, verification_status: code }, ctx)!.verificationStatus, code).toStrictEqual({
         coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code }],
       });
     }
-    // Search cannot find what the read leaves out: there is no
-    // verification-status parameter (an unknown parameter is refused).
+    expect(mapCondition({ ...CONDITION_A, verification_status: null }, ctx)!.verificationStatus).toBeUndefined();
+    // There is still no verification-status search parameter (an unknown parameter is refused).
     expect(conditionDefinition.searchParams.map((p) => p.name)).not.toContain("verification-status");
-    // The published notes say so, so a missing verificationStatus is not read as "unconfirmed".
-    expect(conditionDefinition.notes?.join(" ")).toMatch(
-      /verificationStatus is left out when the stored value is 'confirmed'.*cannot be told apart.*does not mean the diagnosis is unconfirmed/,
-    );
+    // The published notes say a missing status was not recorded, not that it is "unconfirmed".
+    const notes = conditionDefinition.notes?.join(" ");
+    expect(notes).not.toMatch(/'confirmed'/);
+    expect(notes).toMatch(/sent only as recorded.*does not mean the diagnosis is inactive, unconfirmed or not on the problem list/);
+  });
+
+  it("sends a diagnosis nobody marked with no clinical status, verification status or category", () => {
+    const unmarked = { ...CONDITION_A, clinical_status: null, verification_status: null, category: null };
+    const c = mapCondition(unmarked, ctx)!;
+    for (const k of ["clinicalStatus", "verificationStatus", "category"]) expect(k in c, k).toBe(false);
+    expect(c.code?.text).toBe("Malaria");
+    expect(validateResource(c)).toEqual([]);
+    // A ruled-out diagnosis saved without a clinical status is not shown as current.
+    const refuted = mapCondition({ ...unmarked, verification_status: "refuted" }, ctx)!;
+    expect(refuted.verificationStatus?.coding?.[0].code).toBe("refuted");
+    expect("clinicalStatus" in refuted).toBe(false);
+    // A category staff chose is sent; no clinical status is invented beside it.
+    const listed = mapCondition({ ...unmarked, category: "problem-list-item" }, ctx)!;
+    expect(listed.category?.[0].coding?.[0].code).toBe("problem-list-item");
+    expect("clinicalStatus" in listed).toBe(false);
+    expect(validateResource(listed)).toEqual([]);
   });
 });
 
