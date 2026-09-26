@@ -24,6 +24,7 @@ export const DEVICE_ONLY_STAFF_FIELDS = [
   "pinEnrolledAt",
   "lastOnlineVerifiedAt",
   "permissionsCachedAt",
+  "removedFromServerAt",
 ] as const;
 
 /**
@@ -42,6 +43,8 @@ export function staffFromServerRow(raw: Row): Partial<User> & { id: string } {
     isActive: isDeactivatedAppUser(raw) || role === "guest" ? 0 : 1,
     adminAccess: raw.admin_access === true || role === "admin",
     adminPermanent: raw.admin_permanent === true,
+    // The server lists this record, so it is not removed.
+    removedFromServerAt: undefined,
   };
   if (fullName) out.fullName = fullName;
   if (typeof raw.email === "string" && raw.email.trim()) {
@@ -192,18 +195,21 @@ export async function pullStaffRoster(): Promise<RosterPullResult> {
       }
 
       if (!fullDirectory) return;
+      // Records already switched off here get the mark too, so the offline
+      // Users screen leaves them out.
       const gone = await db.users
         .filter(
           (u) =>
-            u.isActive === 1 &&
+            (u.isActive === 1 || !u.removedFromServerAt) &&
             !serverIds.has(u.id) &&
             !!(u as unknown as Row)._syncedAt &&
             (u as unknown as Row)._dirty !== 1,
         )
         .toArray();
+      const removedAt = new Date();
       for (const u of gone) {
-        await db.users.update(u.id, { isActive: 0 });
-        deactivated += 1;
+        await db.users.update(u.id, { isActive: 0, removedFromServerAt: removedAt });
+        if (u.isActive === 1) deactivated += 1;
       }
     });
   } catch (error) {

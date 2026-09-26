@@ -75,6 +75,7 @@ describe("staffFromServerRow", () => {
       email: "ada@clinic.ng",
       isActive: 1,
     });
+    expect(staff.removedFromServerAt).toBeUndefined();
     expect(staff).not.toHaveProperty("pinHash");
     expect(staff).not.toHaveProperty("pinSalt");
     expect(staff).not.toHaveProperty("pinEnrolledAt");
@@ -142,7 +143,49 @@ describe("pullStaffRoster", () => {
 
     expect(result).toEqual({ ok: true, staff: 2, deactivated: 1 });
     expect(rows.get("gone")?.isActive).toBe(0);
+    expect(rows.get("gone")?.removedFromServerAt).toBeInstanceOf(Date);
     expect(rows.get("local")?.isActive).toBe(1);
+    expect(rows.get("local")?.removedFromServerAt).toBeUndefined();
+  });
+
+  it("marks a record already switched off here as removed, without counting it", async () => {
+    rows.set("old", { id: "old", fullName: "Retired", isActive: 0, _syncedAt: "2026-09-01" });
+    mockSelect.mockResolvedValue({
+      data: [
+        { id: "u1", full_name: "Ada Okafor", role: "doctor" },
+        { id: "u2", full_name: "Chidi Eze", role: "pharmacist" },
+      ],
+      count: 2,
+      error: null,
+    });
+
+    expect(await pullStaffRoster()).toEqual({ ok: true, staff: 2, deactivated: 0 });
+    expect(rows.get("old")?.isActive).toBe(0);
+    expect(rows.get("old")?.removedFromServerAt).toBeInstanceOf(Date);
+  });
+
+  it("clears the removed mark when the server lists the record again", async () => {
+    rows.set("u2", {
+      id: "u2",
+      fullName: "Chidi",
+      role: "pharmacist",
+      isActive: 0,
+      removedFromServerAt: new Date("2026-09-20"),
+      _syncedAt: "2026-09-01",
+    });
+    mockSelect.mockResolvedValue({
+      data: [
+        { id: "u1", full_name: "Ada Okafor", role: "doctor" },
+        { id: "u2", full_name: "Chidi Eze", role: "pharmacist" },
+      ],
+      count: 2,
+      error: null,
+    });
+
+    await pullStaffRoster();
+
+    expect(rows.get("u2")).toMatchObject({ isActive: 1, fullName: "Chidi Eze" });
+    expect(rows.get("u2")?.removedFromServerAt).toBeUndefined();
   });
 
   it("switches nobody off when the server cut the directory short", async () => {

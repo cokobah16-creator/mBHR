@@ -656,6 +656,29 @@ describe("useAuthStore", () => {
       expect(retired?.[1]).not.toHaveProperty("disabledLocallyAt");
     });
 
+    it("keeps the sign-in email on a downloaded record that has none, and clears a removed mark", async () => {
+      // Server staff records have no email column: the directory download
+      // made this record without one, and later marked it removed.
+      mockDbUsers.get.mockResolvedValue({
+        id: AUTH_USER.id,
+        fullName: "Ngozi Eze",
+        role: "nurse",
+        pinHash: "",
+        pinSalt: "",
+        isActive: 0,
+        removedFromServerAt: new Date("2026-09-20"),
+      });
+      appUsersLookup({ data: { id: AUTH_USER.id, role: "nurse", full_name: "Ngozi Eze" }, error: null });
+
+      expect(await useAuthStore.getState().loginOnline("ngozi@clinic.ng", "secret")).toBe(true);
+
+      const saved = mockDbUsers.put.mock.calls.find(([u]) => u.id === AUTH_USER.id)?.[0];
+      expect(saved).toMatchObject({ id: AUTH_USER.id, email: AUTH_USER.email, isActive: 1 });
+      expect(saved?.removedFromServerAt).toBeUndefined();
+      // Only this device keeps the email: the record is not queued for upload.
+      expect(saved?._dirty).toBeUndefined();
+    });
+
     it("refuses a same-email device record under another id when the server cannot be asked", async () => {
       const stored = {
         id: "local-ulid",

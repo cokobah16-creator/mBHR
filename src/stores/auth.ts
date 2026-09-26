@@ -675,16 +675,29 @@ export const useAuthStore = create<AuthState>()(
             const role = (account.status === "found" ? account.role : "guest") as User["role"];
             const fullName =
               (account.status === "found" ? account.fullName : undefined) ?? user.fullName;
-            if (role !== user.role || fullName !== user.fullName || user.isActive !== 1) {
+            // The sign-in email, kept here only (staff records on the server
+            // have no email column, so downloaded records often lack it). The
+            // Users screen matches this person's older device entry by it.
+            const signInEmail = data.user.email ?? user.email;
+            if (
+              role !== user.role ||
+              fullName !== user.fullName ||
+              user.isActive !== 1 ||
+              signInEmail !== user.email ||
+              user.removedFromServerAt
+            ) {
               const refreshed: User = {
                 ...user,
                 role,
                 fullName,
+                email: signInEmail,
                 adminAccess: role === "admin",
                 // The server lists them as active (checked above), and this
                 // device did not switch them off: a record the roster pull
                 // switched off comes back on.
                 isActive: account.status === "found" ? 1 : user.isActive,
+                // The server has this record, so it is not removed.
+                removedFromServerAt: undefined,
                 updatedAt: new Date(),
               };
               await db.users.put(refreshed);
