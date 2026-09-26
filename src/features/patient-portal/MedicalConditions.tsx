@@ -14,6 +14,7 @@ import { PortalListSkeleton, PortalNotice, PortalPage } from "./PortalPage";
 import { conditionStatusInfo, formatPortalDate } from "./portalStatus";
 import { readPortalUser } from "./portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 
 interface MedicalCondition {
   id: string;
@@ -26,11 +27,19 @@ interface MedicalCondition {
 
 type ConditionStatus = MedicalCondition["status"];
 
+// Labels are translation keys.
 const STATUS_OPTIONS: { value: ConditionStatus; label: string }[] = [
-  { value: "active", label: "Current – I have it now" },
-  { value: "managed", label: "Being managed – under treatment or control" },
-  { value: "resolved", label: "Resolved – I no longer have it" },
+  { value: "active", label: "portal.conditions.optionActive" },
+  { value: "managed", label: "portal.conditions.optionManaged" },
+  { value: "resolved", label: "portal.conditions.optionResolved" },
 ];
+
+// The badge label for a stored status, by translation key.
+const STATUS_BADGE_KEY: Record<string, string> = {
+  active: "portal.conditions.statusActive",
+  managed: "portal.conditions.statusManaged",
+  resolved: "portal.conditions.statusResolved",
+};
 
 function isConditionStatus(value: string): value is ConditionStatus {
   return value === "active" || value === "managed" || value === "resolved";
@@ -43,11 +52,10 @@ const EMPTY_FORM = {
   notes: "",
 };
 
-const PAGE_TITLE = "Your conditions";
-const PAGE_DESCRIPTION =
-  "Long-term health conditions added to your portal record, newest first. They are separate from the notes the clinic keeps from your visits.";
-
 export function MedicalConditions() {
+  const { t } = useT();
+  const pageTitle = t("portal.conditions.title");
+  const pageDescription = t("portal.conditions.description");
   const navigate = useNavigate();
   const online = useOnlineStatus();
   const [conditions, setConditions] = useState<MedicalCondition[]>([]);
@@ -73,7 +81,7 @@ export function MedicalConditions() {
 
     try {
       const portalUser = readPortalUser();
-      if (!portalUser) {
+      if (!portalUser || !portalUser.patientId) {
         navigate("/patient/login", { replace: true });
         return;
       }
@@ -94,11 +102,7 @@ export function MedicalConditions() {
         err instanceof Error ? err.name : "unknown",
       );
       // Offline, the "You are offline" notice already explains it.
-      setError(
-        navigator.onLine
-          ? "We could not load your conditions. Please try again."
-          : "",
-      );
+      setError(navigator.onLine ? "portal.conditions.loadFailed" : "");
     } finally {
       setLoading(false);
     }
@@ -141,15 +145,13 @@ export function MedicalConditions() {
   const addCondition = async (e?: FormEvent<HTMLFormElement>) => {
     e?.preventDefault();
     if (!newCondition.condition_name.trim()) {
-      setNameError("Enter the name of the condition.");
+      setNameError("portal.conditions.nameRequired");
       nameInputRef.current?.focus();
       return;
     }
     if (!supabase) return;
     if (!navigator.onLine) {
-      setFormError(
-        "You are offline, so this condition was not saved. Connect to the internet and try again.",
-      );
+      setFormError("portal.conditions.offlineNotSaved");
       return;
     }
 
@@ -160,7 +162,7 @@ export function MedicalConditions() {
 
     try {
       const portalUser = readPortalUser();
-      if (!portalUser) {
+      if (!portalUser || !portalUser.patientId) {
         navigate("/patient/login", { replace: true });
         return;
       }
@@ -178,7 +180,7 @@ export function MedicalConditions() {
       if (insertError) throw insertError;
 
       setSuccess(
-        `${newCondition.condition_name.trim()} was saved to your portal record.`,
+        t("portal.conditions.saved", { name: newCondition.condition_name.trim() }),
       );
       setNewCondition(EMPTY_FORM);
       setShowAdd(false);
@@ -188,9 +190,7 @@ export function MedicalConditions() {
         "Error adding condition:",
         err instanceof Error ? err.name : "unknown",
       );
-      setFormError(
-        "This condition was not saved. Check your connection and try again.",
-      );
+      setFormError("portal.conditions.notSaved");
     } finally {
       setSaving(false);
     }
@@ -200,24 +200,22 @@ export function MedicalConditions() {
 
   if (!supabase) {
     return (
-      <PortalPage title={PAGE_TITLE} description={PAGE_DESCRIPTION}>
-        <PortalNotice tone="info" title="Conditions are not available here">
-          This portal is not connected to the clinic&apos;s online records, so
-          conditions cannot be shown or added. Tell the outreach team about
-          any health conditions at your next visit.
+      <PortalPage title={pageTitle} description={pageDescription}>
+        <PortalNotice tone="info" title={t("portal.conditions.notConnectedTitle")}>
+          {t("portal.conditions.notConnected")}
         </PortalNotice>
       </PortalPage>
     );
   }
 
   if (loading && !loaded) {
-    return <PortalListSkeleton label="Loading your conditions" />;
+    return <PortalListSkeleton label={t("portal.conditions.loading")} />;
   }
 
   return (
     <PortalPage
-      title={PAGE_TITLE}
-      description={PAGE_DESCRIPTION}
+      title={pageTitle}
+      description={pageDescription}
       actions={
         !showAdd && (
           <button
@@ -228,16 +226,16 @@ export function MedicalConditions() {
             className="btn-primary"
           >
             <PlusIcon className="h-5 w-5" aria-hidden />
-            Add a condition
+            {t("portal.conditions.add")}
           </button>
         )
       }
     >
       {!online && (
-        <PortalNotice tone="offline" title="You are offline">
+        <PortalNotice tone="offline" title={t("portal.visits.offlineTitle")}>
           {loaded
-            ? "You are seeing the conditions loaded when this phone was last online. They may be out of date. Connect to the internet to add a condition."
-            : "Connect to the internet to see or add your conditions."}
+            ? t("portal.conditions.offlineStale")
+            : t("portal.conditions.offlineEmpty")}
         </PortalNotice>
       )}
 
@@ -252,12 +250,12 @@ export function MedicalConditions() {
                 className="btn-secondary"
               >
                 <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                Try again
+                {t("portal.error.retry")}
               </button>
             ) : undefined
           }
         >
-          {error}
+          {t(error)}
         </PortalNotice>
       )}
 
@@ -272,13 +270,13 @@ export function MedicalConditions() {
         >
           <div className="panel-header">
             <h2 id="add-condition-title" className="panel-title">
-              Add a condition
+              {t("portal.conditions.add")}
             </h2>
           </div>
           <div className="panel-body space-y-4">
             <div>
               <label htmlFor="condition-name" className="field-label">
-                Condition name (required)
+                {t("portal.conditions.nameLabel")}
               </label>
               <input
                 ref={nameInputRef}
@@ -299,18 +297,18 @@ export function MedicalConditions() {
               />
               {nameError ? (
                 <p id="condition-name-error" className="field-error">
-                  {nameError}
+                  {t(nameError)}
                 </p>
               ) : (
                 <p id="condition-name-hint" className="field-hint">
-                  For example: high blood pressure, diabetes, asthma.
+                  {t("portal.conditions.nameHint")}
                 </p>
               )}
             </div>
 
             <div>
               <label htmlFor="condition-date" className="field-label">
-                Date a health worker told you (optional)
+                {t("portal.conditions.dateLabel")}
               </label>
               <input
                 id="condition-date"
@@ -329,7 +327,7 @@ export function MedicalConditions() {
 
             <div>
               <label htmlFor="condition-status" className="field-label">
-                How is it now?
+                {t("portal.conditions.statusLabel")}
               </label>
               <select
                 id="condition-status"
@@ -345,7 +343,7 @@ export function MedicalConditions() {
               >
                 {STATUS_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
-                    {opt.label}
+                    {t(opt.label)}
                   </option>
                 ))}
               </select>
@@ -353,7 +351,7 @@ export function MedicalConditions() {
 
             <div>
               <label htmlFor="condition-notes" className="field-label">
-                Notes (optional)
+                {t("portal.conditions.notesLabel")}
               </label>
               <textarea
                 id="condition-notes"
@@ -367,12 +365,12 @@ export function MedicalConditions() {
                 className="input-field"
               />
               <p id="condition-notes-hint" className="field-hint">
-                For example, medicines you take for it.
+                {t("portal.conditions.notesHint")}
               </p>
             </div>
 
             {formError && (
-              <PortalNotice tone="danger">{formError}</PortalNotice>
+              <PortalNotice tone="danger">{t(formError)}</PortalNotice>
             )}
 
             <div className="flex flex-wrap gap-2">
@@ -381,7 +379,7 @@ export function MedicalConditions() {
                 disabled={saving || !online}
                 className="btn-primary"
               >
-                {saving ? "Saving…" : "Save condition"}
+                {saving ? t("portal.conditions.saving") : t("portal.conditions.save")}
               </button>
               <button
                 type="button"
@@ -389,7 +387,7 @@ export function MedicalConditions() {
                 disabled={saving}
                 className="btn-secondary"
               >
-                Cancel
+                {t("portal.conditions.cancel")}
               </button>
             </div>
           </div>
@@ -400,14 +398,14 @@ export function MedicalConditions() {
         <div className="panel">
           <EmptyState
             icon={HeartIcon}
-            title="No conditions saved yet"
-            description="If a health worker has told you that you have a long-term condition, you can add it here so it is part of your portal record."
+            title={t("portal.conditions.emptyTitle")}
+            description={t("portal.conditions.emptyBody")}
           />
         </div>
       )}
 
       {conditions.length > 0 && (
-        <ul className="panel divide-y divide-line" aria-label="Your conditions">
+        <ul className="panel divide-y divide-line" aria-label={t("portal.conditions.title")}>
           {conditions.map((condition) => {
             const status = conditionStatusInfo(condition.status);
             return (
@@ -417,12 +415,12 @@ export function MedicalConditions() {
                     {condition.condition_name}
                   </h3>
                   <StatusBadge tone={status.tone} icon>
-                    {status.label}
+                    {t(STATUS_BADGE_KEY[condition.status] ?? "portal.conditions.statusUnknown", status.label)}
                   </StatusBadge>
                 </div>
                 {condition.diagnosed_date && (
                   <p className="mt-1 text-body text-ink-secondary">
-                    Diagnosed {formatPortalDate(condition.diagnosed_date)}
+                    {t("portal.conditions.diagnosedOn", { date: formatPortalDate(condition.diagnosed_date) })}
                   </p>
                 )}
                 {condition.notes && (
@@ -432,8 +430,7 @@ export function MedicalConditions() {
                 )}
                 {condition.created_at && (
                   <p className="mt-1 text-caption text-ink-muted">
-                    Added to your portal on{" "}
-                    {formatPortalDate(condition.created_at)}
+                    {t("portal.conditions.addedOn", { date: formatPortalDate(condition.created_at) })}
                   </p>
                 )}
               </li>
@@ -443,9 +440,7 @@ export function MedicalConditions() {
       )}
 
       <PortalNotice tone="info">
-        Adding a condition here does not change the record the clinic keeps
-        from your visits, and it is not a diagnosis. Tell your clinician about
-        it at your next visit.
+        {t("portal.conditions.notAClinicRecord")}
       </PortalNotice>
     </PortalPage>
   );
