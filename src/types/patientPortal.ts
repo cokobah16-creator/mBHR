@@ -176,7 +176,7 @@ export interface PatientMedicalRecord {
     medicationName: string;
     dosage: string;
     directions: string;
-    dispensedAt: Date;
+    dispensedAt?: Date;
   }>;
 }
 

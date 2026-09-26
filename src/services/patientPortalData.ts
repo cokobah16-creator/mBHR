@@ -312,6 +312,88 @@ export async function loadPatientDashboard(
   }
 }
 
+// Rows come untyped from the Supabase client.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Row = Record<string, any>;
+
+function rowTime(row: Row, keys: string[]): number {
+  for (const key of keys) {
+    const t = row[key] ? new Date(row[key]).getTime() : NaN;
+    if (!isNaN(t)) return t;
+  }
+  return 0;
+}
+
+/** The newest row by the first readable timestamp in `keys`. */
+export function newestRow<T extends Row>(rows: readonly T[], keys: string[]): T | undefined {
+  let best: T | undefined;
+  for (const row of rows) {
+    if (!best || rowTime(row, keys) > rowTime(best, keys)) best = row;
+  }
+  return best;
+}
+
+function optionalDate(value: unknown): Date | undefined {
+  if (!value) return undefined;
+  const d = new Date(value as string);
+  return isNaN(d.getTime()) ? undefined : d;
+}
+
+/**
+ * One visit as the portal shows it, from its own rows: the newest
+ * measurements and notes, and every medicine given at it.
+ */
+export function toMedicalRecord(
+  visit: Row,
+  vitalsRows: readonly Row[],
+  consultationRows: readonly Row[],
+  dispenseRows: readonly Row[],
+): PatientMedicalRecord {
+  const vitals = newestRow(vitalsRows, ["taken_at", "updated_at"]);
+  const consultation = newestRow(consultationRows, ["created_at", "updated_at"]);
+  return {
+    visitId: visit.id,
+    visitDate: new Date(visit.started_at),
+    vitals: vitals
+      ? {
+          heightCm: vitals.height_cm,
+          weightKg: vitals.weight_kg,
+          bmi: resolveBmi({
+            heightCm: vitals.height_cm,
+            weightKg: vitals.weight_kg,
+            bmi: vitals.bmi,
+          }),
+          tempC: vitals.temp_c,
+          pulseBpm: vitals.pulse_bpm,
+          systolic: vitals.systolic,
+          diastolic: vitals.diastolic,
+          spo2: vitals.spo2,
+        }
+      : undefined,
+    consultation: consultation
+      ? {
+          subjective: consultation.soap_subjective,
+          objective: consultation.soap_objective,
+          assessment: consultation.soap_assessment,
+          plan: consultation.soap_plan,
+          diagnoses: Array.isArray(consultation.provisional_dx)
+            ? consultation.provisional_dx.filter(
+                (d: unknown): d is string => typeof d === "string" && d.trim() !== "",
+              )
+            : [],
+          providerName: consultation.provider_name,
+        }
+      : undefined,
+    prescriptions: dispenseRows.map((d) => ({
+      medicationName: d.item_name,
+      dosage: d.dosage,
+      directions: d.directions,
+      // A medicine without a recorded time shows no date, never 1 Jan 1970.
+      dispensedAt: optionalDate(d.dispensed_at),
+    })),
+  };
+}
+
 /**
  * Get patient medical history with visits, vitals, consultations
  */
@@ -368,51 +450,14 @@ export async function getPatientMedicalHistory(
       return { records: [], total: 0, error: failure() };
     }
 
-    const records: PatientMedicalRecord[] = visits.map((visit) => {
-      const visitVitals = vitals?.find((v) => v.visit_id === visit.id);
-      const visitConsultation = consultations?.find(
-        (c) => c.visit_id === visit.id,
-      );
-      const visitDispenses =
-        dispenses?.filter((d) => d.visit_id === visit.id) || [];
-
-      return {
-        visitId: visit.id,
-        visitDate: new Date(visit.started_at),
-        vitals: visitVitals
-          ? {
-              heightCm: visitVitals.height_cm,
-              weightKg: visitVitals.weight_kg,
-              bmi: resolveBmi({
-                heightCm: visitVitals.height_cm,
-                weightKg: visitVitals.weight_kg,
-                bmi: visitVitals.bmi,
-              }),
-              tempC: visitVitals.temp_c,
-              pulseBpm: visitVitals.pulse_bpm,
-              systolic: visitVitals.systolic,
-              diastolic: visitVitals.diastolic,
-              spo2: visitVitals.spo2,
-            }
-          : undefined,
-        consultation: visitConsultation
-          ? {
-              subjective: visitConsultation.soap_subjective,
-              objective: visitConsultation.soap_objective,
-              assessment: visitConsultation.soap_assessment,
-              plan: visitConsultation.soap_plan,
-              diagnoses: visitConsultation.provisional_dx,
-              providerName: visitConsultation.provider_name,
-            }
-          : undefined,
-        prescriptions: visitDispenses.map((d) => ({
-          medicationName: d.item_name,
-          dosage: d.dosage,
-          directions: d.directions,
-          dispensedAt: new Date(d.dispensed_at),
-        })),
-      };
-    });
+    const records: PatientMedicalRecord[] = visits.map((visit) =>
+      toMedicalRecord(
+        visit,
+        (vitals ?? []).filter((v) => v.visit_id === visit.id),
+        (consultations ?? []).filter((c) => c.visit_id === visit.id),
+        (dispenses ?? []).filter((d) => d.visit_id === visit.id),
+      ),
+    );
 
     return {
       records,
@@ -461,6 +506,7 @@ export async function loadVisitDetails(
       .select("*")
       .eq("id", visitId)
       .eq("patient_id", patientId)
+      .eq("status", "closed")
       .maybeSingle();
 
     if (visitError) {
@@ -469,17 +515,17 @@ export async function loadVisitDetails(
     }
     if (!visit) return { visit: null, error: "not_found" };
 
+    // A visit can hold more than one set of measurements or notes; the
+    // newest of each is shown (a single-row query would fail on those).
     const { data: vitals, error: vitalsError } = await supabase
       .from("vitals")
       .select("*")
-      .eq("visit_id", visitId)
-      .maybeSingle();
+      .eq("visit_id", visitId);
 
     const { data: consultation, error: consultationError } = await supabase
       .from("consultations")
       .select("*")
-      .eq("visit_id", visitId)
-      .maybeSingle();
+      .eq("visit_id", visitId);
 
     const { data: dispenses, error: dispensesError } = await supabase
       .from("dispenses")
@@ -492,42 +538,12 @@ export async function loadVisitDetails(
       return { visit: null, error: failure() };
     }
 
-    const record: PatientMedicalRecord = {
-      visitId: visit.id,
-      visitDate: new Date(visit.started_at),
-      vitals: vitals
-        ? {
-            heightCm: vitals.height_cm,
-            weightKg: vitals.weight_kg,
-            bmi: resolveBmi({
-              heightCm: vitals.height_cm,
-              weightKg: vitals.weight_kg,
-              bmi: vitals.bmi,
-            }),
-            tempC: vitals.temp_c,
-            pulseBpm: vitals.pulse_bpm,
-            systolic: vitals.systolic,
-            diastolic: vitals.diastolic,
-            spo2: vitals.spo2,
-          }
-        : undefined,
-      consultation: consultation
-        ? {
-            subjective: consultation.soap_subjective,
-            objective: consultation.soap_objective,
-            assessment: consultation.soap_assessment,
-            plan: consultation.soap_plan,
-            diagnoses: consultation.provisional_dx,
-            providerName: consultation.provider_name,
-          }
-        : undefined,
-      prescriptions: (dispenses || []).map((d) => ({
-        medicationName: d.item_name,
-        dosage: d.dosage,
-        directions: d.directions,
-        dispensedAt: new Date(d.dispensed_at),
-      })),
-    };
+    const record = toMedicalRecord(
+      visit,
+      vitals ?? [],
+      consultation ?? [],
+      dispenses ?? [],
+    );
     return { visit: record };
   } catch (error) {
     logger.error("Error in getVisitDetails:", safeError(error));
