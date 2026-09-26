@@ -561,6 +561,14 @@ function downloadedAfter(u: User, checkedAt: number): boolean {
   return Number.isFinite(synced) && synced > checkedAt;
 }
 
+/**
+ * Whether this device switched a record off because the server no longer
+ * has it. A record with that mark is nobody's account any more.
+ */
+function removedHere(u: User): boolean {
+  return u.isActive !== 1 && !!u.removedFromServerAt;
+}
+
 /** The note beside a server account's status about its record on this device. */
 function deviceNoteFor(account: AccountView, device: User | null): DeviceNote | null {
   if (!device) return null;
@@ -574,31 +582,46 @@ function deviceNoteFor(account: AccountView, device: User | null): DeviceNote | 
 /**
  * One row per person: every server account (with its record on this device,
  * when there is one), then the records on this device the server does not
- * list. Without an overview, every record on this device is a row.
+ * list. Without an overview, every record on this device is a row, except
+ * as below.
  *
  * Two switched-off records the server does not list are left out, as they
- * are nobody to act on:
+ * are nobody to act on (a record marked for review is always shown):
  * - a device-only record whose email belongs to a server account. It is
  *   that person's older entry here, retired when they signed in online, and
- *   the person is their server row;
- * - a record the server no longer has ("missing"). It has no access here.
+ *   the person is their server row. Without an overview, the records this
+ *   device holds under a server account's id stand in for the server's list;
+ * - a record the server no longer has ("missing", or marked
+ *   removedFromServerAt when this device learned it). It has no access here.
  */
 export function mergeStaffRows(
   deviceUsers: User[],
   overview: OverviewResponse | null,
 ): StaffRow[] {
   if (!overview) {
-    return deviceUsers.map((u): StaffRow => ({
-      id: u.id,
-      fullName: u.fullName,
-      role: u.role,
-      email: u.email?.trim() || null,
-      source: isDeviceOnlyRecord(u, null) ? "device_only" : "unchecked",
-      account: null,
-      device: u,
-      deviceNote: null,
-      sameEmailServerAccount: false,
-    }));
+    const accountEmails = new Set<string>();
+    for (const u of deviceUsers) {
+      const email = normEmail(u.email);
+      if (email && !isDeviceOnlyRecord(u, null) && !removedHere(u)) accountEmails.add(email);
+    }
+    return deviceUsers
+      .filter((u) => {
+        if (u.isActive === 1 || u.accessConflict === 1) return true;
+        if (removedHere(u)) return false;
+        const email = normEmail(u.email);
+        return !(isDeviceOnlyRecord(u, null) && email !== null && accountEmails.has(email));
+      })
+      .map((u): StaffRow => ({
+        id: u.id,
+        fullName: u.fullName,
+        role: u.role,
+        email: u.email?.trim() || null,
+        source: isDeviceOnlyRecord(u, null) ? "device_only" : "unchecked",
+        account: null,
+        device: u,
+        deviceNote: null,
+        sameEmailServerAccount: false,
+      }));
   }
 
   const deviceById = new Map<string, User>();
@@ -641,7 +664,13 @@ export function mergeStaffRows(
         ? "unchecked"
         : "missing";
     const sameEmailServerAccount = deviceOnly && email !== null && serverEmails.has(email);
-    if (u.isActive !== 1 && (source === "missing" || sameEmailServerAccount)) continue;
+    if (
+      u.isActive !== 1 &&
+      u.accessConflict !== 1 &&
+      (source === "missing" || sameEmailServerAccount || !!u.removedFromServerAt)
+    ) {
+      continue;
+    }
     rows.push({
       id: u.id,
       fullName: u.fullName,
@@ -658,30 +687,34 @@ export function mergeStaffRows(
 }
 
 /**
- * Records still switched on here that the server has removed: they came from
- * the server, and its whole list, read after they were downloaded, no longer
- * has them. The Users screen switches them off, as a download of the whole
- * staff directory does (src/sync/staffRoster.ts). That download cannot tell
- * the whole directory from one row, so an organisation left with one
- * account relies on this. Nothing when the list may be incomplete, and
- * never the signed-in person or a record with changes not yet uploaded.
+ * This device's records that the server has removed and that are not yet
+ * switched off and marked removedFromServerAt here: they came from the
+ * server, and its whole list, read after they were downloaded, no longer
+ * has them. The Users screen switches them off and marks them, as a
+ * download of the whole staff directory does (src/sync/staffRoster.ts).
+ * That download cannot tell the whole directory from one row, so an
+ * organisation left with one account relies on this. Nothing when the list
+ * may be incomplete, and never the signed-in person or a record with
+ * changes not yet uploaded.
  */
 export function removedFromServer(
-  rows: StaffRow[],
+  deviceUsers: User[],
   overview: OverviewResponse | null,
   currentUserId: string | null | undefined,
 ): User[] {
   if (!overview || overview.health.truncated) return [];
+  const serverIds = new Set(overview.accounts.map((a) => a.userId.toLowerCase()));
+  const checkedAt = Date.parse(overview.checkedAt);
   const self = currentUserId?.toLowerCase();
-  return rows
-    .filter(
-      (r) =>
-        r.source === "missing" &&
-        r.device?.isActive === 1 &&
-        r.id.toLowerCase() !== self &&
-        (r.device as unknown as { _dirty?: unknown })._dirty !== 1,
-    )
-    .map((r) => r.device as User);
+  return deviceUsers.filter(
+    (u) =>
+      !serverIds.has(u.id.toLowerCase()) &&
+      !isDeviceOnlyRecord(u, serverIds) &&
+      !downloadedAfter(u, checkedAt) &&
+      (u.isActive === 1 || !u.removedFromServerAt) &&
+      u.id.toLowerCase() !== self &&
+      (u as unknown as { _dirty?: unknown })._dirty !== 1,
+  );
 }
 
 /** Badge text, caption and tone for any row. */

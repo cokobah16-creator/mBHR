@@ -214,7 +214,7 @@ export function UserManagement() {
   // removedFromServer); the list is then read again without it.
   const removedIds =
     serverReady && canManage
-      ? removedFromServer(rows, staff.overview, currentUser?.id)
+      ? removedFromServer(users ?? [], staff.overview, currentUser?.id)
           .map((u) => u.id)
           .join(",")
       : "";
@@ -223,8 +223,11 @@ export function UserManagement() {
     let cancelled = false;
     void (async () => {
       try {
+        const removedAt = new Date();
         await Promise.all(
-          removedIds.split(",").map((id) => db.users.update(id, { isActive: 0 })),
+          removedIds
+            .split(",")
+            .map((id) => db.users.update(id, { isActive: 0, removedFromServerAt: removedAt })),
         );
       } catch (error) {
         console.error("Error switching off removed staff:", errorName(error));

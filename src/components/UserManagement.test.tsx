@@ -373,10 +373,17 @@ describe("UserManagement, one row per person", () => {
       createdAt: new Date("2025-09-30T05:44:00.000Z"),
       updatedAt: new Date("2025-09-30T05:44:00.000Z"),
     };
-    mocks.toArray.mockResolvedValueOnce([gone]).mockResolvedValue([{ ...gone, isActive: 0 }]);
+    mocks.toArray
+      .mockResolvedValueOnce([gone])
+      .mockResolvedValue([{ ...gone, isActive: 0, removedFromServerAt: new Date() }]);
     render(<UserManagement />);
 
-    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith(GONE_ID, { isActive: 0 }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith(GONE_ID, {
+        isActive: 0,
+        removedFromServerAt: expect.any(Date),
+      }),
+    );
     await waitFor(() => expect(screen.queryByText("Old Admin")).toBeNull());
     expect(screen.getAllByText("Ada Okafor").length).toBeGreaterThan(0);
   });
@@ -391,6 +398,38 @@ describe("UserManagement, one row per person", () => {
     await waitFor(() => expect(mocks.toArray).toHaveBeenCalled());
     expect(screen.getAllByText("Ada Okafor").length).toBeGreaterThan(0);
     expect(screen.queryByText("Ada (old tablet entry)")).toBeNull();
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("offline, leaves out the older entry and records the server removed", async () => {
+    serverMode("offline");
+    mocks.toArray.mockResolvedValue([
+      {
+        id: ADA_ID,
+        fullName: "Ada Okafor",
+        role: "nurse",
+        email: "ada@clinic.ng",
+        pinHash: "",
+        pinSalt: "",
+        isActive: 1,
+        _syncedAt: "2026-09-01T00:00:00.000Z",
+        createdAt: new Date("2026-09-01T10:00:00.000Z"),
+        updatedAt: new Date("2026-09-01T10:00:00.000Z"),
+      },
+      { ...TUNDE_DEVICE_ONLY, fullName: "Ada (old tablet entry)", email: "ADA@clinic.ng", isActive: 0 },
+      {
+        ...TUNDE_DEVICE_ONLY,
+        id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        fullName: "Old Admin",
+        isActive: 0,
+        removedFromServerAt: new Date("2026-09-26T07:10:00.000Z"),
+      },
+    ]);
+    render(<UserManagement />);
+
+    await waitFor(() => expect(screen.getAllByText("Ada Okafor").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Ada (old tablet entry)")).toBeNull();
+    expect(screen.queryByText("Old Admin")).toBeNull();
     expect(mocks.update).not.toHaveBeenCalled();
   });
 });

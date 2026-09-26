@@ -185,12 +185,91 @@ describe("mergeStaffRows", () => {
     ]);
   });
 
-  it("without an overview, still lists switched-off records", () => {
+  it("without an overview, leaves out the same records, using this device's server accounts", () => {
+    const rows = mergeStaffRows(
+      [
+        synced({ id: NURSE_ID, email: "amina@example.org" }),
+        // This person's older entry, retired when they signed in online.
+        device({ id: ULID_ID, fullName: "Old Amina", email: " AMINA@example.org ", isActive: 0 }),
+        // Marked removed from the server when this device learned it.
+        synced({
+          id: "44444444-4444-4444-8444-444444444444",
+          fullName: "Gone Person",
+          isActive: 0,
+          removedFromServerAt: new Date(),
+        }),
+        // Switched off by the server (still on it): listed.
+        synced({ id: "55555555-5555-4555-8555-555555555555", fullName: "Disabled Person", isActive: 0 }),
+        // Made here and switched off, no server account has its email: listed.
+        device({
+          id: "01J9Z8X7Y6W5V4T3S2R1Q0P9N9",
+          fullName: "Chidi Okafor",
+          email: "chidi@example.org",
+          isActive: 0,
+        }),
+      ],
+      null,
+    );
+    expect(rows.map((r) => [r.fullName, r.source])).toEqual([
+      ["Amina Bello", "unchecked"],
+      ["Disabled Person", "unchecked"],
+      ["Chidi Okafor", "device_only"],
+    ]);
+  });
+
+  it("without an overview, keeps a person whose server account was removed", () => {
+    // Their server account is gone, so their older entry here is the only
+    // trace of them left: listed, off.
+    const rows = mergeStaffRows(
+      [
+        synced({ id: NURSE_ID, email: "amina@example.org", isActive: 0, removedFromServerAt: new Date() }),
+        device({ id: ULID_ID, fullName: "Old Amina", email: "amina@example.org", isActive: 0 }),
+      ],
+      null,
+    );
+    expect(rows.map((r) => [r.fullName, r.source])).toEqual([["Old Amina", "device_only"]]);
+  });
+
+  it("always lists a record marked for review", () => {
+    const review = { isActive: 0, accessConflict: 1, disabledLocallyAt: new Date() } as const;
+    const records = [
+      synced({ id: NURSE_ID, email: "amina@example.org" }),
+      device({ id: ULID_ID, fullName: "Old Amina", email: "amina@example.org", ...review }),
+      synced({
+        id: "44444444-4444-4444-8444-444444444444",
+        fullName: "Gone Person",
+        removedFromServerAt: new Date(),
+        ...review,
+      }),
+    ];
+    expect(mergeStaffRows(records, null).map((r) => r.fullName)).toEqual([
+      "Amina Bello",
+      "Old Amina",
+      "Gone Person",
+    ]);
+    expect(mergeStaffRows(records, overview([account()])).map((r) => r.fullName)).toEqual([
+      "Amina Bello",
+      "Old Amina",
+      "Gone Person",
+    ]);
+  });
+
+  it("without an overview, lists a switched-off device-only record no server account shares", () => {
     const rows = mergeStaffRows(
       [device({ id: ULID_ID, email: "amina@example.org", isActive: 0 })],
       null,
     );
     expect(rows).toHaveLength(1);
+  });
+
+  it("leaves out a record marked removed even when it downloaded after the list was read", () => {
+    const marked = {
+      ...device({ id: OTHER_ID, fullName: "Gone Person", isActive: 0, removedFromServerAt: new Date() }),
+      _syncedAt: "2026-09-25T00:05:00.000Z",
+    } as unknown as User;
+    expect(mergeStaffRows([marked], overview([account()])).map((r) => r.fullName)).toEqual([
+      "Amina Bello",
+    ]);
   });
 
   it("does not call a record removed when it was downloaded after the list was read", () => {
@@ -238,36 +317,47 @@ describe("mergeStaffRows", () => {
 
 describe("removedFromServer", () => {
   const GONE_ID = "44444444-4444-4444-8444-444444444444";
-  const gone = () => synced({ id: GONE_ID, fullName: "Gone Person" });
+  const gone = (over: Partial<User> = {}) =>
+    synced({ id: GONE_ID, fullName: "Gone Person", ...over });
 
   it("returns records the server no longer lists that are still on here", () => {
     const list = overview([account()]);
-    const rows = mergeStaffRows([synced({ id: NURSE_ID }), gone()], list);
-    expect(removedFromServer(rows, list, ADMIN_ID).map((u) => u.id)).toEqual([GONE_ID]);
+    const users = [synced({ id: NURSE_ID }), gone()];
+    expect(removedFromServer(users, list, ADMIN_ID).map((u) => u.id)).toEqual([GONE_ID]);
+  });
+
+  it("returns a switched-off one until it is marked, then nothing", () => {
+    const list = overview([account()]);
+    expect(removedFromServer([gone({ isActive: 0 })], list, ADMIN_ID)).toHaveLength(1);
+    expect(
+      removedFromServer([gone({ isActive: 0, removedFromServerAt: new Date() })], list, ADMIN_ID),
+    ).toEqual([]);
   });
 
   it("returns nothing when the server's list may be incomplete", () => {
     const list = overview([account()]);
     list.health.truncated = true;
-    const rows = mergeStaffRows([gone()], list);
-    expect(removedFromServer(rows, list, ADMIN_ID)).toEqual([]);
-    expect(removedFromServer(mergeStaffRows([gone()], null), null, ADMIN_ID)).toEqual([]);
+    expect(removedFromServer([gone()], list, ADMIN_ID)).toEqual([]);
+    expect(removedFromServer([gone()], null, ADMIN_ID)).toEqual([]);
   });
 
   it("never returns the signed-in person, a record with changes to upload, or one made here", () => {
     const list = overview([account()]);
     const dirty = { ...gone(), _dirty: 1 } as unknown as User;
-    const rows = mergeStaffRows(
-      [dirty, synced({ id: ADMIN_ID.toUpperCase() }), device({ id: ULID_ID }), device({ id: OTHER_ID })],
-      list,
-    );
-    expect(removedFromServer(rows, list, ADMIN_ID)).toEqual([]);
+    const users = [
+      dirty,
+      synced({ id: ADMIN_ID.toUpperCase() }),
+      device({ id: ULID_ID }),
+      device({ id: OTHER_ID }),
+      synced({ id: NURSE_ID }),
+    ];
+    expect(removedFromServer(users, list, ADMIN_ID)).toEqual([]);
   });
 
   it("does not return a record downloaded after the list was read", () => {
     const list = overview([account()]);
     const fresh = { ...gone(), _syncedAt: "2026-09-25T00:05:00.000Z" } as unknown as User;
-    expect(removedFromServer(mergeStaffRows([fresh], list), list, ADMIN_ID)).toEqual([]);
+    expect(removedFromServer([fresh], list, ADMIN_ID)).toEqual([]);
   });
 });
 

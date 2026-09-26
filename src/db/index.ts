@@ -32,6 +32,11 @@ export interface User {
   // active, accessConflict is set for an administrator to resolve.
   disabledLocallyAt?: Date;
   accessConflict?: 0 | 1;
+  // Device-local, never uploaded: when this device learned that the server
+  // no longer has this staff record (a full staff directory download, or
+  // the server's list on the Users screen). The record is switched off then
+  // and Users leaves it out. A download that lists it again clears this.
+  removedFromServerAt?: Date;
   adminAccess?: boolean;
   adminPermanent?: boolean;
   // Device-local, never uploaded: who last saved this account on the Users
