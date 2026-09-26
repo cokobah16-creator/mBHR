@@ -218,18 +218,23 @@ export function SecureMessaging() {
   useEffect(() => {
     if (!supabase) return;
     if (!isRealtimeAvailable()) return;
+    const patientId = readPortalUser()?.patientId;
+    if (!patientId) return;
     const client = supabase;
 
     let channel: ReturnType<typeof client.channel> | null = null;
     try {
       channel = client
-        .channel("secure_messages")
+        .channel(`secure_messages:${patientId}`)
         .on(
           "postgres_changes",
           {
             event: "*",
             schema: "public",
             table: "patient_secure_messages",
+            // Only this patient's rows. Realtime does not apply row security
+            // to deletions, so the filter must be here, not only on the server.
+            filter: `patient_id=eq.${patientId}`,
           },
           () => {
             loadMessages();

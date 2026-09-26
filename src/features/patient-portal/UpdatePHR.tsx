@@ -16,9 +16,11 @@ import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { errorName, readPortalUser } from "./account/portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 
+// Blood type and medical notes are clinical details: patients see them but
+// only clinic staff change them.
 interface PHRField {
-  label: string;
   key: string;
   value: string;
   editable: boolean;
@@ -32,10 +34,14 @@ interface UpdatePHRProps {
 
 export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
   const navigate = useNavigate();
+  const { t } = useT();
   const isOnline = useOnlineStatus();
+  const fieldLabel = (key: string) => t(`portal.phr.field.${key}`);
   const [loading, setLoading] = useState(isSupabaseEnabled);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Load errors are kept as a translation key: loadPHR does not depend on t.
+  const [loadErrorKey, setLoadErrorKey] = useState("");
   const [loadFailed, setLoadFailed] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [success, setSuccess] = useState("");
@@ -50,6 +56,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
     }
     setLoading(true);
     setError("");
+    setLoadErrorKey("");
     setLoadFailed(false);
 
     try {
@@ -67,9 +74,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
 
       if (patientError) throw patientError;
       if (!patient) {
-        setError(
-          "We could not find your patient record. Ask clinic staff to link your record to your account.",
-        );
+        setLoadErrorKey("portal.phr.err.noRecord");
         setLoadFailed(true);
         return;
       }
@@ -81,59 +86,51 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
 
       const phrFields: PHRField[] = [
         {
-          label: "Full name",
           key: "name",
           value: fullName,
           editable: true,
           type: "text",
         },
         {
-          label: "Date of birth",
           key: "dob",
           value: patient.dob || "",
           editable: false,
           type: "date",
         },
         {
-          label: "Phone number",
           key: "phone",
           value: patient.phone || "",
           editable: true,
           type: "text",
         },
         {
-          label: "Email",
           key: "email",
           value: patient.email || "",
           editable: true,
           type: "text",
         },
         {
-          label: "Address",
           key: "address",
           value: patient.address || "",
           editable: true,
           type: "textarea",
         },
         {
-          label: "Emergency contact",
           key: "emergency_contact",
           value: patient.emergency_contact || "",
           editable: true,
           type: "text",
         },
         {
-          label: "Blood type",
           key: "blood_type",
           value: patient.blood_type || "",
-          editable: true,
+          editable: false,
           type: "text",
         },
         {
-          label: "Medical notes",
           key: "notes",
           value: patient.notes || "",
-          editable: true,
+          editable: false,
           type: "textarea",
         },
       ];
@@ -151,9 +148,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
       );
     } catch (err) {
       logger.error("[UpdatePHR] load failed:", errorName(err));
-      setError(
-        "We could not load your details. Check your internet connection and try again.",
-      );
+      setLoadErrorKey("portal.phr.err.loadFailed");
       setLoadFailed(true);
     } finally {
       setLoading(false);
@@ -203,18 +198,22 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
       // updates nothing). Only say "saved" when a record was really changed.
       if (!updated || updated.length === 0) {
         setError(
-          `${field.label} was not saved. Your account cannot change this detail online. Ask clinic staff to update it at your next visit.`,
+          t("portal.phr.err.refused", {
+            field: fieldLabel(key),
+          }),
         );
         return;
       }
 
-      setSuccess(`${field.label} saved to your online record.`);
+      setSuccess(t("portal.phr.saved", { field: fieldLabel(key) }));
       setEditingField(null);
       await loadPHR();
     } catch (err) {
       logger.error("[UpdatePHR] save failed:", errorName(err));
       setError(
-        `${field.label} was not saved. Check your internet connection and try again. If it keeps happening, ask clinic staff to update it.`,
+        t("portal.phr.err.saveFailed", {
+          field: fieldLabel(key),
+        }),
       );
     } finally {
       setSaving(false);
@@ -223,15 +222,15 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
 
   const heading = embedded ? (
     <div className="mb-4">
-      <h2 className="text-h2 text-ink">Your details</h2>
+      <h2 className="text-h2 text-ink">{t("portal.phr.title")}</h2>
       <p className="mt-1 text-body text-ink-muted">
-        Keep your contact details up to date so the clinic can reach you.
+        {t("portal.phr.intro")}
       </p>
     </div>
   ) : (
     <PageHeader
-      title="Your details"
-      description="Keep your contact details up to date so the clinic can reach you. Each change is saved to your online record when you press Save."
+      title={t("portal.phr.title")}
+      description={t("portal.phr.introPage")}
     />
   );
 
@@ -249,9 +248,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
         <div className="banner banner-info">
           <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <p>
-            Seeing and changing your details here needs an online account, and
-            this device is not connected to one. Ask clinic staff to check or
-            update your details at your next visit.
+            {t("portal.phr.notConnected")}
           </p>
         </div>
       </>,
@@ -263,7 +260,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
       <>
         {heading}
         <span role="status" className="sr-only">
-          Loading your details
+          {t("portal.phr.loading")}
         </span>
         <div className="panel p-5" aria-hidden>
           <Skeleton className="mb-4 h-4 w-32" />
@@ -278,15 +275,15 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
       {heading}
 
       <div aria-live="polite" className="space-y-3">
-        {error && (
+        {(error || loadErrorKey) && (
           <div className="banner banner-danger mb-4" role="alert">
             <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <div className="space-y-3">
-              <p>{error}</p>
+              <p>{loadErrorKey ? t(loadErrorKey) : error}</p>
               {loadFailed && (
                 <button type="button" onClick={() => void loadPHR()} className="btn-secondary">
                   <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                  Try again
+                  {t("portal.error.retry")}
                 </button>
               )}
             </div>
@@ -304,7 +301,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
       {!isOnline && (
         <div className="banner banner-warning mb-4" role="status">
           <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-          <p>You are offline. Connect to the internet to change your details.</p>
+          <p>{t("portal.phr.offline")}</p>
         </div>
       )}
 
@@ -320,7 +317,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
                     {isEditing ? (
                       <div className="space-y-2">
                         <label htmlFor={inputId} className="field-label">
-                          {field.label}
+                          {fieldLabel(field.key)}
                         </label>
                         {field.type === "textarea" ? (
                           <textarea
@@ -360,7 +357,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
                             className="btn-primary"
                           >
                             <CheckIcon className="h-5 w-5" aria-hidden />
-                            {saving ? "Saving…" : "Save"}
+                            {saving ? t("portal.phr.saving") : t("portal.phr.save")}
                           </button>
                           <button
                             type="button"
@@ -369,13 +366,13 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
                             className="btn-secondary"
                           >
                             <XMarkIcon className="h-5 w-5" aria-hidden />
-                            Cancel
+                            {t("action.cancel")}
                           </button>
                         </div>
                       </div>
                     ) : (
                       <>
-                        <p className="text-label text-ink-muted">{field.label}</p>
+                        <p className="text-label text-ink-muted">{fieldLabel(field.key)}</p>
                         <p
                           className={`mt-0.5 whitespace-pre-line text-body ${field.value ? "text-ink" : "text-ink-muted"}`}
                         >
@@ -383,10 +380,10 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
                             ? field.type === "date"
                               ? formatNigerianDate(field.value) || field.value
                               : field.value
-                            : "Not provided"}
+                            : t("portal.phr.notProvided")}
                         </p>
                         {!field.editable && (
-                          <p className="field-hint">Only clinic staff can change this.</p>
+                          <p className="field-hint">{t("portal.phr.staffOnly")}</p>
                         )}
                       </>
                     )}
@@ -397,7 +394,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
                       type="button"
                       onClick={() => startEdit(field.key, field.value)}
                       disabled={!isOnline || saving}
-                      aria-label={`Edit ${field.label.toLowerCase()}`}
+                      aria-label={t("portal.phr.edit", { field: fieldLabel(field.key) })}
                       className="btn-ghost min-w-touch-target"
                     >
                       <PencilIcon className="h-5 w-5" aria-hidden />
@@ -413,8 +410,7 @@ export function UpdatePHR({ embedded = false }: UpdatePHRProps = {}) {
       <div className="banner banner-info mt-4">
         <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
         <p>
-          Some details, like your date of birth, can only be changed by clinic
-          staff. Ask them at your next visit.
+          {t("portal.phr.staffOnlyNote")}
         </p>
       </div>
     </>,
