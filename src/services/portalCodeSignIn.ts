@@ -67,15 +67,18 @@ export function maskDestination(dest: CodeDestination): string {
   return `${shown}•••@${domain}`;
 }
 
+// The ok: true branches carry reason?: undefined so `result.reason` reads
+// after `if (!result.ok)` even without strict null checks (which the app's
+// tsconfig does not turn on, so boolean narrowing does not apply).
 export type SendCodeResult =
-  | { ok: true }
+  | { ok: true; reason?: undefined }
   | {
       ok: false;
       reason: "offline" | "rate_limited" | "delivery_failed" | "unavailable";
     };
 
 export type VerifyCodeResult =
-  | { ok: true }
+  | { ok: true; reason?: undefined }
   | {
       ok: false;
       /** "invalid" covers wrong and expired: Supabase does not tell them apart. */
