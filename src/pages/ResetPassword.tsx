@@ -8,15 +8,21 @@ import { supabase, type Session } from "@/lib/supabaseClient";
 import {
   MIN_PASSWORD_LENGTH,
   completePasswordReset,
+  expiredLinkMessage,
   loginPathFor,
   parseAudience,
   parseRecoveryLanding,
+  redeemInviteToken,
   resolveResetAudience,
   validateNewPassword,
   type ResetAudience,
 } from "@/services/passwordReset";
 
-type Stage = "checking" | "ready" | "invalid" | "done";
+/**
+ * "confirm" is the invitation token_hash flow: the page waits for Continue
+ * before redeeming the link, so a mail scanner that opens it cannot use it up.
+ */
+type Stage = "checking" | "confirm" | "ready" | "invalid" | "done";
 
 /** How long to wait for supabase-js to turn the link's token into a session. */
 const SESSION_WAIT_MS = 10_000;
@@ -32,6 +38,13 @@ const FORGOT_PATH: Record<ResetAudience, string> = {
 // reloading once connected can finish the check.
 const OFFLINE_REASON =
   "This device is offline, so the reset link could not be checked. Connect to the internet and reload this page. If it still does not work, request a new link.";
+const INVITE_OFFLINE_REASON =
+  "This device is offline, so the invitation link could not be checked. Connect to the internet and reload this page. If it still does not work, ask your administrator to send a new one.";
+
+// The session this page got belongs to another account than the link's token,
+// e.g. someone else is signed in on this browser. Never set their password.
+const WRONG_ACCOUNT_REASON =
+  "This link is for a different account than the one signed in on this browser. Sign out, then open the link again.";
 
 function deviceOffline(): boolean {
   return typeof navigator !== "undefined" && navigator.onLine === false;
@@ -50,6 +63,12 @@ function deviceOffline(): boolean {
  * hint the email link carries. A link that Supabase redirected to the Site URL
  * (allow-list misconfiguration) arrives here without it, so the account type
  * is then looked up from the recovery session instead.
+ *
+ * A staff invitation uses the same page with invitation wording. A default
+ * template invitation arrives as a hash token like a reset; the documented
+ * template's token_hash is redeemed only when the person presses Continue.
+ * When the hash token names an account, a session for any other account is
+ * refused.
  */
 export default function ResetPassword() {
   const [params] = useSearchParams();
@@ -58,23 +77,31 @@ export default function ResetPassword() {
   const loginPath = loginPathFor(audience);
   const forgotPath = FORGOT_PATH[audience];
 
-  const [stage, setStage] = useState<Stage>("checking");
+  const [landing] = useState(() => parseRecoveryLanding());
+  const isInvite = landing.kind === "invite";
+
+  const [stage, setStage] = useState<Stage>(() =>
+    landing.flow === "token_hash" ? "confirm" : "checking",
+  );
   const [invalidReason, setInvalidReason] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [redeeming, setRedeeming] = useState(false);
 
   useEffect(() => {
-    const landing = parseRecoveryLanding();
+    const invite = landing.kind === "invite";
     const fail = (reason: string) => {
       setInvalidReason(reason);
-      setStage((s) => (s === "checking" ? "invalid" : s));
+      setStage((s) => (s === "checking" || s === "confirm" ? "invalid" : s));
     };
 
     if (!supabase) {
       fail(
-        "Password reset is not available here because online accounts are not set up for this app.",
+        invite
+          ? "Setting a password is not available here because online accounts are not set up for this app."
+          : "Password reset is not available here because online accounts are not set up for this app.",
       );
       return;
     }
@@ -82,12 +109,19 @@ export default function ResetPassword() {
       fail(landing.error);
       return;
     }
+    // The invitation token_hash is redeemed by handleContinue, never here.
+    // No stored session is accepted meanwhile: it is not the invitee's.
+    if (landing.flow === "token_hash") return;
 
     let settled = false;
     let disposed = false;
     const ready = (session: Session) => {
       if (settled) return;
       settled = true;
+      if (landing.tokenSubject && session.user?.id !== landing.tokenSubject) {
+        fail(WRONG_ACCOUNT_REASON);
+        return;
+      }
       setStage((s) => (s === "checking" ? "ready" : s));
       if (!audienceHint) {
         void resolveResetAudience(session.user?.id).then((resolved) => {
@@ -108,7 +142,11 @@ export default function ResetPassword() {
       const early = setTimeout(() => {
         if (!settled) {
           settled = true;
-          fail("Open this page from the link in your password reset email.");
+          fail(
+            invite
+              ? "Open this page from the link in your invitation email."
+              : "Open this page from the link in your password reset email.",
+          );
         }
       }, 1500);
       return () => {
@@ -134,8 +172,10 @@ export default function ResetPassword() {
         // the link expired would send the user off to request another one.
         fail(
           deviceOffline()
-            ? OFFLINE_REASON
-            : "This reset link has expired or has already been used. Request a new one.",
+            ? invite
+              ? INVITE_OFFLINE_REASON
+              : OFFLINE_REASON
+            : expiredLinkMessage(landing.kind),
         );
       }
     }, SESSION_WAIT_MS);
@@ -145,7 +185,30 @@ export default function ResetPassword() {
       listener.subscription.unsubscribe();
       clearTimeout(timer);
     };
-  }, [audienceHint]);
+  }, [audienceHint, landing]);
+
+  const handleContinue = async () => {
+    setRedeeming(true);
+    setError(null);
+    const result = await redeemInviteToken(landing.tokenHash);
+    setRedeeming(false);
+    if (result.ok) {
+      setStage("ready");
+      if (!audienceHint) {
+        void resolveResetAudience(result.session?.user?.id).then(setAudience);
+      }
+    } else if (result.reason === "expired") {
+      setInvalidReason(expiredLinkMessage("invite"));
+      setStage("invalid");
+    } else {
+      // Nothing was used up, so Continue can simply be pressed again.
+      setError(
+        deviceOffline()
+          ? "This device is offline. Connect to the internet, then press Continue again."
+          : "Could not check your invitation link. Press Continue to try again.",
+      );
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -156,7 +219,11 @@ export default function ResetPassword() {
     }
     setSaving(true);
     setError(null);
-    const result = await completePasswordReset(password);
+    const result = await completePasswordReset(password, {
+      // The "password set" marker is for staff accounts only.
+      markPasswordSet: audience === "staff" || isInvite,
+      kind: landing.kind,
+    });
     setSaving(false);
     if (result.ok) {
       setPassword("");
@@ -171,7 +238,9 @@ export default function ResetPassword() {
     <div className="min-h-screen flex items-center justify-center bg-canvas px-4 py-8 sm:p-6">
       <div className="w-full max-w-md">
         <div className="panel p-6">
-          <h1 className="text-h2 text-ink mb-4">Choose a new password</h1>
+          <h1 className="text-h2 text-ink mb-4">
+            {isInvite ? "Set your password" : "Choose a new password"}
+          </h1>
 
           {stage === "checking" && (
             <div
@@ -182,7 +251,32 @@ export default function ResetPassword() {
                 className="h-5 w-5 shrink-0 rounded-full border-2 border-primary border-t-transparent animate-spin"
                 aria-hidden
               />
-              Checking your reset link…
+              {isInvite ? "Checking your invitation link…" : "Checking your reset link…"}
+            </div>
+          )}
+
+          {stage === "confirm" && (
+            <div className="space-y-4">
+              <p className="text-body text-ink">
+                Welcome to mBHR. Press Continue to set your password.
+              </p>
+              {error && (
+                <div className="banner banner-danger" role="alert">
+                  <ExclamationCircleIcon
+                    className="h-5 w-5 shrink-0 mt-0.5"
+                    aria-hidden
+                  />
+                  <p>{error}</p>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => void handleContinue()}
+                disabled={redeeming}
+                className="btn-primary w-full h-12"
+              >
+                {redeeming ? "Checking…" : "Continue"}
+              </button>
             </div>
           )}
 
@@ -195,7 +289,8 @@ export default function ResetPassword() {
                 />
                 <p>{invalidReason}</p>
               </div>
-              {invalidReason === OFFLINE_REASON && (
+              {(invalidReason === OFFLINE_REASON ||
+                invalidReason === INVITE_OFFLINE_REASON) && (
                 <button
                   type="button"
                   onClick={() => window.location.reload()}
@@ -204,14 +299,17 @@ export default function ResetPassword() {
                   Reload page
                 </button>
               )}
-              <Link
-                to={forgotPath}
-                className={`${
-                  invalidReason === OFFLINE_REASON ? "btn-secondary" : "btn-primary"
-                } w-full`}
-              >
-                Request a new link
-              </Link>
+              {/* Only an administrator can send a new invitation. */}
+              {!isInvite && (
+                <Link
+                  to={forgotPath}
+                  className={`${
+                    invalidReason === OFFLINE_REASON ? "btn-secondary" : "btn-primary"
+                  } w-full`}
+                >
+                  Request a new link
+                </Link>
+              )}
               <Link
                 to={loginPath}
                 className="mx-auto flex min-h-touch-target w-fit items-center rounded-md px-2 text-label text-primary hover:text-primary-hover underline"
@@ -272,7 +370,7 @@ export default function ResetPassword() {
                 disabled={saving}
                 className="btn-primary w-full h-12"
               >
-                {saving ? "Saving…" : "Save new password"}
+                {saving ? "Saving…" : isInvite ? "Save password" : "Save new password"}
               </button>
             </form>
           )}
@@ -284,13 +382,24 @@ export default function ResetPassword() {
                   className="h-5 w-5 shrink-0 mt-0.5"
                   aria-hidden
                 />
-                <div>
-                  <p className="font-medium mb-1">Password updated</p>
-                  <p className="text-caption">
-                    You've been signed out on all devices. Sign in again with
-                    your new password.
-                  </p>
-                </div>
+                {isInvite ? (
+                  <div>
+                    <p className="font-medium mb-1">Your password is set.</p>
+                    <p className="text-caption">
+                      Sign in with your email and this password. The first time
+                      you sign in on a device, you'll also choose a PIN for
+                      offline use.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <p className="font-medium mb-1">Password updated</p>
+                    <p className="text-caption">
+                      You've been signed out on all devices. Sign in again with
+                      your new password.
+                    </p>
+                  </div>
+                )}
               </div>
               <Link to={loginPath} className="btn-primary w-full">
                 Go to sign in

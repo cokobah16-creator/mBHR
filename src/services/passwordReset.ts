@@ -18,11 +18,21 @@
  *      signs out everywhere, so a session opened by whoever had the old password
  *      does not survive the reset.
  *
+ * Staff invitations land on the same page (docs/PASSWORD_RECOVERY.md,
+ * "Invitation links"). An invitation arrives in one of two forms:
+ *   - the default email template: the implicit-flow token in the hash with
+ *     `type=invite`, which supabase-js turns into a session like a recovery;
+ *   - the documented template: `?token_hash=…&type=invite`, which is redeemed
+ *     only when the person presses Continue (redeemInviteToken), so a mail
+ *     scanner that opens the link cannot use it up.
+ * The redirect carries `link=invite`, so an expired invitation (which comes
+ * back without a `type`) is still worded as an invitation.
+ *
  * Offline PINs are not covered here: staff PINs live only on the device and are
  * reset by an administrator from Users; offline patient PINs are reset at the
  * clinic.
  */
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, type Session } from "@/lib/supabaseClient";
 import { appLinkOrigin } from "@/config/canonicalOrigin";
 
 export type ResetAudience = "staff" | "patient";
@@ -59,22 +69,23 @@ export function resetRedirectUrl(origin: string, audience: ResetAudience): strin
 /**
  * Fallback for a link that arrived without ?for= (Supabase drops the query
  * string when it falls back to the Site URL). Works out which sign-in page the
- * account behind a recovery session belongs to: staff accounts have a
- * staff_roles row, which RLS lets the account itself read; every other account
- * is a patient-portal account. Anything that stops the lookup (offline, RLS,
- * network) is answered with "patient", which only affects where the "sign in"
- * links point.
+ * account behind a recovery session belongs to: staff accounts have an
+ * app_users row (id = the online user id), which RLS lets the account itself
+ * read; every other account is a patient-portal account. Anything that stops
+ * the lookup (offline, RLS, network) is answered with "patient", which only
+ * affects where the "sign in" links point.
  */
 export async function resolveResetAudience(userId: string): Promise<ResetAudience> {
   if (!supabase || !userId) return "patient";
   try {
     const { data, error } = await supabase
-      .from("staff_roles")
-      .select("role")
-      .eq("auth_user_id", userId)
+      .from("app_users")
+      .select("id")
+      .eq("id", userId)
       .maybeSingle();
     if (error) {
-      console.warn("[passwordReset] staff_roles lookup:", error.message);
+      // The error code only: the message can echo the account being looked up.
+      console.warn("[passwordReset] app_users lookup failed:", error.code || "unknown");
       return "patient";
     }
     return data ? "staff" : "patient";
@@ -83,11 +94,65 @@ export async function resolveResetAudience(userId: string): Promise<ResetAudienc
   }
 }
 
+/** What the email link was for: a password reset or a staff invitation. */
+export type LandingKind = "recovery" | "invite";
+
 export interface RecoveryLanding {
-  /** The URL hash carries an implicit-flow recovery token (`type=recovery` plus an access token). */
+  /**
+   * The URL carries a token this page accepts: an implicit-flow token in the
+   * hash (`type=recovery` or `type=invite` plus an access token), or an
+   * invitation `token_hash` in the query string.
+   */
   hasToken: boolean;
+  kind: LandingKind;
+  /** How the token arrived; null when there is none. */
+  flow: "fragment" | "token_hash" | null;
+  /** The invitation token to redeem with Continue (token_hash flow only). */
+  tokenHash: string | null;
+  /**
+   * The account the hash token was issued for (its `sub` claim), used to make
+   * sure the session this page ends up with belongs to the same account.
+   */
+  tokenSubject: string | null;
+  /** The error Supabase reported means the link expired or was already used. */
+  expired: boolean;
   /** Error Supabase put in the URL, e.g. an expired or already-used link. */
   error: string | null;
+}
+
+const RESET_EXPIRED =
+  "This reset link has expired or has already been used. Request a new one.";
+const INVITE_EXPIRED =
+  "This invitation link has expired or was already used. Ask your administrator to send a new one.";
+
+/** The message for a link that expired or was already used. */
+export function expiredLinkMessage(kind: LandingKind): string {
+  return kind === "invite" ? INVITE_EXPIRED : RESET_EXPIRED;
+}
+
+/**
+ * Reads the `sub` claim (the account id) from an access token without
+ * verifying it. Only used to check that the session this page ends up with
+ * belongs to the account the link was issued for; Supabase verifies the token
+ * itself. Returns null for anything that is not a readable JWT.
+ */
+export function accessTokenSubject(token: string): string | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3 || !parts[1]) return null;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
+    // Undo the byte-per-character decoding of atob so UTF-8 claims survive.
+    const json = decodeURIComponent(
+      Array.from(binary, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`).join(""),
+    );
+    const payload: unknown = JSON.parse(json);
+    if (!payload || typeof payload !== "object") return null;
+    const sub = (payload as { sub?: unknown }).sub;
+    return typeof sub === "string" && sub ? sub : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -95,25 +160,43 @@ export interface RecoveryLanding {
  * token in the hash and reports errors in either the hash or the query string.
  */
 export function parseRecoveryLanding(href: string = landingUrl): RecoveryLanding {
+  const none = (kind: LandingKind): RecoveryLanding => ({
+    hasToken: false,
+    kind,
+    flow: null,
+    tokenHash: null,
+    tokenSubject: null,
+    expired: false,
+    error: null,
+  });
   let url: URL;
   try {
     url = new URL(href);
   } catch {
-    return { hasToken: false, error: null };
+    return none("recovery");
   }
   const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
   const query = url.searchParams;
   const read = (key: string) => hash.get(key) ?? query.get(key);
+  const hashType = hash.get("type");
+  // The invitation redirect carries ?link=invite, which survives on the error
+  // redirect too; the hash `type` does not.
+  const linkKind: LandingKind = query.get("link") === "invite" ? "invite" : "recovery";
 
   const errorCode = read("error_code");
   const errorDescription = read("error_description");
   if (errorCode || errorDescription || read("error")) {
+    const kind: LandingKind = hashType === "invite" ? "invite" : linkKind;
+    const expired = errorCode === "otp_expired" || /expired|invalid/i.test(errorDescription ?? "");
     return {
-      hasToken: false,
-      error:
-        errorCode === "otp_expired" || /expired|invalid/i.test(errorDescription ?? "")
-          ? "This reset link has expired or has already been used. Request a new one."
-          : errorDescription || "This reset link could not be used. Request a new one.",
+      ...none(kind),
+      expired,
+      error: expired
+        ? expiredLinkMessage(kind)
+        : errorDescription ||
+          (kind === "invite"
+            ? "This invitation link could not be used. Ask your administrator to send a new one."
+            : "This reset link could not be used. Request a new one."),
     };
   }
 
@@ -121,8 +204,24 @@ export function parseRecoveryLanding(href: string = landingUrl): RecoveryLanding
   // ?code=, which this app's client never issues) must not let a browser that
   // is merely signed in reach the password form. With a token present,
   // supabase-js drops any stored session if the token does not verify.
-  const hasToken = hash.get("type") === "recovery" && !!hash.get("access_token");
-  return { hasToken, error: null };
+  const accessToken = hash.get("access_token");
+  if ((hashType === "recovery" || hashType === "invite") && accessToken) {
+    return {
+      ...none(hashType as LandingKind),
+      hasToken: true,
+      flow: "fragment",
+      tokenSubject: accessTokenSubject(accessToken),
+    };
+  }
+
+  // The documented invitation template: supabase-js does not act on a
+  // token_hash, so the page redeems it when the person presses Continue.
+  const tokenHash = query.get("token_hash");
+  if (tokenHash && query.get("type") === "invite") {
+    return { ...none("invite"), hasToken: true, flow: "token_hash", tokenHash };
+  }
+
+  return none(linkKind);
 }
 
 /** Returns an error message, or null if the new password is acceptable. */
@@ -204,13 +303,31 @@ export interface CompleteResetResult {
   message?: string;
 }
 
+export interface CompleteResetOptions {
+  /**
+   * Also record when the password was set (user_metadata.mbhr_password_set_at).
+   * Only for staff accounts and invitations; the Users screen shows it as a
+   * status label and nothing relies on it for access.
+   */
+  markPasswordSet: boolean;
+  /** Words the expired-session message for an invitation. Defaults to a reset. */
+  kind?: LandingKind;
+}
+
 /** Saves the new password for the current recovery session, then signs out everywhere. */
-export async function completePasswordReset(password: string): Promise<CompleteResetResult> {
+export async function completePasswordReset(
+  password: string,
+  opts: CompleteResetOptions,
+): Promise<CompleteResetResult> {
   if (!supabase) {
     return { ok: false, message: "Password reset needs an internet connection." };
   }
   try {
-    const { error } = await supabase.auth.updateUser({ password });
+    const { error } = await supabase.auth.updateUser(
+      opts.markPasswordSet
+        ? { password, data: { mbhr_password_set_at: new Date().toISOString() } }
+        : { password },
+    );
     if (error) {
       const msg = error.message.toLowerCase();
       if (msg.includes("different from the old") || msg.includes("same_password")) {
@@ -219,7 +336,10 @@ export async function completePasswordReset(password: string): Promise<CompleteR
       if (msg.includes("session") || msg.includes("jwt") || error.status === 401) {
         return {
           ok: false,
-          message: "Your reset link has expired. Request a new one and try again.",
+          message:
+            opts.kind === "invite"
+              ? "Your invitation link has expired. Ask your administrator to send a new one."
+              : "Your reset link has expired. Request a new one and try again.",
         };
       }
       if (msg.includes("weak") || msg.includes("password should")) {
@@ -243,4 +363,44 @@ export async function completePasswordReset(password: string): Promise<CompleteR
   localStorage.removeItem("patient_portal_user");
   localStorage.removeItem("patient_active_profile");
   return { ok: true };
+}
+
+// Flat for the same reason as RequestResetResult.
+export interface RedeemInviteResult {
+  ok: boolean;
+  session?: Session;
+  reason?: "expired" | "error";
+}
+
+/**
+ * Redeems an invitation token_hash for a session. Called only when the person
+ * presses Continue, never on page load, so a mail scanner that opens the link
+ * does not use it up. "expired" covers a link that expired, was already used
+ * or no longer matches an invitation; "error" is anything else (offline,
+ * server), after which pressing Continue again may work.
+ */
+export async function redeemInviteToken(tokenHash: string): Promise<RedeemInviteResult> {
+  if (!supabase || !tokenHash) return { ok: false, reason: "error" };
+  try {
+    const { data, error } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: "invite",
+    });
+    if (error) {
+      const code = (error as { code?: string }).code;
+      if (
+        code === "otp_expired" ||
+        code === "invite_not_found" ||
+        /expired|invalid/i.test(error.message ?? "")
+      ) {
+        return { ok: false, reason: "expired" };
+      }
+      console.warn("[passwordReset] invitation check failed:", code || error.status || "unknown");
+      return { ok: false, reason: "error" };
+    }
+    if (!data?.session) return { ok: false, reason: "error" };
+    return { ok: true, session: data.session };
+  } catch {
+    return { ok: false, reason: "error" };
+  }
 }

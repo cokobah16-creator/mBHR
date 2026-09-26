@@ -2,16 +2,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-const RECOVERY_HASH = "#access_token=abc&refresh_token=def&type=recovery&expires_in=3600";
-
 // services/passwordReset captures the landing URL when it is first imported,
 // so the recovery token has to be in the URL before the page module loads.
-vi.hoisted(() => {
-  window.history.replaceState(
-    null,
-    "",
-    "/reset-password#access_token=abc&refresh_token=def&type=recovery&expires_in=3600",
-  );
+// The token is JWT-shaped with sub "user-1", so the page can check that the
+// session it gets belongs to that account.
+const { RECOVERY_HASH } = vi.hoisted(() => {
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const token = `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ sub: "user-1" })}.signature`;
+  const hash = `#access_token=${token}&refresh_token=def&type=recovery&expires_in=3600`;
+  window.history.replaceState(null, "", `/reset-password${hash}`);
+  return { RECOVERY_HASH: hash };
 });
 
 const onAuthStateChange = vi.fn();
@@ -70,12 +71,14 @@ describe("ResetPassword", () => {
   });
 
   it("sends a staff account to the staff sign-in after the reset", async () => {
-    maybeSingle.mockResolvedValue({ data: { role: "nurse" }, error: null });
+    maybeSingle.mockResolvedValue({ data: { id: "user-1" }, error: null });
     renderPage();
     await setNewPassword();
 
-    expect(from).toHaveBeenCalledWith("staff_roles");
-    expect(updateUser).toHaveBeenCalledWith({ password: "brand-new-pass" });
+    expect(from).toHaveBeenCalledWith("app_users");
+    expect(updateUser).toHaveBeenCalledWith(
+      expect.objectContaining({ password: "brand-new-pass" }),
+    );
     expect(screen.getByRole("link", { name: /go to sign in/i })).toHaveAttribute("href", "/login");
   });
 
@@ -84,6 +87,8 @@ describe("ResetPassword", () => {
     renderPage();
     await setNewPassword();
 
+    // Patients get no "password set" marker.
+    expect(updateUser).toHaveBeenCalledWith({ password: "brand-new-pass" });
     expect(screen.getByRole("link", { name: /go to sign in/i })).toHaveAttribute(
       "href",
       "/patient/login",
@@ -95,6 +100,10 @@ describe("ResetPassword", () => {
     await setNewPassword();
 
     expect(from).not.toHaveBeenCalled();
+    expect(updateUser).toHaveBeenCalledWith({
+      password: "brand-new-pass",
+      data: { mbhr_password_set_at: expect.any(String) },
+    });
     expect(screen.getByRole("link", { name: /go to sign in/i })).toHaveAttribute("href", "/login");
   });
 
@@ -111,6 +120,20 @@ describe("ResetPassword", () => {
     act(() => handler("PASSWORD_RECOVERY", session));
 
     await setNewPassword();
-    expect(from).toHaveBeenCalledWith("staff_roles");
+    expect(from).toHaveBeenCalledWith("app_users");
+  });
+
+  it("refuses a session that belongs to another account than the link", async () => {
+    getSession.mockResolvedValue({ data: { session: { user: { id: "someone-else" } } } });
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "This link is for a different account than the one signed in on this browser. Sign out, then open the link again.",
+      ),
+    );
+    expect(screen.queryByLabelText(/^new password/i)).toBeNull();
+    expect(from).not.toHaveBeenCalled();
+    expect(updateUser).not.toHaveBeenCalled();
   });
 });

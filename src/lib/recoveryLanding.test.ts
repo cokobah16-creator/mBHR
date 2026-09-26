@@ -22,6 +22,23 @@ describe("recoveryLandingPath", () => {
     );
   });
 
+  it("moves an invitation token too", () => {
+    const inviteHash = "#access_token=abc&refresh_token=def&type=invite&expires_in=3600";
+    expect(recoveryLandingPath(`https://app.test/${inviteHash}`)).toBe(
+      `/reset-password${inviteHash}`,
+    );
+    expect(recoveryLandingPath(`https://app.test/auth/callback${inviteHash}`)).toBe(
+      `/reset-password${inviteHash}`,
+    );
+    expect(recoveryLandingPath(`https://app.test/reset-password${inviteHash}`)).toBeNull();
+  });
+
+  it("does not move a signup confirmation", () => {
+    expect(
+      recoveryLandingPath("https://app.test/#access_token=abc&refresh_token=def&type=signup"),
+    ).toBeNull();
+  });
+
   it("leaves the reset page alone", () => {
     expect(recoveryLandingPath(`https://app.test/reset-password${TOKEN_HASH}`)).toBeNull();
     expect(recoveryLandingPath(`https://app.test/reset-password/${TOKEN_HASH}`)).toBeNull();
@@ -35,6 +52,7 @@ describe("recoveryLandingPath", () => {
       ),
     ).toBeNull();
     expect(recoveryLandingPath("https://app.test/#type=recovery")).toBeNull();
+    expect(recoveryLandingPath("https://app.test/#type=invite")).toBeNull();
     expect(recoveryLandingPath("https://app.test/")).toBeNull();
     expect(recoveryLandingPath("not a url")).toBeNull();
   });

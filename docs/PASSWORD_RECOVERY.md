@@ -6,11 +6,59 @@ staff sign-in (`/login` → Online) and the patient portal (`/patient/login`).
 | Step | Route | What happens |
 | --- | --- | --- |
 | 1. Request | `/forgot-password` (staff), `/patient/forgot-password` (patients), or Patient portal → Account → Security | `supabase.auth.resetPasswordForEmail` sends a one-time link that comes back to `/reset-password?for=staff\|patient`. The confirmation is identical whether or not the address has an account. |
-| 2. Land | `/reset-password` | supabase-js exchanges the link's token for a recovery session. Expired/used links show "Request a new link". A visit without a recovery token in the URL is refused. `?for=` decides where the page's "sign in" links point; a link that lost it (see the Site URL fallback below) gets that from the recovery session instead (staff = has a `staff_roles` row). |
-| 3. Set | `/reset-password` | New password (min 8 chars, confirmed) saved with `updateUser`, then `signOut({ scope: "global" })` ends every session for the account. User is sent back to the correct login page. |
+| 2. Land | `/reset-password` | supabase-js exchanges the link's token for a recovery session. Expired/used links show "Request a new link". A visit without a recovery token in the URL is refused. `?for=` decides where the page's "sign in" links point; a link that lost it (see the Site URL fallback below) gets that from the recovery session instead (staff = has an `app_users` row, whose `id` is the account's user id). If the token in the link names a different account than the session the page ends up with, the page refuses (see "Session check" below). |
+| 3. Set | `/reset-password` | New password (min 8 chars, confirmed) saved with `updateUser`, then `signOut({ scope: "global" })` ends every session for the account. Staff accounts also get the password-set marker (below). User is sent back to the correct login page. |
 
 Code: `src/services/passwordReset.ts`, `src/pages/ForgotPassword.tsx`,
 `src/pages/ResetPassword.tsx`, `src/lib/recoveryLanding.ts`.
+
+## Staff invitations
+
+A staff member added on the Users screen gets an invitation email from the
+`staff-admin` edge function. The invitation lands on the same `/reset-password`
+page, which then says "Set your password" instead of "Choose a new password".
+The page accepts two link formats:
+
+| Format | What the link looks like | What the page does |
+| --- | --- | --- |
+| Documented template (preferred; see [deployment/STAFF_INVITE_EMAIL.md](deployment/STAFF_INVITE_EMAIL.md)) | `https://mbhr.app/reset-password?for=staff&link=invite&token_hash=…&type=invite` | Shows "Welcome to mBHR. Press Continue to set your password." with a **Continue** button. Only pressing it redeems the code (`verifyOtp({ token_hash, type: "invite" })`). Nothing happens on page load, so a mail scanner that opens the link does not use it up. Any session already stored in the browser is ignored until Continue succeeds. |
+| Supabase's default template (`{{ .ConfirmationURL }}`) | Supabase's `/verify` link, which redirects to `https://mbhr.app/reset-password?for=staff&link=invite#access_token=…&type=invite` | supabase-js turns the hash token into a session (a `SIGNED_IN` event, not `PASSWORD_RECOVERY`) and the page shows the password form, as for a reset. A scanner that opens the link first does use it up. |
+
+- `link=invite` is what makes the page word things as an invitation when
+  the link has expired: Supabase's error redirect keeps the query string but
+  drops `type`. An expired or used invitation shows "This invitation link has
+  expired or was already used. Ask your administrator to send a new one." and
+  no "Request a new link" button, because only an administrator can send a
+  new invitation.
+- An invitation token that lands on another page (for example the home page,
+  after a Site URL fallback) is moved to `/reset-password` just like a
+  recovery token (`src/lib/recoveryLanding.ts`). Signup confirmations are
+  never moved.
+- After saving, the page says "Your password is set. Sign in with your email
+  and this password. The first time you sign in on a device, you'll also
+  choose a PIN for offline use."
+
+### Password-set marker
+
+When a staff account (`?for=staff`, or an `app_users` row) or an invitation
+saves a password, the page also writes `user_metadata.mbhr_password_set_at`
+(the time, in ISO format) in the same `updateUser` call. Patient resets do not
+write it. The Users screen uses it only to label an account's status (for
+example, whether an invited person has set a password yet). It is **display
+only**: `user_metadata` can be edited by the signed-in user themselves, so
+nothing may use it to grant or refuse access.
+
+### Session check
+
+When the link carries an access token in the hash (a reset, or a
+default-template invitation), the page reads the token's `sub` claim (the
+account id; the token itself is verified by Supabase, not by the page). If the
+session the page ends up with belongs to a different account, the page shows
+"This link is for a different account than the one signed in on this browser.
+Sign out, then open the link again." and never offers the password form. This
+stops the page from setting a password on whichever account happens to be
+signed in on a shared browser. The token_hash format needs no such check: the
+session comes straight from redeeming the code.
 
 ## Not covered (by design)
 
@@ -91,6 +139,8 @@ Authentication → Emails → Templates → Reset Password. Keep
 | --- | --- | --- |
 | The link in the email opens the home page (or any page other than `/reset-password`). | The redirect URL is not on the allow list and not on the Site URL's host, so Supabase sent the user to the Site URL. | Step 1 above. The app now moves a recovery token that lands on the wrong page to `/reset-password` on its own, so the reset still completes, but fix the settings anyway. |
 | "This reset link has expired or has already been used." | Links work once and expire after an hour. The first click already consumed it, even if that click only showed the home page. Some mail clients also open links to scan them. | Request a new link. |
+| "This invitation link has expired or was already used." | Same as above, for an invitation. With the default template a mail scanner may have used the link before the person clicked it. | An administrator uses **Resend invitation** on the Users screen. Install the documented template ([deployment/STAFF_INVITE_EMAIL.md](deployment/STAFF_INVITE_EMAIL.md)) so scanners stop using links up. |
+| "This link is for a different account than the one signed in on this browser." | Another account's session was found on this browser instead of the one the link was issued for. | Sign out of mBHR in this browser, then open the link from the email again. |
 | "Check your email" but nothing arrives, for anyone who is not on the Supabase team. | Built-in sender. | Step 2 above. |
 | Auth logs show `POST /recover` followed by `GET /verify … redirect_to=<Site URL>` | Same as the first row; the `redirect_to` on the verify link is the fallback, not the URL the app asked for. | Step 1 above. |
 
