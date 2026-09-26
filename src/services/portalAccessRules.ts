@@ -212,10 +212,14 @@ export function portalSignInDecision(rows: unknown, failed: boolean): PortalSign
 }
 
 /** Message shown when the portal refuses a sign-in. */
+/** Access is off or revoked: no internal terms, no protected information. */
+export const PORTAL_ACCESS_UNAVAILABLE_MESSAGE =
+  "Your online access is currently unavailable. Please contact the care team for assistance.";
+
 export function portalSignInRefusalMessage(kind: Exclude<PortalSignInCheck["kind"], "allowed">): string {
   switch (kind) {
     case "not_enabled":
-      return "Your clinic has not turned on portal access for you. Please ask clinic staff to turn it on, then sign in again.";
+      return PORTAL_ACCESS_UNAVAILABLE_MESSAGE;
     case "not_linked":
       return "Your account is not linked to a clinic record yet. Please ask clinic staff to check your record.";
     case "unavailable":
@@ -267,6 +271,14 @@ export function portalLinkOutcome(status: unknown): PortalLinkOutcome {
       // (20260926120100_portal_link_adults_only.sql). One message that is
       // true for all three: ask clinic staff.
       return { linked: false, message: MINOR_RECORD_LINK_MESSAGE };
+    case "no_clinic_record":
+      // The server never creates a clinic record for a sign-up: the clinic
+      // registers patients, and the account links to that record.
+      return {
+        linked: false,
+        message:
+          "We could not find a clinic record that matches your details. Please ask the care team to check your record, then sign in again.",
+      };
     case "contact_not_verified":
       return {
         linked: false,

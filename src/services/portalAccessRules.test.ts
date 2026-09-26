@@ -214,7 +214,7 @@ describe("portalSignInDecision", () => {
   });
 
   it("has a plain message for each refusal", () => {
-    expect(portalSignInRefusalMessage("not_enabled")).toMatch(/not turned on portal access/);
+    expect(portalSignInRefusalMessage("not_enabled")).toMatch(/online access is currently unavailable/);
     expect(portalSignInRefusalMessage("not_linked")).toMatch(/not linked/);
     expect(portalSignInRefusalMessage("unavailable")).toMatch(/could not check/);
   });
@@ -236,6 +236,7 @@ describe("portalLinkOutcome", () => {
       "needs_staff_verification",
       "contact_not_verified",
       "missing_details",
+      "no_clinic_record",
       "unavailable",
       undefined,
     ]) {
@@ -244,6 +245,13 @@ describe("portalLinkOutcome", () => {
       expect(outcome.message && outcome.message.length).toBeGreaterThan(10);
     }
     expect(portalLinkOutcome("portal_not_enabled").message).toMatch(/not turned on portal access/);
+  });
+
+  it("does not claim an account was created when no clinic record matches", () => {
+    const outcome = portalLinkOutcome("no_clinic_record");
+    expect(outcome.linked).toBe(false);
+    expect(outcome.message).toMatch(/could not find a clinic record/);
+    expect(outcome.message).not.toMatch(/created/i);
   });
 
   it("sends a child's record or an under-18 sign-up to clinic staff, without blaming the date of birth", () => {

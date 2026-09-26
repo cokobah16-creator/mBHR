@@ -36,6 +36,12 @@ const envSchema = z.object({
   // anything prefixed VITE_ is shipped to every browser.
   VITE_INVITE_RATE_MS: z.coerce.number().int().nonnegative().default(60_000),
 
+  // Patient portal sign-in codes: which channels may send them, as a
+  // comma list of "sms" and "email". Empty (the default) keeps code sign-in
+  // switched off. Turn a channel on only once Supabase Auth can deliver it
+  // (email: SMTP; sms: phone sign-in plus the SMS hook).
+  VITE_PORTAL_CODE_CHANNELS: z.string().default(""),
+
   // Televisits (video-room base URL; rooms are appended as /mbhr-<uuid>).
   // A present-but-blank value is treated as unset so the default applies.
   VITE_TELEVISIT_BASE_URL: z.preprocess(
@@ -59,6 +65,7 @@ function readRaw(): Record<string, unknown> {
     VITE_SENTRY_DSN: e.VITE_SENTRY_DSN,
     VITE_INVITE_RATE_MS: e.VITE_INVITE_RATE_MS,
     VITE_TELEVISIT_BASE_URL: e.VITE_TELEVISIT_BASE_URL,
+    VITE_PORTAL_CODE_CHANNELS: e.VITE_PORTAL_CODE_CHANNELS,
   };
 }
 
