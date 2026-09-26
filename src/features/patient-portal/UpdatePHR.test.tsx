@@ -50,7 +50,8 @@ describe("UpdatePHR", () => {
     expect(screen.getByRole("button", { name: "Edit Phone number" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit Blood type" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit Medical notes" })).toBeNull();
-    // Date of birth, blood type and medical notes.
-    expect(screen.getAllByText("Only clinic staff can change this.")).toHaveLength(3);
+    // Name, date of birth, blood type and medical notes. The name has no
+    // single column to save to, so only staff change it.
+    expect(screen.getAllByText("Only clinic staff can change this.")).toHaveLength(4);
   });
 });
