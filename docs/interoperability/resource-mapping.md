@@ -436,12 +436,12 @@ an empty file and a stored path outside the patient's folder all answer
 | --- | --- |
 | Source | `interop.consent_records` with `interop.consent_provisions`, read through `fhir_consent_directives()`, which never returns account ids (recorded, verified or withdrawn by), the withdrawal reason, who signed (`granted_by` and relationship), the source document or a provision's actor reference (only `names_recipient`: whether a rule names one specific recipient). |
 | FHIR id | `consent_records.id` (uuid). |
-| status | The stored consent-state code (table below); a withdrawn record is `inactive` (or stays `entered-in-error`). Missing or not a code → **withheld** (Consent.status is required and has no `unknown`). |
+| status | The stored consent-state code (tables below); a withdrawn record is `inactive` (or stays `entered-in-error`), and an active record past its end date (`effective_until` at or before the time of the request; the end is exclusive, the consent check's own rule) is `inactive`, no longer in force. Missing or not a code → **withheld** (Consent.status is required and has no `unknown`). |
 | scope | The stored consentscope code (adr, research, patient-privacy, treatment) with its R4 display. |
 | category | The stored category as a local `https://mbhr.app/codes/consent-category` code (text only if it is not code-like). Never LOINC. Blank → withheld. |
 | patient | The canonical Patient; unresolved → withheld. |
 | dateTime | `recorded_at`: when the record was entered in the register. |
-| policy | `policy.uri` = the recorded policy. R4 requires a policy or a policy rule (invariant ppc-1) and mBHR records no rule, so a record that cites no policy is **withheld**. |
+| policy | `policy.uri` = the recorded policy. R4 requires a policy or a policy rule (invariant ppc-1) and mBHR records no rule. Recording a consent requires a policy link (`interop_record_consent()` refuses one without, and the register's CHECK `consent_records_policy_required` refuses it from any other path). The mapper still **withholds** a record without a usable policy, as defence in depth. |
 | verification | Only from the recorded flag: verified true (with its date when recorded), or verified false. Who verified is never published. |
 | provision | Root: the record's effective period, no type. One nested provision per stored rule, in stored order, with only what was recorded: `type` (permit or deny), `period`, `actor` (the kind of recipient as a local `consent-actor-type` code, with a display-only reference; `any` means no actor element; a rule that names one specific recipient withholds the record, below), `action` (consentaction), `purpose` (v3 ActReason, no display), `class` (an R4 resource type, or a local `consent-resource-type` or `consent-data-class` code) and `securityLabel` (local `consent-security-label`). |
 | Never published | `performer`, `organization`, `source[x]`, `policyRule`, and every column listed under Source as not returned. |
@@ -461,14 +461,29 @@ not a boolean withholds the record. A searchset says how many were left
 out.
 
 `CONSENT_STATUS` maps each stored code to itself (draft, proposed, active,
-rejected, inactive, entered-in-error). An active record whose period has
-ended stays `active` as recorded; its period is in `provision.period`.
-`CONSENT_STATUS_WITHDRAWN`, used when `withdrawn_at` is set:
+rejected, inactive, entered-in-error).
+`CONSENT_STATUS_WITHDRAWN`, used when `withdrawn_at` is set (it takes
+precedence over the end date):
 
 | Stored status of a withdrawn record | Consent.status |
 | --- | --- |
 | inactive, active, draft, proposed, rejected | inactive |
 | entered-in-error | entered-in-error |
+| missing or anything else | none: withheld |
+
+`CONSENT_STATUS_ENDED`, used when a record that is not withdrawn has an
+end date (`effective_until`) at or before the time of the request: the
+end is exclusive, times are compared as instants, and an unreadable end
+counts as ended, as mBHR's consent check (`consent_expired`) and the
+portal (ended) treat it. The time is the gateway's request time, the one
+the access decision used. The end date is still published in
+`provision.period`, and a search for `status=active` never finds the
+record.
+
+| Stored status of a record past its end date | Consent.status |
+| --- | --- |
+| active | inactive |
+| draft, proposed, rejected, inactive, entered-in-error | the same code |
 | missing or anything else | none: withheld |
 
 Two partial points (see [consent.md](consent.md#the-consent-resource)):

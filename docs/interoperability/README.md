@@ -354,15 +354,16 @@ From least to most drastic:
    only with the owner's go-ahead for that database, and only after step 1,
    because the Phase 2 gateway fails without them). **Phase 2 first, then
    Phase 1:**
-   - Phase 2: the 43 statements in the header of
+   - Phase 2: the 44 statements in the header of
      `20260926130000_interop_phase2.sql`, in order. They drop the Phase 2
-     functions and triggers, `interop.consent_record_history` and the
-     Phase 2 audit columns (HTTP status, consent result, actor kind,
-     restrictions), and grant `EXECUTE` on the Phase 1
-     `fhir_record_access()` back to `authenticated`. **Export the consent
-     history and the audit trail first.** Minted `interop.resource_links`
-     rows (Practitioner and Medication ids) are left in place on purpose,
-     so published ids stay the same if Phase 2 is applied again.
+     functions and triggers, the consent policy CHECK,
+     `interop.consent_record_history` and the Phase 2 audit columns (HTTP
+     status, consent result, actor kind, restrictions), and grant
+     `EXECUTE` on the Phase 1 `fhir_record_access()` back to
+     `authenticated`. **Export the consent history and the audit trail
+     first.** Minted `interop.resource_links` rows (Practitioner and
+     Medication ids) are left in place on purpose, so published ids stay
+     the same if Phase 2 is applied again.
    - Phase 1: the five statements in the header of
      `20260926110000_interop_foundation.sql`. **Dropping the `interop`
      schema deletes the access audit trail and every consent record**, so

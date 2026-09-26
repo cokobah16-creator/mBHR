@@ -2,8 +2,10 @@
 //
 // Mappers are pure: they receive rows the repository already fetched (and
 // the gateway already authorised) plus pre-resolved references, and return
-// FHIR JSON. They never query, never authorise and never read the clock, so
-// the same row always maps to the same resource.
+// FHIR JSON. They never query, never authorise and never read the clock (a
+// mapper whose output depends on the time, such as Consent past its end
+// date, is given the request's time), so the same inputs always map to the
+// same resource.
 
 import type { Meta, Reference } from "../types/fhir";
 

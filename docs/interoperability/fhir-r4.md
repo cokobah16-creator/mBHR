@@ -236,7 +236,7 @@ Token values per type:
 | DocumentReference | `type` | `medical_record`, `lab_result`, `imaging`, `prescription`, `insurance`, `other` (system optional: `https://mbhr.app/codes/document-type`) |
 | DocumentReference | `category` | `patient`, `staff` (system optional: `https://mbhr.app/codes/document-source`) |
 | DocumentReference | `status` | `current` matches every published document; other codes match nothing |
-| Consent | `status` | `draft`, `proposed`, `active`, `rejected`, `inactive`, `entered-in-error` (the published status: a withdrawn record is `inactive`) |
+| Consent | `status` | `draft`, `proposed`, `active`, `rejected`, `inactive`, `entered-in-error` (the published status: a withdrawn record, or an active one past its end date, is `inactive`) |
 | Consent | `scope` | `adr`, `research`, `patient-privacy`, `treatment` |
 | Practitioner | `active` | `true`, `false`; an account that records no flag matches neither |
 | PractitionerRole | `role` | `admin`, `doctor`, `nurse`, `pharmacist`, `volunteer`, `auditor`, `lead_clinician`, `registration_lead` |
@@ -322,8 +322,9 @@ the resource has `meta.lastUpdated`, `Last-Modified`.
 of a SHA-256 over the resource without its `versionId`, as 24 hex
 characters. It changes whenever the served content changes. `ETag` uses
 the same value. `meta.lastUpdated` is the source row's last change time
-where the type publishes one. There is no version history (`vread` and
-`_history` are not supported).
+where the type publishes one; for a Consent that ended after its last
+change, it is the end date, from which it is served as `inactive`. There
+is no version history (`vread` and `_history` are not supported).
 
 ### Binary
 

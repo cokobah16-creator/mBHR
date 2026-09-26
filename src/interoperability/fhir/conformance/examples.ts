@@ -469,6 +469,21 @@ const CONSENT_RESEARCH_WITHDRAWN = {
   ],
 };
 
+/** A permission whose end date has passed: no longer in force (inactive), end date in provision.period. */
+const CONSENT_PRIVACY_ENDED = {
+  ...CONSENT_PRIVACY,
+  id: "c0a5e000-0000-4000-8000-0000000000e4",
+  verified_at: "2025-06-02T10:00:00Z",
+  effective_from: "2025-06-01T00:00:00Z",
+  effective_until: "2026-06-01T00:00:00Z",
+  recorded_at: "2025-06-01T09:30:00Z",
+  created_at: "2025-06-01T09:30:00Z",
+  updated_at: "2025-06-02T10:00:00Z",
+  provisions: [{ ...CONSENT_PRIVACY.provisions[0], id: "d0000000-0000-4000-8000-0000000000e5" }],
+};
+/** The request time the Consent examples are mapped at (as the example bundles), so they do not change with the date. */
+const EXAMPLE_NOW = new Date("2026-09-25T12:00:00Z");
+
 /** Merged into PATIENT (the Patient-merged example). */
 const MERGED_PATIENT = { id: "01HZZEXAMPLEMERGED0000000", fhir_id: "7c0f6a52-3d0e-4f7e-9a51-5b8d2c1e0a02" };
 
@@ -717,9 +732,10 @@ function phase2Examples(ctx: MapContext): Record<string, Resource> {
   add("Binary-patient-upload", mapBinary(DOCUMENT_UPLOAD, ctx));
 
   // Consent (resources/consent.ts).
-  add("Consent-privacy-rules", mapConsent(CONSENT_PRIVACY, ctx));
-  add("Consent-deny-external-actor", mapConsent(CONSENT_EXTERNAL_DENY, ctx));
-  add("Consent-research-withdrawn", mapConsent(CONSENT_RESEARCH_WITHDRAWN, ctx));
+  add("Consent-privacy-rules", mapConsent(CONSENT_PRIVACY, ctx, EXAMPLE_NOW));
+  add("Consent-deny-external-actor", mapConsent(CONSENT_EXTERNAL_DENY, ctx, EXAMPLE_NOW));
+  add("Consent-research-withdrawn", mapConsent(CONSENT_RESEARCH_WITHDRAWN, ctx, EXAMPLE_NOW));
+  add("Consent-privacy-ended", mapConsent(CONSENT_PRIVACY_ENDED, ctx, EXAMPLE_NOW));
 
   // Provenance (resources/provenance.ts) and AuditEvent (resources/auditEvent.ts):
   // staff resolve to Practitioner references through the staff directory.

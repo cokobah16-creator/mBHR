@@ -54,6 +54,13 @@ export interface QueryCtx {
    * resolving the parameter again.
    */
   patients?: PatientSearchContext;
+  /**
+   * The request's time: the instant authorizeFhirRequest() (and its consent
+   * check) decided with. A module whose published status depends on the
+   * time (Consent past its end date) uses it, so the decision and what is
+   * published agree. Absent only where a test builds a context by hand.
+   */
+  now?: Date;
 }
 
 /** Search parameters that name a patient, resolved by the gateway before authorization. */

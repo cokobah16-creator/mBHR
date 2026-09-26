@@ -28,7 +28,7 @@ Locally, where `npm install` is not possible, the same files run under Bun:
 bun test src/interoperability
 ```
 
-With Bun this is 19 files and 705 tests (705 pass, 0 fail). Vitest is
+With Bun this is 19 files and 714 tests (714 pass, 0 fail). Vitest is
 what CI uses; the Bun run is a local convenience.
 
 Files in `src/interoperability/fhir/__tests__/` (plus
@@ -40,8 +40,8 @@ Files in `src/interoperability/fhir/__tests__/` (plus
 | `gateway.test.ts` | The whole request path: feature flag, metadata, authentication, authorisation, enumeration protection, reads, searches (including a birth date on the 1st of a month: sent shortened, still found by name and the stored date), errors and request limits |
 | `guard.test.ts` | The routing guard (`routeRequest`), keyset paging, `LIKE` escaping, reference checks in the validator |
 | `authorize.test.ts` | The order of the 12 steps (no staff account reads DocumentReference, Binary or Consent, whatever it holds), the restrictions handed to modules, and the consent step, including `consentStep()` on a governed purpose (it still loads directives for staff with consult, portal_manage or audit_access) |
-| `consentPolicy.test.ts` | `evaluateConsent()`: which accesses consent governs, default-deny, withdrawal and expiry, a permit for one named recipient never permits, parsing of directives |
-| `consentResource.test.ts` | Consent status maps, mapper, no staff account reads or searches Consent (owner decision), patient reads and searches, patient self-access, nothing forbidden is served, a rule for one named recipient withholds the record |
+| `consentPolicy.test.ts` | `evaluateConsent()`: which accesses consent governs, default-deny, withdrawal and expiry (and the end-date rule the Consent mapper shares), a permit for one named recipient never permits, parsing of directives |
+| `consentResource.test.ts` | Consent status maps, mapper, a consent past its end date is inactive at the request's time (as the consent check decides), no staff account reads or searches Consent (owner decision), patient reads and searches, patient self-access, nothing forbidden is served, a rule for one named recipient withholds the record |
 | `consentDirectiveLoader.test.ts` | The consent step's directive lookup: the named patient's merge family, directives read as the named patient's, more than 100 refused (503) |
 | `framework.test.ts` | Configuration and flags, search parameter parsing (including a type's refused parameters, answered with the type's own message), the access decision (no staff role reads documents or consents), the CapabilityStatement |
 | `mappers.test.ts` | Patient, Encounter, vital-sign Observation and Condition mapping (including birth dates on the 1st of a month: 1 January as the year, any other 1st as year and month, every other date in full); the structural validator; the conformance examples |
@@ -127,7 +127,7 @@ Document and consent cases are in `documents.test.ts` and
 The `gateway` job, after the unit tests:
 
 1. writes the gateway's own output for synthetic data with
-   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 55 examples from
+   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 56 examples from
    `src/interoperability/fhir/conformance/examples.ts` (the published
    resource shapes, searchset Bundles including one with no match and so
    no `entry`, two OperationOutcomes (a forbidden answer, and the answer
@@ -164,16 +164,16 @@ the two interop migrations depend on:
 | File | Plan | Covers |
 | --- | --- | --- |
 | `supabase/migrations-deferred/tests/interop_foundation.test.sql` | 42 | Phase 1: the `interop` schema is closed to API roles; anon is refused; role and permissions come from the database; the audit actor is `auth.uid()`; argument checks; non-staff get no role; the rate limit; the audit trail is append-only; consent deletion and withdrawal rules; terminology review rules |
-| `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 277 | Phase 2, in ten sections (below) |
+| `supabase/migrations-deferred/tests/interop_phase2.test.sql` | 284 | Phase 2, in ten sections (below) |
 
 Sections of `interop_phase2.test.sql`:
 
 1. Structure, grants, Phase 1 fixes and indexes.
 2. `anon` can call no function.
 3. A doctor: gateway context, `fhir_record_access_v2`, patient resolution,
-   staff directory, link ids, consent management (including the staff
-   chip's `sharing_state` and `sharing_reason` for each kind of record),
-   and the functions a doctor is refused.
+   staff directory, link ids, consent management (recording needs a
+   policy link; the staff chip's `sharing_state` and `sharing_reason` for
+   each kind of record), and the functions a doctor is refused.
 4. A pharmacist: rate buckets and the link functions; consent functions
    refused. A nurse and a volunteer cannot use the link functions.
 5. A signed-in account that is neither staff nor a portal patient.
@@ -183,8 +183,10 @@ Sections of `interop_phase2.test.sql`:
    share, never a refusal, a treatment consent or an advance directive.
    One sign-in linked to two people: each page lists and withdraws only
    its own patient's records.
-7. Consent history, audit rows and the consent guards; the directives
-   JSON says whether a rule names one recipient, never who; the staff
+7. Consent history, audit rows and the consent guards; the register
+   refuses a record without a policy link from any writer (the owner and
+   the service role included); the directives JSON says whether a rule
+   names one recipient, never who; the staff
    summary reads a verified permit for one named recipient as limited
    (never allowed) and a refusal for one as refused in part.
 8. `patients.fhir_id` is kept once set.
@@ -200,7 +202,7 @@ On `ubuntu-24.04`, with PostgreSQL 16 and pgTAP from the Ubuntu packages:
 2. Apply Phase 1 twice, then Phase 2 twice. Each must be idempotent.
 3. Run both pgTAP files with `pg_prove`.
 4. Roll back Phase 2: take the rollback lines from the Phase 2 migration
-   header, check there are exactly 43 statements, run them.
+   header, check there are exactly 44 statements, run them.
 5. Check that `authenticated` can execute the v1 `fhir_record_access`
    again, then run the Phase 1 pgTAP file.
 6. Roll back Phase 1: take its rollback lines, check there are exactly 5

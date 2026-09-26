@@ -15,6 +15,7 @@ import { STATUS_MAPS } from "../terminology/status";
 import {
   CONSENT_STATE_CODES,
   CONSENT_STATUS,
+  CONSENT_STATUS_ENDED,
   CONSENT_STATUS_MAPS,
   CONSENT_STATUS_WITHDRAWN,
 } from "../terminology/status/consent";
@@ -40,6 +41,8 @@ import {
   hasActorRule,
   withheldNote,
 } from "../resources/consent";
+import { evaluateConsent, parseDirectives } from "../consent/evaluateConsent";
+import { conformanceExamples } from "../conformance/examples";
 import { fakeSupabase, makeToken, type FakeOptions, type FakeUser, type RpcHandler } from "./fakeSupabase";
 import { PATIENT_A, PATIENT_B } from "./fixtures";
 
@@ -192,7 +195,11 @@ const A3 = {
   effective_until: null,
   provisions: [],
 };
-/** No policy: FHIR requires one (ppc-1), so it is not published. */
+/**
+ * No policy: FHIR requires one (ppc-1), so it is not published. It cannot
+ * be recorded any more (interop_record_consent and the register's CHECK
+ * refuse it); the mapper still withholds one, as defence in depth.
+ */
 const A_NO_POLICY = { ...A1, id: "c0a5e000-0000-4000-8000-000000000004", policy_uri: null, provisions: [] };
 /** Still filed under the merged-away record. */
 const M1 = { ...A1, id: "c0a5e000-0000-4000-8000-000000000005", patient_id: PATIENT_M.id, provisions: [] };
@@ -237,6 +244,8 @@ const ctx = {
     [PATIENT_C.id, PATIENT_C.fhir_id],
   ]),
 };
+/** The request's time, as the gateway passes it to the mapper (the gateway tests' clock). */
+const AT = new Date("2026-09-25T12:00:00Z");
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
@@ -248,7 +257,7 @@ type Json = Record<string, any>;
 describe("Consent.status maps", () => {
   it("are listed with every other status map", () => {
     for (const m of CONSENT_STATUS_MAPS) expect(STATUS_MAPS).toContain(m);
-    expect(CONSENT_STATUS_MAPS).toEqual([CONSENT_STATUS, CONSENT_STATUS_WITHDRAWN]);
+    expect(CONSENT_STATUS_MAPS).toEqual([CONSENT_STATUS, CONSENT_STATUS_WITHDRAWN, CONSENT_STATUS_ENDED]);
   });
 
   it("maps each stored consent-state code to the same code, and nothing else", () => {
@@ -271,8 +280,8 @@ describe("Consent.status maps", () => {
       expect(map.missing).toEqual({ fhir: null, reason: expect.stringMatching(/withheld/) });
       expect(map.unrecognised).toEqual({ fhir: null, reason: expect.stringMatching(/withheld/) });
     }
-    expect(mapConsentRecord({ ...A1, status: null }, ctx)).toEqual({ resource: null, withheld: "no_status" });
-    expect(mapConsentRecord({ ...A1, status: "suspended" }, ctx)).toEqual({ resource: null, withheld: "no_status" });
+    expect(mapConsentRecord({ ...A1, status: null }, ctx, AT)).toEqual({ resource: null, withheld: "no_status" });
+    expect(mapConsentRecord({ ...A1, status: "suspended" }, ctx, AT)).toEqual({ resource: null, withheld: "no_status" });
   });
 
   it("never shows a withdrawn consent as active, draft or proposed", () => {
@@ -280,8 +289,8 @@ describe("Consent.status maps", () => {
       const expected = code === "entered-in-error" ? "entered-in-error" : "inactive";
       expect(applyStatusMap(CONSENT_STATUS_WITHDRAWN, code), code).toBe(expected);
       // By the flag, or by the recorded time alone.
-      expect(mapConsentStatus({ status: code, withdrawn: true, withdrawn_at: null })).toBe(expected);
-      expect(mapConsentStatus({ status: code, withdrawn: false, withdrawn_at: "2026-08-01T12:00:00Z" })).toBe(expected);
+      expect(mapConsentStatus({ status: code, withdrawn: true, withdrawn_at: null }, AT)).toBe(expected);
+      expect(mapConsentStatus({ status: code, withdrawn: false, withdrawn_at: "2026-08-01T12:00:00Z" }, AT)).toBe(expected);
     }
     expect(isWithdrawn({ withdrawn: false, withdrawn_at: null })).toBe(false);
     expect(explainStatus(CONSENT_STATUS_WITHDRAWN, "active").reason).toMatch(/Never shown as active/);
@@ -293,10 +302,78 @@ describe("Consent.status maps", () => {
     expect(applyStatusMap(CONSENT_STATUS, "rejected")).toBe("rejected");
     // Values are compared lower-cased and exactly, as the register stores them.
     expect(applyStatusMap(CONSENT_STATUS, "ACTIVE")).toBe("active");
-    // An ended period does not change the recorded status; the period says it.
-    const expired = mapConsent({ ...A1, effective_until: "2026-07-01T00:00:00+00:00" }, ctx) as Consent;
-    expect(expired.status).toBe("active");
+    // An active record past its end date is no longer in force (inactive),
+    // as the consent check treats it; the end date is still published.
+    const expired = mapConsent({ ...A1, effective_until: "2026-07-01T00:00:00+00:00" }, ctx, AT) as Consent;
+    expect(expired.status).toBe("inactive");
     expect(expired.provision?.period?.end).toBe("2026-07-01T00:00:00.000Z");
+  });
+
+  it("an active consent past its end date is inactive; every other status is kept", () => {
+    const expected: Record<string, string> = {
+      active: "inactive",
+      draft: "draft",
+      proposed: "proposed",
+      rejected: "rejected",
+      inactive: "inactive",
+      "entered-in-error": "entered-in-error",
+    };
+    for (const code of CONSENT_STATE_CODES) expect(applyStatusMap(CONSENT_STATUS_ENDED, code), code).toBe(expected[code]);
+    // The end is exclusive and compared as an instant; no end is no end.
+    const active = (until: string | null) => ({ status: "active", withdrawn: false, withdrawn_at: null, effective_until: until });
+    expect(mapConsentStatus(active("2026-09-25T12:00:00Z"), AT)).toBe("inactive");
+    expect(mapConsentStatus(active("2026-09-25T13:00:00+01:00"), AT)).toBe("inactive");
+    expect(mapConsentStatus(active("2026-09-25T12:00:00.001Z"), AT)).toBe("active");
+    expect(mapConsentStatus(active(null), AT)).toBe("active");
+    // Draft and proposed were never in force: an end date does not make them inactive.
+    for (const status of ["draft", "proposed"]) {
+      expect(mapConsentStatus({ status, withdrawn: false, withdrawn_at: null, effective_until: "2026-01-01T00:00:00Z" }, AT)).toBe(status);
+    }
+    // Withdrawn and ended: the withdrawn map decides.
+    const ended = { withdrawn: true, withdrawn_at: "2026-08-01T12:00:00Z", effective_until: "2026-01-01T00:00:00Z" };
+    expect(mapConsentStatus({ ...ended, status: "active" }, AT)).toBe("inactive");
+    expect(mapConsentStatus({ ...ended, status: "entered-in-error" }, AT)).toBe("entered-in-error");
+    const reason = explainStatus(CONSENT_STATUS_ENDED, "active").reason;
+    expect(reason).toMatch(/no longer in force/);
+    expect(reason).toMatch(/Never shown as active/);
+  });
+
+  it("decides the end date exactly as the consent check does", () => {
+    const permit = {
+      id: "d0000000-0000-4000-8000-0000000000aa",
+      provision_type: "permit",
+      actor_type: null,
+      names_recipient: false,
+      action: null,
+      purpose: null,
+      data_class: null,
+      resource_type: null,
+      security_label: null,
+      effective_from: null,
+      effective_until: null,
+    };
+    for (const until of ["2026-09-25T12:00:00Z", "2026-09-25T13:00:00+01:00", "2026-09-25T12:00:00.001Z"]) {
+      const row = { ...A1, effective_until: until, provisions: [permit] };
+      for (const t of [new Date(AT.getTime() - 1), AT, new Date(AT.getTime() + 1)]) {
+        const check = evaluateConsent(
+          {
+            patientId: PATIENT_A.id,
+            actor: { kind: "none", role: null },
+            clientId: "x",
+            clientKind: "external-system",
+            organizationId: null,
+            resourceType: "Observation",
+            dataClass: "clinical",
+            action: "access",
+            purposeOfUse: "TREAT",
+            timestamp: t,
+          },
+          parseDirectives([row]),
+          { enforcementEnabled: true },
+        );
+        expect(mapConsentStatus(row, t) === "inactive", `${until} at ${t.toISOString()}`).toBe(check.reason === "consent_expired");
+      }
+    }
   });
 });
 
@@ -321,7 +398,7 @@ function backToColumns(rule: ConsentProvisionRule) {
 }
 
 describe("Consent mapper", () => {
-  const c = mapConsent(A1, ctx) as Consent;
+  const c = mapConsent(A1, ctx, AT) as Consent;
 
   it("maps every element from the register record", () => {
     expect(c).toEqual({
@@ -396,7 +473,7 @@ describe("Consent mapper", () => {
     for (const base of [PROVISION_PERMIT, PROVISION_DENY]) {
       for (const actor_type of [...Object.keys(CONSENT_ACTOR_TYPES), "any", null]) {
         const row = { ...A1, provisions: [{ ...base, actor_type, ...NAMED }] };
-        expect(mapConsentRecord(row, ctx), `${base.provision_type} ${actor_type}`).toEqual(withheld);
+        expect(mapConsentRecord(row, ctx, AT), `${base.provision_type} ${actor_type}`).toEqual(withheld);
       }
     }
     // Only an explicit false proves the rule names no one.
@@ -407,17 +484,17 @@ describe("Consent mapper", () => {
       ...[null, undefined, "false", 0, "no"].map((v) => ({ ...PROVISION_PERMIT, names_recipient: v })),
     ];
     for (const p of unclear) {
-      expect(mapConsentRecord({ ...A1, provisions: [PROVISION_DENY, p] }, ctx), String(p.names_recipient)).toEqual(withheld);
+      expect(mapConsentRecord({ ...A1, provisions: [PROVISION_DENY, p] }, ctx, AT), String(p.names_recipient)).toEqual(withheld);
     }
     // false: published as before (every element: above).
-    expect(mapConsentRecord(A1, ctx).resource?.provision?.provision).toHaveLength(2);
+    expect(mapConsentRecord(A1, ctx, AT).resource?.provision?.provision).toHaveLength(2);
   });
 
   it("never copies a stray actor reference onto a published rule", () => {
     // The function never returns actor_reference; if a row carried one
     // anyway beside names_recipient false, it still stays out of the output.
     const stray = { ...PROVISION_PERMIT, actor_type: "organization", actor_reference: ACTOR_REFERENCE };
-    const out = mapConsentRecord({ ...A1, provisions: [stray, PROVISION_DENY] }, ctx);
+    const out = mapConsentRecord({ ...A1, provisions: [stray, PROVISION_DENY] }, ctx, AT);
     expect(out.resource?.provision?.provision).toHaveLength(2);
     expect(JSON.stringify(out)).not.toContain(ACTOR_REFERENCE);
   });
@@ -429,48 +506,62 @@ describe("Consent mapper", () => {
 
   it("publishes verification only as recorded", () => {
     expect(c.verification).toEqual([{ verified: true, verificationDate: "2026-06-02T10:00:00.000Z" }]);
-    expect(mapConsent({ ...A1, verified_at: null }, ctx)?.verification).toEqual([{ verified: true }]);
-    expect(mapConsent(A3, ctx)?.verification).toEqual([{ verified: false }]);
+    expect(mapConsent({ ...A1, verified_at: null }, ctx, AT)?.verification).toEqual([{ verified: true }]);
+    expect(mapConsent(A3, ctx, AT)?.verification).toEqual([{ verified: false }]);
     // Not recorded: left out, never assumed false.
-    expect(mapConsent({ ...A1, verified: null }, ctx)?.verification).toBeUndefined();
-    expect(mapConsent({ ...A1, verified: undefined }, ctx)?.verification).toBeUndefined();
+    expect(mapConsent({ ...A1, verified: null }, ctx, AT)?.verification).toBeUndefined();
+    expect(mapConsent({ ...A1, verified: undefined }, ctx, AT)?.verification).toBeUndefined();
   });
 
   it("leaves out what mBHR does not record: performer, policyRule, source, organisation, a root rule type", () => {
     for (const row of [A1, A2, A3]) {
-      const r = mapConsent(row, ctx) as unknown as Json;
+      const r = mapConsent(row, ctx, AT) as unknown as Json;
       for (const key of ["performer", "policyRule", "sourceReference", "sourceAttachment", "organization", "identifier"]) {
         expect(r[key], key).toBeUndefined();
       }
       expect(r.provision?.type).toBeUndefined();
     }
     // A draft with no period and no rules has no provision element at all.
-    expect(mapConsent(A3, ctx)?.provision).toBeUndefined();
+    expect(mapConsent(A3, ctx, AT)?.provision).toBeUndefined();
     // No record time: no dateTime, never an invented one.
-    expect(mapConsent({ ...A1, recorded_at: null }, ctx)?.dateTime).toBeUndefined();
+    expect(mapConsent({ ...A1, recorded_at: null }, ctx, AT)?.dateTime).toBeUndefined();
   });
 
   it("uses a local category code, or the recorded text, never LOINC", () => {
-    expect(mapConsent({ ...A1, category: "odd  spacing " }, ctx)?.category).toEqual([{ text: "odd  spacing" }]);
-    expect(JSON.stringify(RECORDS.map((r) => mapConsent(r, ctx)))).not.toMatch(/loinc|59284-0/i);
-    expect(mapConsentRecord({ ...A1, category: null }, ctx).withheld).toBe("no_category");
-    expect(mapConsentRecord({ ...A1, category: "  " }, ctx).withheld).toBe("no_category");
+    expect(mapConsent({ ...A1, category: "odd  spacing " }, ctx, AT)?.category).toEqual([{ text: "odd  spacing" }]);
+    expect(JSON.stringify(RECORDS.map((r) => mapConsent(r, ctx, AT)))).not.toMatch(/loinc|59284-0/i);
+    expect(mapConsentRecord({ ...A1, category: null }, ctx, AT).withheld).toBe("no_category");
+    expect(mapConsentRecord({ ...A1, category: "  " }, ctx, AT).withheld).toBe("no_category");
   });
 
   it("never copies account ids, the withdrawal reason, the signer, the source document or the internal patient id", () => {
-    const json = JSON.stringify(RECORDS.map((r) => mapConsent(r, ctx)));
+    const json = JSON.stringify(RECORDS.map((r) => mapConsent(r, ctx, AT)));
     for (const secret of SECRETS) expect(json, secret).not.toContain(secret);
   });
 
   it("withholds a record whose patient does not resolve, and one filed under a merged-away record shows the kept record", () => {
-    expect(mapConsentRecord(ORPHAN, ctx)).toEqual({ resource: null, withheld: "no_patient" });
-    expect(mapConsent(A1, { patientFhirIds: new Map() })).toBeNull();
-    expect(mapConsent(M1, ctx)?.patient).toEqual({ reference: `Patient/${PATIENT_A.fhir_id}` });
+    expect(mapConsentRecord(ORPHAN, ctx, AT)).toEqual({ resource: null, withheld: "no_patient" });
+    expect(mapConsent(A1, { patientFhirIds: new Map() }, AT)).toBeNull();
+    expect(mapConsent(M1, ctx, AT)?.patient).toEqual({ reference: `Patient/${PATIENT_A.fhir_id}` });
+  });
+
+  it("publishes an ended consent whole, as inactive, with its end date", () => {
+    const out = mapConsentRecord({ ...A1, effective_until: "2026-07-01T00:00:00+00:00" }, ctx, AT);
+    expect(out.withheld).toBeNull();
+    const r = out.resource as Consent;
+    expect(r.status).toBe("inactive");
+    expect(r.provision?.period).toEqual({ start: "2026-06-01T00:00:00.000Z", end: "2026-07-01T00:00:00.000Z" });
+    expect(r.provision?.provision).toHaveLength(2);
+    expect(validateResource(r, validateConsent)).toEqual([]);
+    // It has read inactive since its end, after its last recorded change.
+    expect(r.meta?.lastUpdated).toBe("2026-07-01T00:00:00.000Z");
+    expect(r.meta?.versionId).toBe(String(Date.parse("2026-07-01T00:00:00Z")));
+    expect(c.meta?.lastUpdated).toBe("2026-06-02T10:00:00.000Z");
   });
 
   it("withholds a record that cites no usable policy (ppc-1) rather than inventing one", () => {
-    expect(mapConsentRecord(A_NO_POLICY, ctx).withheld).toBe("no_policy");
-    expect(mapConsentRecord({ ...A1, policy_uri: "not a uri" }, ctx).withheld).toBe("no_policy");
+    expect(mapConsentRecord(A_NO_POLICY, ctx, AT).withheld).toBe("no_policy");
+    expect(mapConsentRecord({ ...A1, policy_uri: "not a uri" }, ctx, AT).withheld).toBe("no_policy");
   });
 
   it("withholds a whole directive when a rule cannot be shown without changing its meaning", () => {
@@ -490,26 +581,26 @@ describe("Consent mapper", () => {
     ];
     for (const change of bad) {
       const row = { ...A1, provisions: [PROVISION_DENY, { ...PROVISION_PERMIT, ...change }] };
-      expect(mapConsentRecord(row, ctx), JSON.stringify(change)).toEqual({ resource: null, withheld: "not_expressible" });
+      expect(mapConsentRecord(row, ctx, AT), JSON.stringify(change)).toEqual({ resource: null, withheld: "not_expressible" });
     }
-    expect(mapConsentRecord({ ...A1, provisions: ["x"] }, ctx).withheld).toBe("not_expressible");
+    expect(mapConsentRecord({ ...A1, provisions: ["x"] }, ctx, AT).withheld).toBe("not_expressible");
     // The rule list must be present: a missing list is not "no rules".
-    expect(mapConsentRecord({ ...A1, provisions: null }, ctx).withheld).toBe("not_expressible");
-    expect(mapConsentRecord({ ...A1, effective_from: "yesterday" }, ctx).withheld).toBe("not_expressible");
-    expect(mapConsentRecord({ ...A1, scope: "marketing" }, ctx).withheld).toBe("no_scope");
-    expect(mapConsentRecord({ ...A1, id: "not-a-uuid" }, ctx).withheld).toBe("no_id");
+    expect(mapConsentRecord({ ...A1, provisions: null }, ctx, AT).withheld).toBe("not_expressible");
+    expect(mapConsentRecord({ ...A1, effective_from: "yesterday" }, ctx, AT).withheld).toBe("not_expressible");
+    expect(mapConsentRecord({ ...A1, scope: "marketing" }, ctx, AT).withheld).toBe("no_scope");
+    expect(mapConsentRecord({ ...A1, id: "not-a-uuid" }, ctx, AT).withheld).toBe("no_id");
   });
 
   it("produces resources that pass the gateway's checks and Consent's own rules", () => {
     for (const row of [A1, A2, A3, M1, B1, C1, C2]) {
-      const r = mapConsent(row, ctx) as Consent;
+      const r = mapConsent(row, ctx, AT) as Consent;
       const issues: string[] = [];
       validateConsent(r as unknown as Record<string, unknown>, (path, message) => issues.push(`${path}: ${message}`));
       expect(issues, row.id).toEqual([]);
     }
     // Without an actor rule, the gateway's full check passes, nothing filtered.
     for (const row of [A1, A2, A3, M1, B1]) {
-      const r = mapConsent(row, ctx) as Consent;
+      const r = mapConsent(row, ctx, AT) as Consent;
       expect(hasActorRule(r), row.id).toBe(false);
       expect(validateResource(r, validateConsent), row.id).toEqual([]);
     }
@@ -517,7 +608,7 @@ describe("Consent mapper", () => {
 
   it("an actor rule passes the gateway's check exactly when the module serves it, and fails on nothing else", () => {
     for (const row of [C1, C2]) {
-      const r = mapConsent(row, ctx) as Consent;
+      const r = mapConsent(row, ctx, AT) as Consent;
       expect(hasActorRule(r), row.id).toBe(true);
       const issues = validateResource(r, validateConsent);
       // The module's own reading of the shared checker agrees with the checker.
@@ -535,7 +626,7 @@ describe("Consent mapper", () => {
   it("the shared checker still refuses a reference that is not a relative Type/id, at the top level and inside an actor", () => {
     // A fix that lets the actor's Reference through must keep this check for
     // every other reference (a bare "if false" in its place would not).
-    const base = mapConsent(A1, ctx) as unknown as Json;
+    const base = mapConsent(A1, ctx, AT) as unknown as Json;
     const external = { ...base, patient: { reference: "https://elsewhere.example/Patient/01HZZINTERNALID" } };
     expect(validateResource(external, validateConsent)).toContainEqual({
       path: "Consent.patient.reference",
@@ -543,7 +634,7 @@ describe("Consent mapper", () => {
     });
     // Inside an actor: a Reference whose own reference is not Type/id is
     // still refused, whether or not the checker walks into the actor's Reference.
-    const withActor = mapConsent(C1, ctx) as unknown as Json;
+    const withActor = mapConsent(C1, ctx, AT) as unknown as Json;
     const rule = withActor.provision.provision[0];
     const bad = {
       ...withActor,
@@ -565,7 +656,7 @@ describe("Consent mapper", () => {
       validateConsent(r, (path) => out.push(path));
       return out;
     };
-    const good = mapConsent(A1, ctx) as unknown as Json;
+    const good = mapConsent(A1, ctx, AT) as unknown as Json;
     expect(issues({ ...good, policy: undefined })).toContain("policy");
     expect(issues({ ...good, status: "unknown" })).toContain("status");
     expect(issues({ ...good, scope: { text: "privacy" } })).toContain("scope");
@@ -598,6 +689,22 @@ describe("Consent definition", () => {
     expect(typeof consentModule.search).toBe("function");
     expect(typeof consentModule.validate).toBe("function");
     for (const p of definition.searchParams) expect(p.documentation.length).toBeGreaterThan(10);
+  });
+
+  it("says that a consent past its end date is inactive, in the status parameter and the notes", () => {
+    const status = definition.searchParams.find((p) => p.name === "status");
+    expect(status?.documentation).toMatch(/past its end date|end date/);
+    expect(status?.documentation).toMatch(/inactive/);
+    expect((definition.notes ?? []).some((n) => /published as inactive, and so is a consent past its end date/.test(n))).toBe(true);
+  });
+
+  it("the conformance examples include an ended consent, published as inactive", () => {
+    const examples = conformanceExamples();
+    const ended = examples["Consent-privacy-ended"] as Consent;
+    expect(ended.status).toBe("inactive");
+    expect(ended.provision?.period?.end).toBe("2026-06-01T00:00:00.000Z");
+    expect(validateResource(ended, validateConsent)).toEqual([]);
+    expect((examples["Consent-privacy-rules"] as Consent).status).toBe("active");
   });
 });
 
@@ -690,7 +797,7 @@ function visible(table: string, row: Record<string, unknown>, user: FakeUser): b
   return table === "patients" ? own.includes(String(row.id)) : own.includes(String(row.patient_id));
 }
 
-function setup(overrides: Partial<FakeOptions> = {}, env: Record<string, string> = ENV) {
+function setup(overrides: Partial<FakeOptions> = {}, env: Record<string, string> = ENV, nowIso = "2026-09-25T12:00:00Z") {
   const fake = fakeSupabase({
     users: USERS,
     tables: { patients: PATIENTS },
@@ -708,7 +815,7 @@ function setup(overrides: Partial<FakeOptions> = {}, env: Record<string, string>
       fetchImpl: fake.fetchImpl,
       randomId: () => "11111111-2222-4333-8444-555555555555",
       log: (l) => logs.push(l),
-      now: () => new Date("2026-09-25T12:00:00Z"),
+      now: () => new Date(nowIso),
     });
     const text = await res.text();
     served.push(text);
@@ -754,7 +861,7 @@ describe("Consent at the gateway: who may read", () => {
   it("serves the mapped resource as is, with the version as a content digest", async () => {
     const { call } = setup();
     const { json } = await call(`/fhir/R4/Consent/${A1.id}`, PAT_A);
-    const expected = mapConsent(A1, ctx) as Consent;
+    const expected = mapConsent(A1, ctx, AT) as Consent;
     expect(json).toEqual({ ...expected, meta: { ...expected.meta, versionId: expect.stringMatching(/^[0-9a-f]{24}$/) } });
   });
 });
@@ -789,6 +896,41 @@ describe("Consent at the gateway: searches", () => {
     const s = setup({ rpcs: { fhir_consent_directives: directivesRpc([odd]) } });
     expect((await s.call(`/fhir/R4/Consent/${A2.id}`, PAT_A)).json.status).toBe("inactive");
     expect(ids((await s.call(`/fhir/R4/Consent?${p}&status=active`, PAT_A)).json)).toEqual([]);
+  });
+
+  // Ends exactly at the gateway's request time (setup's clock), one second after it, and a withheld one that ended.
+  const ENDED = { ...A1, id: "c0a5e000-0000-4000-8000-00000000000d", effective_until: "2026-09-25T12:00:00+00:00", provisions: [] };
+  const OPEN = { ...A1, id: "c0a5e000-0000-4000-8000-00000000000e", effective_until: "2026-09-25T12:00:01+00:00", provisions: [] };
+  const ENDED_NP = { ...A_NO_POLICY, id: "c0a5e000-0000-4000-8000-00000000000f", effective_until: "2026-09-01T00:00:00+00:00" };
+
+  it("a consent past its end date is served as inactive and never matches status=active; withheld ones are counted under the same status", async () => {
+    const { call } = setup({ rpcs: { fhir_consent_directives: directivesRpc([ENDED, OPEN, ENDED_NP]) } });
+    const read = await call(`/fhir/R4/Consent/${ENDED.id}`, PAT_A);
+    expect(read.status).toBe(200);
+    expect(read.json.status).toBe("inactive");
+    expect(read.json.provision.period.end).toBe("2026-09-25T12:00:00.000Z");
+    expect((await call(`/fhir/R4/Consent/${OPEN.id}`, PAT_A)).json.status).toBe("active");
+    const p = `patient=Patient/${PATIENT_A.fhir_id}`;
+    const active = (await call(`/fhir/R4/Consent?${p}&status=active`, PAT_A)).json;
+    expect(ids(active)).toEqual([OPEN.id]);
+    expect(outcomes(active).filter((o) => o.severity === "warning")).toEqual([]);
+    const inactive = (await call(`/fhir/R4/Consent?${p}&status=inactive`, PAT_A)).json;
+    expect(ids(inactive)).toEqual([ENDED.id]);
+    expect(outcomes(inactive)).toContainEqual(withheldNote(1));
+    const all = (await call(`/fhir/R4/Consent?${p}`, PAT_A)).json;
+    expect(ids(all)).toEqual([ENDED.id, OPEN.id]);
+    expect(outcomes(all)).toContainEqual(withheldNote(1));
+    expect(ids((await call("/fhir/R4/Consent?status=active", PAT_A)).json)).toEqual([OPEN.id]);
+  });
+
+  it("uses the request's time, not the machine clock", async () => {
+    const rpcs = { fhir_consent_directives: directivesRpc([ENDED]) };
+    const before = await setup({ rpcs }, ENV, "2026-09-24T12:00:00Z").call(`/fhir/R4/Consent/${ENDED.id}`, PAT_A);
+    const after = await setup({ rpcs }).call(`/fhir/R4/Consent/${ENDED.id}`, PAT_A);
+    expect(before.json.status).toBe("active");
+    expect(after.json.status).toBe("inactive");
+    // The version is a content digest: it changes when the consent ends, so a stale If-None-Match gets no 304.
+    expect(before.json.meta.versionId).not.toBe(after.json.meta.versionId);
   });
 
   it("filters by scope, and a code or system outside the value set matches nothing", async () => {

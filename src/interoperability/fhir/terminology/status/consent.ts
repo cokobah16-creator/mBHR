@@ -3,22 +3,26 @@
 // The consent register stores the FHIR R4 consent-state codes themselves:
 // a CHECK on the table allows only draft, proposed, active, rejected,
 // inactive and entered-in-error. Each stored value therefore becomes the
-// same code, and nothing is re-interpreted:
+// same code, except that a record no longer in force (past its end date,
+// or withdrawn: below) is inactive:
 //
 //   - draft stays draft (it is never shown as proposed or active)
-//   - a record's own period (effective_from / effective_until) does not
-//     change its status: an active record whose period has ended is still
-//     "active" as recorded, and the period is published in
-//     provision.period, which is what limits when it applies
+//   - an active record whose own end date (effective_until) is at or
+//     before the time of the request is no longer in force and is read
+//     with CONSENT_STATUS_ENDED (inactive), as mBHR's consent check
+//     (consent_expired) and the portal (ended) treat it; its end date is
+//     still published in provision.period. Draft and proposed records were
+//     never in force and keep their code. The time is the request's,
+//     passed in by the gateway.
 //
 // Withdrawal. mBHR withdraws a consent by recording the withdrawal
 // (withdrawn_at, and the status becomes inactive); the record is never
 // deleted and a withdrawal cannot be undone. A withdrawn record is read
-// with CONSENT_STATUS_WITHDRAWN instead: it is inactive (or stays
-// entered-in-error) whatever the status column says, so a withdrawn
-// consent is never shown as active, draft or proposed. The table's CHECK
-// already forbids any other combination; this map is the defence if one
-// ever appears.
+// with CONSENT_STATUS_WITHDRAWN instead, whatever its end date: it is
+// inactive (or stays entered-in-error) whatever the status column says,
+// so a withdrawn consent is never shown as active, draft or proposed. The
+// table's CHECK already forbids any other combination; this map is the
+// defence if one ever appears.
 //
 // Consent.status is required (1..1) and consent-state-codes has no
 // "unknown" code, so a record with no status, or a status outside the
@@ -69,7 +73,7 @@ export const CONSENT_STATUS: StatusMap<ConsentState> = {
     {
       source: ["active"],
       fhir: "active",
-      reason: "Recorded as in force. Its period (provision.period) still limits when it applies; an ended period does not change the recorded status.",
+      reason: "Recorded as in force, and not past its end date (an ended one is read with CONSENT_STATUS_ENDED).",
     },
     {
       source: ["rejected"],
@@ -113,4 +117,47 @@ export const CONSENT_STATUS_WITHDRAWN: StatusMap<ConsentState> = {
   unrecognised: { fhir: null, reason: WITHHELD_UNRECOGNISED },
 };
 
-export const CONSENT_STATUS_MAPS: readonly StatusMap[] = [CONSENT_STATUS, CONSENT_STATUS_WITHDRAWN];
+export const CONSENT_STATUS_ENDED: StatusMap<ConsentState> = {
+  element: "Consent.status",
+  source:
+    "interop.consent_records.status of a record past its end date (effective_until at or before the time of the request) that is not withdrawn",
+  valueSet: CONSENT_STATE_VALUE_SET,
+  allowed: CONSENT_STATE_CODES,
+  rules: [
+    {
+      source: ["active"],
+      fhir: "inactive",
+      reason:
+        "Past its end date: no longer in force, as mBHR itself treats it (the consent check skips it as expired; the portal shows it as ended). Its end date is published in provision.period. Never shown as active.",
+    },
+    {
+      source: ["draft"],
+      fhir: "draft",
+      reason: "Never in force: stays draft; an end date does not make it inactive.",
+    },
+    {
+      source: ["proposed"],
+      fhir: "proposed",
+      reason: "Never in force: stays proposed; an end date does not make it inactive.",
+    },
+    {
+      source: ["rejected"],
+      fhir: "rejected",
+      reason: "Declined: it never came into force.",
+    },
+    {
+      source: ["inactive"],
+      fhir: "inactive",
+      reason: "Already no longer in force.",
+    },
+    {
+      source: ["entered-in-error"],
+      fhir: "entered-in-error",
+      reason: "Recorded by mistake; kept as entered-in-error.",
+    },
+  ],
+  missing: { fhir: null, reason: WITHHELD_MISSING },
+  unrecognised: { fhir: null, reason: WITHHELD_UNRECOGNISED },
+};
+
+export const CONSENT_STATUS_MAPS: readonly StatusMap[] = [CONSENT_STATUS, CONSENT_STATUS_WITHDRAWN, CONSENT_STATUS_ENDED];

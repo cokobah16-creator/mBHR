@@ -37,8 +37,10 @@
 // instead of claiming to be complete.
 //
 // status and scope are filtered after mapping, on the published values,
-// so a search always finds exactly what a read shows (a withdrawn record
-// is inactive and never matches status=active).
+// so a search always finds exactly what a read shows (a withdrawn record,
+// and an active record past its end date at the time of the request, are
+// inactive and never match status=active). The time is the request's
+// (ctx.now), the one the access decision used, for every round of a search.
 
 import { FhirError, errors } from "../errors/operationOutcome";
 import type { OperationOutcomeIssue } from "../types/fhir";
@@ -114,7 +116,7 @@ export const definition: ResourceDefinition = {
     "mBHR consent register: interop.consent_records with interop.consent_provisions, read through public.fhir_consent_directives",
   idStrategy: "consent_records.id (uuid)",
   fields: [
-    "status (consent-state code as recorded; a withdrawn record is inactive, never active)",
+    "status (consent-state code as recorded; a withdrawn record, or an active one past its end date, is inactive, never active)",
     "scope (consentscope code as recorded)",
     "category (mBHR local code https://mbhr.app/codes/consent-category; no LOINC)",
     "patient (the canonical record)",
@@ -139,7 +141,7 @@ export const definition: ResourceDefinition = {
       name: "status",
       type: "token",
       documentation:
-        "draft, proposed, active, rejected, inactive or entered-in-error (http://hl7.org/fhir/consent-state-codes). Matches the published status: a withdrawn record is inactive.",
+        "draft, proposed, active, rejected, inactive or entered-in-error (http://hl7.org/fhir/consent-state-codes). Matches the published status: a withdrawn record, and an active record whose end date (effective_until) is at or before the time of the request, are inactive.",
     },
     {
       name: "scope",
@@ -155,10 +157,10 @@ export const definition: ResourceDefinition = {
   sensitiveSearch: false,
   notes: [
     "Staff accounts cannot read or search consents here (403), whatever their role: the mBHR staff app shows only an External sharing badge (Allowed, Restricted or Withdrawn), and this interface shows staff no more than the app does. This holds until mBHR has a staff consent screen.",
-    "A withdrawn consent is kept and published as inactive: it is never deleted and never shown as active.",
+    "A withdrawn consent is kept and published as inactive, and so is a consent past its end date (no longer in force, as mBHR's consent check treats it); its end date is published in provision.period. Neither is ever shown as active or deleted.",
     "Who recorded, verified or withdrew a consent, the reason for a withdrawal, who signed it and its source document are never published; neither is a performer.",
     "A rule's actor names the kind of recipient recorded (for example External system), never a specific one. A consent with a rule for one specific recipient is therefore not published: it would read as a rule for every recipient of that kind.",
-    "A consent that cites no policy (FHIR requires one) or whose rules cannot be shown without changing their meaning is not published; a searchset says how many were left out.",
+    "Every consent is recorded with a policy link. A consent that still cites no usable policy (FHIR requires one) or whose rules cannot be shown without changing their meaning is not published; a searchset says how many were left out.",
     ...(ACTOR_RULES_SERVED
       ? []
       : [
@@ -218,7 +220,7 @@ export function withheldNote(count: number): OperationOutcomeIssue {
   return {
     severity: "warning",
     code: "incomplete",
-    diagnostics: `${count} consent record(s) were left out because they cannot be shown as FHIR R4 without inventing or changing what was recorded (for example a record that cites no policy, which FHIR requires).`,
+    diagnostics: `${count} consent record(s) were left out because they cannot be shown as FHIR R4 without inventing or changing what was recorded (for example a rule for one named recipient, which would read as a rule for every recipient of that kind).`,
   };
 }
 
@@ -294,12 +296,12 @@ async function fetchDirectives(db: Postgrest, sel: Selection, after: string | nu
   return [...byId.values()].sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1)).slice(0, limit);
 }
 
-async function mapRecords(ctx: QueryCtx, rows: Row[]): Promise<ConsentMapResult[]> {
+async function mapRecords(ctx: QueryCtx, rows: Row[], at: Date): Promise<ConsentMapResult[]> {
   const refs = await referenceContext(
     ctx.db,
     rows.map((r) => r.patient_id).filter((v): v is string => typeof v === "string"),
   );
-  return rows.map((r) => mapConsentRecord(r, refs));
+  return rows.map((r) => mapConsentRecord(r, refs, at));
 }
 
 async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
@@ -307,7 +309,7 @@ async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
   const patientIds = coveredPatients(ctx);
   if (patientIds !== null && !patientIds.length) return emptyResult();
   const rows = await fetchDirectives(ctx.db, { patientIds, consentIds: [id.toLowerCase()] }, null, 1);
-  const [mapped] = await mapRecords(ctx, rows);
+  const [mapped] = await mapRecords(ctx, rows, ctx.now ?? new Date());
   if (!mapped?.resource) return emptyResult();
   // The caller may read this record (the selection above); it is only the
   // shared checker that cannot take its actor yet. Say so, with no content.
@@ -328,11 +330,11 @@ function matches(resource: Consent, f: Filters): boolean {
 }
 
 /** Whether a withheld record would have matched (so the note counts only what the search asked for). */
-function withheldMatches(row: Row, reason: ConsentWithheld, f: Filters): boolean {
+function withheldMatches(row: Row, reason: ConsentWithheld, f: Filters, at: Date): boolean {
   // A record whose patient cannot be resolved is not about the searched patient in any way we can show.
   if (reason === "no_patient" || reason === "no_id") return false;
-  // The same status and scope the mapper would have published.
-  if (f.status !== null && mapConsentStatus(row) !== f.status) return false;
+  // The same status (at the same time) and scope the mapper would have published.
+  if (f.status !== null && mapConsentStatus(row, at) !== f.status) return false;
   if (f.scope !== null && mapConsentScope(row) !== f.scope) return false;
   return true;
 }
@@ -357,6 +359,8 @@ function parseFilters(search: ParsedSearch): Filters | null {
 }
 
 async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult> {
+  // One time for every round, so the status filter and the left-out count agree.
+  const at = ctx.now ?? new Date();
   const notes = patientNotes(ctx);
   const coverage = ctx.scope.kind === "patient" ? CONSENT_COVERAGE_NOTE_PATIENT : CONSENT_COVERAGE_NOTE;
   const outcomes: OperationOutcomeIssue[] = [...(notes.outcomes ?? []), coverage];
@@ -407,7 +411,7 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
 
   for (let round = 0; round < MAX_KEYSET_ROUNDS; round++) {
     const rows = await fetchDirectives(ctx.db, { patientIds, consentIds }, after, batch);
-    const mapped = await mapRecords(ctx, rows);
+    const mapped = await mapRecords(ctx, rows, at);
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const id = String(row.id);
@@ -422,7 +426,7 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
             out.push({ resource: m.resource, owner: String(row.patient_id), id });
           }
         }
-      } else if (withheldMatches(row, m.withheld, filters)) {
+      } else if (withheldMatches(row, m.withheld, filters, at)) {
         withheld.push(id);
       }
       after = id;
