@@ -21,6 +21,7 @@ import {
 } from "./account/displayStatus";
 import { errorName, readPortalUser } from "./account/portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 
 interface Referral {
   id: string;
@@ -35,9 +36,22 @@ interface Referral {
   priority: "routine" | "urgent" | "emergency";
 }
 
+// Only what this screen shows.
+const REFERRAL_COLUMNS =
+  "id, referring_provider, specialist_name, specialty, reason, referral_date, appointment_date, status, notes, priority";
+
+const STATUSES = ["pending", "scheduled", "completed", "cancelled"];
+const PRIORITIES = ["routine", "urgent", "emergency"];
+
 export function Referrals() {
   const navigate = useNavigate();
   const isOnline = useOnlineStatus();
+  const { t } = useT();
+  // Stored values the screen does not know keep the helper's label.
+  const statusLabel = (value: string, fallback: string) =>
+    STATUSES.includes(value) ? t(`portal.ref.status.${value}`) : fallback;
+  const priorityLabel = (value: string, fallback: string) =>
+    PRIORITIES.includes(value) ? t(`portal.ref.priority.${value}`) : fallback;
   const [referrals, setReferrals] = useState<Referral[]>([]);
   const [loading, setLoading] = useState(isSupabaseEnabled);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -62,7 +76,7 @@ export function Referrals() {
 
       const { data, error: referralsError } = await supabase
         .from("patient_referrals")
-        .select("*")
+        .select(REFERRAL_COLUMNS)
         .eq("patient_id", portalUser.patientId)
         .order("referral_date", { ascending: false });
 
@@ -83,18 +97,15 @@ export function Referrals() {
 
   const header = (
     <PageHeader
-      title="Referrals"
-      description="Specialists and services your care team has referred you to."
+      title={t("portal.ref.title")}
+      description={t("portal.ref.description")}
     />
   );
 
   const helpNote = (
     <div className="banner banner-info">
       <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-      <p>
-        Questions about a referral, or need help booking? Contact the clinic
-        that referred you.
-      </p>
+      <p>{t("portal.ref.help")}</p>
     </div>
   );
 
@@ -104,11 +115,7 @@ export function Referrals() {
         {header}
         <div className="banner banner-info">
           <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-          <p>
-            Referrals are kept in the clinic&apos;s online system. This device is
-            not connected to it, so referrals cannot be shown here. Ask clinic
-            staff about any referral you were given.
-          </p>
+          <p>{t("portal.ref.notConnected")}</p>
         </div>
       </div>
     );
@@ -119,7 +126,7 @@ export function Referrals() {
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
         {header}
         <span role="status" className="sr-only">
-          Loading your referrals
+          {t("portal.ref.loading")}
         </span>
         <div className="panel p-5" aria-hidden>
           <Skeleton className="mb-4 h-5 w-40" />
@@ -140,14 +147,14 @@ export function Referrals() {
           className="btn-ghost -ml-3"
         >
           <ArrowLeftIcon className="h-5 w-5" aria-hidden />
-          All referrals
+          {t("portal.ref.back")}
         </button>
 
         <PageHeader
           title={selectedReferral.specialty}
           description={
             selectedReferral.specialist_name
-              ? `Dr. ${selectedReferral.specialist_name}`
+              ? t("portal.ref.doctor", { name: selectedReferral.specialist_name })
               : undefined
           }
         />
@@ -156,8 +163,8 @@ export function Referrals() {
           <div className="banner banner-danger" role="alert">
             <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <p>
-              <strong>Emergency referral.</strong> Please seek immediate
-              attention.
+              <strong>{t("portal.ref.emergencyTitle")}</strong>{" "}
+              {t("portal.ref.emergencyBody")}
             </p>
           </div>
         )}
@@ -166,8 +173,8 @@ export function Referrals() {
           <div className="banner banner-warning">
             <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <p>
-              <strong>Action needed:</strong> contact the specialist&apos;s office
-              to book your appointment.
+              <strong>{t("portal.ref.actionTitle")}</strong>{" "}
+              {t("portal.ref.actionBody")}
             </p>
           </div>
         )}
@@ -175,51 +182,53 @@ export function Referrals() {
         <section className="panel" aria-labelledby="referral-detail-title">
           <div className="panel-header">
             <h2 id="referral-detail-title" className="panel-title">
-              Referral details
+              {t("portal.ref.detailsTitle")}
             </h2>
           </div>
           <dl className="panel-body grid gap-4 text-body sm:grid-cols-2">
             <div>
-              <dt className="text-label text-ink-muted">Status</dt>
+              <dt className="text-label text-ink-muted">{t("portal.ref.label.status")}</dt>
               <dd className="mt-1">
                 <StatusBadge tone={status.tone} icon>
-                  {status.label}
+                  {statusLabel(selectedReferral.status, status.label)}
                 </StatusBadge>
               </dd>
             </div>
             <div>
-              <dt className="text-label text-ink-muted">Priority</dt>
+              <dt className="text-label text-ink-muted">{t("portal.ref.label.priority")}</dt>
               <dd className="mt-1">
-                <StatusBadge tone={priority.tone}>{priority.label}</StatusBadge>
+                <StatusBadge tone={priority.tone}>
+                  {priorityLabel(selectedReferral.priority, priority.label)}
+                </StatusBadge>
               </dd>
             </div>
             <div>
-              <dt className="text-label text-ink-muted">Referred by</dt>
+              <dt className="text-label text-ink-muted">{t("portal.ref.label.referredBy")}</dt>
               <dd className="mt-1 text-ink">{selectedReferral.referring_provider}</dd>
             </div>
             <div>
-              <dt className="text-label text-ink-muted">Referral date</dt>
+              <dt className="text-label text-ink-muted">{t("portal.ref.label.referralDate")}</dt>
               <dd className="mt-1 text-ink tabular-nums">
                 {formatNigerianDate(selectedReferral.referral_date)}
               </dd>
             </div>
             {selectedReferral.appointment_date && (
               <div>
-                <dt className="text-label text-ink-muted">Appointment date</dt>
+                <dt className="text-label text-ink-muted">{t("portal.ref.label.appointmentDate")}</dt>
                 <dd className="mt-1 text-ink tabular-nums">
                   {formatNigerianDate(selectedReferral.appointment_date)}
                 </dd>
               </div>
             )}
             <div className="sm:col-span-2">
-              <dt className="text-label text-ink-muted">Reason for referral</dt>
+              <dt className="text-label text-ink-muted">{t("portal.ref.label.reason")}</dt>
               <dd className="mt-1 whitespace-pre-line text-ink">
                 {selectedReferral.reason}
               </dd>
             </div>
             {selectedReferral.notes && (
               <div className="sm:col-span-2">
-                <dt className="text-label text-ink-muted">Additional notes</dt>
+                <dt className="text-label text-ink-muted">{t("portal.ref.label.notes")}</dt>
                 <dd className="mt-1 whitespace-pre-line text-ink">
                   {selectedReferral.notes}
                 </dd>
@@ -243,8 +252,8 @@ export function Referrals() {
           <div className="space-y-3">
             <p>
               {isOnline
-                ? "We could not load your referrals. Please try again."
-                : "You are offline. Connect to the internet to see your referrals."}
+                ? t("portal.ref.loadFailed")
+                : t("portal.ref.offline")}
             </p>
             <button
               type="button"
@@ -252,7 +261,7 @@ export function Referrals() {
               className="btn-secondary"
             >
               <ArrowPathIcon className="h-5 w-5" aria-hidden />
-              Try again
+              {t("portal.error.retry")}
             </button>
           </div>
         </div>
@@ -260,7 +269,7 @@ export function Referrals() {
         <section className="panel" aria-labelledby="referral-list-title">
           <div className="panel-header">
             <h2 id="referral-list-title" className="panel-title">
-              Your referrals
+              {t("portal.ref.listTitle")}
             </h2>
             <span className="text-caption text-ink-muted tabular-nums">
               {referrals.length}
@@ -269,8 +278,8 @@ export function Referrals() {
           {referrals.length === 0 ? (
             <EmptyState
               icon={UserGroupIcon}
-              title="No referrals"
-              description="If your care team refers you to a specialist, it will be listed here."
+              title={t("portal.ref.emptyTitle")}
+              description={t("portal.ref.emptyBody")}
             />
           ) : (
             <ul className="divide-y divide-line">
@@ -290,26 +299,32 @@ export function Referrals() {
                             {referral.specialty}
                           </span>
                           {referral.priority !== "routine" && (
-                            <StatusBadge tone={priority.tone}>{priority.label}</StatusBadge>
+                            <StatusBadge tone={priority.tone}>
+                              {priorityLabel(referral.priority, priority.label)}
+                            </StatusBadge>
                           )}
                         </span>
                         {referral.specialist_name && (
                           <span className="block text-caption text-ink-secondary">
-                            Dr. {referral.specialist_name}
+                            {t("portal.ref.doctor", { name: referral.specialist_name })}
                           </span>
                         )}
                         <span className="block text-caption text-ink-muted">
-                          Referred by {referral.referring_provider} on{" "}
-                          {formatNigerianDate(referral.referral_date)}
+                          {t("portal.ref.referredByOn", {
+                            provider: referral.referring_provider,
+                            date: formatNigerianDate(referral.referral_date),
+                          })}
                         </span>
                         {referral.appointment_date && (
                           <span className="block text-caption text-ink-secondary">
-                            Appointment: {formatNigerianDate(referral.appointment_date)}
+                            {t("portal.ref.appointment", {
+                              date: formatNigerianDate(referral.appointment_date),
+                            })}
                           </span>
                         )}
                         <span className="mt-1 block">
                           <StatusBadge tone={status.tone} icon>
-                            {status.label}
+                            {statusLabel(referral.status, status.label)}
                           </StatusBadge>
                         </span>
                       </span>
