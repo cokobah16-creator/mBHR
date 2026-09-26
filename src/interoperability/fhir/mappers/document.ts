@@ -26,7 +26,8 @@
 //   author          who wrote the document. mBHR records only who uploaded
 //                   it: a portal upload may come from a caregiver's account,
 //                   and a clinic upload may be a letter someone else wrote.
-//                   An upload is an event (Provenance), not authorship.
+//                   An upload is an event, not authorship (and gets no
+//                   Provenance either: owner decision 2026-09-26).
 //   docStatus       preliminary or final (see terminology/status/document.ts)
 //   attachment.creation  when the document itself was written; created_at
 //                   is the upload time, published as DocumentReference.date

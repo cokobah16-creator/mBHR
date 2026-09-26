@@ -567,16 +567,16 @@ Clinical records do not name the organisation that provided care, so
 Only events the database records itself, with the actor stamped from the
 session and the time from its own clock. Nothing a tablet uploads is used.
 
-| | Laboratory event | Merge | Upload |
-| --- | --- | --- | --- |
-| Source | `public.lab_result_release_log` | `public.patient_merges` rows with a server-stamped `actor_id` (written by `merge_patients()`) | `public.patient_documents` |
-| FHIR id | `labrel-<log id>` | `merge-<merge id>` | `docup-<document id>` |
-| target | `Observation/lab-<result id>` and `DiagnosticReport/<order id>` | the kept Patient and the merged-away Patient (each by its own id) | `DocumentReference/<id>` |
-| recorded | `created_at` (server clock) | `created_at` (server clock) | `created_at` (database default, which a client could still set) |
-| activity | local `lab-review`, `lab-release` or `lab-withhold` | local `patient-merge` | v3-DataOperation `CREATE` |
-| agent.who | `Practitioner/<id>` when the directory resolves the account, else display "mBHR staff member" | same | display only: "Patient portal account" for a portal upload, else "mBHR account" |
-| agent.type | provenance-participant-type `verifier`, for a review only | none | none |
-| entity | none | the merged-away Patient, role `source` | none |
+| | Laboratory event | Merge |
+| --- | --- | --- |
+| Source | `public.lab_result_release_log` | `public.patient_merges` rows with a server-stamped `actor_id` (written by `merge_patients()`) |
+| FHIR id | `labrel-<log id>` | `merge-<merge id>` |
+| target | `Observation/lab-<result id>` and `DiagnosticReport/<order id>` | the kept Patient and the merged-away Patient (each by its own id) |
+| recorded | `created_at` (server clock) | `created_at` (server clock) |
+| activity | local `lab-review`, `lab-release` or `lab-withhold` | local `patient-merge` |
+| agent.who | `Practitioner/<id>` when the directory resolves the account, else display "mBHR staff member" | same |
+| agent.type | provenance-participant-type `verifier`, for a review only | none |
+| entity | none | the merged-away Patient, role `source` |
 
 `meta.lastUpdated` is the recorded time. `occurred[x]` is never published.
 
@@ -600,8 +600,6 @@ A row is withheld, never guessed, when:
   not resolve.
 - **Merge:** no `actor_id` (a legacy tablet-uploaded row); `kind` is not
   `merge`; no time; or the kept record does not resolve.
-- **Upload:** the document was removed; no time; or the patient does not
-  resolve.
 
 Never published: withhold reasons, merge snapshots and field choices, who
 asked for a merge on the tablet, account ids, device ids, storage paths,
@@ -616,6 +614,12 @@ events only. Not available to patients.
 Visits, vital signs, consultations, prescriptions, dispenses, allergies
 and conditions have no server-verified author and get no Provenance: an
 empty result does not mean nothing changed.
+
+Document uploads get no Provenance either (owner decision, Emeke Okobah,
+2026-09-26; `docs/clinical/CLINICAL_LOGIC_CHANGES.md` 2.7): Provenance
+never reads `public.patient_documents`, a `docup-` id (the retired upload
+prefix) is not found, and a `DocumentReference` target matches nothing.
+An empty result does not mean no document exists.
 
 ## AuditEvent ← `interop.access_audit`
 

@@ -16,14 +16,14 @@
 //                Only rows with a server-stamped actor (actor_id): older
 //                rows were uploaded by tablets and name a device-claimed
 //                person and a device time, so they are not published.
-//   docup-<id>   public.patient_documents: a document stored for a patient
-//                (created_at: the server default, as the app never sends it;
-//                the database does not yet stop a client setting it).
+//
+// Document uploads (public.patient_documents) get no Provenance (owner
+// decision 2026-09-26): Provenance never shows that a document was stored
+// for a patient, not even to staff with audit access.
 //
 // What each element says, and what is deliberately left out:
 //
-//   - recorded is the time the event row was stored (server-stamped for
-//     laboratory events and merges; for uploads, see docup above).
+//   - recorded is the time the event row was stored (server-stamped).
 //     occurred[x] is left out: no source records a separate time the
 //     activity was performed (patient_merges.requested_at is a tablet clock
 //     and is not published).
@@ -32,15 +32,10 @@
 //     which gives each staff account a stable random id). Otherwise it is a
 //     display-only reference ("mBHR staff member"). The account id itself,
 //     device ids and staff contact details are never published.
-//   - Document uploads never name a person: before the ownership migration
-//     every document was marked as a clinic record whoever uploaded it, and
-//     the stored uploader id was not stamped by the server, so the agent is
-//     "Patient portal account" (a portal upload, possibly by a caregiver)
-//     or "mBHR account" (anything else).
 //   - agent.type only where an R4 code says exactly what the person did:
 //     a review is the verification that makes a laboratory result final
-//     (provenance-participant-type "verifier"). Release, withhold, merge and
-//     upload carry no agent type.
+//     (provenance-participant-type "verifier"). Release, withhold and merge
+//     carry no agent type.
 //   - The target Observation is the result as it is NOW (it has no
 //     versions). When a reviewed result's value, unit, range or
 //     interpretation changes, the database clears its review and release
@@ -50,8 +45,7 @@
 //     amendment. Otherwise it described an earlier value and is left out
 //     (like the events of a superseded result). A withhold is kept: an
 //     amendment does not lift it, the result stays off the portal.
-//   - activity is an explicit local code (https://mbhr.app/codes/provenance-activity)
-//     except for an upload, which is exactly v3-DataOperation CREATE.
+//   - activity is an explicit local code (https://mbhr.app/codes/provenance-activity).
 //   - Never published: the withhold reason and any other free text, the
 //     merge snapshots and field choices (winner_before, loser_before,
 //     field_choices), who asked for a merge on the tablet (merged_by,
@@ -60,7 +54,7 @@
 // Mappers are pure (see common.ts): the resource module fetches the rows and
 // resolves patients and staff first.
 
-import type { CodeableConcept, Coding, Meta, Reference, Resource } from "../types/fhir";
+import type { CodeableConcept, Meta, Reference, Resource } from "../types/fhir";
 import { MBHR_CODES } from "../terminology/codeSystems";
 import { applyStatusMap, type StatusMap } from "../terminology/statusMaps";
 import { LAB_OBSERVATION_PREFIX } from "../resources/labObservation";
@@ -97,7 +91,6 @@ export interface Provenance extends Resource {
 
 /** mBHR's own activity codes (no R4 code says "released to the patient portal"). */
 export const PROVENANCE_ACTIVITY_SYSTEM = `${MBHR_CODES}/provenance-activity`;
-export const V3_DATA_OPERATION = "http://terminology.hl7.org/CodeSystem/v3-DataOperation";
 export const PROVENANCE_PARTICIPANT_TYPE = "http://terminology.hl7.org/CodeSystem/provenance-participant-type";
 
 /** The local activity codes and their plain-language meaning. */
@@ -110,18 +103,13 @@ export const PROVENANCE_ACTIVITIES: Readonly<Record<ProvenanceActivityCode, stri
 
 export type ProvenanceActivityCode = "lab-review" | "lab-release" | "lab-withhold" | "patient-merge";
 
-/** An upload creates a new document record: exactly v3-DataOperation CREATE. */
-export const UPLOAD_ACTIVITY: Coding = { system: V3_DATA_OPERATION, code: "CREATE", display: "create" };
-
 /** A review is the verification that makes a result final (the only agent type published). */
 export const VERIFIER: CodeableConcept = {
   coding: [{ system: PROVENANCE_PARTICIPANT_TYPE, code: "verifier", display: "Verifier" }],
 };
 
-/** Display-only agents: no id of any kind. */
+/** Display-only agent: no id of any kind. */
 export const STAFF_MEMBER_DISPLAY = "mBHR staff member";
-export const PORTAL_ACCOUNT_DISPLAY = "Patient portal account";
-export const ANY_ACCOUNT_DISPLAY = "mBHR account";
 
 // ---------------------------------------------------------------------------
 // Activity maps (listed for the status-map tests and the mapping docs)
@@ -183,17 +171,6 @@ export const MERGE_ACTIVITY: StatusMap<ProvenanceActivityCode> = {
 /** Every activity map of this resource, for the status-map tests and docs. */
 export const PROVENANCE_STATUS_MAPS: readonly StatusMap[] = [LAB_EVENT_ACTIVITY, MERGE_ACTIVITY];
 
-/**
- * Provenance.agent.who.display <- patient_documents.upload_source. Only
- * "patient" is certain (set by the server for a portal upload). "staff" is
- * also the value every document stored before the ownership migration was
- * given, whoever uploaded it, so it names no one.
- */
-export const UPLOAD_AGENT_DISPLAY: Readonly<Record<string, string>> = {
-  patient: PORTAL_ACCOUNT_DISPLAY,
-  staff: ANY_ACCOUNT_DISPLAY,
-};
-
 // ---------------------------------------------------------------------------
 // Ids
 // ---------------------------------------------------------------------------
@@ -202,18 +179,20 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** patient_merges.id values that fit in a FHIR id after "merge-" (64 characters, [A-Za-z0-9-.]). */
 export const MERGE_SOURCE_ID = /^[A-Za-z0-9.-]{1,58}$/;
 
-export type ProvenanceKind = "lab" | "merge" | "upload";
+export type ProvenanceKind = "lab" | "merge";
 
-/** Id prefix per event kind. Never change one: published ids would change. */
+/**
+ * Id prefix per event kind. Never change one: published ids would change.
+ * "docup-" (document uploads, no longer published) is retired: never reuse it.
+ */
 export const PROVENANCE_PREFIX: Readonly<Record<ProvenanceKind, string>> = {
   lab: "labrel-",
   merge: "merge-",
-  upload: "docup-",
 };
 
 /** The event kind and source row id of a Provenance id, or null when it is not one this server makes. */
 export function parseProvenanceId(id: string): { kind: ProvenanceKind; sourceId: string } | null {
-  for (const kind of ["lab", "merge", "upload"] as const) {
+  for (const kind of ["lab", "merge"] as const) {
     const prefix = PROVENANCE_PREFIX[kind];
     if (!id.startsWith(prefix)) continue;
     const sourceId = id.slice(prefix.length);
@@ -225,7 +204,7 @@ export function parseProvenanceId(id: string): { kind: ProvenanceKind; sourceId:
 
 // ---------------------------------------------------------------------------
 // Columns read (and nothing else: reason, merged_by, requested_by,
-// field_choices, winner_before, loser_before, file_path are never selected)
+// field_choices, winner_before, loser_before are never selected)
 // ---------------------------------------------------------------------------
 
 export const LAB_EVENT_COLUMNS = ["id", "result_id", "action", "actor_id", "created_at"] as const;
@@ -237,7 +216,6 @@ export const LAB_RESULT_LINK_COLUMNS = ["id", "order_id", "superseded_by", "revi
 /** lab_orders: the patient of the order. */
 export const LAB_ORDER_LINK_COLUMNS = ["id", "patient_id"] as const;
 export const MERGE_EVENT_COLUMNS = ["id", "winner_id", "loser_id", "kind", "actor_id", "created_at"] as const;
-export const UPLOAD_EVENT_COLUMNS = ["id", "patient_id", "created_at", "upload_source", "deleted_at"] as const;
 
 // ---------------------------------------------------------------------------
 // Mapping
@@ -373,29 +351,4 @@ export function mapMergeEvent(
     resource.entity = [{ role: "source", what: { reference: `Patient/${merged}` } }];
   }
   return resource;
-}
-
-/**
- * patient_documents row -> Provenance of the upload, or null (withheld) for
- * a removed document (not published as a DocumentReference), a missing time
- * or a patient that does not resolve.
- */
-export function mapDocumentUploadEvent(row: Row, refs: MapContext): Provenance | null {
-  const id = str(row, "id");
-  const recorded = instant(row, "created_at");
-  const patientId = row.patient_id;
-  if (!id || !UUID.test(id) || !recorded) return null;
-  if (row.deleted_at !== null && row.deleted_at !== undefined) return null;
-  if (typeof patientId !== "string" || !refs.patientFhirIds.has(patientId)) return null;
-  const source = str(row, "upload_source")?.toLowerCase();
-  const display = (source && UPLOAD_AGENT_DISPLAY[source]) || ANY_ACCOUNT_DISPLAY;
-  return {
-    resourceType: "Provenance",
-    id: `${PROVENANCE_PREFIX.upload}${id}`,
-    meta: eventMeta(recorded),
-    target: [{ reference: `DocumentReference/${id}` }],
-    recorded,
-    activity: { coding: [UPLOAD_ACTIVITY] },
-    agent: [{ who: { display } }],
-  };
 }

@@ -50,7 +50,7 @@ Files in `src/interoperability/fhir/__tests__/` (plus
 | `medication.test.ts` | Medication, MedicationRequest and MedicationDispense: status maps, mappers, who may read, ids, gateway behaviour |
 | `documents.test.ts` | DocumentReference and Binary: mapping, stored paths, every staff account refused (owner decision: patients only) at the permission step and by the modules themselves, the CapabilityStatement notes, patient access, downloads, merged patients, search |
 | `directory.test.ts` | Practitioner, PractitionerRole, Organization and Location: mappers, name searches, gateway behaviour |
-| `provenanceAudit.test.ts` | Provenance and AuditEvent: activity and outcome maps, ids, mapping, gateway behaviour |
+| `provenanceAudit.test.ts` | Provenance and AuditEvent: activity and outcome maps, ids, mapping, gateway behaviour; document uploads get no Provenance (a `docup-` id is not found, and no search by id, `DocumentReference` target, patient or recorded range returns one, for audit_access or lab_review holders) |
 | `statusMaps.test.ts` | Every status map against the owner's rules: unknown stays unknown, and no status is promoted |
 | `vercelRouting.test.ts` | `vercel.json` sends `/fhir/R4` and everything under it to the function, before the app catch-all |
 | `reviewFixes.gateway.test.ts` | Fixes from the Phase 2 final review, end to end: an Encounter date search never matches a visit published without a period (including across pages); a searchset with nothing to list has no `entry`; a padded visit status is `unknown`; status tokens in another code system match nothing; Observation `code=` matches only what `Observation.code` carries; a 304 read is audited as 304; a module's refusal is audited with the reason it names; Binary declares no versioning and no conditional read; nothing in the CapabilityStatement, search parameters included, describes patients while patient access is off |
@@ -127,7 +127,7 @@ Document and consent cases are in `documents.test.ts` and
 The `gateway` job, after the unit tests:
 
 1. writes the gateway's own output for synthetic data with
-   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 56 examples from
+   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 55 examples from
    `src/interoperability/fhir/conformance/examples.ts` (the published
    resource shapes, searchset Bundles including one with no match and so
    no `entry`, two OperationOutcomes (a forbidden answer, and the answer

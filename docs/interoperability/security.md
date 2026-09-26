@@ -135,16 +135,15 @@ The table above is the single place to change what the gateway allows.
 ### Open owner decisions
 
 The owner's rule is that FHIR never lets staff read more than the staff
-app shows. Two rows of the table go beyond today's staff app. They are
-defaults chosen during the build, not settled decisions, and need the
+app shows. One row of the table goes beyond today's staff app. It is a
+default chosen during the build, not a settled decision, and needs the
 owner's decision before the gateway is enabled with real data:
 
 | Type | Who can read it | What the staff app shows today | Options |
 | --- | --- | --- | --- |
-| AuditEvent | audit_access (admin, lead clinician, auditor): the FHIR access trail for any patient | No staff screen shows the FHIR access trail per patient | Keep for audit_access; or refuse until an audit screen exists |
-| Provenance of document uploads (`docup-<id>`) | audit_access (admin, lead clinician, auditor): for any patient, that a document was uploaded, its id, when, and whether through the portal or an mBHR account; never its content, and its DocumentReference target is refused to every staff account (decision 2.7) | No staff screen shows patient documents or their uploads | Keep for audit_access; or leave uploads out of staff Provenance until a staff documents screen exists |
+| AuditEvent | audit_access (admin, lead clinician, auditor): the FHIR access trail for any patient. With patient access on, this includes a portal patient's own DocumentReference and Binary reads (the document's id, the patient, the time, and a search's result count); a Binary read shows that the patient uploaded that document | No staff screen shows the FHIR access trail per patient | Keep for audit_access; or refuse until an audit screen exists |
 
-Two such rows were decided on 2026-09-26 (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`,
+Three such rows were decided on 2026-09-26 (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`,
 section 2.7):
 
 - **DocumentReference, Binary** (consult could read every patient's
@@ -156,6 +155,19 @@ section 2.7):
   External sharing badge): only what the app shows. No staff account reads
   Consent until mBHR has a staff consent screen; the badge is unchanged,
   and a portal patient reads their own.
+- **Provenance of document uploads** (`docup-<id>`: audit_access could
+  see, for any patient, that a document was uploaded, its id, when, and
+  whether through the portal or an mBHR account, while no staff screen
+  shows patient documents or their uploads): no Provenance of uploads
+  until mBHR has a staff documents screen. Decided by the owner, Emeke
+  Okobah, on 2026-09-26. Provenance is staff only, so the gateway
+  publishes no Provenance of a document upload to anyone: a `docup-` id
+  is not found, and a search by a `DocumentReference` target, a patient
+  or a recorded range returns no upload. Provenance never reads
+  `patient_documents`. Laboratory events and merges are unchanged.
+  AuditEvent is not changed by this decision: it still shows a portal
+  patient's DocumentReference and Binary reads, and so that they uploaded
+  the file they downloaded (see the open AuditEvent row above).
 
 ## Patient self-access
 
@@ -248,6 +260,7 @@ never released even if the database returns them.
 for portal patients only: every staff account is refused (403
 `missing_permission` at step 5, owner decision, until mBHR has a staff
 documents screen), and the modules refuse a staff caller themselves too.
+Document uploads get no Provenance either (owner decision, 2026-09-26).
 Controls:
 
 - **Each download is authorised on its own.** An earlier DocumentReference

@@ -14,7 +14,6 @@ import {
   LAB_EVENT_ACTIVITY,
   MERGE_ACTIVITY,
   PROVENANCE_STATUS_MAPS,
-  mapDocumentUploadEvent,
   mapLabReleaseEvent,
   mapMergeEvent,
   parseProvenanceId,
@@ -513,7 +512,8 @@ describe("Provenance ids", () => {
     expect(parseProvenanceId(`labrel-${LOG_REVIEW.id}`)).toEqual({ kind: "lab", sourceId: LOG_REVIEW.id });
     expect(parseProvenanceId(`merge-${MERGE_OK.id}`)).toEqual({ kind: "merge", sourceId: MERGE_OK.id });
     expect(parseProvenanceId(`merge-01HZZMERGEULID000000000000`)).toEqual({ kind: "merge", sourceId: "01HZZMERGEULID000000000000" });
-    expect(parseProvenanceId(`docup-${DOC_PATIENT.id}`)).toEqual({ kind: "upload", sourceId: DOC_PATIENT.id });
+    // Document uploads get no Provenance: "docup-" is not a prefix this server makes.
+    expect(parseProvenanceId(`docup-${DOC_PATIENT.id}`)).toBeNull();
     for (const bad of ["labrel-nope", "docup-", `labrel${LOG_REVIEW.id}`, `rv-${LOG_REVIEW.id}`, "merge-", `merge-${"x".repeat(59)}`, LOG_REVIEW.id]) {
       expect(parseProvenanceId(bad), bad).toBeNull();
     }
@@ -607,27 +607,6 @@ describe("Provenance mapping", () => {
     expect(p.target).toEqual([{ reference: `Patient/${P_KEPT.fhir_id}` }]);
     expect(p.entity).toBeUndefined();
     expect(p.agent).toEqual([{ who: { display: "mBHR staff member" } }]);
-  });
-
-  it("maps an upload: DocumentReference target, CREATE, and no person named", () => {
-    const p = mapDocumentUploadEvent(DOC_PATIENT, REFS);
-    expect(p).toEqual({
-      resourceType: "Provenance",
-      id: `docup-${DOC_PATIENT.id}`,
-      meta: { versionId: String(Date.parse("2026-09-11T11:00:00.000Z")), lastUpdated: "2026-09-11T11:00:00.000Z", source: "https://mbhr.app" },
-      target: [{ reference: `DocumentReference/${DOC_PATIENT.id}` }],
-      recorded: "2026-09-11T11:00:00.000Z",
-      activity: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v3-DataOperation", code: "CREATE", display: "create" }] },
-      agent: [{ who: { display: "Patient portal account" } }],
-    });
-    // "staff" includes every document stored before the ownership change: it names no one.
-    expect((mapDocumentUploadEvent(DOC_STAFF, REFS) as Json).agent).toEqual([{ who: { display: "mBHR account" } }]);
-    expect((mapDocumentUploadEvent({ ...DOC_STAFF, upload_source: null }, REFS) as Json).agent).toEqual([{ who: { display: "mBHR account" } }]);
-    expect((mapDocumentUploadEvent({ ...DOC_STAFF, upload_source: "robot" }, REFS) as Json).agent).toEqual([{ who: { display: "mBHR account" } }]);
-    expect(mapDocumentUploadEvent(DOC_REMOVED, REFS)).toBeNull();
-    expect(mapDocumentUploadEvent({ ...DOC_PATIENT, patient_id: P_ORPHAN.id }, REFS)).toBeNull();
-    expect(mapDocumentUploadEvent({ ...DOC_PATIENT, created_at: null }, REFS)).toBeNull();
-    expectNothingInternal(p);
   });
 
   it("validation refuses ids, agents and elements this server never publishes", () => {
@@ -854,8 +833,6 @@ const KEPT_EVENTS = [
   `labrel-${LOG_WITHHELD.id}`,
   `labrel-${LOG_M.id}`,
   `merge-${MERGE_OK.id}`,
-  `docup-${DOC_PATIENT.id}`,
-  `docup-${DOC_MERGED.id}`,
 ];
 
 describe("Provenance through the gateway", () => {
@@ -882,20 +859,18 @@ describe("Provenance through the gateway", () => {
       `labrel-${LOG_O.id}`, // another patient
       `merge-${MERGE_LEGACY.id}`, // device-claimed actor, device time
       `merge-${MERGE_UNMERGE.id}`, // no writer
-      `docup-${DOC_REMOVED.id}`, // removed document
-      `docup-${DOC_STAFF.id}`, // another patient
     ]) {
       expect(served).not.toContain(hidden);
     }
     // By id too.
-    for (const id of [`labrel-${LOG_BAD.id}`, `merge-${MERGE_LEGACY.id}`, `docup-${DOC_REMOVED.id}`, `labrel-${LOG_X.id}`]) {
+    for (const id of [`labrel-${LOG_BAD.id}`, `merge-${MERGE_LEGACY.id}`, `labrel-${LOG_X.id}`]) {
       expect((await call(`/fhir/R4/Provenance/${id}`, AUDITOR)).status, id).toBe(404);
     }
   });
 
   it("reads each kind of event by id", async () => {
     const { call } = setup();
-    for (const id of [`labrel-${LOG_REVIEW.id}`, `merge-${MERGE_OK.id}`, `docup-${DOC_PATIENT.id}`]) {
+    for (const id of [`labrel-${LOG_REVIEW.id}`, `merge-${MERGE_OK.id}`]) {
       const res = await call(`/fhir/R4/Provenance/${id}`, AUDITOR);
       expect(res.status, id).toBe(200);
       const p = await json(res);
@@ -998,7 +973,7 @@ describe("Provenance through the gateway", () => {
     const { call } = setup();
     const b = await json(await call("/fhir/R4/Provenance?recorded=ge2026-09-01&recorded=lt2026-10-01", AUDITOR));
     expect(new Set(ids(b))).toEqual(
-      new Set([...KEPT_EVENTS, `labrel-${LOG_O.id}`, `docup-${DOC_STAFF.id}`]),
+      new Set([...KEPT_EVENTS, `labrel-${LOG_O.id}`]),
     );
     const day = await json(await call("/fhir/R4/Provenance?recorded=2026-09-12&patient=Patient/" + P_KEPT.fhir_id, AUDITOR));
     expect(ids(day)).toEqual([`labrel-${LOG_REVIEW.id}`, `labrel-${LOG_RELEASE.id}`, `labrel-${LOG_WITHHELD.id}`]);
@@ -1015,15 +990,16 @@ describe("Provenance through the gateway", () => {
     // The merged-away record is a target of its merge too.
     expect(await q(`Patient/${P_MERGED.fhir_id}`)).toEqual([`merge-${MERGE_OK.id}`]);
     expect(audits[audits.length - 1].p_patient_ids).toContain(P_MERGED.id);
-    expect(await q(`DocumentReference/${DOC_PATIENT.id}`)).toEqual([`docup-${DOC_PATIENT.id}`]);
+    expect(await q(`DocumentReference/${DOC_PATIENT.id}`)).toEqual([]);
     expect(await q(`Encounter/01HZZVISITA000000000000000`)).toEqual([]);
     expect(await q(`Observation/01HZZVITALSA0000000000000-bp`)).toEqual([]);
     expect(await q(`Patient/0b3c1d2e-2222-4aaa-8bbb-00000000ffff`)).toEqual([]);
     // _id and target together must agree.
-    expect(ids(await json(await call(`/fhir/R4/Provenance?_id=docup-${DOC_PATIENT.id}&target=DocumentReference/${DOC_MERGED.id}`, AUDITOR)))).toEqual([]);
+    expect(ids(await json(await call(`/fhir/R4/Provenance?_id=merge-${MERGE_OK.id}&target=${labRef(RES_A1.id)}`, AUDITOR)))).toEqual([]);
     expect(ids(await json(await call(`/fhir/R4/Provenance?_id=labrel-${LOG_REVIEW.id}&target=${labRef(RES_A1.id)}`, AUDITOR)))).toEqual([
       `labrel-${LOG_REVIEW.id}`,
     ]);
+    expect(ids(await json(await call(`/fhir/R4/Provenance?_id=labrel-${LOG_REVIEW.id}&target=${labRef(RES_O.id)}`, AUDITOR)))).toEqual([]);
   });
 
   it("answers malformed targets and ids with 400 or 404, without detail", async () => {
@@ -1048,17 +1024,61 @@ describe("Provenance through the gateway", () => {
     expect(outcome?.resource.issue[0].diagnostics).toContain(`Patient/${P_KEPT.fhir_id}`);
   });
 
-  it("pages across the three sources with no gaps or repeats", async () => {
+  it("pages across the two sources with no gaps or repeats", async () => {
     const { call } = setup();
     const r = await allPages(call, `/fhir/R4/Provenance?patient=Patient/${P_KEPT.fhir_id}&_count=2`, AUDITOR);
     expect(r.ids).toEqual(KEPT_EVENTS);
-    expect(r.pages).toBe(4);
+    expect(r.pages).toBe(3);
     const one = await allPages(call, `/fhir/R4/Provenance?patient=Patient/${P_KEPT.fhir_id}&_count=1`, AUDITOR);
     expect(one.ids).toEqual(KEPT_EVENTS);
     // A cursor from another search is refused.
     const first = one.bodies[0].link.find((l: Json) => l.relation === "next").url as string;
     const cursor = new URL(first).searchParams.get("_cursor");
     expect((await call(`/fhir/R4/Provenance?patient=Patient/${P_OTHER.fhir_id}&_count=1&_cursor=${cursor}`, AUDITOR)).status).toBe(400);
+  });
+
+  it("publishes no Provenance of a document upload, to anyone (owner decision 2026-09-26)", async () => {
+    const { call, calls } = setup();
+    const docs = [
+      { doc: DOC_PATIENT, patient: P_KEPT }, // portal upload
+      { doc: DOC_STAFF, patient: P_OTHER }, // clinic record
+      { doc: DOC_REMOVED, patient: P_KEPT }, // removed
+      { doc: DOC_MERGED, patient: P_KEPT }, // stored for a record since merged into P_KEPT
+    ];
+    const noUpload = (b: Json, what: string) => expect(JSON.stringify(matches(b)), what).not.toMatch(/docup-|DocumentReference\//);
+    // An audit_access holder, and a lab_review holder without it.
+    for (const token of [AUDITOR, DOCTOR]) {
+      for (const { doc, patient } of docs) {
+        // A stored document and a made-up id get the same answer.
+        for (const id of [doc.id, doc.id.replace(/^d/, "e")]) {
+          const read = await call(`/fhir/R4/Provenance/docup-${id}`, token);
+          expect(read.status, id).toBe(404);
+          expect(JSON.stringify(await json(read)), id).not.toContain(id);
+          const byId = await call(`/fhir/R4/Provenance?_id=docup-${id}`, token);
+          expect(byId.status, id).toBe(200);
+          expect(ids(await json(byId)), id).toEqual([]);
+          const byTarget = await call(`/fhir/R4/Provenance?target=DocumentReference/${id}`, token);
+          expect(byTarget.status, id).toBe(200);
+          expect(ids(await json(byTarget)), id).toEqual([]);
+        }
+        const byPatient = await call(`/fhir/R4/Provenance?patient=Patient/${patient.fhir_id}`, token);
+        expect(byPatient.status).toBe(200);
+        noUpload(await json(byPatient), doc.id);
+        // A recorded day covering the upload (all four were stored on 2026-09-11).
+        const day = await call(`/fhir/R4/Provenance?recorded=2026-09-11&patient=Patient/${patient.fhir_id}`, token);
+        expect(day.status).toBe(200);
+        expect(ids(await json(day)), doc.id).toEqual([]);
+      }
+    }
+    // A recorded range alone (audit_access only) covering every upload.
+    const range = await call("/fhir/R4/Provenance?recorded=ge2026-09-01&recorded=lt2026-10-01", AUDITOR);
+    expect(range.status).toBe(200);
+    noUpload(await json(range), "recorded range");
+    const uploadDay = await call("/fhir/R4/Provenance?recorded=2026-09-11", AUDITOR);
+    expect(uploadDay.status).toBe(200);
+    expect(ids(await json(uploadDay))).toEqual([]);
+    // The documents table is never read for Provenance.
+    expect(calls.filter((c) => c.url.includes("/rest/v1/patient_documents"))).toEqual([]);
   });
 
   it("publishes its search parameters in the CapabilityStatement", async () => {

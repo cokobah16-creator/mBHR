@@ -1,12 +1,13 @@
 // Provenance <- server-attributed mBHR events (see mappers/provenance.ts for
 // the mapping rules): laboratory result review, release and withhold
-// (public.lab_result_release_log), patient merges written by
-// merge_patients() (public.patient_merges), and document uploads
-// (public.patient_documents).
+// (public.lab_result_release_log) and patient merges written by
+// merge_patients() (public.patient_merges). Document uploads get no
+// Provenance (owner decision 2026-09-26): public.patient_documents is never
+// read here, and a docup- id or a DocumentReference target matches nothing.
 //
-// A search runs over the three sources in turn, each in its own keyset
+// A search runs over the two sources in turn, each in its own keyset
 // order (like Observation over vital signs and laboratory results): the
-// cursor records which source the page stopped in (p = "l", "m" or "d").
+// cursor records which source the page stopped in (p = "l" or "m").
 // A search whose _id or target can only match one source reads only that
 // one. Staff with lab_review but not audit_access (restriction
 // "lab_events_only") read the laboratory events only, and only by _id,
@@ -29,8 +30,6 @@ import {
   LAB_RESULT_LINK_COLUMNS,
   MERGE_ACTIVITY,
   MERGE_EVENT_COLUMNS,
-  UPLOAD_EVENT_COLUMNS,
-  mapDocumentUploadEvent,
   mapLabReleaseEvent,
   mapMergeEvent,
   parseProvenanceId,
@@ -61,13 +60,13 @@ import {
 export const definition: ResourceDefinition = {
   type: "Provenance",
   source:
-    "Server-attributed events only: public.lab_result_release_log (a laboratory result reviewed, released to or withheld from the patient portal), public.patient_merges rows written by merge_patients() (a duplicate record merged), public.patient_documents (a document stored)",
+    "Server-attributed events only: public.lab_result_release_log (a laboratory result reviewed, released to or withheld from the patient portal), public.patient_merges rows written by merge_patients() (a duplicate record merged). Document uploads get no Provenance (owner decision 2026-09-26)",
   idStrategy:
-    "Derived and stable: labrel-<lab_result_release_log.id>, merge-<patient_merges.id>, docup-<patient_documents.id>",
+    "Derived and stable: labrel-<lab_result_release_log.id>, merge-<patient_merges.id>",
   fields: [
-    "target (laboratory events: the result Observation lab-<id> and its DiagnosticReport; merges: the kept and the merged-away Patient; uploads: the DocumentReference)",
-    "recorded (when the event was stored: server-stamped for laboratory events and merges; an upload's time is the database default, which a client could still set)",
-    "activity (local provenance-activity code: lab-review, lab-release, lab-withhold, patient-merge; an upload is v3-DataOperation CREATE)",
+    "target (laboratory events: the result Observation lab-<id> and its DiagnosticReport; merges: the kept and the merged-away Patient)",
+    "recorded (when the event was stored, server-stamped)",
+    "activity (local provenance-activity code: lab-review, lab-release, lab-withhold, patient-merge)",
     "agent (a Practitioner when the staff directory resolves the account the server stamped, else display-only; type verifier for a review only)",
     "entity (merges: the merged-away Patient, role source)",
   ],
@@ -79,13 +78,13 @@ export const definition: ResourceDefinition = {
       name: "target",
       type: "reference",
       documentation:
-        "Observation/lab-[id], DiagnosticReport/[id], Patient/[id] or DocumentReference/[id]: events about exactly that record.",
+        "Observation/lab-[id], DiagnosticReport/[id] or Patient/[id]: events about exactly that record. Any other record, a DocumentReference included, matches nothing.",
     },
     {
       name: "patient",
       type: "reference",
       documentation:
-        "Patient/[id]: events about this patient's records (merges into the record, and laboratory result and document events), including records since merged into it. Wider than the R4 definition, which matches Patient targets only.",
+        "Patient/[id]: events about this patient's records (merges into the record, and laboratory result events), including records since merged into it. Wider than the R4 definition, which matches Patient targets only.",
     },
     {
       name: "recorded",
@@ -102,11 +101,11 @@ export const definition: ResourceDefinition = {
   patientAccess: false,
   sensitiveSearch: true,
   notes: [
-    "Only events the database records itself: laboratory result review, release and withhold; merges made by the server-side merge function; document uploads. Visits, vital signs, consultations, prescriptions, dispenses, allergies and conditions have no server-verified author and get no Provenance: an empty result does not mean nothing changed.",
+    "Only events the database records itself: laboratory result review, release and withhold; merges made by the server-side merge function. Visits, vital signs, consultations, prescriptions, dispenses, allergies and conditions have no server-verified author and get no Provenance: an empty result does not mean nothing changed.",
     "Staff with lab_review but not audit_access see laboratory events only, and must give _id, target or patient (a recorded range alone is refused).",
     "A review or release is published only while it still stands: when a reviewed result's value, unit, range or interpretation changes, its review and release are cleared and the earlier events are left out (a withhold stays, as the result stays off the portal).",
     "Merges recorded before the server-side merge function (no server-stamped actor) are not published.",
-    "Document uploads name no person: 'Patient portal account' for a portal upload, otherwise 'mBHR account' (documents stored before the ownership change are all marked clinic records, whoever uploaded them). Removed documents are left out. An upload event names its DocumentReference, which no staff account can read (staff get no documents here).",
+    "Document uploads get no Provenance (owner decision, 2026-09-26): nothing here shows that a document was stored, and an empty result does not mean no document exists.",
     "Events of a laboratory result that a newer result replaced are left out, like the result itself.",
     "Never published: withhold reasons, merge snapshots, who asked for a merge on the tablet, account ids, device ids, storage paths.",
     "Staff only; not available to patients.",
@@ -117,8 +116,8 @@ export const definition: ResourceDefinition = {
 // Search plan
 // ---------------------------------------------------------------------------
 
-type Phase = "l" | "m" | "d";
-const PHASES: readonly Phase[] = ["l", "m", "d"];
+type Phase = "l" | "m";
+const PHASES: readonly Phase[] = ["l", "m"];
 /** Cursor key for "start of this source" (a "|" never appears in a key). */
 const START = "|start";
 /** Rows of lab_orders / lab_results one patient search may cover. */
@@ -132,7 +131,6 @@ interface Plan {
   phases: Set<Phase>;
   logId?: string;
   mergeId?: string;
-  docId?: string;
   resultId?: string;
   orderId?: string;
   /** target=Patient/[id]: that record's published id. */
@@ -142,13 +140,6 @@ interface Plan {
 
 function only(plan: Plan, phase: Phase): void {
   plan.phases = new Set([...plan.phases].filter((p) => p === phase));
-}
-
-/** Set a source id the search names; two different values match nothing. */
-function pin(plan: Plan, field: "logId" | "mergeId" | "docId" | "resultId" | "orderId" | "targetPatientFhirId", value: string): void {
-  const current = plan[field];
-  if (current !== undefined && current !== value) plan.phases = new Set();
-  else plan[field] = value;
 }
 
 const TARGET = /^([A-Z][A-Za-z]{1,63})\/([A-Za-z0-9\-.]{1,64})$/;
@@ -162,18 +153,17 @@ function applyTarget(plan: Plan, raw: string): void {
   const [, type, id] = m;
   if (type === "Observation" && id.startsWith(LAB_OBSERVATION_PREFIX) && UUID.test(id.slice(LAB_OBSERVATION_PREFIX.length))) {
     only(plan, "l");
-    pin(plan, "resultId", id.slice(LAB_OBSERVATION_PREFIX.length).toLowerCase());
+    plan.resultId = id.slice(LAB_OBSERVATION_PREFIX.length).toLowerCase();
   } else if (type === "DiagnosticReport" && UUID.test(id)) {
     only(plan, "l");
-    pin(plan, "orderId", id.toLowerCase());
+    plan.orderId = id.toLowerCase();
   } else if (type === "Patient") {
     only(plan, "m");
-    pin(plan, "targetPatientFhirId", id);
-  } else if (type === "DocumentReference" && UUID.test(id)) {
-    only(plan, "d");
-    pin(plan, "docId", id.toLowerCase());
+    plan.targetPatientFhirId = id;
   } else {
-    // No Provenance is recorded for any other record (vital signs, visits, ...).
+    // No Provenance is recorded for any other record (vital signs, visits,
+    // documents, ...): nothing is read, so the answer is the same whether
+    // the record exists or not.
     plan.phases = new Set();
   }
 }
@@ -186,13 +176,10 @@ function applyId(plan: Plan, raw: string): void {
   }
   if (parsed.kind === "lab") {
     only(plan, "l");
-    pin(plan, "logId", parsed.sourceId.toLowerCase());
-  } else if (parsed.kind === "merge") {
-    only(plan, "m");
-    pin(plan, "mergeId", parsed.sourceId);
+    plan.logId = parsed.sourceId.toLowerCase();
   } else {
-    only(plan, "d");
-    pin(plan, "docId", parsed.sourceId.toLowerCase());
+    only(plan, "m");
+    plan.mergeId = parsed.sourceId;
   }
 }
 
@@ -200,6 +187,8 @@ function buildPlan(ctx: QueryCtx, search: ParsedSearch): Plan {
   const plan: Plan = { phases: new Set(PHASES), recorded: search.values.get("recorded") };
   const idParam = one(search, "_id");
   const target = one(search, "target");
+  // _id and target set different fields and both filters apply; when they
+  // name different sources, only() leaves no phase and nothing matches.
   if (idParam) applyId(plan, idParam);
   if (target) applyTarget(plan, target);
   if (ctx.restrictions.has("lab_events_only")) only(plan, "l");
@@ -436,49 +425,16 @@ async function mapMergeRows(ctx: QueryCtx, rows: Row[]): Promise<(Item | null)[]
   });
 }
 
-function uploadSource(ctx: QueryCtx, plan: Plan, named: Filters): Source {
-  const base: Filters = [
-    // Removed documents are not published as DocumentReference either.
-    ["deleted_at", "is.null"],
-    ...dateFilters("created_at", plan.recorded, "recorded"),
-    ...scopeFilter(ctx),
-    ...named,
-  ];
-  if (plan.docId) base.push(["id", `eq.${plan.docId}`]);
-  return {
-    phase: "d",
-    keyPattern: UUID,
-    fetch: (after, limit) =>
-      ctx.db.select("patient_documents", UPLOAD_EVENT_COLUMNS, after !== null ? [...base, ["id", `gt.${after}`]] : base, {
-        order: "id.asc",
-        limit,
-      }),
-    async map(rows) {
-      const refs = await referenceContext(
-        ctx.db,
-        rows.map((r) => r.patient_id).filter((v): v is string => typeof v === "string"),
-      );
-      return rows.map((row) => {
-        const res = mapDocumentUploadEvent(row, refs);
-        return res && typeof row.patient_id === "string" ? { res, owner: row.patient_id } : null;
-      });
-    },
-  };
-}
-
 /**
  * The source for a phase, or null when it can match nothing (the named
  * patient or the target record does not resolve).
  */
 async function makeSource(ctx: QueryCtx, plan: Plan, phase: Phase, targetPatient: string | null): Promise<Source | null> {
   if (phase === "l") return labSource(ctx, plan, await labScope(ctx, plan));
-  const named = namedPatientFilter(ctx, phase === "m" ? "winner_id" : "patient_id");
+  const named = namedPatientFilter(ctx, "winner_id");
   if (named === null) return null;
-  if (phase === "m") {
-    if (plan.targetPatientFhirId !== undefined && targetPatient === null) return null;
-    return mergeSource(ctx, plan, named, targetPatient);
-  }
-  return uploadSource(ctx, plan, named);
+  if (plan.targetPatientFhirId !== undefined && targetPatient === null) return null;
+  return mergeSource(ctx, plan, named, targetPatient);
 }
 
 /**
