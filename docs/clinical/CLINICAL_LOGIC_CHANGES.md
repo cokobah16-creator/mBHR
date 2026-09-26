@@ -406,42 +406,57 @@ The FHIR R4 gateway (`src/interoperability/fhir`, off by default behind
 `FHIR_ENABLED`) publishes existing records in a standard format. It changes
 nothing staff or patients see in mBHR, and no threshold, range or
 decision-support rule. These representation rules decide what another
-system would read, so each needs a clinician's decision before the gateway
-is switched on anywhere real data exists. Full rules:
-`docs/interoperability/resource-mapping.md`.
+system would read, so each needed a decision before the gateway is switched
+on anywhere real data exists. Full rules:
+`docs/interoperability/resource-mapping.md`. All six items were signed off
+on 2026-09-26 with section 2.7: see the sign-off at the end of 2.7. The
+number after each decision is the item's number on the owner's FHIR
+sign-off sheet.
 
-- [ ] **A stored vital sign of 0 is not published.** A pulse, blood
+- [x] **A stored vital sign of 0 is not published.** A pulse, blood
       pressure, temperature, SpO₂, weight, height or BMI of 0 (or below)
       is left out of the export rather than sent as a reading, because
       "pulse 0" would tell another system the patient had no pulse. Missing
       values are never sent as 0. Confirm, or say whether such rows should
       be sent with a "data absent" marker instead. (Phase 2 changes this
-      for blood pressure only, pending sign-off: see 2.7.)
-- [ ] **mBHR's vitals flags and ranges are not exported.** No
+      for blood pressure only: see 2.7.)
+      Decision received 2026-09-26: **accept** (sheet 14).
+- [x] **mBHR's vitals flags and ranges are not exported.** No
       interpretation (high/low) and no reference range is attached to a
       reading, because those are local rules still awaiting sign-off in
       2.2. Confirm.
-- [ ] **Every saved vitals reading is "final".** mBHR has no preliminary
+      Decision received 2026-09-26: **accept** (sheet 15).
+- [x] **Every saved vitals reading is "final".** mBHR has no preliminary
       or entered-in-error state for vitals. Confirm that a saved reading is
       a completed measurement.
-- [ ] **Pulse is published as LOINC "Heart rate" (8867-4) and SpO₂ as
+      Decision received 2026-09-26: **accept** (sheet 16).
+- [x] **Pulse is published as LOINC "Heart rate" (8867-4) and SpO₂ as
       LOINC "Oxygen saturation in Arterial blood" (2708-6) plus "Oxygen
       saturation in Arterial blood by Pulse oximetry" (59408-5)**. The FHIR
       vital signs profile requires 8867-4 and 2708-6; 59408-5 is mBHR's
       addition, because SpO₂ is read with a pulse oximeter. mBHR's own column name is kept alongside. mBHR does not
       record how a reading was taken. Confirm these match how outreach
       readings are taken.
-- [ ] **Diagnosis status is carried over exactly.** A provisional or
+      Decision received 2026-09-26: **accept** (sheet 17).
+- [x] **Diagnosis status is carried over exactly.** A provisional or
       differential diagnosis stays provisional or differential; only
       diagnoses in the `conditions` table are exported. Provisional
       diagnoses typed on the consultation (`provisional_dx`) are not
       exported yet. Confirm that leaving them out is safer than exporting
-      them without a stable identity. (Phase 2 changes this for a stored
-      "confirmed", which is now sent with no verification status, pending
-      sign-off: see 2.7.)
-- [ ] **Diagnosis codes stay local unless a person has verified a
+      them without a stable identity. (A stored "confirmed" is sent as
+      recorded since the table no longer fills it in: see 2.7, "A diagnosis
+      is sent only with the statuses staff chose".)
+      Decision received 2026-09-26: **accept** (sheet 18).
+- [x] **Diagnosis codes stay local unless a person has verified a
       mapping.** An ICD-10 or SNOMED CT code is added only from a reviewed
       entry in `interop.terminology_map`. Decide who may verify a mapping.
+      Decision received 2026-09-26: **only the owner** (sheet 1, as
+      recommended). Emeke Okobah approves each match, and it is added with
+      him as the approver; nothing is added until he does, and none is
+      approved yet. No code change was needed: only a verified entry is
+      ever used. Open: the database records an approver and a date but
+      cannot yet check who that approver was; that needs database work
+      before the first match is approved.
 
 ### 2.6 Audit follow-up (September 2026): questions for clinical review
 
@@ -482,96 +497,138 @@ Phase 2 adds allergies, medicines, laboratory orders, results and reports,
 documents, consents, staff, sites, provenance and access history to the
 FHIR gateway. The gateway is still off (`FHIR_ENABLED` unset), and nothing
 changes for staff or patients in mBHR. These rules decide what another
-system would read once it is switched on, so each needs a clinician's
-decision first. The status maps are in
-`src/interoperability/fhir/terminology/status/`, and the full rules in
-`docs/interoperability/resource-mapping.md`. Nothing unknown is published
-as a definite status, and no code is invented (a test enforces both).
+system would read once it is switched on, so each needed a decision first.
+The status maps are in `src/interoperability/fhir/terminology/status/`, and
+the full rules in `docs/interoperability/resource-mapping.md`. Nothing
+unknown is published as a definite status, and no code is invented (a test
+enforces both). Every item below was signed off on 2026-09-26 (see the
+sign-off at the end of this section); items the sign-off changed describe
+the behaviour as built. The number after each decision is the item's
+number on the owner's FHIR sign-off sheet.
 
 Changes to what Phase 1 published (2.5)
 
-- [ ] **A blood pressure with only one half measured is now published.**
+- [x] **A blood pressure with only one half measured is now published.**
       The measured half is sent; the other (missing, or stored as 0) is
       marked "unknown" (data absent), never sent as 0. Phase 1 left the
       whole reading out, which hid a real measurement. This answers the
       2.5 question on stored 0 for blood pressure only. Confirm that a 0
       half means "not measured", or say to leave such readings out again
       (a one-line change).
-- [ ] **Sex "other" is not published.** Registration also stores "other"
+      Decision received 2026-09-26: **accept** (sheet 19).
+- [x] **Sex "other" is not published.** Registration also stores "other"
       when nothing was chosen, so a real "other" cannot be told apart from
       an unset value; the patient's sex is left out rather than guessed.
       Confirm.
-- [ ] **Name, phone and address are sent without a "use".** mBHR does not
+      Decision received 2026-09-26: **accept** (sheet 20).
+- [x] **Name, phone and address are sent without a "use".** mBHR does not
       record whether a name is the official one or a phone is a mobile, so
       none is claimed. Confirm.
-- [ ] **Visits a staff member adds afterwards on the online staff
+      Decision received 2026-09-26: **accept** (sheet 21).
+- [x] **Visits a staff member adds afterwards on the online staff
       dashboard ("Portal entry") have no start time,** because that time is
       when the visit was typed in, not when care happened. A date search
       never finds them. The site name is matched in any case, and spaces
       around it are ignored. "Portal entry" and "Mobile clinic" are not
       published as a place. Confirm.
-- [ ] **A visit status stored with spaces around it is now "unknown".**
+      Decision received 2026-09-26: **accept** (sheet 22).
+- [x] **A visit status stored with spaces around it is now "unknown".**
       Only the exact values the app writes (such as "open", "closed" and
       "cancelled") are translated, in any case. Phase 1 trimmed the value
       first, so a stored " closed" went out as finished; it is now unknown,
       and a status search does not find it as finished. The app always
       writes the exact value. Confirm that such a visit should not be shown
       as finished.
-- [ ] **A diagnosis stored as "confirmed" is sent without a verification
-      status.** The `conditions` table fills in "confirmed" when nothing is
-      given, so a stored "confirmed" cannot be told apart from an unset
-      value. Other values (provisional, differential, unconfirmed, refuted,
-      entered in error) are sent as stored. The same table fills in
-      "active" as the clinical status when nothing is given, and that is
-      still sent as active. Nothing in mBHR writes this table yet. Confirm
-      both, before anything starts writing diagnoses there.
-- [ ] **A diagnosis end date is sent only beside an ended status**
+      Decision received 2026-09-26: **accept** (sheet 23).
+- [x] **A diagnosis is sent only with the statuses staff chose.** The
+      held-back diagnosis table (`conditions`, migration `20260125091822`,
+      never created anywhere) no longer fills in "active", "confirmed" or
+      "problem list" when staff leave them blank, so a blank clinical
+      status, verification status or category is sent as nothing. A
+      diagnosis nobody marked never goes out as a current, confirmed
+      illness, and a ruled-out diagnosis saved without a clinical status is
+      not shown as current. Every status staff chose is sent as stored,
+      "confirmed" included (Phase 2 had left out a stored "confirmed" only
+      because the table used to fill it in). Nothing in mBHR writes this
+      table yet; any form that does must send nothing when staff choose
+      nothing.
+      Decision received 2026-09-26: **remove the fill-ins** (sheet 2, as
+      recommended). Built: see section 4, "FHIR sign-off: approved
+      changes".
+- [x] **A diagnosis end date is sent only beside an ended status**
       (inactive, remission or resolved), as FHIR requires. Phase 1 sent a
       stored end date beside any status. It is now left out beside active,
       recurrence or relapse, and when no status is sent (entered in error,
       or a status that is missing or not recognised). An ended status is
       never guessed from the date. Confirm.
-- [ ] **An estimated date of birth is sent as an exact date** (unchanged
-      from Phase 1). Quick registration turns an age into 1 January of the
+      Decision received 2026-09-26: **accept** (sheet 24).
+- [x] **A date of birth on the 1st of a month is sent with less
+      precision.** Quick registration turns an age into 1 January of the
       birth year, or the 1st of the birth month, and the "estimated" mark
       stays on the tablet that registered the patient, so the server cannot
-      tell an estimate from a real birthday. Another system could then work
-      out an exact age in days or months (for example for a child's dose)
-      from it. Options: send it as is (today); or have the app upload the
-      mark so the gateway sends only the year (or year and month) for an
-      estimate, which needs an app and database change. Which?
+      tell an estimate from a real birthday. A date on 1 January is now
+      sent as the year only (for example 2021), and a date on the 1st of
+      any other month as the year and month (for example 2024-06); any
+      other date is sent in full. This covers every estimate already saved;
+      a real birthday on the 1st also loses its day, and an estimated year
+      can still be a year out. The date saved in mBHR is not changed and no
+      "estimated" mark is added. A search by name and date of birth still
+      matches the full saved date, so a search for 2021-01-01 finds the
+      patient, whose date of birth is then sent as 2021.
+      Decision received 2026-09-26: **shorten 1st-of-month dates** (sheet
+      3, as recommended). Built: see section 4.
 
 Allergies
 
-- [ ] **An empty allergy list never means "no known allergies".** mBHR
+- [x] **An empty allergy list never means "no known allergies".** mBHR
       cannot record NKA, so every allergy search says so. Text such as
       "None" or "NKDA" typed as an allergen is published as written, as an
       allergy. Should such rows be cleaned first?
-- [ ] **"Mark inactive" is published as `inactive`** ("no longer at
-      risk"), although mBHR stores no reason and the same action is used for
-      wrong-patient or duplicate entries. The app hides inactive allergies.
-      Publish them as inactive, or leave them out?
-- [ ] **Severity.** Life-threatening becomes criticality `high` and,
-      when a reaction was typed, reaction severity `severe` (the top of the
-      FHIR scale). Severe and moderate are sent as reaction severity
-      `severe` and `moderate`, but only when a reaction was typed, so a
-      severe allergy with no reaction typed carries no rating. `mild` is
-      left out because the form pre-selects it. Should `severe` also be
-      criticality `high`?
-- [ ] **No verification status is published.** mBHR does not record
+      Decision received 2026-09-26: **send as typed** (sheet 4, as
+      recommended). No change: it is what staff recorded and see, it
+      matches no medicine, and automatic cleaning could delete a real
+      allergy typed in the same box. (With the inactive-allergy decision
+      below, the search note now says an empty result means no active
+      allergy matched the search.)
+- [x] **An allergy marked inactive is not published.** "Mark inactive" is
+      used both for allergies that resolved and for wrong-patient or
+      duplicate entries, and mBHR stores no reason, so another system is
+      never told such an allergy is inactive, resolved or "no longer a
+      risk". Only the active allergies staff see are sent. A request for
+      an inactive one gets "not found", as for an allergy that does not
+      exist, and no search returns or counts it (a search for inactive
+      allergies matches nothing). Another system that copied such an
+      allergy earlier is not told it was later marked inactive, so it may
+      keep warning about it.
+      Decision received 2026-09-26: **leave them out** (sheet 5, as
+      recommended). Built: see section 4.
+- [x] **Severity.** Life-threatening and severe both become criticality
+      `high` ("high risk"), whether or not staff typed a reaction, matching
+      the patient header in mBHR, which gives severe the same top red alert
+      as life-threatening. Reaction severity is unchanged: sent only when a
+      reaction was typed (life-threatening and severe as `severe`, moderate
+      as `moderate`); `mild` is left out because the form pre-selects it.
+      Decision received 2026-09-26: **severe is high risk too** (sheet 6,
+      as recommended). Built: see section 4.
+- [x] **No verification status is published.** mBHR does not record
       whether an allergy was confirmed (the old export said "confirmed").
-- [ ] **An allergy's type "medication" is not published as a category.**
-      The form pre-selects it, so a stored "medication" cannot be told apart
-      from a type nobody chose. Only food and environmental, which someone
-      chose, are sent as a category; "other" gets none. A search for
-      medication allergies finds nothing. The app itself still checks every
-      active allergy against medicines, whatever its type. Confirm, or say
-      whether the form should start with no type chosen, so that a chosen
-      "medication" can be published.
+      Decision received 2026-09-26: **accept** (sheet 25).
+- [x] **An allergy's type "medication" is not published as a category,
+      and a search by type is refused.** The form pre-selects "medication",
+      so a stored "medication" cannot be told apart from a type nobody
+      chose. Only food and environmental, which someone chose, are sent as
+      a category; "other" gets none. A search for allergies by type
+      (`category` or `type`) no longer comes back empty with a note saying
+      no allergy is recorded: it is refused with a message telling the
+      other system to ask for all of the patient's allergies instead. The
+      app itself still checks every active allergy against medicines,
+      whatever its type.
+      Decision received 2026-09-26: **fix searches by type** (sheet 7, as
+      recommended). Built: see section 4.
 
 Medicines
 
-- [ ] **A dispense is never published as `completed` and carries no
+- [x] **A dispense is never published as `completed` and carries no
       hand-over time.** mBHR has no separate hand-over record. The
       prescription dispensing screen (Pharmacy > Dispense, `/rx/dispense`)
       asks staff to confirm who they hand the medicine to before
@@ -582,59 +639,119 @@ Medicines
       `when_handed_over`; the gateway ignores both. Should a
       recorded dispense count as a hand-over (then `completed`, with the
       dispense time)?
-- [ ] **Prescription status.** Open is `active` (mBHR sets no expiry, so an
+      Decision received 2026-09-26: **keep as unknown** (sheet 8, as
+      recommended). No change: it claims nothing mBHR did not record.
+- [x] **Prescription status.** Open is `active` (mBHR sets no expiry, so an
       old open prescription stays active), dispensed is `completed` (every
       line given, not the course finished), partial is `unknown`, void is
       `cancelled`. Confirm.
-- [ ] **Medicines are text only.** No medicine code is published, doses are
+      Decision received 2026-09-26: **accept** (sheet 26).
+- [x] **Medicines are text only.** No medicine code is published, doses are
       free text, and a quantity's unit is today's catalogue unit (past
       quantities follow a later change of unit).
+      Decision received 2026-09-26: **accept** (sheet 27).
 
 Laboratory
 
-- [ ] **A result is `preliminary` until someone with the review
+- [x] **A result is `preliminary` until someone with the review
       permission reviews it** (a doctor, lead clinician or admin; an admin
       need not be a clinician), then `final`. A result with no value is never final. Normal, abnormal and
       critical become N, A and AA; H and L are never inferred, and an
       unreviewed "normal" is left out (older rows may carry the form's old
       default). Confirm.
-- [ ] **A report is `final` only when every current result is reviewed.** A
+      Decision received 2026-09-26: **accept** (sheet 28).
+- [x] **A report is `final` only when every current result is reviewed.** A
       patient's own report is at most `partial`, because the patient's view
       cannot prove that no other result on the order is still unreviewed or
       withheld. Confirm, or decide that patients may see `final` (this would
       tell them a hidden result exists).
-- [ ] **Values are published as recorded.** A number becomes a quantity only
+      Decision received 2026-09-26: **keep patients at partial** (sheet 9,
+      as recommended). No change: a patient is never told that a withheld
+      result exists.
+- [x] **Values are published as recorded.** A number becomes a quantity only
       when it is a plain decimal with a unit; UCUM codes are used for 13
       exact unit strings. Reference ranges stay text. Confirm the unit list.
+      Decision received 2026-09-26: **accept** (sheet 29).
 
 Documents
 
-- [ ] **Patients may download only files they uploaded.** Clinic documents
+- [x] **Patients may download only files they uploaded.** Clinic documents
       have no release step, so patients see that they exist but not their
       content. The clinic description (a staff note) is never published.
-- [ ] **Document type is the uploader's own label.** A file labelled "Test
+      Decision received 2026-09-26: **accept** (sheet 30).
+- [x] **Document type is the uploader's own label.** A file labelled "Test
       result" or "Prescription" never becomes a lab result or medicine
       record. Documents from before the uploader was recorded are labelled
       as clinic documents, which includes early patient uploads. Is that
       wording acceptable, and should insurance documents be included?
-- [ ] **Doctors, lead clinicians and admins could read every patient's
-      document list and files over FHIR,** although the staff app has no
-      documents screen today and the owner's rule is that FHIR never goes
-      beyond what staff can see in mBHR. Decide whether staff get
-      documents over FHIR before a staff documents screen exists (the
-      alternative is patients only, for their own files).
+      Decision received 2026-09-26: **accept as is** (sheet 10, as
+      recommended). No change: labels never turn into clinical records, and
+      with the next item only the patient sees their own papers.
+- [x] **Staff get no documents through the connection.** No staff account
+      (doctors, lead clinicians and admins included) can read a patient's
+      document list or download a file over FHIR: the gateway refuses the
+      request the way it refuses any record type a role may not read, and
+      records the refusal in the access log. This holds until mBHR has a
+      staff documents screen, because the owner's rule is that FHIR never
+      goes beyond what staff can see in mBHR. Nothing changes for patients,
+      who (with patient access switched on) see only their own records'
+      documents and download only files they uploaded. Open: staff with
+      audit access can still see in the access provenance that a document
+      was uploaded (its id, when, and whether through the portal), never
+      its content; this is listed as an open owner decision in
+      `docs/interoperability/security.md`.
+      Decision received 2026-09-26: **patients only** (sheet 11, as
+      recommended). Built: see section 4.
 
 Consents, staff and sites
 
-- [ ] **Consents are published exactly as recorded.** A withdrawn consent is
-      `inactive` and kept. An unverified one is marked unverified. One with
-      no policy, or with a rule the shared format cannot show exactly
-      (including a rule that names one specific recipient), is not
-      published at all rather than shown broader than the patient agreed;
-      a search says how many were left out.
-- [ ] **Staff are published by name and mBHR access role only** (the role is
+- [x] **Consents are published as recorded, with two changes.** A
+      withdrawn consent is `inactive` and kept. An active consent whose end
+      date has passed is published as no longer in force (`inactive`), with
+      its end date beside it, by the same rule mBHR's consent check and the
+      patient portal use, at the moment of the request; a search for
+      consents in force does not return it. An unverified one is marked
+      unverified. A consent can no longer be recorded without a policy
+      link: the recording function refuses it and the consent register
+      refuses such a record from any other path, so a patient's refusal is
+      never left out just because no policy was recorded. One with a rule
+      the shared format cannot show exactly (including a rule that names
+      one specific recipient) is not published at all rather than shown
+      broader than the patient agreed; a search says how many were left
+      out.
+      Decision received 2026-09-26: **accept, with two changes** (sheet 13,
+      as recommended). Built: see section 4.
+- [x] **Staff get no consent records through the connection.** The staff
+      app shows only a badge ("External sharing: Allowed, Restricted or
+      Withdrawn"), so no staff account can read or search a patient's
+      consent records over FHIR until mBHR has a staff consent screen. The
+      badge is unchanged, patients still see their own consents, and the
+      gateway's consent check still reads a patient's rules to decide other
+      requests without showing them to staff. (Found in the sign-off check;
+      it was not one of the file's original questions.)
+      Decision received 2026-09-26: **only what the app shows** (sheet 12,
+      as recommended). Built: see section 4.
+- [x] **Staff are published by name and mBHR access role only** (the role is
       not a qualification). Confirm "Administrator" and "Lead clinician" as
       the role names.
+      Decision received 2026-09-26: **accept** (sheet 31).
+
+**Sign-off of sections 2.5 and 2.7.** Signed off: Emeke Okobah, Director
+(no professional registration given), 2026-09-26.
+Decision: accept as recommended on the FHIR sign-off sheet: decisions 1 to
+13 as recommended, and confirms 14 to 31 accepted. The items in 2.5 and
+2.7 are ticked on this sign-off by the owner's decision (Emeke Okobah,
+2026-09-25 and 2026-09-26): the Director's sign-off is accepted without a
+clinician's professional registration. Decisions 2, 3, 5, 6, 7, 11, 12
+and 13 needed building and are built in the pull request recorded in
+section 4 ("FHIR sign-off: approved changes"); decisions 1, 4, 8, 9 and 10
+needed no change. These decisions approve how records are represented to
+other systems through the FHIR connection only. They do not approve any
+threshold, range, dose, allergy-matching rule or decision-support rule,
+and they do not switch anything on: the connection stays off
+(`FHIR_ENABLED` unset) until the owner says otherwise. The older "download
+as FHIR" features (the admin bulk export and the patient's "download my
+data") are separate and are not changed by this sign-off.
 
 ## 3. Owner decisions (decided)
 
@@ -708,6 +825,7 @@ clinician must sign off, or write "None" and say why.
 
 | Date | Pull request | What changed | Files | Checklist item (section 2) | Clinician sign-off |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-26 | FHIR sign-off: approved changes | None for staff or patients: the `/fhir/R4` gateway stays off and nothing is applied to any database. Records the owner's sign-off of 2.5 and 2.7 (decisions 1 to 13 as recommended, confirms 14 to 31 accepted) and builds what it asked for. Diagnoses: the held-back diagnosis table no longer fills in "active", "confirmed" or "problem list", so only statuses staff chose are sent, "confirmed" included. Date of birth: a date on 1 January is sent as the year only and one on the 1st of any other month as the year and month; the saved date is unchanged, and a name and date-of-birth search still matches it. Allergies: an allergy marked inactive is never sent (a request for it gets "not found"); severe is sent as high risk like life-threatening, with or without a typed reaction; a search by type is refused with a message to ask for all allergies, and the search note says an empty result means no active allergy matched. Staff get no documents, files or consent records over FHIR (patients unchanged; the staff badge unchanged). Consents: an active consent past its end date is sent as no longer in force, and a consent can no longer be recorded without a policy link. No threshold, range, dose, allergy-matching or decision-support rule changed. | `src/interoperability/fhir/mappers/{condition,patient,allergy,consent,common}.ts`, `src/interoperability/fhir/resources/{condition,patient,allergyIntolerance,documentReference,binary,consent,provenance,module}.ts`, `src/interoperability/fhir/terminology/statusMaps.ts`, `src/interoperability/fhir/terminology/status/{allergy,consent}.ts`, `src/interoperability/fhir/authorization/{permissions,authorize}.ts`, `src/interoperability/fhir/consent/evaluateConsent.ts`, `src/interoperability/fhir/search/params.ts`, `src/interoperability/fhir/gateway/handler.ts`, `supabase/migrations-deferred/20260125091822_add_immunizations_conditions_sdoh.sql`, `supabase/migrations-deferred/20260926130000_interop_phase2.sql`, this file | 2.5 (all items); 2.7 (all items, including the new "Staff get no consent records through the connection") | Emeke Okobah, Director, 2026-09-26 (no professional registration; accepted by owner decision) |
 | 2026-09-26 | FHIR sign-off follow-up: consent for one named recipient | None for staff or patients: the `/fhir/R4` gateway stays off and the consent register is not on production yet. A consent with a rule for one specific recipient (for example one hospital) is no longer published as a rule for every recipient of that kind: the whole consent is withheld, and a search says how many were left out. Such a permit never grants access in the consent check, and the staff "External sharing" badge shows it as limited, not allowed; a refusal that names one recipient still refuses, and the badge gives it as "refused in part" rather than "refused". In the patient portal's Privacy section, such a permission reads "A choice about how your records are shared" with "Ask clinic staff about it", instead of a general permission to share outside mBHR. Six items in 2.5 and 2.7 were reworded to match the code (oxygen codes, diagnosis end date history, allergy reaction severity, dispense hand-over, who reviews a lab result, consents). No threshold, range, dose or matching rule changed. | `src/interoperability/fhir/mappers/consent.ts`, `src/interoperability/fhir/resources/consent.ts`, `src/interoperability/fhir/consent/evaluateConsent.ts`, `supabase/migrations-deferred/20260926130000_interop_phase2.sql`, `src/services/interopConsent.ts`, `src/features/patient-portal/privacyCopy.ts`, this file | 2.5 "Pulse is published as LOINC…"; 2.7 "A diagnosis end date is sent only beside an ended status", "Severity", "A dispense is never published as `completed`…", "A result is `preliminary` until…", "Consents are published exactly as recorded" | Pending |
 | 2026-09-25 | FHIR R4 interoperability Phase 2 | None for staff or patients: the `/fhir/R4` gateway stays off (`FHIR_ENABLED` unset). When switched on it would also publish allergies, medicines, laboratory orders, results and reports, documents, consents, staff, sites, provenance and access history. How each status, value and code is represented (an empty allergy list is not NKA, an allergy's pre-selected type "medication" is not sent as a category, a dispense is never shown as handed over, a result is preliminary until reviewed, a patient's report is never final, no invented codes) is listed for review in 2.7, together with changes to what Phase 1 published (a blood pressure with one half measured is now sent, sex "other" and name or phone "use" are left out, visits added afterwards on the staff dashboard ("Portal entry") have no start time, a visit status stored with spaces around it is unknown, a stored "confirmed" diagnosis carries no verification status). No threshold, range, dose or matching rule is created. | `src/interoperability/fhir/mappers/*`, `src/interoperability/fhir/terminology/**`, `src/interoperability/fhir/resources/*` | 2.7 (all items) | Pending |
 | 2026-09-25 | Audit follow-up: portal note and registration wording | The patient portal note shown beside an unrated blood pressure said none of the readings were rated, although temperature is rated at every age; it now says only blood pressure is not rated for children or without a date of birth. Row 44 now describes the registration form as shipped (the box starts unticked, typing never ticks it, locked off for under-18s). No threshold, range, dose or rule changed. | `i18n/locales/*.json (portal.vital.notRated)`, this file | 2.2 rows 39 and 44 | Pending |
