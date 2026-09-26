@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
+  currentPatientId,
   isSupabaseAuthKey,
   parseActiveProfile,
   parsePortalUser,
@@ -104,5 +105,40 @@ describe("isSupabaseAuthKey", () => {
     expect(isSupabaseAuthKey("patient_message_queue")).toBe(false);
     expect(isSupabaseAuthKey("sb-auth-token")).toBe(false);
     expect(isSupabaseAuthKey("my-sb-x-auth-token")).toBe(false);
+  });
+});
+
+describe("currentPatientId", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("is empty when nobody is signed in", () => {
+    expect(currentPatientId()).toBe("");
+  });
+
+  it("is the account's own patient by default", () => {
+    localStorage.setItem(
+      "patient_portal_user",
+      JSON.stringify({ id: "u1", patientId: "p1", managedPatients: [] }),
+    );
+    expect(currentPatientId()).toBe("p1");
+  });
+
+  it("follows a managed profile only when it belongs to the account", () => {
+    localStorage.setItem(
+      "patient_portal_user",
+      JSON.stringify({
+        id: "u1",
+        patientId: "p1",
+        managedPatients: [
+          { patientId: "p2", givenName: "Chi", familyName: "Obi", relationship: "child" },
+        ],
+      }),
+    );
+    localStorage.setItem("patient_active_profile", JSON.stringify({ patientId: "p2" }));
+    expect(currentPatientId()).toBe("p2");
+    localStorage.setItem("patient_active_profile", JSON.stringify({ patientId: "p9" }));
+    expect(currentPatientId()).toBe("p1");
   });
 });
