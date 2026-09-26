@@ -20,23 +20,31 @@ import {
   addManagedPatientToSession,
   hasLocalPortalAccount,
   listManagedPatients,
-  relationshipLabel,
   removeManagedPatientLink,
   RELATIONSHIP_OPTIONS,
   syncSessionManagedPatients,
 } from "./account/caregiverAccess";
 import { errorName, readPortalUser } from "./account/portalSession";
+import { useT } from "@/hooks/useT";
 
 const schema = z.object({
-  givenName: z.string().min(1, "First name is required"),
-  familyName: z.string().min(1, "Last name is required"),
-  dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Please enter a valid date"),
+  givenName: z.string().min(1, "portal.cg.err.givenName"),
+  familyName: z.string().min(1, "portal.cg.err.familyName"),
+  dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "portal.cg.err.dob"),
   relationship: z.enum(["child", "parent", "spouse", "sibling", "other"], {
-    errorMap: () => ({ message: "Please select a relationship" }),
+    errorMap: () => ({ message: "portal.cg.err.relationship" }),
   }),
 });
 
 type SetupForm = z.infer<typeof schema>;
+
+// A message shown on the page, kept as a key so it follows the language.
+interface Message {
+  key: string;
+  vars?: Record<string, string>;
+  // Text from the account service, shown as it comes.
+  raw?: string;
+}
 
 /** Today's date on this device (local time), as YYYY-MM-DD. */
 function todayIso(): string {
@@ -48,6 +56,12 @@ function todayIso(): string {
 
 export function CaregiverSetup() {
   const navigate = useNavigate();
+  const { t } = useT();
+  const say = (m: Message | null) => (m ? m.raw ?? t(m.key, m.vars) : null);
+  const relLabel = (value: string) =>
+    RELATIONSHIP_OPTIONS.some((o) => o.value === value)
+      ? t(`portal.cg.rel.${value}`)
+      : t("portal.cg.rel.unknown");
   const [portalUser] = useState(() => readPortalUser());
   const portalUserId = portalUser?.id;
   const canAdd = hasLocalPortalAccount(portalUserId);
@@ -57,10 +71,10 @@ export function CaregiverSetup() {
   );
   const [pending, setPending] = useState<SetupForm | null>(null);
   const [adding, setAdding] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
+  const [addError, setAddError] = useState<Message | null>(null);
   const [toRemove, setToRemove] = useState<ManagedPatient | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<Message | null>(null);
+  const [notice, setNotice] = useState<Message | null>(null);
 
   const form = useForm<SetupForm>({
     resolver: zodResolver(schema),
@@ -109,17 +123,22 @@ export function CaregiverSetup() {
           relationship: pending.relationship,
         });
         setManaged(listManagedPatients(portalUserId));
-        setNotice(
-          `${pending.givenName} ${pending.familyName} has been added to your account on this device. Choose your name at the top of the portal to switch to their profile.`,
-        );
+        setNotice({
+          key: "portal.cg.added",
+          vars: { name: `${pending.givenName} ${pending.familyName}` },
+        });
         setPending(null);
         form.reset();
       } else {
-        setAddError(result.error || "Could not add this person. Please try again.");
+        setAddError(
+          result.error
+            ? { key: "", raw: result.error }
+            : { key: "portal.cg.addFailed" },
+        );
       }
     } catch (err) {
       logger.error("[CaregiverSetup] add failed:", errorName(err));
-      setAddError("Could not add this person. Nothing was saved. Please try again.");
+      setAddError({ key: "portal.cg.addFailedNothingSaved" });
     } finally {
       setAdding(false);
     }
@@ -129,15 +148,14 @@ export function CaregiverSetup() {
     if (!toRemove || !portalUserId) return;
     const ok = removeManagedPatientLink(portalUserId, toRemove.patientId);
     if (!ok) {
-      setRemoveError(
-        "Could not remove this profile. This device's storage may be full or blocked. Nothing was changed.",
-      );
+      setRemoveError({ key: "portal.cg.removeFailed" });
       return;
     }
     setManaged(listManagedPatients(portalUserId));
-    setNotice(
-      `${toRemove.givenName} ${toRemove.familyName} has been removed from your account on this device.`,
-    );
+    setNotice({
+      key: "portal.cg.removed",
+      vars: { name: `${toRemove.givenName} ${toRemove.familyName}` },
+    });
     setToRemove(null);
     setRemoveError(null);
   };
@@ -145,49 +163,43 @@ export function CaregiverSetup() {
   return (
     <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
       <PageHeader
-        title="People you care for"
-        description="Keep a profile for your child, parent or someone else you look after, alongside your own."
+        title={t("portal.cg.title")}
+        description={t("portal.cg.description")}
         breadcrumbs={[
-          { label: "Home", to: "/patient/dashboard" },
-          { label: "People you care for" },
+          { label: t("portal.cg.home"), to: "/patient/dashboard" },
+          { label: t("portal.cg.title") },
         ]}
       />
 
       <section className="panel" aria-labelledby="caregiver-explainer-title">
         <div className="panel-header">
           <h2 id="caregiver-explainer-title" className="panel-title">
-            What adding someone means
+            {t("portal.cg.explainTitle")}
           </h2>
         </div>
         <dl className="panel-body grid gap-4 text-body sm:grid-cols-2">
           <div>
-            <dt className="font-medium text-ink">What it does</dt>
+            <dt className="font-medium text-ink">{t("portal.cg.whatTitle")}</dt>
             <dd className="mt-1 text-ink-secondary">
-              Creates a separate profile for the person on this device, linked
-              to your portal account. You switch to it from your name at the
-              top of the portal.
+              {t("portal.cg.whatBody")}
             </dd>
           </div>
           <div>
-            <dt className="font-medium text-ink">Who can see it</dt>
+            <dt className="font-medium text-ink">{t("portal.cg.whoTitle")}</dt>
             <dd className="mt-1 text-ink-secondary">
-              Anyone who logs in to your portal account on this device, and
-              clinic staff who use this device. Keep your PIN or password to
-              yourself.
+              {t("portal.cg.whoBody")}
             </dd>
           </div>
           <div>
-            <dt className="font-medium text-ink">What it does not do</dt>
+            <dt className="font-medium text-ink">{t("portal.cg.notTitle")}</dt>
             <dd className="mt-1 text-ink-secondary">
-              It does not open records the clinic already holds for the person.
-              To link their clinic record, ask clinic staff at your next visit.
+              {t("portal.cg.notBody")}
             </dd>
           </div>
           <div>
-            <dt className="font-medium text-ink">How long, and how to stop</dt>
+            <dt className="font-medium text-ink">{t("portal.cg.stopTitle")}</dt>
             <dd className="mt-1 text-ink-secondary">
-              The profile stays on your account until you remove it below.
-              Removing it takes it off your account straight away.
+              {t("portal.cg.stopBody")}
             </dd>
           </div>
         </dl>
@@ -198,12 +210,12 @@ export function CaregiverSetup() {
           <div className="banner banner-success">
             <CheckCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <div className="space-y-2">
-              <p>{notice}</p>
+              <p>{say(notice)}</p>
               <Link
                 to="/patient/dashboard"
                 className="inline-flex min-h-touch-target items-center font-medium underline underline-offset-2"
               >
-                Go to my dashboard
+                {t("portal.cg.goDashboard")}
               </Link>
             </div>
           </div>
@@ -213,17 +225,19 @@ export function CaregiverSetup() {
       <section className="panel" aria-labelledby="caregiver-current-title">
         <div className="panel-header">
           <h2 id="caregiver-current-title" className="panel-title">
-            Profiles on your account
+            {t("portal.cg.listTitle")}
           </h2>
           <span className="text-caption text-ink-muted tabular-nums">
-            {managed.length} {managed.length === 1 ? "person" : "people"}
+            {managed.length === 1
+              ? t("portal.cg.countOne")
+              : t("portal.cg.countMany", { n: String(managed.length) })}
           </span>
         </div>
         {managed.length === 0 ? (
           <EmptyState
             icon={UserGroupIcon}
-            title="You are not looking after anyone's profile"
-            description="People you add below will be listed here, with the option to remove them."
+            title={t("portal.cg.emptyTitle")}
+            description={t("portal.cg.emptyBody")}
           />
         ) : (
           <ul className="divide-y divide-line">
@@ -237,8 +251,7 @@ export function CaregiverSetup() {
                     {mp.givenName} {mp.familyName}
                   </p>
                   <p className="text-caption text-ink-muted">
-                    {relationshipLabel(mp.relationship)} · you can see and update
-                    this profile
+                    {relLabel(mp.relationship)} · {t("portal.cg.canUpdate")}
                   </p>
                 </div>
                 <button
@@ -248,10 +261,12 @@ export function CaregiverSetup() {
                     setToRemove(mp);
                   }}
                   className="btn-secondary"
-                  aria-label={`Remove ${mp.givenName} ${mp.familyName} from your account`}
+                  aria-label={t("portal.cg.removeLabel", {
+                    name: `${mp.givenName} ${mp.familyName}`,
+                  })}
                 >
                   <UserMinusIcon className="h-5 w-5" aria-hidden />
-                  Remove
+                  {t("portal.cg.remove")}
                 </button>
               </li>
             ))}
@@ -262,18 +277,14 @@ export function CaregiverSetup() {
       <section className="panel" aria-labelledby="caregiver-add-title">
         <div className="panel-header">
           <h2 id="caregiver-add-title" className="panel-title">
-            Add someone you care for
+            {t("portal.cg.addTitle")}
           </h2>
         </div>
         <div className="panel-body">
           {!canAdd ? (
             <div className="banner banner-info">
               <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-              <p>
-                Adding people you care for is only available for portal accounts
-                created on this device. Ask clinic staff to help link a family
-                member&apos;s record to your account.
-              </p>
+              <p>{t("portal.cg.addUnavailable")}</p>
             </div>
           ) : (
             <form
@@ -281,11 +292,11 @@ export function CaregiverSetup() {
               className="space-y-4"
               noValidate
             >
-              <p className="text-caption text-ink-muted">All fields are required.</p>
+              <p className="text-caption text-ink-muted">{t("portal.cg.allRequired")}</p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="cg-given" className="field-label">
-                    First name
+                    {t("portal.cg.field.givenName")}
                   </label>
                   <input
                     {...form.register("givenName")}
@@ -299,13 +310,13 @@ export function CaregiverSetup() {
                   />
                   {errors.givenName && (
                     <p id="cg-given-error" className="field-error" role="alert">
-                      {errors.givenName.message}
+                      {t(String(errors.givenName.message))}
                     </p>
                   )}
                 </div>
                 <div>
                   <label htmlFor="cg-family" className="field-label">
-                    Last name
+                    {t("portal.cg.field.familyName")}
                   </label>
                   <input
                     {...form.register("familyName")}
@@ -319,7 +330,7 @@ export function CaregiverSetup() {
                   />
                   {errors.familyName && (
                     <p id="cg-family-error" className="field-error" role="alert">
-                      {errors.familyName.message}
+                      {t(String(errors.familyName.message))}
                     </p>
                   )}
                 </div>
@@ -328,7 +339,7 @@ export function CaregiverSetup() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="cg-dob" className="field-label">
-                    Date of birth
+                    {t("portal.cg.field.dob")}
                   </label>
                   <input
                     {...form.register("dob")}
@@ -342,13 +353,13 @@ export function CaregiverSetup() {
                   />
                   {errors.dob && (
                     <p id="cg-dob-error" className="field-error" role="alert">
-                      {errors.dob.message}
+                      {t(String(errors.dob.message))}
                     </p>
                   )}
                 </div>
                 <div>
                   <label htmlFor="cg-relationship" className="field-label">
-                    They are
+                    {t("portal.cg.field.relationship")}
                   </label>
                   <select
                     {...form.register("relationship")}
@@ -362,13 +373,13 @@ export function CaregiverSetup() {
                   >
                     {RELATIONSHIP_OPTIONS.map((o) => (
                       <option key={o.value} value={o.value}>
-                        {o.label}
+                        {t(`portal.cg.rel.${o.value}`)}
                       </option>
                     ))}
                   </select>
                   {errors.relationship && (
                     <p id="cg-relationship-error" className="field-error" role="alert">
-                      {errors.relationship.message}
+                      {t(String(errors.relationship.message))}
                     </p>
                   )}
                 </div>
@@ -376,11 +387,11 @@ export function CaregiverSetup() {
 
               <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
                 <Link to="/patient/dashboard" className="btn-secondary">
-                  Cancel
+                  {t("portal.cg.cancel")}
                 </Link>
                 <button type="submit" disabled={adding} className="btn-primary">
                   <UserPlusIcon className="h-5 w-5" aria-hidden />
-                  Review and add
+                  {t("portal.cg.review")}
                 </button>
               </div>
             </form>
@@ -392,35 +403,32 @@ export function CaregiverSetup() {
         open={!!pending}
         title={
           pending
-            ? `Add ${pending.givenName} ${pending.familyName} to your account?`
+            ? t("portal.cg.addConfirmTitle", {
+                name: `${pending.givenName} ${pending.familyName}`,
+              })
             : ""
         }
-        confirmLabel="Add to my account"
-        cancelLabel="Go back"
-        busyLabel="Adding…"
+        confirmLabel={t("portal.cg.addConfirm")}
+        cancelLabel={t("portal.cg.goBack")}
+        busyLabel={t("portal.cg.adding")}
         busy={adding}
-        error={addError}
+        error={say(addError)}
         onConfirm={() => void confirmAdd()}
         onCancel={() => setPending(null)}
       >
         {pending && (
           <>
             <p>
-              {relationshipLabel(pending.relationship)}, born{" "}
-              {formatNigerianDate(pending.dob)}.
+              {t("portal.cg.bornOn", {
+                relationship: relLabel(pending.relationship),
+                date: formatNigerianDate(pending.dob),
+              })}
             </p>
             <ul className="list-disc space-y-1 pl-5">
-              <li>A new profile for {pending.givenName} is created on this device.</li>
-              <li>
-                Anyone who logs in to your account can see and update{" "}
-                {pending.givenName}&apos;s profile. Clinic staff who use this
-                device can also see it.
-              </li>
-              <li>
-                It does not open records the clinic already holds for{" "}
-                {pending.givenName}.
-              </li>
-              <li>You can remove the profile from your account at any time on this page.</li>
+              <li>{t("portal.cg.addPoint1", { name: pending.givenName })}</li>
+              <li>{t("portal.cg.addPoint2", { name: pending.givenName })}</li>
+              <li>{t("portal.cg.addPoint3", { name: pending.givenName })}</li>
+              <li>{t("portal.cg.addPoint4")}</li>
             </ul>
           </>
         )}
@@ -431,29 +439,22 @@ export function CaregiverSetup() {
         destructive
         title={
           toRemove
-            ? `Remove ${toRemove.givenName} ${toRemove.familyName} from your account?`
+            ? t("portal.cg.removeConfirmTitle", {
+                name: `${toRemove.givenName} ${toRemove.familyName}`,
+              })
             : ""
         }
-        confirmLabel="Remove from my account"
-        cancelLabel="Keep profile"
-        error={removeError}
+        confirmLabel={t("portal.cg.removeConfirm")}
+        cancelLabel={t("portal.cg.keep")}
+        error={say(removeError)}
         onConfirm={confirmRemove}
         onCancel={() => setToRemove(null)}
       >
         {toRemove && (
           <ul className="list-disc space-y-1 pl-5">
-            <li>
-              You will no longer be able to see or switch to {toRemove.givenName}
-              &apos;s profile in your portal.
-            </li>
-            <li>
-              If you are viewing their profile now, the portal switches back to
-              yours.
-            </li>
-            <li>
-              {toRemove.givenName}&apos;s details stay saved on this device.
-              Adding them again later creates a new, separate profile.
-            </li>
+            <li>{t("portal.cg.removePoint1", { name: toRemove.givenName })}</li>
+            <li>{t("portal.cg.removePoint2")}</li>
+            <li>{t("portal.cg.removePoint3", { name: toRemove.givenName })}</li>
           </ul>
         )}
       </ConfirmDialog>
