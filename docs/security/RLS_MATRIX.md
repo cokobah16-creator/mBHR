@@ -326,7 +326,7 @@ doctor.
 | patient_portal_sessions | own sessions; P(users) | own | own; P(users) | own; P(users) |
 | patient_portal_access_logs | P(audit_access); own | own | none | none |
 | patient_portal_preferences | staff; own | own | own | own |
-| patient_secure_messages | staff; own | P(consult) with `from_patient` false; own with `from_patient` true | P(consult); own (read and archive flags only) | P(consult) |
+| patient_secure_messages | staff; own | P(consult) with `from_patient` false; own with `from_patient` true (the server sets `from_name`, `staff_id`, `read`, `is_archived` and timestamps: 20260927100120) | P(consult); own: `read` only, false to true, on clinic messages (20260927100120) | P(consult) |
 | patient_messages (legacy) | staff; own | P(consult) as 'staff'; own as 'patient' | P(consult); own (flags only) | P(consult) |
 | patient_notifications | staff; own | P(register) | P(register); own (read flags only) | none |
 | patient_appointment_requests | staff; own | own, `pending`, unreviewed | P(register); own `pending` → `cancelled` | none |
