@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  MESSAGE_QUEUE_KEY,
+  clearMessageQueue,
   parseMessageQueue,
   queuedForPatient,
   withoutQueued,
@@ -44,5 +46,13 @@ describe("withoutQueued", () => {
   it("removes one message by id", () => {
     const queue = [msg("a", "p1"), msg("b", "p1")];
     expect(withoutQueued(queue, "a").map((m) => m.id)).toEqual(["b"]);
+  });
+});
+
+describe("clearMessageQueue", () => {
+  it("removes every unsent message from this phone", () => {
+    localStorage.setItem(MESSAGE_QUEUE_KEY, JSON.stringify([msg("a", "p1")]));
+    clearMessageQueue();
+    expect(localStorage.getItem(MESSAGE_QUEUE_KEY)).toBeNull();
   });
 });

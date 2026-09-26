@@ -25,6 +25,11 @@ import {
   readActiveProfile,
   readPortalUser,
 } from "./portalSession";
+import {
+  clearMessageQueue,
+  queuedForPatient,
+  readMessageQueue,
+} from "./messageQueue";
 import { PortalHeader, type PortalProfileProps } from "./shell/PortalHeader";
 import { PortalSideNavigation } from "./shell/PortalNavigation";
 import { PortalMobileNavigation } from "./shell/PortalMobileNavigation";
@@ -114,6 +119,18 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
 
   const handleLogout = async () => {
     if (signingOut) return;
+    // Signing out deletes unsent messages from this phone (it may be shared),
+    // so say so first.
+    const unsent = queuedForPatient(
+      readMessageQueue(),
+      readPortalUser()?.patientId ?? "",
+    ).length;
+    if (
+      unsent > 0 &&
+      !window.confirm(t("portal.msg.signOutUnsent", { count: unsent }))
+    ) {
+      return;
+    }
     setSigningOut(true);
     try {
       const token = sessionStorage.getItem(SESSION_TOKEN_KEY);
@@ -134,6 +151,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       );
     } finally {
       clearPortalSession();
+      clearMessageQueue();
       // signOut() cannot finish offline and then keeps the stored sign-in:
       // remove it from this phone either way.
       if (authClient) clearStoredSupabaseAuth();
