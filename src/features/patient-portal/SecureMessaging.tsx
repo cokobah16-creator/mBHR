@@ -28,6 +28,7 @@ import {
   type QueuedMessage,
 } from "./messageQueue";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 
 interface Message {
   id: string;
@@ -41,14 +42,32 @@ interface Message {
   staff_id?: string;
 }
 
-const QUICK_MESSAGES = [
-  "I am feeling pain",
-  "I need help",
-  "I missed my medication",
-  "I have a question",
+// Only the columns this page shows.
+const MESSAGE_COLUMNS =
+  "id, subject, body, from_patient, from_name, created_at, read, patient_id, staff_id";
+
+const QUICK_MESSAGE_KEYS = [
+  "portal.msg.quick.pain",
+  "portal.msg.quick.help",
+  "portal.msg.quick.missedMedicine",
+  "portal.msg.quick.question",
 ];
 
-type Feedback = { tone: "success" | "warning"; text: string } | null;
+const DELIVERY_KEYS: Record<string, string> = {
+  "Not sent": "portal.msg.status.notSent",
+  Read: "portal.msg.status.read",
+  New: "portal.msg.status.new",
+  "Seen by the clinic team": "portal.msg.status.seen",
+  "Sent, not opened yet": "portal.msg.status.sentNotOpened",
+};
+
+// Error and feedback text are kept as translation keys so the loaders do not
+// depend on the translate function.
+type Feedback = {
+  tone: "success" | "warning";
+  key: string;
+  vars?: Record<string, string>;
+} | null;
 
 function localId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -102,6 +121,9 @@ function MessageDate({ value }: { value: string }) {
 export function SecureMessaging() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useT();
+  const deliveryLabel = (label: string) =>
+    DELIVERY_KEYS[label] ? t(DELIVERY_KEYS[label]) : label;
   const online = useOnlineStatus();
   const [messages, setMessages] = useState<Message[]>([]);
   const [unsent, setUnsent] = useState<QueuedMessage[]>([]);
@@ -128,14 +150,12 @@ export function SecureMessaging() {
     setError("");
     const portalUser = readPortalUser();
     if (!portalUser) {
-      setError(
-        "We could not find your sign-in on this phone. Please log in again.",
-      );
+      setError("portal.msg.err.noSignIn");
       setLoading(false);
       return;
     }
     if (!portalUser.patientId) {
-      setError("Your sign-in details are incomplete. Please log in again.");
+      setError("portal.msg.err.incomplete");
       setLoading(false);
       return;
     }
@@ -151,7 +171,7 @@ export function SecureMessaging() {
     try {
       const { data, error: messagesError } = await supabase
         .from("patient_secure_messages")
-        .select("*")
+        .select(MESSAGE_COLUMNS)
         .eq("patient_id", portalUser.patientId)
         .order("created_at", { ascending: false });
 
@@ -164,7 +184,7 @@ export function SecureMessaging() {
       // Offline, the "You are offline" notice already explains it.
       setError(
         navigator.onLine
-          ? "We could not load your messages. Please try again."
+          ? "portal.msg.err.loadFailed"
           : "",
       );
     } finally {
@@ -181,6 +201,18 @@ export function SecureMessaging() {
     attempted.current = true;
     loadMessages();
   }, [online, loadMessages]);
+
+  // Clinic replies may not arrive live, so check again whenever the patient
+  // comes back to this page (switching apps or tabs).
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        void loadMessages();
+      }
+    };
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [loadMessages]);
 
   // Live updates when the clinic replies (if realtime is available).
   useEffect(() => {
@@ -223,11 +255,13 @@ export function SecureMessaging() {
     if (supabase) {
       setReplyStaffId(null);
       setSelectedMessage(null);
-      setNewMessage({ subject: "Medicine refill request", body: "" });
+      setNewMessage({ subject: t("portal.msg.refillSubject"), body: "" });
       setShowCompose(true);
     }
     // Clear the request so a page refresh does not reopen it.
     navigate(location.pathname, { replace: true, state: null });
+    // t is left out on purpose: it changes every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, location.pathname, navigate]);
 
   useEffect(() => {
@@ -255,7 +289,7 @@ export function SecureMessaging() {
     const subject = newMessage.subject.trim();
     const body = newMessage.body.trim();
     if (!subject || !body) {
-      setComposeError("Add a subject and a message before sending.");
+      setComposeError("portal.msg.err.empty");
       return;
     }
     if (!supabase) return;
@@ -284,15 +318,13 @@ export function SecureMessaging() {
       };
       const saved = writeMessageQueue([...readMessageQueue(), queued]);
       if (!saved) {
-        setComposeError(
-          "You are offline and this phone could not save your message. It has not been sent. Please try again when you are online.",
-        );
+        setComposeError("portal.msg.err.saveFailed");
         return;
       }
       setUnsent(queuedForPatient(readMessageQueue(), portalUser.patientId));
       setFeedback({
         tone: "warning",
-        text: "You are offline, so your message has not been sent. It is saved on this phone. Tap “Send now” when you are back online.",
+        key: "portal.msg.savedOffline",
       });
       resetCompose();
       return;
@@ -307,15 +339,13 @@ export function SecureMessaging() {
       });
       setFeedback({
         tone: "success",
-        text: "Message sent. The clinic team will see it when they next check messages.",
+        key: "portal.msg.sent",
       });
       resetCompose();
       await loadMessages();
     } catch (err) {
       logger.error("Error sending message:", errorName(err));
-      setComposeError(
-        "Your message was not sent. Check your connection and try again.",
-      );
+      setComposeError("portal.msg.err.notSent");
     } finally {
       setSending(false);
     }
@@ -323,9 +353,7 @@ export function SecureMessaging() {
 
   const sendQueued = async (item: QueuedMessage) => {
     if (!supabase || !navigator.onLine) {
-      setError(
-        "You are offline. Connect to the internet to send this message.",
-      );
+      setError("portal.msg.err.offlineSend");
       return;
     }
     setSendingQueuedId(item.id);
@@ -339,13 +367,15 @@ export function SecureMessaging() {
       });
       writeMessageQueue(withoutQueued(readMessageQueue(), item.id));
       setUnsent((prev) => prev.filter((m) => m.id !== item.id));
-      setFeedback({ tone: "success", text: `“${item.subject}” was sent.` });
+      setFeedback({
+        tone: "success",
+        key: "portal.msg.queuedSent",
+        vars: { subject: item.subject },
+      });
       await loadMessages();
     } catch (err) {
       logger.error("Error sending saved message:", errorName(err));
-      setError(
-        "That message was not sent. It is still saved on this phone. Check your connection and try again.",
-      );
+      setError("portal.msg.err.queuedNotSent");
     } finally {
       setSendingQueuedId(null);
     }
@@ -401,13 +431,13 @@ export function SecureMessaging() {
   };
 
   if (loading && !loaded) {
-    return <PortalListSkeleton label="Loading your messages" />;
+    return <PortalListSkeleton label={t("portal.msg.loading")} />;
   }
 
   return (
     <PortalPage
-      title="Messages"
-      description="Write to the outreach clinic team about your care. Messages are not for emergencies."
+      title={t("portal.msg.title")}
+      description={t("portal.msg.description")}
       actions={
         messagingConfigured &&
         !showCompose && (
@@ -417,26 +447,23 @@ export function SecureMessaging() {
             className="btn-primary"
           >
             <PencilSquareIcon className="h-5 w-5" aria-hidden />
-            New message
+            {t("portal.msg.new")}
           </button>
         )
       }
     >
       {!messagingConfigured && (
-        <PortalNotice tone="info" title="Messages are not available here">
-          This portal is not connected to the clinic&apos;s online system, so
-          messages cannot be sent or received here. Speak to the outreach team
-          at your next visit.
+        <PortalNotice tone="info" title={t("portal.msg.notConnectedTitle")}>
+          {t("portal.msg.notConnected")}
         </PortalNotice>
       )}
 
       {messagingConfigured && !online && (
-        <PortalNotice tone="offline" title="You are offline">
+        <PortalNotice tone="offline" title={t("portal.msg.offlineTitle")}>
           {loaded
-            ? "You are seeing the messages loaded when this phone was last online. New replies cannot load right now. "
-            : "Your messages cannot load right now. "}
-          You can still write a message: it will be saved on this phone, not
-          sent, until you tap “Send now” while online.
+            ? t("portal.msg.offlineStale")
+            : t("portal.msg.offlineEmpty")}{" "}
+          {t("portal.msg.offlineWrite")}
         </PortalNotice>
       )}
 
@@ -451,17 +478,19 @@ export function SecureMessaging() {
                 className="btn-secondary"
               >
                 <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                Try again
+                {t("portal.error.retry")}
               </button>
             ) : undefined
           }
         >
-          {error}
+          {t(error)}
         </PortalNotice>
       )}
 
       {feedback && (
-        <PortalNotice tone={feedback.tone}>{feedback.text}</PortalNotice>
+        <PortalNotice tone={feedback.tone}>
+          {feedback.vars ? t(feedback.key, feedback.vars) : t(feedback.key)}
+        </PortalNotice>
       )}
 
       {showCompose && messagingConfigured && (
@@ -473,13 +502,13 @@ export function SecureMessaging() {
         >
           <div className="panel-header">
             <h2 id="compose-title" className="panel-title">
-              {replyStaffId ? "Reply" : "New message"}
+              {replyStaffId ? t("portal.msg.reply") : t("portal.msg.new")}
             </h2>
           </div>
           <div className="panel-body space-y-4">
             <div>
               <label htmlFor="message-subject" className="field-label">
-                Subject
+                {t("portal.msg.subject")}
               </label>
               <input
                 ref={subjectRef}
@@ -495,11 +524,15 @@ export function SecureMessaging() {
             </div>
 
             <fieldset>
-              <legend className="field-label">Quick messages</legend>
+              <legend className="field-label">
+                {t("portal.msg.quickLegend")}
+              </legend>
               <div className="flex flex-wrap gap-2">
-                {QUICK_MESSAGES.map((msg) => (
+                {QUICK_MESSAGE_KEYS.map((key) => {
+                  const msg = t(key);
+                  return (
                   <button
-                    key={msg}
+                    key={key}
                     type="button"
                     onClick={() => setNewMessage({ ...newMessage, body: msg })}
                     aria-pressed={newMessage.body === msg}
@@ -512,14 +545,17 @@ export function SecureMessaging() {
                   >
                     {msg}
                   </button>
-                ))}
+                  );
+                })}
               </div>
-              <p className="field-hint">Tapping one fills in the message.</p>
+              <p className="field-hint">
+                {t("portal.msg.quickHint")}
+              </p>
             </fieldset>
 
             <div>
               <label htmlFor="message-body" className="field-label">
-                Message
+                {t("portal.msg.body")}
               </label>
               <textarea
                 id="message-body"
@@ -534,17 +570,17 @@ export function SecureMessaging() {
             </div>
 
             {composeError && (
-              <PortalNotice tone="danger">{composeError}</PortalNotice>
+              <PortalNotice tone="danger">{t(composeError)}</PortalNotice>
             )}
 
             <div className="flex flex-wrap gap-2">
               <button type="submit" disabled={sending} className="btn-primary">
                 <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
                 {sending
-                  ? "Sending…"
+                  ? t("portal.appt.sending")
                   : online
-                    ? "Send message"
-                    : "Save on this phone"}
+                    ? t("portal.msg.send")
+                    : t("portal.msg.saveOnPhone")}
               </button>
               <button
                 type="button"
@@ -552,7 +588,7 @@ export function SecureMessaging() {
                 disabled={sending}
                 className="btn-secondary"
               >
-                Cancel
+                {t("action.cancel")}
               </button>
             </div>
           </div>
@@ -563,7 +599,7 @@ export function SecureMessaging() {
         <section className="panel" aria-labelledby="unsent-title">
           <div className="panel-header">
             <h2 id="unsent-title" className="panel-title">
-              Not sent yet
+              {t("portal.msg.unsentTitle")}
             </h2>
           </div>
           <ul className="divide-y divide-line">
@@ -581,26 +617,28 @@ export function SecureMessaging() {
                       {item.subject}
                     </p>
                     <StatusBadge tone={delivery.tone}>
-                      {delivery.label} – saved on this phone
+                      {t("portal.msg.savedBadge", {
+                        status: deliveryLabel(delivery.label),
+                      })}
                     </StatusBadge>
                   </div>
                   <p className="whitespace-pre-wrap text-body text-ink-secondary line-clamp-3">
                     {item.body}
                   </p>
                   <p className="text-caption text-ink-muted">
-                    Written <MessageDate value={item.created_at} />
+                    {t("portal.msg.written")} <MessageDate value={item.created_at} />
                   </p>
                   {confirming ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-body text-ink">
-                        Delete this unsent message?
+                        {t("portal.msg.deleteConfirm")}
                       </p>
                       <button
                         type="button"
                         onClick={() => discardQueued(item)}
                         className="btn-danger"
                       >
-                        Yes, delete
+                        {t("portal.msg.yesDelete")}
                       </button>
                       <button
                         type="button"
@@ -610,7 +648,7 @@ export function SecureMessaging() {
                         // when the Delete button is replaced.
                         autoFocus
                       >
-                        Keep it
+                        {t("portal.msg.keepIt")}
                       </button>
                     </div>
                   ) : (
@@ -626,7 +664,9 @@ export function SecureMessaging() {
                         className="btn-primary"
                       >
                         <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
-                        {sendingQueuedId === item.id ? "Sending…" : "Send now"}
+                        {sendingQueuedId === item.id
+                          ? t("portal.appt.sending")
+                          : t("portal.msg.sendNow")}
                       </button>
                       <button
                         type="button"
@@ -635,7 +675,7 @@ export function SecureMessaging() {
                         className="btn-secondary"
                       >
                         <TrashIcon className="h-5 w-5" aria-hidden />
-                        Delete
+                        {t("portal.msg.delete")}
                       </button>
                     </div>
                   )}
@@ -655,7 +695,7 @@ export function SecureMessaging() {
               className="btn-ghost -ml-2"
             >
               <ArrowLeftIcon className="h-5 w-5" aria-hidden />
-              Back to messages
+              {t("portal.msg.back")}
             </button>
             {!selectedMessage.from_patient && messagingConfigured && (
               <button
@@ -663,7 +703,7 @@ export function SecureMessaging() {
                 onClick={handleReply}
                 className="btn-primary"
               >
-                Reply
+                {t("portal.msg.reply")}
               </button>
             )}
           </div>
@@ -680,7 +720,7 @@ export function SecureMessaging() {
               <span className="flex items-center gap-1">
                 <UserCircleIcon className="h-5 w-5" aria-hidden />
                 {selectedMessage.from_patient
-                  ? "You"
+                  ? t("portal.msg.you")
                   : selectedMessage.from_name}
               </span>
               <MessageDate value={selectedMessage.created_at} />
@@ -694,12 +734,12 @@ export function SecureMessaging() {
                   }
                   icon
                 >
-                  {
+                  {deliveryLabel(
                     messageDeliveryInfo({
                       fromPatient: true,
                       read: selectedMessage.read,
-                    }).label
-                  }
+                    }).label,
+                  )}
                 </StatusBadge>
               )}
             </div>
@@ -714,14 +754,14 @@ export function SecureMessaging() {
           <section className="panel" aria-labelledby="inbox-title">
             <div className="panel-header">
               <h2 id="inbox-title" className="panel-title">
-                Your messages
+                {t("portal.msg.inbox")}
               </h2>
             </div>
             {messages.length === 0 ? (
               <EmptyState
                 icon={InboxIcon}
-                title="No messages yet"
-                description="Send a message to the outreach team if you have a question about your care."
+                title={t("portal.msg.emptyTitle")}
+                description={t("portal.msg.emptyBody")}
               />
             ) : (
               <ul className="divide-y divide-line">
@@ -751,15 +791,15 @@ export function SecureMessaging() {
                           </span>
                           <span className="block text-caption text-ink-muted">
                             {message.from_patient
-                              ? "From you"
-                              : `From ${message.from_name}`}
+                              ? t("portal.msg.fromYou")
+                              : t("portal.msg.from", { name: message.from_name })}
                           </span>
                           <span className="mt-1 block text-body text-ink-secondary line-clamp-2">
                             {message.body}
                           </span>
                           <span className="mt-2 flex flex-wrap items-center gap-2">
                             <StatusBadge tone={delivery.tone} icon>
-                              {delivery.label}
+                              {deliveryLabel(delivery.label)}
                             </StatusBadge>
                           </span>
                         </span>
@@ -782,9 +822,7 @@ export function SecureMessaging() {
 
       {messagingConfigured && (
         <p className="text-caption text-ink-muted">
-          The clinic team reads messages when they can, so we cannot promise a
-          reply time. If you need help urgently, use the Emergency button at
-          the top of the page.
+          {t("portal.msg.replyTime")}
         </p>
       )}
     </PortalPage>

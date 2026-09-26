@@ -75,3 +75,15 @@ export function writeMessageQueue(queue: readonly QueuedMessage[]): boolean {
     return false;
   }
 }
+
+/**
+ * Forget every unsent message on this phone. Sign-out calls it, so the next
+ * person on a shared phone cannot read what was written.
+ */
+export function clearMessageQueue(): void {
+  try {
+    localStorage.removeItem(MESSAGE_QUEUE_KEY);
+  } catch {
+    // Storage blocked: nothing to clear.
+  }
+}
