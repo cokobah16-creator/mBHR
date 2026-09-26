@@ -88,6 +88,6 @@ describe("DocumentUpload", () => {
   it("shows a clinic record's type and source in English", async () => {
     renderPage();
     expect(await screen.findByText("Clinic record")).toBeInTheDocument();
-    expect(screen.getByText(/Scan or X-ray/)).toBeInTheDocument();
+    expect(screen.getByText(/^Scan or X-ray ·/)).toBeInTheDocument();
   });
 });
