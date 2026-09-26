@@ -109,6 +109,20 @@ export function readActiveProfile(): ActiveProfile | null {
   return parseActiveProfile(safeGet(ACTIVE_PROFILE_KEY));
 }
 
+/**
+ * The one answer every portal page should use for "whose records am I
+ * showing": the account's own patient, or a caregiver's managed profile when
+ * one is selected and belongs to this account. "" when nobody is signed in.
+ *
+ * This is a display choice only. The server decides what the signed-in
+ * account may read (RLS on every table), whatever id a page asks for.
+ */
+export function currentPatientId(): string {
+  const user = readPortalUser();
+  if (!user) return "";
+  return resolveActivePatientId(user, readActiveProfile());
+}
+
 /** Remove every portal session key from this device. */
 export function clearPortalSession(): void {
   try {
