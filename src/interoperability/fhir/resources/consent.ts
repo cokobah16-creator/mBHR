@@ -157,7 +157,7 @@ export const definition: ResourceDefinition = {
   sensitiveSearch: false,
   notes: [
     "Staff accounts cannot read or search consents here (403), whatever their role: the mBHR staff app shows only an External sharing badge (Allowed, Restricted or Withdrawn), and this interface shows staff no more than the app does. This holds until mBHR has a staff consent screen.",
-    "A withdrawn consent is kept and published as inactive, and so is a consent past its end date (no longer in force, as mBHR's consent check treats it); its end date is published in provision.period. Neither is ever shown as active or deleted.",
+    "A withdrawn consent is kept and published as inactive, and so is an active consent past its end date (no longer in force, as mBHR's consent check treats it); its end date is published in provision.period. Neither is ever shown as active or deleted. A draft or proposed consent, never in force, keeps its own status.",
     "Who recorded, verified or withdrew a consent, the reason for a withdrawal, who signed it and its source document are never published; neither is a performer.",
     "A rule's actor names the kind of recipient recorded (for example External system), never a specific one. A consent with a rule for one specific recipient is therefore not published: it would read as a rule for every recipient of that kind.",
     "Every consent is recorded with a policy link. A consent that still cites no usable policy (FHIR requires one) or whose rules cannot be shown without changing their meaning is not published; a searchset says how many were left out.",

@@ -135,13 +135,14 @@ The table above is the single place to change what the gateway allows.
 ### Open owner decisions
 
 The owner's rule is that FHIR never lets staff read more than the staff
-app shows. One row of the table goes beyond today's staff app. It is a
-default chosen during the build, not a settled decision, and needs the
+app shows. Two rows of the table go beyond today's staff app. They are
+defaults chosen during the build, not settled decisions, and need the
 owner's decision before the gateway is enabled with real data:
 
 | Type | Who can read it | What the staff app shows today | Options |
 | --- | --- | --- | --- |
 | AuditEvent | audit_access (admin, lead clinician, auditor): the FHIR access trail for any patient | No staff screen shows the FHIR access trail per patient | Keep for audit_access; or refuse until an audit screen exists |
+| Provenance of document uploads (`docup-<id>`) | audit_access (admin, lead clinician, auditor): for any patient, that a document was uploaded, its id, when, and whether through the portal or an mBHR account; never its content, and its DocumentReference target is refused to every staff account (decision 2.7) | No staff screen shows patient documents or their uploads | Keep for audit_access; or leave uploads out of staff Provenance until a staff documents screen exists |
 
 Two such rows were decided on 2026-09-26 (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`,
 section 2.7):
@@ -399,12 +400,12 @@ by the gateway; several are also in the CapabilityStatement notes.
 ## Findings
 
 Found in Phase 0 (at `mainone` 2140351). F1 to F4 must be resolved before
-FHIR is exposed beyond mBHR's own staff and portal patients; none is
-changed by this work.
+FHIR is exposed beyond mBHR's own staff and portal patients; this work
+changes none of them (F1 was resolved by the owner on 26 September 2026).
 
 | # | Severity | Finding | Status / owner |
 | --- | --- | --- | --- |
-| F1 | Critical | The deployed TEFCA edge functions (`tefca-ias`, `tefca-bulk`, `tefca-oauth`) still run code with the header bypass the September audit found; #135 fixed the repository copy only. Anyone who knows the URL can reach the old code. | Owner decision pending (delete them, or deploy the fixed versions); tracked in the System audit fixes work. This gateway does not use them. |
+| F1 | Critical → resolved | The deployed TEFCA edge functions (`tefca-ias`, `tefca-bulk`, `tefca-oauth`) still ran code with the header bypass the September audit found; #135 fixed the repository copy only. **Update, 26 September 2026:** the owner deleted all three from Supabase (about 09:22 UTC); a read-only check at 09:23 listed only `send-otp-email`, `send-otp-sms`, `send-sms-reminder` and `staff-admin`. | Resolved by deletion. The fixed code stays in the repository and must not be deployed until a partner needs it (F2). This gateway never used them. |
 | F2 | High | Those functions read with the **service-role key**, so row-level security does not apply, and they keep a second copy of clinical data in `fhir_resources`. | Keep them undeployed until a partner needs them; the SMART design decides whether they are retired or rebuilt on this gateway. |
 | F3 | High → reconciled | Production had drifted from the migrations (62 unapplied, including the Sept 24 permission helpers, the RLS rewrite and Wave A/B). **Update, 25 September 2026 (22:49 UTC):** production now has every file in `supabase/migrations/`; the TEFCA/FHIR files, including both interop migrations and `patients.fhir_id`, are deferred and not applied. | Reconciliation was done by the HRIS transformation work. The gateway still checks role and permission in the database itself instead of trusting RLS alone, and fails closed (503) where helpers or columns are missing. Enabling FHIR on production needs the deferred files applied first (re-versioned), with the owner's go-ahead. |
 | F4 | High | No organisation or site on clinical rows (F6) plus open sign-up: any external party would see all patients of any permitted role. | Blocks external clients and multi-organisation use; needs a data-model change first. |

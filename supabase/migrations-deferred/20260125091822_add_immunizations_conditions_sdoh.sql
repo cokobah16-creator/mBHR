@@ -299,12 +299,3 @@ COMMENT ON TABLE sdoh_observations IS 'Social Determinants of Health observation
 COMMENT ON COLUMN immunizations.vaccine_code IS 'CVX vaccine code from CDC';
 COMMENT ON COLUMN conditions.condition_code IS 'ICD-10-CM or SNOMED CT code';
 COMMENT ON COLUMN sdoh_observations.category IS 'SDOH domain: housing, food, transportation, employment, education, social, financial, safety';
-
--- Owner decision (docs/clinical/CLINICAL_LOGIC_CHANGES.md 2.7, 2026-09-26):
--- a diagnosis's clinical status, verification status and category are never
--- filled in. A blank stays NULL, so FHIR publishes only what staff chose.
--- CREATE TABLE IF NOT EXISTS keeps an older copy's defaults; this removes them.
-ALTER TABLE conditions
-  ALTER COLUMN clinical_status DROP DEFAULT,
-  ALTER COLUMN verification_status DROP DEFAULT,
-  ALTER COLUMN category DROP DEFAULT;

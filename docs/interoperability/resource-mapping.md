@@ -221,8 +221,8 @@ Served by the same Observation module, after vital signs.
 | Who reads | Staff with register, vitals, consult or dispense. Not available to patients. |
 
 Every searchset carries a note: mBHR does not record "no known allergies";
-an empty result means no active allergy is recorded, not that the patient
-has none. Text such as "None" or "NKDA" typed as an allergen is published
+an empty result means no active allergy matched the search, not that the
+patient has none. Text such as "None" or "NKDA" typed as an allergen is published
 as written, as an allergy.
 
 | Source | FHIR | |

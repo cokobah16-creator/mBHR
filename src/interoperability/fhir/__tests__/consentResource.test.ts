@@ -695,7 +695,7 @@ describe("Consent definition", () => {
     const status = definition.searchParams.find((p) => p.name === "status");
     expect(status?.documentation).toMatch(/past its end date|end date/);
     expect(status?.documentation).toMatch(/inactive/);
-    expect((definition.notes ?? []).some((n) => /published as inactive, and so is a consent past its end date/.test(n))).toBe(true);
+    expect((definition.notes ?? []).some((n) => /published as inactive, and so is an active consent past its end date.*draft or proposed consent, never in force, keeps its own status/.test(n))).toBe(true);
   });
 
   it("the conformance examples include an ended consent, published as inactive", () => {

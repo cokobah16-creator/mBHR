@@ -106,7 +106,7 @@ export const definition: ResourceDefinition = {
     "Staff with lab_review but not audit_access see laboratory events only, and must give _id, target or patient (a recorded range alone is refused).",
     "A review or release is published only while it still stands: when a reviewed result's value, unit, range or interpretation changes, its review and release are cleared and the earlier events are left out (a withhold stays, as the result stays off the portal).",
     "Merges recorded before the server-side merge function (no server-stamped actor) are not published.",
-    "Document uploads name no person: 'Patient portal account' for a portal upload, otherwise 'mBHR account' (documents stored before the ownership change are all marked clinic records, whoever uploaded them). Removed documents are left out.",
+    "Document uploads name no person: 'Patient portal account' for a portal upload, otherwise 'mBHR account' (documents stored before the ownership change are all marked clinic records, whoever uploaded them). Removed documents are left out. An upload event names its DocumentReference, which no staff account can read (staff get no documents here).",
     "Events of a laboratory result that a newer result replaced are left out, like the result itself.",
     "Never published: withhold reasons, merge snapshots, who asked for a merge on the tablet, account ids, device ids, storage paths.",
     "Staff only; not available to patients.",

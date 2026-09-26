@@ -93,7 +93,8 @@
 --     VOLATILE (it may mint ids): call it with POST.
 --   - fhir_consent_directives: a selector (patient ids or consent ids) is
 --     required from every caller, staff included. Staff must hold consult,
---     portal_manage or audit_access (the Consent read permissions) for it
+--     portal_manage or audit_access (the gateway consent step's lookup list;
+--     no staff account reads the FHIR Consent resource, decision 2.7) for it
 --     and for interop_consent_summary: the RPCs are open to every signed-in
 --     account through the API, so the gateway's narrowing is not a
 --     boundary. (The design said any staff role; the gateway must not load
@@ -1298,8 +1299,9 @@ COMMENT ON FUNCTION interop.consent_directives_json(uuid[]) IS
 -- ----------------------------------------------------------------------------
 -- 8e. fhir_consent_directives (FHIR Consent source)
 -- ----------------------------------------------------------------------------
--- Staff holding consult, portal_manage or audit_access (the Consent read
--- permissions): any patient. A portal patient (or a staff account without
+-- Staff holding consult, portal_manage or audit_access (the gateway consent
+-- step's lookup list; no staff account reads the FHIR Consent resource,
+-- decision 2.7): any patient. A portal patient (or a staff account without
 -- those permissions that is also a portal patient): their own records,
 -- including records merged into them (interop.patient_members: a consent
 -- recorded before a merge keeps the old patient id); p_patient_ids must all
@@ -1404,7 +1406,7 @@ BEGIN
      OR NOT interop.caller_has_any(ARRAY['portal_manage', 'consult']) THEN
     RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501';
   END IF;
-  IF p_policy_uri IS NULL OR btrim(p_policy_uri) = '' THEN
+  IF p_policy_uri IS NULL OR p_policy_uri !~ '[^[:space:]]' THEN
     RAISE EXCEPTION 'a policy link is required' USING ERRCODE = '22023';
   END IF;
   IF COALESCE(

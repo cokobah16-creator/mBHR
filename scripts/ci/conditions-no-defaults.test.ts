@@ -30,12 +30,6 @@ describe("public.conditions fills in no status (owner decision 2.7)", () => {
     );
   });
 
-  it("drops the defaults from an older copy of the table", () => {
-    expect(SQL).toMatch(
-      /ALTER TABLE conditions\s+ALTER COLUMN clinical_status DROP DEFAULT,\s+ALTER COLUMN verification_status DROP DEFAULT,\s+ALTER COLUMN category DROP DEFAULT;/,
-    );
-  });
-
   it("no held-back migration sets a default on conditions again", () => {
     for (const file of readdirSync(DEFERRED).filter((f) => f.endsWith(".sql"))) {
       const sql = readFileSync(join(DEFERRED, file), "utf8");

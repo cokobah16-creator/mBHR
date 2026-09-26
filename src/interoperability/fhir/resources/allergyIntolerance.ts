@@ -143,7 +143,7 @@ export const definition: ResourceDefinition = {
   patientAccess: false,
   sensitiveSearch: false,
   notes: [
-    "mBHR does not record 'no known allergies': an empty result means no active allergy is recorded, not that the patient has none. Every searchset says so.",
+    "mBHR does not record 'no known allergies': an empty result means no active allergy matched this search, not that the patient has none. Every searchset says so.",
     "Allergies recorded on a tablet that has not synced yet are not included.",
     "No verificationStatus or type: mBHR does not record whether an allergy was confirmed, or whether it is an allergy or an intolerance.",
     "Only allergies staff see as active in mBHR are published. An allergy a staff member marked inactive is left out whatever the reason (mBHR records none; the same action removes entries made in error and duplicates): a read of it is 'not found', no search returns it, and a system that copied it earlier is not told.",

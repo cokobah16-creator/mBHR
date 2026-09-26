@@ -302,7 +302,7 @@ data; today it is off.
 | R9 | IP hashes become reversible if `FHIR_AUDIT_IP_SECRET` leaks | Low | Low | secret only in server environment variables; rotate on exposure; unset means no IP information at all | Engineering |
 | R10 | The web app's offline IndexedDB copies are not encrypted at field level | Medium | High | out of FHIR scope; device encryption, screen lock and the app PIN; field-level encryption work tracked separately | Engineering |
 | R11 | Patient data transits Vercel and Supabase infrastructure; regions and processing terms not recorded here | Medium | Medium | confirm hosting regions and processing agreements for both providers before enabling | Owner (DIOF) |
-| R12 | The older TEFCA functions publish the same data outside these controls (F1, F2) | Medium | High | keep them undeployed or fix them before any exposure; not used by the gateway | Owner (DIOF) |
+| R12 | The older TEFCA functions publish the same data outside these controls (F1, F2) | Medium | High | deleted from Supabase on 26 September 2026 (F1); keep them undeployed or fix them before any exposure; not used by the gateway | Owner (DIOF) |
 | R13 | A clinic document reaches a patient before any release step | Low | Medium | Phase 2 gives portal patients content only for their own uploads | Clinical lead |
 | R14 | A consent withdrawal cannot recall data already disclosed | Low (no disclosures are enabled) | Medium | consent is evaluated per request, so withdrawal stops future access; say so in consent wording | Owner (DIOF) |
 | R15 | Error answers leak database detail | Low | Medium | fixed OperationOutcome messages; only the SQLSTATE of a database error is examined, never its message | Engineering |

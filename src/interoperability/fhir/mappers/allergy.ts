@@ -105,7 +105,7 @@ export const ALLERGY_NKA_CAVEAT: OperationOutcomeIssue = {
   severity: "information",
   code: "informational",
   diagnostics:
-    "mBHR does not record 'no known allergies'; an empty result means no active allergy is recorded, not that the patient has none.",
+    "mBHR does not record 'no known allergies'; an empty result means no active allergy matched this search, not that the patient has none.",
 };
 
 export interface AllergyMapContext extends MapContext {

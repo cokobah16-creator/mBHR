@@ -17,8 +17,9 @@ tables `oauth_clients`, `oauth_authorization_codes`, `oauth_access_tokens`,
 `oauth_refresh_tokens` and `oauth_signing_keys`. They are not used here
 because:
 
-- the deployed issuer runs code with a known bypass (finding F1 in
-  [security.md](security.md#findings));
+- the deployed issuer ran code with a known bypass (finding F1 in
+  [security.md](security.md#findings)); the owner deleted it on
+  26 September 2026, and it must not be redeployed as is;
 - its tokens lead to the service-role functions, which bypass row-level
   security (F2);
 - clinical rows have no organisation, so a client could not be limited to

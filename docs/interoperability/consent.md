@@ -391,11 +391,12 @@ mapping is in [resource-mapping.md](resource-mapping.md#consent--the-consent-reg
   `FHIR_PATIENT_ACCESS_ENABLED`) sees only their own (restriction
   `own_consents_only`).
 - A withdrawn record is published as `inactive`, never `active`.
-- A consent past its end date is published as `inactive` (no longer in
-  force) with its end date in `provision.period`, as the consent check
+- An active consent past its end date is published as `inactive` (no
+  longer in force) with its end date in `provision.period`, as the consent check
   (`consent_expired`) and the portal (ended) treat it; `status=active`
   never matches it. The time is the gateway's request time, the one the
-  access decision used.
+  access decision used. A draft or proposed record, never in force,
+  keeps its own status.
 - A record is published whole or not at all. Recording a consent needs a
   policy link, so every record has one; a record that still cites no
   usable `policy_uri` is not published (R4 needs a policy or a policy

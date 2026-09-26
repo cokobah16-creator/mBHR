@@ -824,7 +824,7 @@ describe("AllergyIntolerance search", () => {
     expect(matches(b)).toEqual([]);
     expect(outcomes(b)).toEqual([ALLERGY_NKA_CAVEAT]);
     expect(outcomes(b)[0].diagnostics).toBe(
-      "mBHR does not record 'no known allergies'; an empty result means no active allergy is recorded, not that the patient has none.",
+      "mBHR does not record 'no known allergies'; an empty result means no active allergy matched this search, not that the patient has none.",
     );
     expect(b.entry.some((e: Json) => e.resource.resourceType === "AllergyIntolerance")).toBe(false);
     expect(JSON.stringify(b)).not.toMatch(/"coding"|snomed|716186003|409137002/);
@@ -999,7 +999,7 @@ describe("AllergyIntolerance search by type", () => {
       expect(res.status, q).toBe(400);
       const body = await json(res);
       expect(body, q).toEqual(refusal);
-      expect(JSON.stringify(body), q).not.toMatch(/no active allergy is recorded|no allergy has been recorded/);
+      expect(JSON.stringify(body), q).not.toMatch(/no active allergy matched|no active allergy is recorded|no allergy has been recorded/);
     }
     expect(allergyQueries()).toEqual([]);
     expect(audits).toHaveLength(TYPE_SEARCHES.length);

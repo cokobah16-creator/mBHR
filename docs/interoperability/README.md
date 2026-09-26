@@ -44,8 +44,10 @@ What is not true yet:
   this repository records, to any shared database), nor is
   `patients.fhir_id` (`20260503010000`, also deferred). Production has
   every file in `supabase/migrations/` since 25 September 2026.
-- The representation rules still need clinical sign-off
-  (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7).
+- The representation rules were signed off by the owner on 26 September
+  2026 (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7),
+  and the changes that sign-off asked for are built. Signing off does not
+  switch anything on.
 
 | Document | What it covers |
 | --- | --- |
@@ -84,7 +86,7 @@ What each published type does today, as implemented in code. Write is
 | Encounter | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Implemented. mBHR records no end time; a "Portal entry" visit has no start time and never matches a date search; patients see closed visits only. |
 | Observation (vital signs) | Yes | Yes | No | clinical | Every request | mappers, framework, gateway, security, reviewFixes.gateway | Implemented. LOINC and UCUM from the R4 vital signs profile; no interpretation or reference range. |
 | Observation (laboratory) | Yes | Yes | No | clinical | Every request | laboratory, security | Implemented. Staff need consult or lab_review (other staff get a note in their searches and 403 on a read); patients see released results only; tests carry local codes only (no LOINC). |
-| Condition | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Partial. Reads `public.conditions`, which no app code writes (repository check); diagnoses in consultation notes are not published; clinical status, verification status and category are sent only as recorded (the held-back table fills in none of them). |
+| Condition | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Partial. Reads `public.conditions`, which no app code writes (repository check); diagnoses in consultation notes are not published; clinical status, verification status and category are sent only as recorded (the held-back table fills in none of them), except that an entered-in-error record carries no clinical status. |
 | AllergyIntolerance | Yes | Yes | No | clinical | Every request | allergy | Implemented. Staff only; allergen and reaction as free text; "no known allergies" cannot be recorded; the form's pre-selected type (medication) is not sent as a category; allergies marked inactive are not published; a search by type (`category` or `type`) is refused with a message to ask for all allergies. |
 | Medication | Yes | `_id` only | No | medication | Every request | medication | Partial. Search by `_id` only; name and strength as text, no medicine code. |
 | MedicationRequest | Yes | Yes | No | medication | Every request | medication | Implemented. Staff only; dosing as free text. |
@@ -279,7 +281,7 @@ re-run it on production without a reason.
 | `FHIR_ENABLED` on a preview deployment | not set |
 | `FHIR_ENABLED` in production | not set; do not set until the conditions below hold |
 | `FHIR_PATIENT_ACCESS_ENABLED` anywhere | not set |
-| Clinical review of the representation choices | pending (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7) |
+| Clinical review of the representation choices | signed off by the owner, 26 September 2026 (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7); the changes it asked for are built |
 
 Before enabling anywhere with real data:
 
@@ -310,8 +312,9 @@ Before enabling anywhere with real data:
    `app_users` policy) must both be on the database. On a database with an
    open `app_users` write policy, any self-registered account could add
    an admin row for itself and then read every patient over FHIR.
-3. A clinician has signed off sections 2.5 and 2.7 of the clinical change
-   log.
+3. Sections 2.5 and 2.7 of the clinical change log are signed off (done
+   26 September 2026 by the owner, whose sign-off the project accepts)
+   and the changes they asked for are merged.
 4. `FHIR_AUDIT_IP_SECRET` is set if IP hashes are wanted in the audit.
 5. The open items in [security.md](security.md#known-security-limitations)
    and the risks in [privacy-data-flow.md](privacy-data-flow.md#11-risks)

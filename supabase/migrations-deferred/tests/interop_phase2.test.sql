@@ -477,9 +477,9 @@ SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-p
 SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'pgtap-nopolicy', 'portal', 'active', NULL, NULL, NULL,
     '[{"provision_type":"deny","actor_type":"external_system"}]'::jsonb)$$, '22023', 'a policy link is required',
   'consent: a refusal cannot be recorded without a policy link (it would reach another system only as a count)');
-SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'active', '   ')$$,
+SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'active', E'  \t\n ')$$,
   '22023', 'a policy link is required',
-  'consent: a blank policy link is refused');
+  'consent: a blank policy link (spaces, tabs or new lines) is refused');
 SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'active', 'mbhr data sharing policy')$$,
   '22023', 'invalid consent',
   'consent: a policy that is not a link is refused');

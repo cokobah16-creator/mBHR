@@ -17,7 +17,7 @@ export const conditionDefinition: ResourceDefinition = {
   source: "public.conditions",
   idStrategy: "conditions.id (uuid)",
   fields: [
-    "clinicalStatus (left out when none was recorded)",
+    "clinicalStatus (left out when none was recorded, and on an entered-in-error record)",
     "verificationStatus (the stored code; left out when none was recorded)",
     "category (left out when none was recorded)",
     "severity",
@@ -44,7 +44,7 @@ export const conditionDefinition: ResourceDefinition = {
   sensitiveSearch: false,
   notes: [
     "Diagnoses written in consultation notes are not published yet: an empty result does not mean the patient has no conditions.",
-    "clinicalStatus, verificationStatus and category are sent only as recorded; nothing is filled in. A missing one means none was recorded; it does not mean the diagnosis is inactive, unconfirmed or not on the problem list.",
+    "clinicalStatus, verificationStatus and category are sent only as recorded; nothing is filled in. A missing one means none was recorded (a clinicalStatus is also left out when the record is entered in error); it does not mean the diagnosis is inactive, unconfirmed or not on the problem list.",
   ],
 };
 

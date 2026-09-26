@@ -17,8 +17,10 @@ The rule in the code (`src/interoperability/fhir/terminology/codeSystems.ts`):
   description.
 
 The mapping per resource is in [resource-mapping.md](resource-mapping.md).
-Clinical representation choices are listed for clinician review in
-`docs/clinical/CLINICAL_LOGIC_CHANGES.md` (sections 2.5 and 2.7).
+Clinical representation choices are listed, and were signed off by the
+owner on 26 September 2026, in `docs/clinical/CLINICAL_LOGIC_CHANGES.md`
+(sections 2.5 and 2.7). Only the owner approves a local-to-standard code
+mapping (decision 1 there); none is approved yet.
 
 ## (a) Standard FHIR and HL7 systems
 

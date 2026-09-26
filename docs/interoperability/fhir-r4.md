@@ -269,8 +269,8 @@ element at all (FHIR JSON allows no empty arrays).
 - Condition: every searchset says that diagnoses in consultation notes are
   not published.
 - AllergyIntolerance: every searchset says that mBHR does not record "no
-  known allergies", and that an empty result means no active allergy is
-  recorded.
+  known allergies", and that an empty result means no active allergy
+  matched the search.
 - Consent: the patient's coverage note (staff cannot search Consent).
 - A `patient` naming a merged-away record: an empty result and a note
   naming the kept record.
