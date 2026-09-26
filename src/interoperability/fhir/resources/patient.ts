@@ -22,7 +22,7 @@ export const patientDefinition: ResourceDefinition = {
     "name",
     "telecom",
     "gender (omitted for the placeholder 'other')",
-    "birthDate",
+    "birthDate (a date on the 1st of a month: year only for 1 January, otherwise year and month)",
     "address",
     "link (replaced-by, to the kept record)",
   ],
@@ -40,7 +40,12 @@ export const patientDefinition: ResourceDefinition = {
       type: "string",
       documentation: "Starts-with match on any given or family name. Only together with birthdate.",
     },
-    { name: "birthdate", type: "date", documentation: "Exact date (YYYY-MM-DD). Only together with name." },
+    {
+      name: "birthdate",
+      type: "date",
+      documentation:
+        "Exact date (YYYY-MM-DD). Only together with name. Matches the full stored date of birth, also one on the 1st of a month that birthDate sends as the year or the year and month.",
+    },
   ],
   requiredSearch: [["_id"], ["identifier"], ["name", "birthdate"]],
   writeSupport: false,
@@ -51,6 +56,7 @@ export const patientDefinition: ResourceDefinition = {
   notes: [
     "A merged-away record is a tombstone (active=false, name, replaced-by link); its details live on the kept record.",
     "Name and birth-date searches never return merged-away records.",
+    "birthDate: a date on the 1st of a month is sent as the year only (1 January) or as the year and month (any other month); any other date is sent in full. A name and birth-date search still matches the full stored date, so it can return a record whose birthDate is sent shortened.",
   ],
 };
 
@@ -96,6 +102,8 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   if (name || birthdate) {
     if (!name || !birthdate) throw errors.forbidden("Patient search by name needs birthdate too, and the other way round.");
     const n = parseNameSearch(name, "name");
+    // The full stored date, also when birthDate goes out shortened (a date
+    // on the 1st of a month, mappers/patient.ts publishedBirthDate).
     filters.push(["dob", `eq.${parseExactDate(birthdate, "birthdate")}`]);
     // Any word of the given or family name (a second given name, a
     // double-barrelled family name).

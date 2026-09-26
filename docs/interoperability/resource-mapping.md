@@ -82,12 +82,12 @@ Contents: [Patient](#patient--publicpatients) ·
 | name | family = `family_name`, given = `given_name` split on spaces, text = both. **No `use`**: mBHR does not record whether a name is official. |
 | telecom | `phone` (system phone), `email` (system email). **No `use`**. |
 | gender | `sex`: m/male → male; f/female → female; unknown → unknown; any other value → unknown; **`other` → left out** (registration also stores `other` when nothing was chosen, so it is not an assertion); empty → left out. |
-| birthDate | `dob` as recorded. Whether it was estimated is kept only on the tablet, so it is not flagged. |
+| birthDate | `dob`, with less precision on the 1st of a month: 1 January gives the year only (`2021`), the 1st of any other month gives year and month (`2024-06`), any other date is sent in full. Quick registration saves an age as such a date and whether it was estimated is kept only on the tablet, so every date on the 1st is treated alike (a real birthday on the 1st loses its day too; an estimated year can still be a year out). The stored date is not changed and no "estimated" mark is sent. Owner decision, CLINICAL_LOGIC_CHANGES.md 2.7. |
 | address | text = `address`, district = `lga`, state = `state`. **No `use`**, and no country (not recorded). |
 | link | merged-away record → `replaced-by` the kept record (when the caller can see it). |
 | Merged-away record | Served as a **tombstone**: id, identifier, name, `active: false` and the `replaced-by` link only. Contact details, gender, birth date and address are not repeated on it. |
 | Never published | `photo_url`, `auth_uid`, `family_id`, portal and sync columns, merge metadata. |
-| Searches | `_id`; `identifier`; `name` + `birthdate` together (starts-with on either name, exact date, merged-away records excluded). |
+| Searches | `_id`; `identifier`; `name` + `birthdate` together (starts-with on either name, exact date, merged-away records excluded). `birthdate` matches the full stored date, also when `birthDate` is sent shortened: `birthdate=2021-01-01` finds a record whose `birthDate` is `2021`. |
 | Who reads | Staff with register, vitals, consult, dispense or lab_review; a patient reads their own record. |
 
 ## Encounter ← `public.visits`

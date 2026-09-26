@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { mapPatient, mapGender } from "../mappers/patient";
+import { mapPatient, mapGender, publishedBirthDate } from "../mappers/patient";
+import { calendarDate } from "../mappers/common";
 import { mapEncounter, mapVisitStatus } from "../mappers/encounter";
 import { mapVitalsRow, parseObservationId, mapVitalSign } from "../mappers/observation";
 import { mapCondition } from "../mappers/condition";
@@ -35,6 +36,65 @@ describe("Patient mapper", () => {
     expect(p.gender).toBe("female");
     expect(p.birthDate).toBe("1984-03-02");
     expect(p.address).toEqual([{ text: "12 Example Street", district: "Oshimili South", state: "Delta" }]);
+  });
+
+  // Owner decision, CLINICAL_LOGIC_CHANGES.md 2.7: quick registration saves
+  // an age as the 1st of a month, and the server cannot tell it from a real
+  // birthday, so every date on the 1st goes out with less precision.
+  it("sends a 1 January birth date as the year only", () => {
+    const jan1 = mapPatient({ ...PATIENT_A, dob: "2021-01-01" });
+    expect(jan1.birthDate).toBe("2021");
+    expect(validateResource(jan1)).toEqual([]);
+  });
+
+  it("sends a birth date on the 1st of any other month as the year and month", () => {
+    const jun1 = mapPatient({ ...PATIENT_A, dob: "2024-06-01" });
+    expect(jun1.birthDate).toBe("2024-06");
+    expect(validateResource(jun1)).toEqual([]);
+    expect(mapPatient({ ...PATIENT_A, dob: "2020-12-01" }).birthDate).toBe("2020-12");
+  });
+
+  it("sends any other birth date in full", () => {
+    expect(p.birthDate).toBe("1984-03-02");
+    for (const dob of ["2020-01-02", "2024-02-29", "2019-03-31", "2020-10-10"]) {
+      const full = mapPatient({ ...PATIENT_A, dob });
+      expect(full.birthDate, dob).toBe(dob);
+      expect(validateResource(full), dob).toEqual([]);
+    }
+  });
+
+  it("never changes the stored date, and leaves a missing or unreadable one out as before", () => {
+    const row = { ...PATIENT_A, dob: "2021-01-01" };
+    mapPatient(row);
+    expect(row.dob).toBe("2021-01-01");
+    // A timestamp-shaped value is read as its calendar date first.
+    expect(mapPatient({ ...PATIENT_A, dob: "2021-01-01T00:00:00+00:00" }).birthDate).toBe("2021");
+    for (const dob of [null, undefined, "", "  ", "2021", "2021-01", "01/01/2021", "not a date"]) {
+      expect("birthDate" in mapPatient({ ...PATIENT_A, dob }), String(dob)).toBe(false);
+    }
+    // A merged-away record still carries no birth date.
+    expect("birthDate" in mapPatient({ ...PATIENT_A, dob: "2021-01-01", merged_into: "01HZZSURVIVOR" })).toBe(false);
+    // Only the birth date is shortened: the shared date helper other mappers use is unchanged.
+    expect(calendarDate({ d: "2021-01-01" }, "d")).toBe("2021-01-01");
+  });
+
+  it("shortens only a full date on the 1st, working on the string alone", () => {
+    const cases: [string, string][] = [
+      ["2021-01-01", "2021"],
+      ["2024-06-01", "2024-06"],
+      ["2020-12-01", "2020-12"],
+      ["2020-01-02", "2020-01-02"],
+      ["1984-03-02", "1984-03-02"],
+      ["2024-02-29", "2024-02-29"],
+      ["2019-03-31", "2019-03-31"],
+      ["2021-01-10", "2021-01-10"],
+      // Not a full date: returned unchanged.
+      ["", ""],
+      ["2021", "2021"],
+      ["2021-01", "2021-01"],
+      ["2021-01-01T00:00:00Z", "2021-01-01T00:00:00Z"],
+    ];
+    for (const [dob, out] of cases) expect(publishedBirthDate(dob), dob).toBe(out);
   });
 
   it("does not assert active for an ordinary record, and marks a merged one replaced", () => {

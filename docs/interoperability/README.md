@@ -80,7 +80,7 @@ What each published type does today, as implemented in code. Write is
 
 | Resource | Read | Search | Write | Consent | Audit | Tests | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Patient | Yes | Yes | No | demographics | Every request | mappers, gateway, guard, security | Implemented. No MRN or national id is recorded; a merged-away record is served as a tombstone. |
+| Patient | Yes | Yes | No | demographics | Every request | mappers, gateway, guard, security | Implemented. No MRN or national id is recorded; a merged-away record is served as a tombstone; a birth date on the 1st of a month is sent as the year (1 January) or the year and month, while a name and birth-date search still matches the full stored date. |
 | Encounter | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Implemented. mBHR records no end time; a "Portal entry" visit has no start time and never matches a date search; patients see closed visits only. |
 | Observation (vital signs) | Yes | Yes | No | clinical | Every request | mappers, framework, gateway, security, reviewFixes.gateway | Implemented. LOINC and UCUM from the R4 vital signs profile; no interpretation or reference range. |
 | Observation (laboratory) | Yes | Yes | No | clinical | Every request | laboratory, security | Implemented. Staff need consult or lab_review (other staff get a note in their searches and 403 on a read); patients see released results only; tests carry local codes only (no LOINC). |

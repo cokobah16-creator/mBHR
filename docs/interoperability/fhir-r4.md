@@ -172,7 +172,11 @@ Extra conditions on top of the required groups:
 - `name` (Practitioner, Organization, Location): 2 to 64 letters, digits,
   spaces and `. ' ’ - _ % & ( ) /`; case-insensitive start of the name or
   of any word in it. `%` and `_` match themselves.
-- `birthdate`: an exact date `YYYY-MM-DD` only (other forms are 400).
+- `birthdate`: an exact date `YYYY-MM-DD` only (other forms are 400). It
+  matches the full stored date of birth. A birth date on the 1st of a month
+  is sent as `YYYY` (1 January) or `YYYY-MM` (any other month), so a
+  search for `2021-01-01` can return a Patient whose `birthDate` is
+  `2021`.
 - Dates (`date`, `authored`, `authoredon`, `recorded`):
   `[eq|ge|gt|le|lt]YYYY[-MM[-DD[Thh:mm[:ss]±zone]]]`.
   - A date without a time means the clinic day in Africa/Lagos (UTC+1),
