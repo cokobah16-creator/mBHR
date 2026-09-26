@@ -41,7 +41,7 @@ Clinical representation choices are listed for clinician review in
 | Condition.category | `http://hl7.org/fhir/us/core/CodeSystem/condition-category` | `health-concern` (defined by US Core, not by base R4) |
 | Condition.severity | `http://snomed.info/sct` | `255604002` Mild, `6736007` Moderate (severity modifier), `24484000` Severe |
 | Condition.code | a verified `terminology_map` row | only when a reviewer has verified one (none today); added next to the local code |
-| AllergyIntolerance.clinicalStatus | `http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical` | from `is_active` |
+| AllergyIntolerance.clinicalStatus | `http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical` | from `is_active`: `active` only (allergies marked inactive are not published) |
 | Consent.scope | `http://terminology.hl7.org/CodeSystem/consentscope` | adr, research, patient-privacy, treatment |
 | Consent.provision.action | `http://terminology.hl7.org/CodeSystem/consentaction` | collect, access, use, disclose, correct |
 | Consent.provision.purpose | `http://terminology.hl7.org/CodeSystem/v3-ActReason` | TREAT, ETREAT, HOPERAT, PATRQT, HRESCH, PUBHLTH (no display) |

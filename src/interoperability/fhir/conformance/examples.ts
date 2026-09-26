@@ -12,7 +12,7 @@ import { capabilityStatement } from "../capability/capabilityStatement";
 import { searchsetBundle } from "../search/bundle";
 import { operationOutcome } from "../errors/operationOutcome";
 import { ALLERGY_NKA_CAVEAT, mapAllergy, type AllergyMapContext } from "../mappers/allergy";
-import { allergyLeftOutWarning } from "../resources/allergyIntolerance";
+import { ALLERGY_TYPE_SEARCH_REFUSED, allergyLeftOutWarning } from "../resources/allergyIntolerance";
 import {
   itemDescription,
   lineItemId,
@@ -166,8 +166,8 @@ const ALLERGY_ACTIVE = {
   created_at: "2026-05-01T09:00:00Z",
   updated_at: "2026-05-01T09:00:00Z",
 };
-/** Marked inactive by staff; no reaction recorded; recorded on a tablet account. */
-const ALLERGY_INACTIVE = {
+/** Active food allergy; no reaction recorded; recorded on a tablet account (not in the staff directory). */
+const ALLERGY_FOOD = {
   ...ALLERGY_ACTIVE,
   id: "a11e0000-0000-4000-8000-000000000002",
   allergen: "Groundnuts",
@@ -175,7 +175,7 @@ const ALLERGY_INACTIVE = {
   reaction: null,
   severity: "moderate",
   onset_date: null,
-  is_active: false,
+  is_active: true,
   created_by: DEVICE_ACCOUNT,
   updated_at: "2026-06-10T14:00:00Z",
 };
@@ -637,9 +637,9 @@ function phase2Examples(ctx: MapContext): Record<string, Resource> {
   // AllergyIntolerance (resources/allergyIntolerance.ts: patient refs + staff directory).
   const allergyCtx: AllergyMapContext = { ...ctx, practitionerIds: PRACTITIONER_IDS };
   const allergyActive = mapAllergy(ALLERGY_ACTIVE, allergyCtx);
-  const allergyInactive = mapAllergy(ALLERGY_INACTIVE, allergyCtx);
+  const allergyFood = mapAllergy(ALLERGY_FOOD, allergyCtx);
   add("AllergyIntolerance-active", allergyActive);
-  add("AllergyIntolerance-inactive", allergyInactive);
+  add("AllergyIntolerance-food", allergyFood);
   // A patient search where one matching allergy was left out (its patient
   // record did not resolve): the searchset's outcome entry carries the
   // "no known allergies" caveat every allergy searchset has, and the warning.
@@ -650,12 +650,14 @@ function phase2Examples(ctx: MapContext): Record<string, Resource> {
       resourceType: "AllergyIntolerance",
       query: new URLSearchParams(`patient=Patient/${PATIENT.fhir_id}`),
       count: 20,
-      page: { resources: [allergyActive!, allergyInactive!], next: null },
+      page: { resources: [allergyActive!, allergyFood!], next: null },
       now: new Date("2026-09-25T12:00:00Z"),
       outcomes: [ALLERGY_NKA_CAVEAT, allergyLeftOutWarning(1)],
       newId: () => "0e0e0e0e-0000-4000-8000-000000000001",
     }),
   );
+  // A search by type is answered "ask for all allergies" (owner decision, 2.7).
+  add("OperationOutcome-allergy-type-search", operationOutcome("not-supported", ALLERGY_TYPE_SEARCH_REFUSED));
 
   // Medicines (resources/medication*.ts).
   for (const [name, item] of [

@@ -28,7 +28,7 @@ Locally, where `npm install` is not possible, the same files run under Bun:
 bun test src/interoperability
 ```
 
-With Bun this is 19 files and 687 tests (687 pass, 0 fail). Vitest is
+With Bun this is 19 files and 702 tests (702 pass, 0 fail). Vitest is
 what CI uses; the Bun run is a local convenience.
 
 Files in `src/interoperability/fhir/__tests__/` (plus
@@ -43,10 +43,10 @@ Files in `src/interoperability/fhir/__tests__/` (plus
 | `consentPolicy.test.ts` | `evaluateConsent()`: which accesses consent governs, default-deny, withdrawal and expiry, a permit for one named recipient never permits, parsing of directives |
 | `consentResource.test.ts` | Consent status maps, mapper, who may read, searches, patient self-access, nothing forbidden is served, a rule for one named recipient withholds the record |
 | `consentDirectiveLoader.test.ts` | The consent step's directive lookup: the named patient's merge family, directives read as the named patient's, more than 100 refused (503) |
-| `framework.test.ts` | Configuration and flags, search parameter parsing, the access decision, the CapabilityStatement |
+| `framework.test.ts` | Configuration and flags, search parameter parsing (including a type's refused parameters, answered with the type's own message), the access decision, the CapabilityStatement |
 | `mappers.test.ts` | Patient, Encounter, vital-sign Observation and Condition mapping (including birth dates on the 1st of a month: 1 January as the year, any other 1st as year and month, every other date in full); the structural validator; the conformance examples |
 | `laboratory.test.ts` | Lab status maps, test codes, values, interpretation, review state; laboratory Observation, DiagnosticReport and ServiceRequest; staff and patient access, including staff without consult or lab_review (a note on every search that could include laboratory results; a 403 read audited as `missing_permission`); status tokens in their own code system; merged patients; what is never published |
-| `allergy.test.ts` | AllergyIntolerance mapping, status tables, validation, access, enumeration, search, read, recorder, what is never published |
+| `allergy.test.ts` | AllergyIntolerance mapping, status tables, validation, access, enumeration, search, read, recorder, what is never published; allergies marked inactive are never served (never read, 404 like an unknown id, not counted in any note); severe and life-threatening allergies are high criticality with or without a reaction; a search by type (`category` or `type`) is refused with "ask for all allergies" (every value, modifier and combination) |
 | `medication.test.ts` | Medication, MedicationRequest and MedicationDispense: status maps, mappers, who may read, ids, gateway behaviour |
 | `documents.test.ts` | DocumentReference and Binary: mapping, stored paths, staff and patient access, downloads, merged patients, search |
 | `directory.test.ts` | Practitioner, PractitionerRole, Organization and Location: mappers, name searches, gateway behaviour |
@@ -127,10 +127,11 @@ Document and consent cases are in `documents.test.ts` and
 The `gateway` job, after the unit tests:
 
 1. writes the gateway's own output for synthetic data with
-   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 54 examples from
+   `npx tsx scripts/fhir-r4-examples.ts fhir-examples`: 55 examples from
    `src/interoperability/fhir/conformance/examples.ts` (the published
    resource shapes, searchset Bundles including one with no match and so
-   no `entry`, an OperationOutcome and the CapabilityStatement);
+   no `entry`, two OperationOutcomes (a forbidden answer, and the answer
+   to an allergy search by type) and the CapabilityStatement);
 2. installs Java 21 and downloads the official HL7 validator 6.10.4, with
    its SHA-256 checksum pinned in the workflow;
 3. runs it with `-version 4.0.1`, writing `validation.json`. The

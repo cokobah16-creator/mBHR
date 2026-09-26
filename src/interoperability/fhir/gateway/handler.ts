@@ -302,11 +302,12 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
     if (route.kind === "search") {
       binding = await cursorBinding({ resourceType: type, query, userId, scope: scopeKey(actor) });
       try {
-        search = parseSearch(query, def.searchParams, {
-          defaultCount: config.defaultPageSize,
-          maxCount: config.maxPageSize,
-          cursorBinding: binding,
-        });
+        search = parseSearch(
+          query,
+          def.searchParams,
+          { defaultCount: config.defaultPageSize, maxCount: config.maxPageSize, cursorBinding: binding },
+          def.refusedSearchParams,
+        );
       } catch (e) {
         searchError = e;
       }

@@ -9,7 +9,7 @@
 // before anything is released.
 
 import type { OperationOutcomeIssue, Resource } from "../types/fhir";
-import type { ParsedSearch, SearchParamDef } from "../search/params";
+import type { ParsedSearch, RefusedSearchParam, SearchParamDef } from "../search/params";
 import type { SearchPage } from "../search/bundle";
 import type { Postgrest } from "../gateway/postgrest";
 import type { StorageClient } from "../gateway/storage";
@@ -94,6 +94,13 @@ export interface ResourceDefinition {
   profiles: string[];
   interactions: ("read" | "search-type")[];
   searchParams: SearchParamDef[];
+  /**
+   * Parameters this type refuses with its own explanation (400
+   * not-supported, whatever the value, modifier or other parameters)
+   * instead of the generic "not supported". Not offered in the
+   * CapabilityStatement; say why in `notes`.
+   */
+  refusedSearchParams?: readonly RefusedSearchParam[];
   /** A staff search must name one of these groups (anti-enumeration). */
   requiredSearch: string[][];
   writeSupport: false;

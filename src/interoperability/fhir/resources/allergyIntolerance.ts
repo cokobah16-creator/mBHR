@@ -17,6 +17,23 @@
 // many were left out (allergyLeftOutWarning), and a read fails closed with
 // 500 instead of answering "not found" for an allergy that exists.
 //
+// Allergies a staff member marked inactive are never read
+// (NOT_MARKED_INACTIVE is on every query; owner decision,
+// CLINICAL_LOGIC_CHANGES.md 2.7): they are published under no status, a
+// read answers "not found" as for an id that does not exist, and no note
+// counts them. The 500 above applies only to an allergy that is not marked
+// inactive.
+//
+// A search by type (category, or FHIR's own type) is refused with 400
+// not-supported and ALLERGY_TYPE_SEARCH_REFUSED, which tells the caller to
+// ask for all allergies instead (owner decision, CLINICAL_LOGIC_CHANGES.md
+// 2.7, "Searching allergies by type"). The allergy form starts on
+// "medication", so the recorded type cannot find every allergy of a type,
+// and an empty searchset would carry ALLERGY_NKA_CAVEAT, telling the caller
+// that no allergy is recorded when one is. The gateway refuses it while
+// parsing (definition.refusedSearchParams) and search() refuses it again for
+// direct callers. Each allergy's published category is unchanged.
+//
 // Ids are handled as opaque strings. The repository defines
 // patient_allergies.id as uuid, but tablets create ULIDs and the production
 // column type is not confirmed; an id the column cannot hold (the database
@@ -25,7 +42,6 @@
 import { FhirError, errors } from "../errors/operationOutcome";
 import { READ_PERMISSIONS } from "../authorization/permissions";
 import {
-  ALLERGY_CATEGORY_SYSTEM,
   ALLERGY_CLINICAL_SYSTEM,
   ALLERGY_COLUMNS,
   ALLERGY_CRITICALITY_SYSTEM,
@@ -40,7 +56,7 @@ import { referenceContext } from "../patients/canonical";
 import { pgrstQuote } from "../gateway/postgrest";
 import { FHIR_ID, parseId, parseToken, type Cursor, type ParsedSearch, type TokenValue } from "../search/params";
 import { sourceValuesFor, type StatusMap } from "../terminology/statusMaps";
-import { ALLERGY_CATEGORY, ALLERGY_CLINICAL_STATUS, ALLERGY_CRITICALITY } from "../terminology/status/allergy";
+import { ALLERGY_CLINICAL_STATUS, ALLERGY_CRITICALITY } from "../terminology/status/allergy";
 import { emptyResult, type QueryCtx, type QueryResult, type ResourceDefinition, type ResourceModule } from "./module";
 import {
   SOURCE_ID,
@@ -55,14 +71,38 @@ import {
   type Filters,
 } from "./shared";
 
+/**
+ * Every allergy query carries this filter. An allergy a staff member marked
+ * inactive (is_active false) is never read, so it is published under no
+ * status, a read of it is "not found" exactly as for an id that does not
+ * exist, and no searchset shows or counts it (owner decision,
+ * CLINICAL_LOGIC_CHANGES.md 2.7: another system sees only the active
+ * allergies staff see). IS NOT FALSE still fetches a row with no value
+ * (impossible under the column's NOT NULL), which is withheld with a note
+ * (ait-1), as before.
+ */
+export const NOT_MARKED_INACTIVE: Filters = [["is_active", "not.is.false"]];
+
+/**
+ * The answer to any AllergyIntolerance search by type, that is by category
+ * or by FHIR's own type parameter (owner decision, CLINICAL_LOGIC_CHANGES.md
+ * 2.7, "Searching allergies by type": "ask for all allergies" instead of an
+ * empty list). The allergy form starts on "medication", so the recorded type
+ * cannot find every allergy of a type, and an empty searchset would carry
+ * ALLERGY_NKA_CAVEAT, telling the caller that no allergy is recorded when
+ * one is.
+ */
+export const ALLERGY_TYPE_SEARCH_REFUSED =
+  "Searching allergies by type (category or type) is not supported: the allergy form starts on 'medication', so mBHR cannot tell reliably which type an allergy is (and it does not record whether it is an allergy or an intolerance), and a search by type could leave out allergies that are recorded. Ask for all of the patient's allergies instead (search AllergyIntolerance by patient or _id, without category or type). An allergy without a category may be of any type, medicines included.";
+
 export const definition: ResourceDefinition = {
   type: "AllergyIntolerance",
   source: "public.patient_allergies",
   idStrategy: "patient_allergies.id as stored (opaque: a uuid, or a device ULID where the column holds text)",
   fields: [
-    "clinicalStatus (is_active: true -> active, false -> inactive; a record without a value is withheld, never shown as active)",
+    "clinicalStatus (active only: an allergy marked inactive (is_active false) is not published at all; a record without a value is withheld, never shown as active)",
     "category (food or environment, only when staff chose that type; medication is the form's pre-selected type and is never published)",
-    "criticality (high, only for allergies rated life-threatening)",
+    "criticality (high for allergies rated severe or life-threatening, with or without a recorded reaction; none for moderate or mild)",
     "code.text (the allergen exactly as recorded; no substance coding)",
     "patient",
     "onsetDateTime (date only)",
@@ -83,19 +123,18 @@ export const definition: ResourceDefinition = {
     {
       name: "clinical-status",
       type: "token",
-      documentation: "active or inactive (allergyintolerance-clinical). resolved matches nothing: mBHR does not record it.",
-    },
-    {
-      name: "category",
-      type: "token",
       documentation:
-        "food or environment. medication and biologic match nothing: medication is the form's pre-selected type, so no category is published for it. Allergies recorded as 'other' have no category and never match.",
+        "active (allergyintolerance-clinical). inactive and resolved match nothing: allergies marked inactive in mBHR are not published, and mBHR does not record resolved.",
     },
     {
       name: "criticality",
       type: "token",
-      documentation: "high (allergies rated life-threatening). low and unable-to-assess match nothing: mBHR does not record them.",
+      documentation: "high (allergies rated severe or life-threatening). low and unable-to-assess match nothing: mBHR does not record them.",
     },
+  ],
+  refusedSearchParams: [
+    { name: "category", diagnostics: ALLERGY_TYPE_SEARCH_REFUSED },
+    { name: "type", diagnostics: ALLERGY_TYPE_SEARCH_REFUSED },
   ],
   requiredSearch: [["_id"], ["patient"]],
   writeSupport: false,
@@ -104,12 +143,13 @@ export const definition: ResourceDefinition = {
   patientAccess: false,
   sensitiveSearch: false,
   notes: [
-    "mBHR does not record 'no known allergies': an empty result means no allergy has been recorded, not that the patient has none. Every searchset says so.",
+    "mBHR does not record 'no known allergies': an empty result means no active allergy is recorded, not that the patient has none. Every searchset says so.",
     "Allergies recorded on a tablet that has not synced yet are not included.",
     "No verificationStatus or type: mBHR does not record whether an allergy was confirmed, or whether it is an allergy or an intolerance.",
-    "inactive means a staff member removed the allergy from the app's warnings; mBHR records no reason (resolved, recorded in error or a duplicate).",
+    "Only allergies staff see as active in mBHR are published. An allergy a staff member marked inactive is left out whatever the reason (mBHR records none; the same action removes entries made in error and duplicates): a read of it is 'not found', no search returns it, and a system that copied it earlier is not told.",
     "The allergen and the reaction are free text as recorded: no substance code is published, and one record may name several substances.",
     "No category is sent for allergies saved with the form's pre-selected type (medication), because it may mean nobody chose one. A missing category does not mean the allergy is not to a medicine.",
+    "A search by type (category or type) is refused (400 not-supported) with a message to ask for all allergies instead: the allergy form starts on 'medication', so the recorded type cannot be relied on, and a search by it could leave out allergies that are recorded. Each allergy still carries its category where staff chose food or environmental.",
     "After a merge, allergies from both records are listed under the kept patient as recorded, including duplicates.",
     "An allergy whose patient record cannot be resolved (for example a merged record whose kept record is missing) is not published: a searchset then carries a warning saying how many were left out, and a read returns an error rather than 'not found'.",
     "Staff notes and staff account ids are never published. Patients cannot read allergies through this interface.",
@@ -187,8 +227,8 @@ async function mapAllergies(ctx: QueryCtx, rows: Row[]): Promise<(AllergyIntoler
 /**
  * The searchset warning for matching allergies that were left out because
  * their patient record could not be resolved. Without it, the searchset's
- * only note would be ALLERGY_NKA_CAVEAT ("an empty result means no allergy
- * has been recorded"), which would be untrue: these allergies are recorded.
+ * only note would be ALLERGY_NKA_CAVEAT ("an empty result means no active
+ * allergy is recorded"), which would be untrue: these allergies are recorded.
  */
 export function allergyLeftOutWarning(count: number): OperationOutcomeIssue {
   return {
@@ -243,7 +283,9 @@ async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
   if (!SOURCE_ID.test(id)) return emptyResult();
   let rows: Row[];
   try {
-    rows = await ctx.db.select("patient_allergies", ALLERGY_COLUMNS, [["id", `eq.${id}`], ...scopeFilter(ctx)], { limit: 1 });
+    rows = await ctx.db.select("patient_allergies", ALLERGY_COLUMNS, [["id", `eq.${id}`], ...scopeFilter(ctx), ...NOT_MARKED_INACTIVE], {
+      limit: 1,
+    });
   } catch (e) {
     if (isRefusedValue(e)) return emptyResult();
     throw e;
@@ -276,8 +318,10 @@ function systemMatches(t: TokenValue, system: string): boolean {
 
 /**
  * clinical-status: is_active is a boolean, so the recorded values the map
- * lists for the code ("true", "false") become is_active.is.<value> (an
- * ilike does not apply to a boolean column). null: matches nothing.
+ * lists for the code (only "true") become is_active.is.<value> (an ilike
+ * does not apply to a boolean column). null: matches nothing. inactive and
+ * resolved: no recorded value maps to them (allergies marked inactive are
+ * never published), so they match nothing, without a query.
  */
 function clinicalStatusFilter(t: TokenValue): Filters | null {
   if (!systemMatches(t, ALLERGY_CLINICAL_SYSTEM)) return null;
@@ -298,6 +342,8 @@ function valueFilter(map: StatusMap, column: string, code: string): Filters | nu
 }
 
 async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult> {
+  // The gateway refuses these while parsing; refused again for direct callers.
+  if (search.values.has("category") || search.values.has("type")) throw errors.notSupported(ALLERGY_TYPE_SEARCH_REFUSED);
   const notes = patientNotes(ctx);
   // Owner decision 9: every searchset says that no result is not "no allergies".
   const outcomes = [...(notes.outcomes ?? []), ALLERGY_NKA_CAVEAT];
@@ -306,7 +352,7 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
 
   const named = namedPatientFilter(ctx);
   if (named === null) return nothing();
-  const filters: Filters = [...scopeFilter(ctx), ...named];
+  const filters: Filters = [...scopeFilter(ctx), ...named, ...NOT_MARKED_INACTIVE];
 
   const idParam = one(search, "_id");
   if (idParam) filters.push(["id", `eq.${parseId(idParam)}`]);
@@ -314,13 +360,6 @@ async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult>
   const clinical = one(search, "clinical-status");
   if (clinical) {
     const f = clinicalStatusFilter(parseToken(clinical, "clinical-status"));
-    if (!f) return nothing();
-    filters.push(...f);
-  }
-  const category = one(search, "category");
-  if (category) {
-    const t = parseToken(category, "category");
-    const f = systemMatches(t, ALLERGY_CATEGORY_SYSTEM) ? valueFilter(ALLERGY_CATEGORY, "allergy_type", t.code) : null;
     if (!f) return nothing();
     filters.push(...f);
   }

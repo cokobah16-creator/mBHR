@@ -2,7 +2,10 @@
 // accepted; anything else is refused with 400 rather than silently ignored,
 // so a client never believes a filter was applied when it was not. Values
 // are parsed into typed filters here and never passed through as raw text:
-// the repository turns them into parameterised PostgREST filters.
+// the repository turns them into parameterised PostgREST filters. A
+// parameter a type refuses with its own explanation
+// (ResourceDefinition.refusedSearchParams) is answered with that
+// explanation, whatever its value, modifier or the rest of the query.
 
 import { errors } from "../errors/operationOutcome";
 
@@ -63,11 +66,29 @@ export const FHIR_ID = /^[A-Za-z0-9\-.]{1,64}$/;
 const MAX_VALUE_LENGTH = 256;
 export const RESULT_PARAMS: ReadonlySet<string> = new Set(["_count", "_cursor", "_format"]);
 
+/**
+ * A parameter a type refuses with its own explanation instead of the generic
+ * "not supported" (ResourceDefinition.refusedSearchParams).
+ */
+export interface RefusedSearchParam {
+  name: string;
+  /** The fixed, caller-safe diagnostics of the 400 not-supported answer. */
+  diagnostics: string;
+}
+
 export function parseSearch(
   query: URLSearchParams,
   defs: SearchParamDef[],
   paging: { defaultCount: number; maxCount: number; cursorBinding?: string },
+  refused: readonly RefusedSearchParam[] = [],
 ): ParsedSearch {
+  // A parameter the type refuses with its own explanation gets that
+  // explanation whatever its value or modifier (name:modifier) and whatever
+  // else the query holds, so the caller always learns what to ask instead.
+  for (const rawName of query.keys()) {
+    const r = refused.find((p) => p.name === rawName.split(":")[0]);
+    if (r) throw errors.notSupported(r.diagnostics);
+  }
   const byName = new Map(defs.map((d) => [d.name, d]));
   const values = new Map<string, string[]>();
   let count = paging.defaultCount;

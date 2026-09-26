@@ -8,8 +8,12 @@
 //     substance code is added: mBHR has no allergen code list, and a text
 //     such as "Penicillin, codeine" stays one record with that text rather
 //     than being split or matched to a drug class.
-//   - clinicalStatus comes from is_active (ALLERGY_CLINICAL_STATUS). A row
-//     with no usable value gets no clinical status and so fails invariant
+//   - clinicalStatus comes from is_active (ALLERGY_CLINICAL_STATUS): only
+//     true is mapped (active). An allergy marked inactive is never read by
+//     the gateway (NOT_MARKED_INACTIVE, owner decision 2.7) and the map
+//     gives false no status, so should one reach the mapper it fails ait-1
+//     and is withheld, never published as inactive or resolved. A row with
+//     no usable value gets no clinical status and so fails invariant
 //     ait-1: the gateway withholds it and tells the client a record was
 //     left out, instead of the mapper guessing "active" or dropping it
 //     silently.
@@ -18,9 +22,11 @@
 //   - category, criticality and reaction.severity only from the values in
 //     terminology/status/allergy.ts; anything else is left out. The form's
 //     pre-selected choices (type medication, severity mild) cannot be told
-//     apart from "nobody chose", so neither is published. A
-//     life-threatening rating gives criticality high and, with a recorded
-//     reaction, reaction.severity severe (the top of that scale).
+//     apart from "nobody chose", so neither is published. A severe or
+//     life-threatening rating gives criticality high, with or without a
+//     recorded reaction (owner sign-off, CLINICAL_LOGIC_CHANGES.md 2.7
+//     "Severity"); with a recorded reaction it also gives reaction.severity
+//     severe (the top of that scale).
 //   - "No known allergies" does not exist in mBHR: no row means no allergy
 //     was recorded. The mapper never produces an NKA record, and every
 //     searchset carries ALLERGY_NKA_CAVEAT saying so.
@@ -49,8 +55,7 @@ import { calendarDate, instant, patientReference, str, versionMeta, type MapCont
 /** R4 code systems for AllergyIntolerance.clinicalStatus and verificationStatus. */
 export const ALLERGY_CLINICAL_SYSTEM = "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical";
 export const ALLERGY_VERIFICATION_SYSTEM = "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification";
-/** The code systems of the category and criticality codes (FHIR code elements, for token searches). */
-export const ALLERGY_CATEGORY_SYSTEM = "http://hl7.org/fhir/allergy-intolerance-category";
+/** The code system of the criticality codes (a FHIR code element, for token searches). */
 export const ALLERGY_CRITICALITY_SYSTEM = "http://hl7.org/fhir/allergy-intolerance-criticality";
 
 export interface AllergyIntoleranceReaction {
@@ -100,7 +105,7 @@ export const ALLERGY_NKA_CAVEAT: OperationOutcomeIssue = {
   severity: "information",
   code: "informational",
   diagnostics:
-    "mBHR does not record 'no known allergies'; an empty result means no allergy has been recorded, not that the patient has none.",
+    "mBHR does not record 'no known allergies'; an empty result means no active allergy is recorded, not that the patient has none.",
 };
 
 export interface AllergyMapContext extends MapContext {
@@ -225,6 +230,11 @@ export function validateAllergyIntolerance(resource: Json, add: AddIssue): void 
     add("patient", "required: a Patient reference");
   }
   checkStatusConcept(resource.clinicalStatus, "clinicalStatus", ALLERGY_CLINICAL_SYSTEM, CLINICAL_CODES, add);
+  // Owner decision (CLINICAL_LOGIC_CHANGES.md 2.7): only allergies staff see
+  // as active are published; inactive and resolved are never released.
+  if (codingsOf(resource.clinicalStatus).some((c) => c.code !== "active")) {
+    add("clinicalStatus", "only active allergies are published");
+  }
   checkStatusConcept(resource.verificationStatus, "verificationStatus", ALLERGY_VERIFICATION_SYSTEM, VERIFICATION_CODES, add);
 
   const enteredInError = codingsOf(resource.verificationStatus).some((c) => c.code === "entered-in-error");

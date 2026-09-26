@@ -106,8 +106,19 @@ call:
   twice (a range). More is 400.
 - A value longer than 256 characters, or empty, is 400.
 - A search that cannot match (an unknown status, a malformed id, a foreign
-  code system) returns a Bundle with no matches, not an error. For staff,
-  a `patient` that cannot be resolved does the same.
+  code system) returns a Bundle with no matches, not an error (except an
+  AllergyIntolerance search by type, below). For staff, a `patient` that
+  cannot be resolved does the same.
+- **An AllergyIntolerance search by type is refused.** Any search by
+  `category` or `type`, whatever its value, system, modifier or the other
+  parameters (even without `patient` or `_id`, and also with
+  `Prefer: handling=lenient`, which the gateway does not honour), is 400
+  `not-supported` with a fixed message that says "Ask for all of the
+  patient's allergies instead (search AllergyIntolerance by patient or
+  _id, without category or type)". The allergy form starts on
+  "medication", so the recorded type cannot find every allergy of a type,
+  and an empty result would wrongly say that no allergy is recorded. Each
+  allergy's published category is unchanged.
 - A malformed search from a caller who may not read the type is refused
   as forbidden first, so it learns nothing about the type's parameters.
 
@@ -121,7 +132,7 @@ call:
 | Encounter | `_id`; `patient`; `subject` | `_id`, `patient`, `subject`, `date` (≤2), `status` |
 | Observation | `_id`; `patient`; `subject`; `encounter`; `based-on` | `_id`, `patient`, `subject`, `encounter`, `date` (≤2), `category`, `code`, `status`, `based-on` |
 | Condition | `_id`; `patient`; `subject` | `_id`, `patient`, `subject`, `clinical-status`, `code` |
-| AllergyIntolerance | `_id`; `patient` | `_id`, `patient`, `clinical-status`, `category`, `criticality` |
+| AllergyIntolerance | `_id`; `patient` | `_id`, `patient`, `clinical-status`, `criticality` |
 | Medication | `_id` | `_id` |
 | MedicationRequest | `_id`; `patient`; `subject`; `encounter` | `_id`, `patient`, `subject`, `encounter`, `status`, `authoredon` (≤2) |
 | MedicationDispense | `_id`; `patient`; `subject`; `prescription` | `_id`, `patient`, `subject`, `status`, `prescription` |
@@ -207,9 +218,8 @@ Token values per type:
 | Observation | `status` | `final`, `preliminary` |
 | Condition | `clinical-status` | a condition-clinical code; records whose verification status is `entered-in-error` never match |
 | Condition | `code` | an mBHR condition code, with or without `https://mbhr.app/codes/condition` |
-| AllergyIntolerance | `clinical-status` | `active`, `inactive` (`resolved` matches nothing) |
-| AllergyIntolerance | `category` | `food`, `environment` (`medication` and `biologic` match nothing: the allergy form pre-selects "medication", so no category is published for it) |
-| AllergyIntolerance | `criticality` | `high` (`low`, `unable-to-assess` match nothing) |
+| AllergyIntolerance | `clinical-status` | `active` (`inactive` and `resolved` match nothing: allergies marked inactive in mBHR are not published) |
+| AllergyIntolerance | `criticality` | `high` (allergies rated severe or life-threatening; `low`, `unable-to-assess` match nothing) |
 | MedicationRequest | `status` | `active`, `completed`, `cancelled`, `unknown` match; other codes match nothing |
 | MedicationDispense | `status` | the published status; almost every record is `unknown`, and `completed` matches nothing |
 | ServiceRequest | `status` | `active`, `completed`, `revoked`, `unknown` |
@@ -228,11 +238,13 @@ Token values per type:
 | AuditEvent | `subtype` | `read`, `search-type` |
 
 Not offered (400 if used), among others: Patient `gender`, `address`,
-`telecom`; Encounter `class`, `location`; MedicationDispense
-`whenhandedover`; DocumentReference `author`, `period`, `contenttype`;
-Practitioner `identifier`, `telecom`, `email`; Location `status`,
-`address`, `near`; Provenance `agent`, `entity`; AuditEvent `agent`,
-`entity`, `type`, `source`. Medication has no search other than `_id`.
+`telecom`; Encounter `class`, `location`; AllergyIntolerance `category`
+and `type` (answered with a message to ask for all allergies; see above);
+MedicationDispense `whenhandedover`; DocumentReference `author`,
+`period`, `contenttype`; Practitioner `identifier`, `telecom`, `email`;
+Location `status`, `address`, `near`; Provenance `agent`, `entity`;
+AuditEvent `agent`, `entity`, `type`, `source`. Medication has no search
+other than `_id`.
 
 ### Notes in a searchset
 
@@ -250,7 +262,8 @@ element at all (FHIR JSON allows no empty arrays).
 - Condition: every searchset says that diagnoses in consultation notes are
   not published.
 - AllergyIntolerance: every searchset says that mBHR does not record "no
-  known allergies".
+  known allergies", and that an empty result means no active allergy is
+  recorded.
 - Consent: coverage notes (different for staff and patients).
 - A `patient` naming a merged-away record: an empty result and a note
   naming the kept record.
@@ -337,7 +350,7 @@ traces or other patients' identifiers.
 | Status | issue.code | When |
 | --- | --- | --- |
 | 400 | `invalid` | malformed value, bad or foreign cursor, a request with a body, parameters on a read, a repeated parameter |
-| 400 | `not-supported` | unsupported parameter, modifier, OR list, interaction or path; `_count=0`; Binary search |
+| 400 | `not-supported` | unsupported parameter, modifier, OR list, interaction or path; `_count=0`; Binary search; an AllergyIntolerance search by type (`category` or `type`) |
 | 400 | `too-costly` | a laboratory search that matches more results than one page can gather (narrow it, for example with `based-on` or `_id`) |
 | 401 | `login` | no token, or an invalid, expired or wrong-audience session. Header `WWW-Authenticate: Bearer realm="mBHR FHIR"` |
 | 403 | `forbidden` | no staff role or linked record, missing permission (including a read of a laboratory Observation, `Observation/lab-<id>`, without consult or lab_review, decided from the id before any lookup), patient access off, type not available to patients, another patient named, purpose refused, search not narrowed |

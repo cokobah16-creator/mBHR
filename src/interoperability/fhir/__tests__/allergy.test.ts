@@ -5,8 +5,10 @@
 // to end against the in-memory Supabase: who may read allergies, enumeration
 // protection, every search parameter, merged patients, opaque ids, the
 // "no known allergies" caveat on every searchset, allergies whose patient
-// does not resolve (never dropped silently), the recorder through the staff
-// directory, and that nothing private is ever served.
+// does not resolve (never dropped silently), allergies marked inactive
+// (never read; 404 like an unknown id), searches by type (answered "ask for
+// all allergies"), the recorder through the staff directory, and that
+// nothing private is ever served.
 //
 // Synthetic fixtures only (no real patient data).
 
@@ -16,7 +18,7 @@ import { Postgrest, type FetchLike } from "../gateway/postgrest";
 import { capabilityStatement } from "../capability/capabilityStatement";
 import { READ_PERMISSIONS } from "../authorization/permissions";
 import { validateResource } from "../validation/validate";
-import { applyStatusMap, explainStatus, knownSourceValues } from "../terminology/statusMaps";
+import { applyStatusMap, explainStatus, knownSourceValues, sourceValuesFor } from "../terminology/statusMaps";
 import { STATUS_MAPS } from "../terminology/status";
 import {
   ALLERGY_CATEGORY,
@@ -37,6 +39,8 @@ import {
   type AllergyMapContext,
 } from "../mappers/allergy";
 import {
+  ALLERGY_TYPE_SEARCH_REFUSED,
+  NOT_MARKED_INACTIVE,
   allergyIntoleranceModule,
   allergyLeftOutWarning,
   definition,
@@ -44,6 +48,8 @@ import {
   type ExaminedRow,
 } from "../resources/allergyIntolerance";
 import type { QueryCtx } from "../resources/module";
+import { FhirError } from "../errors/operationOutcome";
+import { conformanceExamples } from "../conformance/examples";
 import { fakeSupabase, makeToken, type FakeOptions, type FakeUser, type RpcHandler } from "./fakeSupabase";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,7 +124,7 @@ const AL_ACTIVE = {
   reaction: "Rash, swelling of the lips",
   severity: "life-threatening",
 };
-/** Marked inactive by staff; recorded by a device-made account. */
+/** Marked inactive by staff (never published: owner decision 2.7); recorded by a device-made account. */
 const AL_INACTIVE = {
   ...BASE,
   id: "a0000000-0000-4000-8000-000000000002",
@@ -324,15 +330,23 @@ describe("AllergyIntolerance mapper", () => {
     expect(validateResource(a, validateAllergyIntolerance)).toEqual([]);
   });
 
-  it("maps an inactive allergy as inactive, with its category and reaction severity", () => {
-    const a = mapAllergy(AL_INACTIVE, MAP_CTX)!;
-    expect(a.clinicalStatus).toEqual({ coding: [{ system: ALLERGY_CLINICAL_SYSTEM, code: "inactive" }] });
+  it("maps a food allergy's category, criticality and reaction severity, with no onset or recorder invented", () => {
+    const a = mapAllergy({ ...AL_INACTIVE, is_active: true }, MAP_CTX)!;
+    expect(a.clinicalStatus).toEqual({ coding: [{ system: ALLERGY_CLINICAL_SYSTEM, code: "active" }] });
     expect(a.category).toEqual(["food"]);
-    expect(a.criticality).toBeUndefined(); // severe is not a criticality
+    expect(a.criticality).toBe("high"); // severe is high risk (owner sign-off, 2.7 "Severity")
     expect(a.reaction).toEqual([{ manifestation: [{ text: "Hives" }], severity: "severe" }]);
     expect(a.onsetDateTime).toBeUndefined(); // no onset recorded: not invented
     expect(a.recorder).toBeUndefined(); // device-made account: not in the directory
     expect(validateResource(a, validateAllergyIntolerance)).toEqual([]);
+  });
+
+  it("never maps an allergy marked inactive as inactive, resolved or active", () => {
+    const a = mapAllergy(AL_INACTIVE, MAP_CTX)!;
+    expect(a.clinicalStatus).toBeUndefined();
+    expect(JSON.stringify(a)).not.toMatch(/"inactive"|"resolved"|"active"/);
+    // Should one ever reach the gateway's validation, it is withheld (ait-1).
+    expect(validateResource(a, validateAllergyIntolerance)).toEqual([{ path: "clinicalStatus", message: expect.stringMatching(/^ait-1/) }]);
   });
 
   it("gives a record with no is_active no clinical status, so validation withholds it (ait-1)", () => {
@@ -437,11 +451,13 @@ describe("AllergyIntolerance mapper", () => {
 // ---------------------------------------------------------------------------
 
 describe("AllergyIntolerance status and value tables", () => {
-  it("clinicalStatus: true is active, false is inactive, anything else is unknown (withheld)", () => {
+  it("clinicalStatus: true is active; false (marked inactive) and anything else get none", () => {
     expect(mapAllergyClinicalStatus(true)).toBe("active");
-    expect(mapAllergyClinicalStatus(false)).toBe("inactive");
+    expect(mapAllergyClinicalStatus(false)).toBeNull();
     expect(mapAllergyClinicalStatus("true")).toBe("active");
-    expect(mapAllergyClinicalStatus("FALSE")).toBe("inactive");
+    expect(mapAllergyClinicalStatus("FALSE")).toBeNull();
+    expect(explainStatus(ALLERGY_CLINICAL_STATUS, "false").reason).toMatch(/Mark inactive/);
+    expect(explainStatus(ALLERGY_CLINICAL_STATUS, "false").reason).toMatch(/not published at all/);
     for (const raw of [null, undefined, "", " true", "yes", "t", 1, 0, "1", "0", "active"]) {
       expect(mapAllergyClinicalStatus(raw), String(raw)).toBeNull();
     }
@@ -460,7 +476,10 @@ describe("AllergyIntolerance status and value tables", () => {
     // The only recorded value that means active is true.
     expect(ALLERGY_CLINICAL_STATUS.rules.filter((r) => r.fhir === "active").flatMap((r) => [...r.source])).toEqual(["true"]);
     // resolved and entered-in-error are never derived from "inactive".
-    expect(knownSourceValues(ALLERGY_CLINICAL_STATUS).map((v) => applyStatusMap(ALLERGY_CLINICAL_STATUS, v))).toEqual(["active", "inactive"]);
+    expect(knownSourceValues(ALLERGY_CLINICAL_STATUS).map((v) => applyStatusMap(ALLERGY_CLINICAL_STATUS, v))).toEqual(["active"]);
+    // No recorded value is searched as inactive or resolved.
+    expect(sourceValuesFor(ALLERGY_CLINICAL_STATUS, "inactive")).toEqual([]);
+    expect(sourceValuesFor(ALLERGY_CLINICAL_STATUS, "resolved")).toEqual([]);
   });
 
   it("verificationStatus is never filled: nothing is ever confirmed by default", () => {
@@ -488,12 +507,45 @@ describe("AllergyIntolerance status and value tables", () => {
     expect(ALLERGY_CATEGORY.rules.some((r) => r.fhir === "biologic")).toBe(false);
   });
 
-  it("criticality: high only for life-threatening; never low, never unable-to-assess", () => {
+  it("criticality: high for life-threatening and severe; never low, never unable-to-assess", () => {
     expect(applyStatusMap(ALLERGY_CRITICALITY, "life-threatening")).toBe("high");
-    for (const raw of ["severe", "moderate", "mild", "", null, "high"]) {
+    expect(applyStatusMap(ALLERGY_CRITICALITY, "severe")).toBe("high");
+    expect(applyStatusMap(ALLERGY_CRITICALITY, "SEVERE")).toBe("high");
+    for (const raw of ["moderate", "mild", "", null, "high", " severe", "Severe ", "severely"]) {
       expect(applyStatusMap(ALLERGY_CRITICALITY, raw), String(raw)).toBeNull();
     }
-    expect(ALLERGY_CRITICALITY.rules.map((r) => r.fhir)).toEqual(["high"]);
+    expect(ALLERGY_CRITICALITY.rules.map((r) => r.fhir)).toEqual(["high", "high"]);
+    expect(knownSourceValues(ALLERGY_CRITICALITY)).toStrictEqual(["life-threatening", "severe"]);
+    expect(explainStatus(ALLERGY_CRITICALITY, "severe").reason).toMatch(/patient header/);
+    expect(explainStatus(ALLERGY_CRITICALITY, "severe").reason).toMatch(/whether or not a reaction was recorded/);
+    expect(explainStatus(ALLERGY_CRITICALITY, "moderate").reason).not.toMatch(/severe/);
+    expect(ALLERGY_CRITICALITY.rules.some((r) => r.fhir !== "high")).toBe(false);
+  });
+
+  it("criticality needs no reaction text; reaction severity still does (every rating, with and without a reaction)", () => {
+    const cases: [unknown, string | null, string | undefined, Json[] | undefined][] = [
+      ["life-threatening", "Anaphylaxis", "high", [{ manifestation: [{ text: "Anaphylaxis" }], severity: "severe" }]],
+      ["life-threatening", null, "high", undefined],
+      ["severe", "Hives", "high", [{ manifestation: [{ text: "Hives" }], severity: "severe" }]],
+      ["severe", null, "high", undefined],
+      ["severe", "", "high", undefined],
+      ["severe", "   ", "high", undefined],
+      ["Severe", null, "high", undefined],
+      ["moderate", "Hives", undefined, [{ manifestation: [{ text: "Hives" }], severity: "moderate" }]],
+      ["moderate", null, undefined, undefined],
+      ["mild", "Hives", undefined, [{ manifestation: [{ text: "Hives" }] }]],
+      ["mild", null, undefined, undefined],
+      [null, "Hives", undefined, [{ manifestation: [{ text: "Hives" }] }]],
+      [" severe", null, undefined, undefined],
+    ];
+    for (const [severity, reaction, criticality, served] of cases) {
+      const label = `${String(severity)} / ${String(reaction)}`;
+      const a = mapAllergy({ ...AL_ACTIVE, severity, reaction }, MAP_CTX)!;
+      expect(a.criticality, label).toBe(criticality);
+      expect("criticality" in a, label).toBe(criticality !== undefined);
+      expect(a.reaction, label).toStrictEqual(served);
+      expect(validateResource(a, validateAllergyIntolerance), label).toEqual([]);
+    }
   });
 
   it("reaction severity: moderate and severe exactly, life-threatening as severe; the pre-selected mild is left out", () => {
@@ -518,8 +570,8 @@ describe("AllergyIntolerance status and value tables", () => {
     for (let i = 1; i < served.length; i++) {
       expect(rank[served[i]!], ratings[i]).toBeGreaterThanOrEqual(rank[served[i - 1]!]);
     }
-    // The most serious rating also carries criticality high; the others do not.
-    expect(ratings.map((severity) => mapAllergy({ ...AL_ACTIVE, severity }, MAP_CTX)!.criticality)).toEqual([undefined, undefined, "high"]);
+    // Severe and life-threatening carry criticality high (owner sign-off); moderate does not.
+    expect(ratings.map((severity) => mapAllergy({ ...AL_ACTIVE, severity }, MAP_CTX)!.criticality)).toEqual([undefined, "high", "high"]);
     // Without reaction text there is still no reaction element to carry it.
     expect(mapAllergy({ ...AL_ACTIVE, reaction: " " }, MAP_CTX)!.reaction).toBeUndefined();
   });
@@ -598,24 +650,41 @@ describe("AllergyIntolerance definition", () => {
     expect([...definition.readPermissions].sort()).toEqual(["consult", "dispense", "register", "vitals"]);
     expect(definition.patientAccess).toBe(false);
     expect(definition.interactions).toEqual(["read", "search-type"]);
-    expect(definition.searchParams.map((p) => p.name)).toEqual(["_id", "patient", "clinical-status", "category", "criticality"]);
+    expect(definition.searchParams.map((p) => p.name)).toEqual(["_id", "patient", "clinical-status", "criticality"]);
+    expect(definition.refusedSearchParams).toEqual([
+      { name: "category", diagnostics: ALLERGY_TYPE_SEARCH_REFUSED },
+      { name: "type", diagnostics: ALLERGY_TYPE_SEARCH_REFUSED },
+    ]);
     expect(definition.requiredSearch).toEqual([["_id"], ["patient"]]);
     expect(definition.notes?.join(" ")).toMatch(/no known allergies/);
+    expect(definition.notes?.join(" ")).toMatch(/An allergy a staff member marked inactive .*is left out/);
+    expect(definition.searchParams.find((p) => p.name === "clinical-status")?.documentation).toMatch(
+      /^active \(allergyintolerance-clinical\)\. inactive and resolved match nothing/,
+    );
   });
 
   it("appears in the CapabilityStatement with exactly those parameters", () => {
     const cs = capabilityStatement("https://mbhr.app/fhir/R4") as Json;
     const r = cs.rest[0].resource.find((x: Json) => x.type === "AllergyIntolerance");
     expect(r.interaction).toEqual([{ code: "read" }, { code: "search-type" }]);
-    expect(r.searchParam.map((p: Json) => p.name)).toEqual(["_id", "patient", "clinical-status", "category", "criticality"]);
+    expect(r.searchParam.map((p: Json) => p.name)).toEqual(["_id", "patient", "clinical-status", "criticality"]);
     expect(r.documentation).toMatch(/no known allergies/);
-    // No claim that a medication category is published or searchable: the
-    // form's pre-selected type is left out (see the mapper and search tests).
-    const category = r.searchParam.find((p: Json) => p.name === "category").documentation;
-    expect(category).toMatch(/^food or environment\. medication and biologic match nothing/);
+    // No search by type is offered: it is refused with "ask for all allergies" (owner decision, 2.7).
+    expect(r.searchParam.some((p: Json) => p.name === "category" || p.name === "type")).toBe(false);
+    expect(r.documentation).toMatch(/A search by type \(category or type\) is refused \(400 not-supported\) with a message to ask for all allergies instead/);
+    // No claim that a medication category is published: the form's
+    // pre-selected type is left out (see the mapper tests).
     expect(r.documentation).toMatch(/No category is sent for allergies saved with the form's pre-selected type \(medication\)/);
     expect(r.documentation).toMatch(/A missing category does not mean the allergy is not to a medicine\./);
     expect(r.documentation).not.toMatch(/category medication/);
+    // Allergies marked inactive are not published (owner decision, 2.7).
+    const clinical = r.searchParam.find((p: Json) => p.name === "clinical-status").documentation;
+    expect(clinical).toMatch(/inactive and resolved match nothing/);
+    expect(r.documentation).toMatch(/a read of it is 'not found', no search returns it/);
+    expect(r.documentation).not.toMatch(/inactive means/);
+    // Severe is high risk too (owner decision, 2.7).
+    const criticality = r.searchParam.find((p: Json) => p.name === "criticality").documentation;
+    expect(criticality).toBe("high (allergies rated severe or life-threatening). low and unable-to-assess match nothing: mBHR does not record them.");
   });
 });
 
@@ -693,7 +762,7 @@ describe("AllergyIntolerance access", () => {
 describe("AllergyIntolerance enumeration protection", () => {
   it("refuses staff searches that do not name an allergy or a patient", async () => {
     const { call, allergyQueries, audits } = setup();
-    for (const q of ["", "?clinical-status=active", "?category=food", "?criticality=high", "?clinical-status=active&category=food&criticality=high"]) {
+    for (const q of ["", "?clinical-status=active", "?criticality=high", "?clinical-status=active&criticality=high"]) {
       const res = await call(`/fhir/R4/AllergyIntolerance${q}`, DOCTOR);
       expect(res.status, q).toBe(403);
     }
@@ -710,6 +779,7 @@ describe("AllergyIntolerance enumeration protection", () => {
       `patient=Patient/${PATIENT_A.fhir_id}&verification-status=confirmed`,
       `patient=Patient/${PATIENT_A.fhir_id}&date=2026`,
       `patient=Patient/${PATIENT_A.fhir_id}&clinical-status:not=active`,
+      `patient=Patient/${PATIENT_A.fhir_id}&_include=AllergyIntolerance:patient`,
     ]) {
       expect((await call(`/fhir/R4/AllergyIntolerance?${q}`, DOCTOR)).status, q).toBe(400);
     }
@@ -727,10 +797,13 @@ describe("AllergyIntolerance search", () => {
     const b = await json(await call(byPatient(PATIENT_A.fhir_id), DOCTOR));
     expect(b.resourceType).toBe("Bundle");
     expect(b.total).toBeUndefined();
-    expect(ids(b)).toEqual([AL_DEVICE.id, AL_ACTIVE.id, AL_INACTIVE.id, AL_OTHER.id, AL_MERGED.id]);
+    expect(ids(b)).toEqual([AL_DEVICE.id, AL_ACTIVE.id, AL_OTHER.id, AL_MERGED.id]);
     for (const r of matches(b)) expect(r.patient).toEqual({ reference: `Patient/${PATIENT_A.fhir_id}` });
     expect(JSON.stringify(b)).not.toContain(PATIENT_M.fhir_id);
-    expect(matches(b).map(status)).toEqual(["active", "active", "inactive", "active", "active"]);
+    expect(matches(b).map(status)).toEqual(["active", "active", "active", "active"]);
+    // Marked inactive: not published (owner decision, 2.7).
+    expect(JSON.stringify(b)).not.toContain("Shellfish");
+    expect(JSON.stringify(b)).not.toContain(AL_INACTIVE.id);
   });
 
   it("withholds a record with no clinical status and says a record was left out, never showing it as active", async () => {
@@ -751,7 +824,7 @@ describe("AllergyIntolerance search", () => {
     expect(matches(b)).toEqual([]);
     expect(outcomes(b)).toEqual([ALLERGY_NKA_CAVEAT]);
     expect(outcomes(b)[0].diagnostics).toBe(
-      "mBHR does not record 'no known allergies'; an empty result means no allergy has been recorded, not that the patient has none.",
+      "mBHR does not record 'no known allergies'; an empty result means no active allergy is recorded, not that the patient has none.",
     );
     expect(b.entry.some((e: Json) => e.resource.resourceType === "AllergyIntolerance")).toBe(false);
     expect(JSON.stringify(b)).not.toMatch(/"coding"|snomed|716186003|409137002/);
@@ -763,7 +836,7 @@ describe("AllergyIntolerance search", () => {
       "",
       "&clinical-status=active",
       "&clinical-status=resolved",
-      "&category=biologic",
+      "&clinical-status=inactive",
       "&criticality=low",
       `&_id=${AL_ACTIVE.id}`,
     ]) {
@@ -796,73 +869,70 @@ describe("AllergyIntolerance search", () => {
     const active = await json(await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=active"), DOCTOR));
     expect(ids(active)).toEqual([AL_DEVICE.id, AL_ACTIVE.id, AL_OTHER.id, AL_MERGED.id]);
     expect(allergyQueries().at(-1)).toContain("or=(is_active.is.true)");
+    expect(allergyQueries().at(-1)).toContain("is_active=not.is.false");
     // No record left out: a missing is_active never matches active.
     expect(outcomes(active)).toEqual([ALLERGY_NKA_CAVEAT]);
 
-    const inactive = await json(
-      await call(byPatient(PATIENT_A.fhir_id, `&clinical-status=${encodeURIComponent(`${ALLERGY_CLINICAL_SYSTEM}|inactive`)}`), DOCTOR),
-    );
-    expect(ids(inactive)).toEqual([AL_INACTIVE.id]);
-    expect(matches(inactive).map(status)).toEqual(["inactive"]);
-    expect(allergyQueries().at(-1)).toContain("or=(is_active.is.false)");
-
+    // Allergies marked inactive are not published (owner decision, 2.7), so
+    // inactive matches nothing, like codes mBHR never records: no query, and
+    // no warning of any kind.
     const before = allergyQueries().length;
-    for (const q of ["resolved", "unknown", "https://example.org/other|active"]) {
+    for (const q of ["inactive", `${ALLERGY_CLINICAL_SYSTEM}|inactive`, "resolved", "unknown", "https://example.org/other|active"]) {
       const b = await json(await call(byPatient(PATIENT_A.fhir_id, `&clinical-status=${encodeURIComponent(q)}`), DOCTOR));
       expect(matches(b), q).toEqual([]);
+      expect(outcomes(b), q).toEqual([ALLERGY_NKA_CAVEAT]);
     }
-    // Codes mBHR never records match nothing without a query.
     expect(allergyQueries().length).toBe(before);
     expect((await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=a%20b"), DOCTOR)).status).toBe(400);
-  });
-
-  it("category filters on the recorded type", async () => {
-    const { call, allergyQueries } = setup();
-    const q = async (v: string) => json(await call(byPatient(PATIENT_A.fhir_id, `&category=${encodeURIComponent(v)}`), DOCTOR));
-    expect(ids(await q("food"))).toEqual([AL_INACTIVE.id]);
-    expect(allergyQueries().at(-1)).toContain('or=(allergy_type.ilike."food")');
-    expect(ids(await q("http://hl7.org/fhir/allergy-intolerance-category|food"))).toEqual([AL_INACTIVE.id]);
-    // medication is the form's pre-selected type: the mapper publishes no
-    // category for it, so a search for it matches nothing, without a query.
-    const before = allergyQueries().length;
-    for (const v of ["medication", "http://hl7.org/fhir/allergy-intolerance-category|medication"]) {
-      const b = await q(v);
-      expect(ids(b), v).toEqual([]);
-      expect(outcomes(b), v).toEqual([ALLERGY_NKA_CAVEAT]);
-    }
-    expect(allergyQueries().length).toBe(before);
-    // environmental: the only such row has no clinical status, so it is withheld (and said so).
-    const env = await q("environment");
-    expect(ids(env)).toEqual([]);
-    expect(allergyQueries().at(-1)).toContain('or=(allergy_type.ilike."environmental")');
-    expect(outcomes(env).some((i) => i.severity === "warning")).toBe(true);
-    for (const v of ["biologic", "other", "https://example.org|food"]) expect(ids(await q(v)), v).toEqual([]);
   });
 
   it("criticality filters on the recorded rating", async () => {
     const { call, allergyQueries } = setup();
     const q = async (v: string) => json(await call(byPatient(PATIENT_A.fhir_id, `&criticality=${encodeURIComponent(v)}`), DOCTOR));
     const high = await q("high");
-    expect(ids(high)).toEqual([AL_ACTIVE.id]);
-    expect(matches(high)[0].criticality).toBe("high");
-    expect(allergyQueries().at(-1)).toContain('or=(severity.ilike."life-threatening")');
-    for (const v of ["low", "unable-to-assess", "severe", "http://hl7.org/fhir/allergy-intolerance-criticality|low"]) {
+    // Life-threatening, and severe on the merged-away record M (the severe
+    // AL_INACTIVE is marked inactive, so it is not published).
+    expect(ids(high)).toEqual([AL_ACTIVE.id, AL_MERGED.id]);
+    expect(matches(high).map((r) => r.criticality)).toEqual(["high", "high"]);
+    expect(outcomes(high)).toEqual([ALLERGY_NKA_CAVEAT]);
+    expect(allergyQueries().at(-1)).toContain('or=(severity.ilike."life-threatening",severity.ilike."severe")');
+    for (const v of ["low", "unable-to-assess", "severe", "moderate", "http://hl7.org/fhir/allergy-intolerance-criticality|low"]) {
       expect(ids(await q(v)), v).toEqual([]);
     }
-    expect(ids(await q("http://hl7.org/fhir/allergy-intolerance-criticality|high"))).toEqual([AL_ACTIVE.id]);
+    expect(ids(await q("http://hl7.org/fhir/allergy-intolerance-criticality|high"))).toEqual([AL_ACTIVE.id, AL_MERGED.id]);
+  });
+
+  it("criticality=high finds a severe allergy with no reaction typed, and read serves it as high with no reaction", async () => {
+    // Not in ALL_ROWS, so the other tests' counts are unchanged.
+    const AL_SEVERE_NO_REACTION = { ...BASE, id: "a0000000-0000-4000-8000-000000000008", allergen: "Ceftriaxone", reaction: null, severity: "severe" };
+    const { call } = setup({
+      tables: { patients: [PATIENT_A, PATIENT_M, PATIENT_B, PATIENT_C], patient_allergies: [...ALL_ROWS, AL_SEVERE_NO_REACTION] },
+    });
+    const b = await json(await call(byPatient(PATIENT_A.fhir_id, "&criticality=high"), DOCTOR));
+    expect(ids(b)).toEqual([AL_ACTIVE.id, AL_MERGED.id, AL_SEVERE_NO_REACTION.id]);
+    const found = matches(b).find((r) => r.id === AL_SEVERE_NO_REACTION.id)!;
+    expect(found.criticality).toBe("high");
+    expect(found.reaction).toBeUndefined();
+    const read = await json(await call(`/fhir/R4/AllergyIntolerance/${AL_SEVERE_NO_REACTION.id}`, NURSE));
+    expect(read.criticality).toBe("high");
+    expect(read.reaction).toBeUndefined();
   });
 
   it("combines parameters, and _id alone is a narrowing search", async () => {
     const { call, allergyQueries } = setup();
-    const both = await json(await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=inactive&category=food"), DOCTOR));
-    expect(ids(both)).toEqual([AL_INACTIVE.id]);
-    // All three filters go into one query (no row here is both food and life-threatening).
-    const none = await json(await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=active&category=food&criticality=high"), DOCTOR));
-    expect(ids(none)).toEqual([]);
+    // Every filter goes into one query.
+    const both = await json(await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=active&criticality=high"), DOCTOR));
+    expect(ids(both)).toEqual([AL_ACTIVE.id, AL_MERGED.id]);
     const last = allergyQueries().at(-1)!;
-    for (const part of ["is_active.is.true", 'allergy_type.ilike."food"', "severity.ilike", `patient_id=in.("${PATIENT_A.id}","${PATIENT_M.id}")`]) {
+    for (const part of ["is_active.is.true", "is_active=not.is.false", "severity.ilike", `patient_id=in.("${PATIENT_A.id}","${PATIENT_M.id}")`]) {
       expect(last, part).toContain(part);
     }
+    // inactive matches nothing (allergies marked inactive are not published), without a query.
+    const before = allergyQueries().length;
+    expect(ids(await json(await call(byPatient(PATIENT_A.fhir_id, "&clinical-status=inactive&criticality=high"), DOCTOR)))).toEqual([]);
+    expect(allergyQueries().length).toBe(before);
+    // Nothing filters on the recorded type (owner decision, 2.7).
+    expect(allergyQueries().some((q) => q.includes("allergy_type.ilike"))).toBe(false);
     const byId = await json(await call(`/fhir/R4/AllergyIntolerance?_id=${AL_MERGED.id}`, DOCTOR));
     expect(ids(byId)).toEqual([AL_MERGED.id]);
     expect(matches(byId)[0].patient.reference).toBe(`Patient/${PATIENT_A.fhir_id}`);
@@ -884,16 +954,174 @@ describe("AllergyIntolerance search", () => {
       pages++;
     }
     expect(pages).toBe(3);
-    expect(seen).toEqual([AL_DEVICE.id, AL_ACTIVE.id, AL_INACTIVE.id, AL_OTHER.id, AL_MERGED.id]);
+    expect(seen).toEqual([AL_DEVICE.id, AL_ACTIVE.id, AL_OTHER.id, AL_MERGED.id]);
   });
 
   it("audits the patients the result belongs to, including the merged-away member", async () => {
     const { call, audits } = setup();
     await call(byPatient(PATIENT_A.fhir_id), DOCTOR);
     const a = audits.at(-1)!;
-    expect(a).toMatchObject({ p_decision: "permit", p_interaction: "search", p_resource_type: "AllergyIntolerance", p_result_count: 5 });
+    expect(a).toMatchObject({ p_decision: "permit", p_interaction: "search", p_resource_type: "AllergyIntolerance", p_result_count: 4 });
     expect([...(a.p_patient_ids as string[])].sort()).toEqual([PATIENT_A.id, PATIENT_M.id].sort());
     expect(a.p_search_params).toEqual(["patient"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gateway: searches by type (owner decision, CLINICAL_LOGIC_CHANGES.md 2.7)
+// ---------------------------------------------------------------------------
+
+describe("AllergyIntolerance search by type", () => {
+  const refusal = {
+    resourceType: "OperationOutcome",
+    issue: [{ severity: "error", code: "not-supported", diagnostics: ALLERGY_TYPE_SEARCH_REFUSED }],
+  };
+  const TYPE_SEARCHES = [
+    ...[
+      "medication",
+      "food",
+      "environment",
+      "biologic",
+      "other",
+      "http://hl7.org/fhir/allergy-intolerance-category|medication",
+      "http://hl7.org/fhir/allergy-intolerance-category|food",
+      "https://example.org|food",
+      "|food",
+    ].map((v) => `&category=${encodeURIComponent(v)}`),
+    ...["allergy", "intolerance", "http://hl7.org/fhir/allergy-intolerance-type|allergy"].map((v) => `&type=${encodeURIComponent(v)}`),
+  ];
+
+  it("is answered 'ask for all allergies', never with an empty list, whatever the value", async () => {
+    const { call, allergyQueries, audits } = setup();
+    expect(ALLERGY_TYPE_SEARCH_REFUSED).toMatch(/Ask for all of the patient's allergies instead/);
+    for (const q of TYPE_SEARCHES) {
+      const res = await call(byPatient(PATIENT_A.fhir_id, q), DOCTOR);
+      expect(res.status, q).toBe(400);
+      const body = await json(res);
+      expect(body, q).toEqual(refusal);
+      expect(JSON.stringify(body), q).not.toMatch(/no active allergy is recorded|no allergy has been recorded/);
+    }
+    expect(allergyQueries()).toEqual([]);
+    expect(audits).toHaveLength(TYPE_SEARCHES.length);
+    for (const a of audits) {
+      expect(a).toMatchObject({
+        p_decision: "deny",
+        p_denial_reason: "invalid_request",
+        p_http_status: 400,
+        p_resource_type: "AllergyIntolerance",
+        p_search_params: ["patient", "unsupported"],
+      });
+    }
+  });
+
+  it("is answered the same way whatever else the search holds", async () => {
+    const { call, allergyQueries } = setup();
+    const patient = `patient=Patient/${PATIENT_A.fhir_id}`;
+    for (const q of [
+      "category=medication", // names no patient: still the instruction, not 403
+      "type=allergy",
+      `_id=${AL_ACTIVE.id}&category=medication`,
+      `_id=${AL_INACTIVE.id}&category=food`,
+      `${patient}&clinical-status=active&category=food&criticality=high`,
+      `${patient}&category=food,medication`,
+      `${patient}&category=food&category=medication`,
+      `${patient}&category=`,
+      `${patient}&category:not=medication`,
+      `${patient}&category:missing=true`,
+      `${patient}&category:text=drug`,
+      `${patient}&_count=abc&category=food`,
+      `${patient}&category=food&_include=AllergyIntolerance:patient`,
+      `${patient}&type=`,
+      `${patient}&type:not=intolerance`,
+      `${patient}&type=allergy&category=food`,
+    ]) {
+      const res = await call(`/fhir/R4/AllergyIntolerance?${q}`, DOCTOR);
+      expect(res.status, q).toBe(400);
+      expect(await json(res), q).toEqual(refusal);
+    }
+    // Prefer: handling=lenient is not honoured: the parameter is never ignored.
+    const lenient = await call(byPatient(PATIENT_A.fhir_id, "&category=medication"), DOCTOR, { Prefer: "handling=lenient" });
+    expect(lenient.status).toBe(400);
+    expect(await json(lenient)).toEqual(refusal);
+    expect(allergyQueries()).toEqual([]);
+  });
+
+  it("callers who may not read allergies are refused first and learn nothing about the parameter", async () => {
+    const { call, allergyQueries, audits } = setup();
+    for (const token of [AUDITOR, PAT_A]) {
+      const res = await call(byPatient(PATIENT_A.fhir_id, "&category=food"), token);
+      expect(res.status, token).toBe(403);
+      const text = JSON.stringify(await json(res));
+      expect(text, token).not.toMatch(/category|allerg/i);
+    }
+    expect(audits.map((a) => a.p_denial_reason)).toEqual(["missing_permission", "not_available_to_patients"]);
+    expect(allergyQueries()).toEqual([]);
+  });
+
+  it("asking for all allergies still gives each allergy's category where staff chose one", async () => {
+    const AL_B_ENV = { ...AL_B, id: "a0000000-0000-4000-8000-000000000009", allergen: "Pollen", allergy_type: "environmental" };
+    const { call } = setup({ tables: { patients: [PATIENT_A, PATIENT_M, PATIENT_B, PATIENT_C], patient_allergies: [...ALL_ROWS, AL_B_ENV] } });
+    const categories = (b: Json) => Object.fromEntries(matches(b).map((r) => [r.id, r.category]));
+    const b = await json(await call(byPatient(PATIENT_B.fhir_id), DOCTOR));
+    expect(categories(b)).toEqual({ [AL_B.id]: ["food"], [AL_B_ENV.id]: ["environment"] });
+    expect(outcomes(b)).toContainEqual(ALLERGY_NKA_CAVEAT);
+    // Medication (the form's starting type) and other: still no category.
+    const a = await json(await call(byPatient(PATIENT_A.fhir_id), DOCTOR));
+    expect(categories(a)).toEqual({ [AL_DEVICE.id]: undefined, [AL_ACTIVE.id]: undefined, [AL_OTHER.id]: undefined, [AL_MERGED.id]: undefined });
+    expect((await json(await call(`/fhir/R4/AllergyIntolerance/${AL_B.id}`, DOCTOR))).category).toEqual(["food"]);
+  });
+
+  it("no other search reaches allergies by type", async () => {
+    const { call, allergyQueries } = setup();
+    for (const path of [
+      "/fhir/R4/Patient?_has:AllergyIntolerance:patient:category=food",
+      `/fhir/R4/Patient?_id=${PATIENT_A.fhir_id}&_revinclude=AllergyIntolerance:patient`,
+    ]) {
+      const res = await call(path, DOCTOR);
+      expect(res.status, path).toBe(400);
+      expect((await json(res)).issue[0].code, path).toBe("not-supported");
+    }
+    expect(allergyQueries()).toEqual([]);
+  });
+
+  it("the module itself refuses a search by type before reading anything (defence in depth)", async () => {
+    const urls: string[] = [];
+    const db = new Postgrest({
+      supabaseUrl: "https://project.supabase.co",
+      anonKey: "anon-key",
+      accessToken: "token",
+      fetchImpl: async (u) => {
+        urls.push(u);
+        return new Response("[]", { status: 200 });
+      },
+    });
+    const ctx: QueryCtx = {
+      db,
+      scope: { kind: "staff", patientIds: null },
+      permissions: new Set(["consult"]),
+      restrictions: new Set(),
+      baseUrl: "https://mbhr.app/fhir/R4",
+      cursorBinding: "",
+      patients: { ids: [PATIENT_A.id], requested: [PATIENT_A.id] },
+    };
+    for (const name of ["category", "type"]) {
+      const values = new Map([
+        ["patient", [PATIENT_A.fhir_id]],
+        [name, ["food"]],
+      ]);
+      const e = await allergyIntoleranceModule.search!(ctx, { values, count: 10, cursor: null }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(e, name).toBeInstanceOf(FhirError);
+      const err = e as FhirError;
+      expect({ status: err.status, code: err.code, message: err.message }, name).toEqual({
+        status: 400,
+        code: "not-supported",
+        message: ALLERGY_TYPE_SEARCH_REFUSED,
+      });
+    }
+    expect(urls).toEqual([]);
   });
 });
 
@@ -1103,7 +1331,6 @@ describe("AllergyIntolerance recorder", () => {
     expect(recorders).toEqual({
       [AL_DEVICE.id]: `Practitioner/${PRACTITIONER_ID}`,
       [AL_ACTIVE.id]: `Practitioner/${PRACTITIONER_ID}`,
-      [AL_INACTIVE.id]: undefined, // device-made account: unknown to the directory
       [AL_OTHER.id]: undefined, // "patient-submitted"
       [AL_MERGED.id]: undefined, // not an account id the directory accepts: not sent
     });
@@ -1114,9 +1341,9 @@ describe("AllergyIntolerance recorder", () => {
       expect(c.p_limit).toBe(101);
       expect(c.p_source_ids).not.toContain("legacy:account 7");
     }
-    expect([...new Set(calls.flatMap((c) => c.p_source_ids as string[]))].sort()).toEqual(
-      [DEVICE_STAFF, DOCTOR_ACCOUNT, "patient-submitted"].sort(),
-    );
+    expect([...new Set(calls.flatMap((c) => c.p_source_ids as string[]))].sort()).toEqual([DOCTOR_ACCOUNT, "patient-submitted"].sort());
+    // The allergy marked inactive is never mapped, so its recorder is never looked up.
+    expect(calls.flatMap((c) => c.p_source_ids as string[])).not.toContain(DEVICE_STAFF);
   });
 
   it("still serves allergies, without a recorder, when the directory is missing or fails", async () => {
@@ -1129,7 +1356,7 @@ describe("AllergyIntolerance recorder", () => {
       expect(a.recorder).toBeUndefined();
       expect(status(a)).toBe("active");
       const b = await json(await call(byPatient(PATIENT_A.fhir_id), DOCTOR));
-      expect(ids(b)).toHaveLength(5);
+      expect(ids(b)).toHaveLength(4);
       expect(matches(b).every((r) => r.recorder === undefined)).toBe(true);
     }
   });
@@ -1145,7 +1372,7 @@ describe("AllergyIntolerance never publishes", () => {
     const served = [
       await json(await call(byPatient(PATIENT_A.fhir_id), DOCTOR)),
       await json(await call(`/fhir/R4/AllergyIntolerance/${AL_ACTIVE.id}`, NURSE)),
-      await json(await call(`/fhir/R4/AllergyIntolerance/${AL_INACTIVE.id}`, PHARMACIST)),
+      await json(await call(`/fhir/R4/AllergyIntolerance/${AL_MERGED.id}`, PHARMACIST)),
       await json(await call(`/fhir/R4/AllergyIntolerance?_id=${AL_OTHER.id}`, REGISTRAR)),
     ];
     const text = JSON.stringify(served);
@@ -1175,5 +1402,110 @@ describe("AllergyIntolerance never publishes", () => {
     // Logs carry no patient data or allergen text.
     const log = logs.join("\n");
     for (const secret of [PATIENT_A.fhir_id, "Penicillin", STAFF_NOTE, DOCTOR_ACCOUNT]) expect(log).not.toContain(secret);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Allergies marked inactive: never published (owner decision,
+// CLINICAL_LOGIC_CHANGES.md 2.7)
+// ---------------------------------------------------------------------------
+
+describe("AllergyIntolerance marked inactive", () => {
+  it("is never read: every allergy query leaves it out", async () => {
+    expect(NOT_MARKED_INACTIVE).toEqual([["is_active", "not.is.false"]]);
+    const { call, allergyQueries } = setup();
+    await call(`/fhir/R4/AllergyIntolerance/${AL_INACTIVE.id}`, DOCTOR);
+    await call(byPatient(PATIENT_A.fhir_id), DOCTOR);
+    await call(`/fhir/R4/AllergyIntolerance?_id=${AL_INACTIVE.id}`, DOCTOR);
+    const queries = allergyQueries();
+    expect(queries).toHaveLength(3);
+    for (const q of queries) expect(q).toContain("is_active=not.is.false");
+  });
+
+  it("a read is 404, exactly as for an allergy that does not exist, and audited the same way", async () => {
+    const { call, audits } = setup();
+    const inactive = await call(`/fhir/R4/AllergyIntolerance/${AL_INACTIVE.id}`, DOCTOR);
+    const unknown = await call("/fhir/R4/AllergyIntolerance/a0000000-0000-4000-8000-0000000000ff", DOCTOR);
+    expect(inactive.status).toBe(404);
+    expect(unknown.status).toBe(404);
+    expect(inactive.headers.get("etag")).toBeNull();
+    const body = await json(inactive);
+    expect(body).toEqual(await json(unknown));
+    expect(JSON.stringify(body)).not.toMatch(/Shellfish|Hives|inactive/);
+    const [a, b] = audits.slice(-2);
+    expect({ ...a, p_resource_id: null }).toEqual({ ...b, p_resource_id: null });
+    expect(a).toMatchObject({ p_decision: "permit", p_http_status: 404, p_result_count: 0, p_patient_ids: [] });
+  });
+
+  it("the searchset is the same whether or not the patient has one", async () => {
+    const withIt = setup();
+    const without = setup({
+      tables: { patients: [PATIENT_A, PATIENT_M, PATIENT_B, PATIENT_C], patient_allergies: ALL_ROWS.filter((r) => r !== AL_INACTIVE) },
+    });
+    for (const q of ["", "&clinical-status=active", "&clinical-status=inactive", "&criticality=high", `&_id=${AL_INACTIVE.id}`, "&_count=1"]) {
+      const a = await json(await withIt.call(byPatient(PATIENT_A.fhir_id, q), NURSE));
+      const b = await json(await without.call(byPatient(PATIENT_A.fhir_id, q), NURSE));
+      expect(a, q).toEqual(b);
+    }
+    expect(withIt.audits.map((x) => x.p_result_count)).toEqual(without.audits.map((x) => x.p_result_count));
+    const byId = await json(await withIt.call(`/fhir/R4/AllergyIntolerance?_id=${AL_INACTIVE.id}`, PHARMACIST));
+    expect(matches(byId)).toEqual([]);
+    expect(outcomes(byId)).toEqual([ALLERGY_NKA_CAVEAT]);
+  });
+
+  it("is left out when filed under a merged-away record, and is never counted as left out", async () => {
+    // (a) Filed under the merged-away record M.
+    const onM = { ...AL_MERGED, id: "a0000000-0000-4000-8000-000000000007", allergen: "Latex", is_active: false };
+    const merged = setup({ tables: { patients: [PATIENT_A, PATIENT_M, PATIENT_B, PATIENT_C], patient_allergies: [...ALL_ROWS, onM] } });
+    const b = await json(await merged.call(byPatient(PATIENT_A.fhir_id), DOCTOR));
+    expect(ids(b)).toEqual([AL_DEVICE.id, AL_ACTIVE.id, AL_OTHER.id, AL_MERGED.id]);
+    expect(JSON.stringify(b)).not.toContain("Latex");
+
+    // (b) Filed under the orphaned tombstone T: not found, not a 500, and no left-out warning.
+    const onT = { ...AL_TOMB, id: "c0000000-0000-4000-8000-000000000002", is_active: false };
+    const tomb = setup({ tables: { ...TOMB_TABLES, patient_allergies: [...TOMB_TABLES.patient_allergies, onT] } });
+    expect((await tomb.call(`/fhir/R4/AllergyIntolerance/${onT.id}`, DOCTOR)).status).toBe(404);
+    const byId = await json(await tomb.call(`/fhir/R4/AllergyIntolerance?_id=${onT.id}`, DOCTOR));
+    expect(outcomes(byId)).toEqual([ALLERGY_NKA_CAVEAT]);
+
+    // (c) Filed under a record whose merge chain stops resolving.
+    const broken = setup(
+      {
+        tables: {
+          patients: [PATIENT_A, PATIENT_M],
+          patient_allergies: [{ ...AL_MERGED, id: "b0000000-0000-4000-8000-000000000009", is_active: false }],
+        },
+      },
+      unresolvable(PATIENT_M.id),
+    );
+    const c = await json(await broken.call(byPatient(PATIENT_A.fhir_id), DOCTOR));
+    expect(matches(c)).toEqual([]);
+    expect(outcomes(c)).toEqual([ALLERGY_NKA_CAVEAT]);
+  });
+
+  it("no conformance example publishes one", () => {
+    const examples = conformanceExamples();
+    const resources = Object.values(examples).flatMap((r) => {
+      const x = r as Json;
+      return x.resourceType === "Bundle" ? ((x.entry ?? []) as Json[]).map((e) => e.resource as Json) : [x];
+    });
+    const allergies = resources.filter((r) => r.resourceType === "AllergyIntolerance");
+    expect(allergies.length).toBeGreaterThanOrEqual(4);
+    for (const r of allergies) {
+      expect(status(r), r.id).toBe("active");
+      expect(validateResource(r, validateAllergyIntolerance), r.id).toEqual([]);
+    }
+    expect(Object.keys(examples)).not.toContain("AllergyIntolerance-inactive");
+  });
+
+  it("validation never releases an allergy with a clinical status other than active", () => {
+    for (const code of ["inactive", "resolved"]) {
+      const r = JSON.parse(JSON.stringify(mapAllergy(AL_ACTIVE, MAP_CTX))) as Json;
+      r.clinicalStatus = { coding: [{ system: ALLERGY_CLINICAL_SYSTEM, code }] };
+      expect(validateResource(r, validateAllergyIntolerance), code).toContainEqual({
+        path: "clinicalStatus",
+        message: "only active allergies are published",
+      });
+    }
   });
 });

@@ -206,10 +206,10 @@ Served by the same Observation module, after vital signs.
 | | |
 | --- | --- |
 | FHIR id | `patient_allergies.id` as stored (opaque: a uuid, or a device ULID where the column holds text). Whether production stores uuid or text is not verified. |
-| clinicalStatus | `is_active` (table below). A row with no usable value gets no clinical status, fails invariant ait-1 and is **withheld** (a searchset says how many; a read is 500), never shown as active. |
+| clinicalStatus | `is_active` (table below). Only `active` is ever published: an allergy marked inactive is left out entirely (see the table). A row with no usable value gets no clinical status, fails invariant ait-1 and is **withheld** (a searchset says how many; a read is 500), never shown as active. |
 | verificationStatus, type | **Never filled**: mBHR records neither. Nothing is "confirmed" by default. |
 | category | `allergy_type`: food → food, environmental → environment. "medication" is left out: the form pre-selects it, so it cannot be told apart from "not chosen". Anything else (including "other") → left out. |
-| criticality | `high` only for severity "life-threatening"; otherwise left out. |
+| criticality | `high` for severity "severe" or "life-threatening", whether or not a reaction was written; otherwise left out (never `low`). |
 | code | `code.text` = the allergen exactly as recorded (outer spaces trimmed). No substance coding; "Penicillin, codeine" stays one record. Blank → no code (the record is still published). |
 | patient | the canonical Patient. |
 | onsetDateTime | `onset_date` (date only). |
@@ -217,21 +217,21 @@ Served by the same Observation module, after vital signs.
 | recorder | `Practitioner/<id>` only when `created_by` resolves in the staff directory; otherwise left out. |
 | reaction | Only when a reaction was written: `manifestation.text` = the reaction as recorded, and `severity` from the severity rating (table below). The severity is not published without a reaction. |
 | Never published | `notes`, `created_by` (an account id), device sync columns, the internal patient id. |
-| Searches | `_id`, `patient`, `clinical-status`, `category`, `criticality`. No `subject`. `category=medication` matches nothing. |
+| Searches | `_id`, `patient`, `clinical-status`, `criticality`. No `subject`. `clinical-status=inactive` and `resolved` match nothing. `criticality=high` matches severe and life-threatening. A search by type (`category` or `type`, any value or modifier) is refused with 400 `not-supported` and a message to ask for all allergies instead: the form starts on "medication", so the recorded type cannot find every allergy of a type. Each allergy's own category (above) is unchanged. |
 | Who reads | Staff with register, vitals, consult or dispense. Not available to patients. |
 
 Every searchset carries a note: mBHR does not record "no known allergies";
-an empty result means no allergy has been recorded, not that the patient
+an empty result means no active allergy is recorded, not that the patient
 has none. Text such as "None" or "NKDA" typed as an allergen is published
 as written, as an allergy.
 
 | Source | FHIR | |
 | --- | --- | --- |
 | `is_active` true | clinicalStatus active | |
-| `is_active` false | clinicalStatus inactive | "Mark inactive" in the app; no reason is recorded (resolved, error or duplicate). The app hides inactive allergies; they are published. |
+| `is_active` false | not published | "Mark inactive" in the app; no reason is recorded (resolved, error or duplicate). The app hides inactive allergies, and so does the gateway (owner decision, CLINICAL_LOGIC_CHANGES.md 2.7): a read is 404 as for an unknown id, no search returns or counts it, and a system that copied it earlier is not told. |
 | `is_active` missing or not a boolean | none: record withheld | |
 | severity moderate | reaction.severity moderate | |
-| severity severe | reaction.severity severe | |
+| severity severe | reaction.severity severe, criticality high | criticality high even with no reaction written (owner sign-off, CLINICAL_LOGIC_CHANGES.md 2.7 "Severity"): the staff patient header gives severe the same top alert as life-threatening |
 | severity life-threatening | reaction.severity severe, criticality high | |
 | severity mild | left out | the form pre-selects mild |
 | allergy_type medication | no category | the form pre-selects medication |

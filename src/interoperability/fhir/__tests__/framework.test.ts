@@ -77,6 +77,34 @@ describe("search parameters", () => {
     for (const q of bad) expect(() => parse(q), q).toThrow(FhirError);
   });
 
+  it("answers a parameter a type refuses with the type's own message, whatever its value, modifier or the rest of the query", () => {
+    const allergyDefs = RESOURCE_DEFINITIONS.AllergyIntolerance.searchParams;
+    const refused = [{ name: "category", diagnostics: "Ask for all of them instead." }];
+    const refusal = (q: string, r = refused): unknown => {
+      try {
+        parseSearch(new URLSearchParams(q), allergyDefs, paging, r);
+        return null;
+      } catch (e) {
+        return e;
+      }
+    };
+    for (const q of ["patient=x&category=food", "category:not=food&patient=x", "_count=abc&category=food", "category=a,b", "category=", "category=food&category=drug"]) {
+      const e = refusal(q);
+      expect(e, q).toBeInstanceOf(FhirError);
+      const { status, code, message } = e as FhirError;
+      expect({ status, code, message }, q).toEqual({ status: 400, code: "not-supported", message: "Ask for all of them instead." });
+    }
+    // Without the refusal: the generic answer. No prefix match.
+    expect((refusal("patient=x&category=food", []) as FhirError).message).toBe("Search parameter category is not supported.");
+    expect((refusal("patient=x&categoryx=1") as FhirError).message).toBe("Search parameter categoryx is not supported.");
+    expect(parseSearch(new URLSearchParams("patient=x&criticality=high"), allergyDefs, paging, refused).values.get("criticality")).toEqual(["high"]);
+    // A refused parameter is never also declared, so the CapabilityStatement never offers it.
+    for (const t of PUBLISHED_TYPES) {
+      const names = RESOURCE_DEFINITIONS[t].searchParams.map((d) => d.name);
+      for (const r of RESOURCE_DEFINITIONS[t].refusedSearchParams ?? []) expect(names, `${t}.${r.name}`).not.toContain(r.name);
+    }
+  });
+
   it("allows two date bounds but not three", () => {
     expect(parse("patient=x&date=ge2026-01-01&date=lt2026-02-01").values.get("date")).toHaveLength(2);
     expect(() => parse("patient=x&date=ge2026&date=lt2027&date=eq2026-05")).toThrow(FhirError);
