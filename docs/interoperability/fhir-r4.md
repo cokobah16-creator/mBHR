@@ -174,14 +174,16 @@ Extra conditions on top of the required groups:
   [resource-mapping.md](resource-mapping.md): Patient ids are uuids,
   vital-sign Observations `<vitals id>-<kind>`, laboratory Observations
   `lab-<uuid>`, MedicationRequests `<prescription id>-<line>`, Provenance
-  `labrel-…`, `merge-…` or `docup-…`.
+  `labrel-…` or `merge-…`.
 - `patient`, `subject`: `Patient/<id>` or a bare `<id>`. A reference to
   another type, or an absolute URL, is 400. If both are given and name
   different patients the result is empty (staff) or 403 (patient).
 - References to other types (`encounter`, `based-on`, `practitioner`,
   `prescription`, `target`) take `Type/<id>` or a bare id in the same way.
   Provenance `target` accepts `Observation/lab-<id>`,
-  `DiagnosticReport/<id>`, `Patient/<id>` and `DocumentReference/<id>`.
+  `DiagnosticReport/<id>` and `Patient/<id>`; any other record, a
+  `DocumentReference` included, matches nothing (document uploads get no
+  Provenance).
 - `identifier` (Patient): `https://mbhr.app/identifiers/patient|<id>` or
   the bare id. mBHR records no MRN or national identifier.
 - `name` (Patient): 2 to 64 letters (any script), spaces, hyphens or

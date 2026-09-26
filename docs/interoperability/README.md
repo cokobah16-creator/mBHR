@@ -100,7 +100,7 @@ What each published type does today, as implemented in code. Write is
 | PractitionerRole | Yes | Yes | No | directory | Every request | directory | Implemented. The mBHR access role as a local code, not a qualification. |
 | Organization | Yes | Yes | No | directory | Every request | directory | Implemented. Only organisations the caller is a member of (row-level security); no app code creates memberships. |
 | Location | Yes | Yes | No | directory | Every request | directory | Implemented. From the server site registry; no Encounter references it. |
-| Provenance | Yes | Yes | No | audit | Every request | provenanceAudit | Partial. Only events the database records itself: lab review, release and withhold; server-side merges; document uploads. Nothing for visits, vitals, consultations, prescriptions, dispenses, allergies or conditions. |
+| Provenance | Yes | Yes | No | audit | Every request | provenanceAudit | Partial. Only events the database records itself: lab review, release and withhold; server-side merges. Nothing for document uploads (owner decision), visits, vitals, consultations, prescriptions, dispenses, allergies or conditions. |
 | AuditEvent | Yes | Yes | No | audit | Every request | provenanceAudit, security | Partial. FHIR gateway reads and searches only, not activity in the app; no `agent` search. |
 | Procedure | No | No | No | n/a | n/a | n/a | Not implemented. The app records no performed procedure, and `public.procedures` has no writer in the repository. |
 | CarePlan | No | No | No | n/a | n/a | n/a | Not implemented. There is no structured care plan: the consultation plan is free text and `public.care_plans` has no writer. |

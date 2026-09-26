@@ -27,7 +27,7 @@ import { mapDiagnosticReport, mapLabObservation, mapServiceRequest } from "../ma
 import { mapBinary, mapDocumentReference } from "../mappers/document";
 import { mapLocation, mapOrganization, mapPractitioner, mapPractitionerRole } from "../mappers/directory";
 import { mapConsent } from "../mappers/consent";
-import { mapDocumentUploadEvent, mapLabReleaseEvent, mapMergeEvent, type LabEventLinks } from "../mappers/provenance";
+import { mapLabReleaseEvent, mapMergeEvent, type LabEventLinks } from "../mappers/provenance";
 import { mapAuditEvent } from "../mappers/auditEvent";
 import type { MapContext } from "../mappers/common";
 
@@ -754,7 +754,6 @@ function phase2Examples(ctx: MapContext): Record<string, Resource> {
     [MERGED_PATIENT.id, MERGED_PATIENT.fhir_id],
   ]);
   add("Provenance-patient-merge", mapMergeEvent(MERGE_EVENT, ownIds, staffRefs));
-  add("Provenance-document-upload", mapDocumentUploadEvent(DOCUMENT_UPLOAD, ctx));
   add("AuditEvent-read-permitted", mapAuditEvent(AUDIT_READ_PERMIT, ctx, staffRefs));
   add("AuditEvent-search-refused", mapAuditEvent(AUDIT_SEARCH_DENIED, ctx, staffRefs));
 

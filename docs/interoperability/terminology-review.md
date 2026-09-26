@@ -48,7 +48,6 @@ mapping (decision 1 there); none is approved yet.
 | Consent.provision.action | `http://terminology.hl7.org/CodeSystem/consentaction` | collect, access, use, disclose, correct |
 | Consent.provision.purpose | `http://terminology.hl7.org/CodeSystem/v3-ActReason` | TREAT, ETREAT, HOPERAT, PATRQT, HRESCH, PUBHLTH (no display) |
 | Consent.provision.class | `http://hl7.org/fhir/resource-types` | an R4 resource type name, when the stored name is one |
-| Provenance.activity (uploads) | `http://terminology.hl7.org/CodeSystem/v3-DataOperation` | `CREATE` |
 | Provenance.agent.type (lab review) | `http://terminology.hl7.org/CodeSystem/provenance-participant-type` | `verifier` |
 | AuditEvent.type | `http://terminology.hl7.org/CodeSystem/audit-event-type` | `rest` |
 | AuditEvent.subtype | `http://hl7.org/fhir/restful-interaction` | `read`, `search-type` |
@@ -208,7 +207,7 @@ Points for review in this table:
 | Staff roles | local code only | An mBHR role is an access role an admin assigns, not a qualification. It is never mapped to SNOMED CT or HL7 v2 practitioner codes. |
 | Organization and Location type | left out | Not recorded in a codable form. |
 | Facility identifiers | none | mBHR records no facility registry id. |
-| Provenance for release, withhold and merge | local codes | R4 has no activity code for these. Only an upload matches `v3-DataOperation CREATE` exactly, and only a review matches the `verifier` agent type. |
+| Provenance for release, withhold and merge | local codes | R4 has no activity code for these. Only a review matches the `verifier` agent type. |
 | Consent category | local code | No reviewed mapping says which LOINC document class a category is. |
 | Document type | local code | No reviewed mapping to the LOINC Document Ontology. |
 | Document source | local code | No standard code says who uploaded a document. |
