@@ -295,6 +295,43 @@ describe("searches", () => {
     expect(otherSystem).not.toHaveProperty("entry");
   });
 
+  it("sends a birth date on the 1st of a month shortened, and still finds it by the stored date", async () => {
+    // Owner decision, CLINICAL_LOGIC_CHANGES.md 2.7: only what goes out is shortened.
+    const JAN1 = { ...PATIENT_B, id: "01HZZPATIENTC0000000000000", fhir_id: "0b3c1d2e-1111-4aaa-8bbb-000000000003", given_name: "Chidi", family_name: "Eze", dob: "2021-01-01" };
+    const JUN1 = { ...JAN1, id: "01HZZPATIENTD0000000000000", fhir_id: "0b3c1d2e-1111-4aaa-8bbb-000000000004", given_name: "Dayo", dob: "2024-06-01" };
+    const { call, calls } = setup({
+      tables: { patients: [PATIENT_A, PATIENT_B, JAN1, JUN1], visits: [VISIT_A], vitals: [VITALS_A, VITALS_B], conditions: [CONDITION_A, CONDITION_ERR] },
+    });
+    const read = async (id: string) => (await body(await call(`/fhir/R4/Patient/${id}`, { token: NURSE }))).birthDate;
+    expect(await read(JAN1.fhir_id)).toBe("2021");
+    expect(await read(JUN1.fhir_id)).toBe("2024-06");
+    expect(await read(PATIENT_A.fhir_id)).toBe("1984-03-02");
+    const byId = await body(await call(`/fhir/R4/Patient?_id=${JAN1.fhir_id}`, { token: NURSE }));
+    expect(byId.entry[0].resource.birthDate).toBe("2021");
+
+    // A name and birth-date search matches the full stored date, as before.
+    const jan = await body(await call("/fhir/R4/Patient?name=eze&birthdate=2021-01-01", { token: NURSE }));
+    expect(matchIds(jan)).toEqual([JAN1.fhir_id]);
+    expect(jan.entry[0].resource.birthDate).toBe("2021");
+    expect(calls.some((c) => c.url.includes("dob=eq.2021-01-01"))).toBe(true);
+    const jun = await body(await call("/fhir/R4/Patient?name=eze&birthdate=2024-06-01", { token: NURSE }));
+    expect(matchIds(jun)).toEqual([JUN1.fhir_id]);
+    expect(jun.entry[0].resource.birthDate).toBe("2024-06");
+    const otherDay = await body(await call("/fhir/R4/Patient?name=eze&birthdate=2021-01-02", { token: NURSE }));
+    expect(otherDay).not.toHaveProperty("entry");
+    // The shortened forms are still not search values.
+    for (const q of ["name=eze&birthdate=2021", "name=eze&birthdate=2024-06"]) {
+      expect((await call(`/fhir/R4/Patient?${q}`, { token: NURSE })).status, q).toBe(400);
+    }
+
+    // The CapabilityStatement says both.
+    const cs = await body(await call("/fhir/R4/metadata"));
+    const patient = cs.rest[0].resource.find((r: { type: string }) => r.type === "Patient");
+    expect(patient.documentation).toMatch(/birthDate: a date on the 1st of a month is sent as the year only \(1 January\) or as the year and month/);
+    expect(patient.documentation).toMatch(/search still matches the full stored date/);
+    expect(patient.searchParam.find((x: { name: string }) => x.name === "birthdate").documentation).toMatch(/Matches the full stored date of birth/);
+  });
+
   it("pages vital signs with a stable cursor and no duplicates", async () => {
     const { call } = setup();
     const seen: string[] = [];
@@ -335,6 +372,28 @@ describe("searches", () => {
     // Every Condition searchset says what the table does not cover.
     const note = all.entry.find((e: { search: { mode: string } }) => e.search.mode === "outcome");
     expect(note.resource.issue[0].severity).toBe("information");
+  });
+
+  it("sends a diagnosis only with what was recorded: nothing filled in, a stored 'confirmed' as confirmed", async () => {
+    const UNMARKED = { ...CONDITION_A, id: "c0000000-0000-4000-8000-00000000000c", clinical_status: null, verification_status: null, category: null };
+    const CONFIRMED = { ...CONDITION_A, id: "c0000000-0000-4000-8000-00000000000d", verification_status: "confirmed" };
+    const { call } = setup({
+      tables: { patients: [PATIENT_A, PATIENT_B], visits: [VISIT_A], vitals: [VITALS_A, VITALS_B], conditions: [CONDITION_A, UNMARKED, CONFIRMED] },
+    });
+    const unmarked = await body(await call(`/fhir/R4/Condition/${UNMARKED.id}`, { token: DOCTOR }));
+    expect(unmarked.resourceType).toBe("Condition");
+    expect(unmarked.clinicalStatus).toBeUndefined();
+    expect(unmarked.verificationStatus).toBeUndefined();
+    expect(unmarked.category).toBeUndefined();
+    const confirmed = await body(await call(`/fhir/R4/Condition/${CONFIRMED.id}`, { token: DOCTOR }));
+    expect(confirmed.verificationStatus).toEqual({
+      coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code: "confirmed" }],
+    });
+    // A diagnosis with no recorded clinical status matches no clinical-status search.
+    const active = await body(await call(`/fhir/R4/Condition?patient=Patient/${PATIENT_A.fhir_id}&clinical-status=active`, { token: DOCTOR }));
+    expect(matchIds(active)).toEqual([CONDITION_A.id, CONFIRMED.id]);
+    const all = await body(await call(`/fhir/R4/Condition?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR }));
+    expect(matchIds(all)).toEqual([CONDITION_A.id, UNMARKED.id, CONFIRMED.id]);
   });
 
   it("adds verified terminology mappings to the local code", async () => {

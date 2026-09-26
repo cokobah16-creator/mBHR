@@ -12,9 +12,12 @@
 //   - sex "other" is also what registration stores when nothing was chosen
 //     (portal self-registration, the staff form's fallback), so it cannot
 //     be told apart from a real "other": gender is left out.
-//   - the birth date is published as recorded. Whether it was estimated is
-//     kept only on the recording tablet, so it cannot be flagged here
-//     (docs/interoperability/resource-mapping.md, known limitations).
+//   - the birth date is sent with less precision when it falls on the 1st
+//     of a month: 1 January as the year only, any other 1st as year and
+//     month (publishedBirthDate). Quick registration saves an age as such
+//     a date, and whether it was estimated is kept only on the recording
+//     tablet, so an estimate cannot be told from a real birthday; every
+//     date on the 1st is treated alike. The stored date is not changed.
 //
 // A merged-away record (merged_into set, or merged_at set with its kept
 // record gone) is published as a tombstone: id, identifier, name,
@@ -63,6 +66,23 @@ export function mapGender(sex: string | undefined): Patient["gender"] | undefine
       // An unrecognised local value is not guessed at.
       return "unknown";
   }
+}
+
+/**
+ * Patient.birthDate from the stored date of birth (YYYY-MM-DD).
+ * Quick registration saves an age as 1 January of the birth year, or the
+ * 1st of the birth month for a baby, and the server cannot tell such an
+ * estimate from a real birthday (the mark stays on the tablet). So a date
+ * on the 1st goes out with less precision (owner decision,
+ * docs/clinical/CLINICAL_LOGIC_CHANGES.md 2.7): 1 January as the year only,
+ * the 1st of any other month as year and month; any other date in full.
+ * A real birthday on the 1st loses its day too. Strings only (no Date, so
+ * no time zone can move the day); anything else is returned unchanged.
+ */
+export function publishedBirthDate(dob: string): string {
+  const m = /^(\d{4})-(\d{2})-01$/.exec(dob);
+  if (!m) return dob;
+  return m[2] === "01" ? m[1] : `${m[1]}-${m[2]}`;
 }
 
 /** A merged-away record: merged into another, or marked merged with its kept record gone. */
@@ -117,8 +137,8 @@ export function mapPatient(row: Row, survivorFhirId?: string | null): Patient {
   if (telecom.length) patient.telecom = telecom;
   const gender = mapGender(str(row, "sex"));
   if (gender) patient.gender = gender;
-  const birthDate = calendarDate(row, "dob");
-  if (birthDate) patient.birthDate = birthDate;
+  const dob = calendarDate(row, "dob");
+  if (dob) patient.birthDate = publishedBirthDate(dob);
   if (address || lga || state) {
     patient.address = [
       {

@@ -130,6 +130,20 @@ describe("patient self-access", () => {
     ]);
   });
 
+  it("A reading A gets a birth date on the 1st shortened, as staff do", async () => {
+    const { call } = setup({
+      tables: {
+        patients: [{ ...PATIENT_A, dob: "1984-03-01" }, PATIENT_B, PATIENT_M],
+        visits: [VISIT_A, VISIT_A_OPEN, VISIT_B],
+        vitals: [VITALS_A, VITALS_B, VITALS_M, VITALS_HIDDEN],
+        conditions: [CONDITION_A],
+      },
+    });
+    const res = await call(`/fhir/R4/Patient/${PATIENT_A.fhir_id}`, { token: PAT_A });
+    expect(res.status).toBe(200);
+    expect((await json(res)).birthDate).toBe("1984-03");
+  });
+
   it("A reads B: refused, whatever the id, and the refusal is audited", async () => {
     const { call, audits, calls } = setup();
     const res = await call(`/fhir/R4/Patient/${PATIENT_B.fhir_id}`, { token: PAT_A });
@@ -355,6 +369,7 @@ describe("audit of every request after sign-in", () => {
     await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR });
     await call(`/fhir/R4/Encounter?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR });
     await call(`/fhir/R4/Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR });
+    // Counted before the access decision, which then refuses a staff download (403).
     await call("/fhir/R4/Binary/doc1", { token: DOCTOR });
     expect(contexts.map((c) => c.p_sensitive)).toEqual([true, false, false, true]);
   });

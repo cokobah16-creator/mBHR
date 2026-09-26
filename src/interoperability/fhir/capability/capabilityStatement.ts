@@ -1,6 +1,8 @@
 // GET /fhir/R4/metadata: generated from the resource registry, so it lists
 // exactly the resource types, interactions and search parameters the
-// gateway serves, and nothing it does not. It claims no profile conformance
+// gateway serves, and nothing it does not. Types only a patient may read
+// (DocumentReference, Binary, Consent) stay listed with a note that staff
+// are refused, also while patient access is off. It claims no profile conformance
 // (supportedProfile) the mappers do not guarantee for every instance, no
 // SMART or OAuth endpoints, and no write interactions.
 

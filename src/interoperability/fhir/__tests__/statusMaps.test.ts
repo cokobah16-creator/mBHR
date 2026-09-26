@@ -120,13 +120,14 @@ describe("Condition.verificationStatus", () => {
     for (const code of CONDITION_VERIFICATION_STATUS.allowed) {
       const served = mapCondition(row(code), ctx)!.verificationStatus?.coding?.[0]?.code;
       expect(served, code).toBe(applyStatusMap(CONDITION_VERIFICATION_STATUS, code) ?? undefined);
+      expect(served, code).toBe(code);
     }
-    // DEFAULT 'confirmed' on public.conditions: a stored 'confirmed' may just
-    // mean nobody recorded one, so neither the map nor the mapper publishes it.
-    expect(applyStatusMap(CONDITION_VERIFICATION_STATUS, "confirmed")).toBeNull();
-    expect(explainStatus(CONDITION_VERIFICATION_STATUS, "confirmed").reason).toMatch(/column's default/);
-    expect(CONDITION_VERIFICATION_STATUS.rules.map((r) => r.fhir)).toEqual(["unconfirmed", "provisional", "differential", "refuted", "entered-in-error"]);
-    expect(sourceValuesFor(CONDITION_VERIFICATION_STATUS, "confirmed")).toEqual([]);
+    // public.conditions fills in no verification status (owner decision 2.7),
+    // so a stored 'confirmed' was recorded by someone and is published.
+    expect(applyStatusMap(CONDITION_VERIFICATION_STATUS, "confirmed")).toBe("confirmed");
+    expect(CONDITION_VERIFICATION_STATUS.rules.map((r) => r.fhir)).toEqual(["unconfirmed", "provisional", "differential", "confirmed", "refuted", "entered-in-error"]);
+    expect(sourceValuesFor(CONDITION_VERIFICATION_STATUS, "confirmed")).toEqual(["confirmed"]);
+    expect(explainStatus(CONDITION_VERIFICATION_STATUS, null)).toMatchObject({ fhir: null, reason: expect.stringMatching(/never assumed confirmed/) });
     for (const raw of [null, "", "suspected", "CONFIRMED"]) {
       expect(mapCondition(row(raw), ctx)!.verificationStatus, String(raw)).toBeUndefined();
     }

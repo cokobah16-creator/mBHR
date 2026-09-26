@@ -132,15 +132,25 @@ const ACTORS_FOR: Partial<Record<AccessClass, readonly string[]>> = {
   research: ["organization", "external_system", "any"],
 };
 
+/**
+ * Whether a period with this end has ended at t (ms): the end is exclusive
+ * (a consent ending at 12:00 is no longer in force at 12:00), instants are
+ * compared (timestamptz), and an unreadable end has ended (fails closed).
+ * The same rule as interop_consent_summary (effective_until > now() is in
+ * force) and the portal (consentState). The Consent mapper uses it too.
+ */
+export function periodEnded(until: string | null, t: number): boolean {
+  if (until === null) return false;
+  const u = Date.parse(until);
+  return Number.isNaN(u) || t >= u;
+}
+
 function within(from: string | null, until: string | null, t: number): "before" | "in" | "after" {
   if (from !== null) {
     const f = Date.parse(from);
     if (Number.isNaN(f) || t < f) return "before";
   }
-  if (until !== null) {
-    const u = Date.parse(until);
-    if (Number.isNaN(u) || t >= u) return "after";
-  }
+  if (periodEnded(until, t)) return "after";
   return "in";
 }
 

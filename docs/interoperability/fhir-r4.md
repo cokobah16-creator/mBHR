@@ -29,7 +29,10 @@ search.
 
 "Session" means an mBHR Supabase access token: a staff member's, or (only
 with `FHIR_PATIENT_ACCESS_ENABLED`) a portal patient's for the types in
-[Patient self-access](#patient-self-access).
+[Patient self-access](#patient-self-access). DocumentReference, Binary and
+Consent are for portal patients only: a staff token gets 403
+`missing_permission` (owner decisions, until mBHR has a staff documents
+screen and a staff consent screen).
 
 ### metadata
 
@@ -47,9 +50,13 @@ service.
 - What patients get is published only while `FHIR_PATIENT_ACCESS_ENABLED`
   is on. That covers each type's patient notes, the patient part of a
   search parameter's documentation (DiagnosticReport `status`,
-  MedicationDispense `prescription`, Consent `patient`), and the patient
-  part of the implementation and security descriptions. With it off,
-  nothing in the statement describes what a patient gets.
+  MedicationDispense `prescription`, DocumentReference `patient`, Consent
+  `patient`), and the patient part of the implementation and security
+  descriptions. With it off, nothing in the statement describes what a
+  patient gets.
+- DocumentReference, Binary and Consent are listed whether patient access
+  is on or off. Their notes say that staff accounts are refused (403); what
+  a patient gets is added only while patient access is on.
 - It takes no parameters other than `_format` (anything else is 400).
 - With `FHIR_READ_ENABLED=false` it is still served, but lists no resource
   types.
@@ -106,8 +113,19 @@ call:
   twice (a range). More is 400.
 - A value longer than 256 characters, or empty, is 400.
 - A search that cannot match (an unknown status, a malformed id, a foreign
-  code system) returns a Bundle with no matches, not an error. For staff,
-  a `patient` that cannot be resolved does the same.
+  code system) returns a Bundle with no matches, not an error (except an
+  AllergyIntolerance search by type, below). For staff, a `patient` that
+  cannot be resolved does the same.
+- **An AllergyIntolerance search by type is refused.** Any search by
+  `category` or `type`, whatever its value, system, modifier or the other
+  parameters (even without `patient` or `_id`, and also with
+  `Prefer: handling=lenient`, which the gateway does not honour), is 400
+  `not-supported` with a fixed message that says "Ask for all of the
+  patient's allergies instead (search AllergyIntolerance by patient or
+  _id, without category or type)". The allergy form starts on
+  "medication", so the recorded type cannot find every allergy of a type,
+  and an empty result would wrongly say that no allergy is recorded. Each
+  allergy's published category is unchanged.
 - A malformed search from a caller who may not read the type is refused
   as forbidden first, so it learns nothing about the type's parameters.
 
@@ -121,15 +139,15 @@ call:
 | Encounter | `_id`; `patient`; `subject` | `_id`, `patient`, `subject`, `date` (≤2), `status` |
 | Observation | `_id`; `patient`; `subject`; `encounter`; `based-on` | `_id`, `patient`, `subject`, `encounter`, `date` (≤2), `category`, `code`, `status`, `based-on` |
 | Condition | `_id`; `patient`; `subject` | `_id`, `patient`, `subject`, `clinical-status`, `code` |
-| AllergyIntolerance | `_id`; `patient` | `_id`, `patient`, `clinical-status`, `category`, `criticality` |
+| AllergyIntolerance | `_id`; `patient` | `_id`, `patient`, `clinical-status`, `criticality` |
 | Medication | `_id` | `_id` |
 | MedicationRequest | `_id`; `patient`; `subject`; `encounter` | `_id`, `patient`, `subject`, `encounter`, `status`, `authoredon` (≤2) |
 | MedicationDispense | `_id`; `patient`; `subject`; `prescription` | `_id`, `patient`, `subject`, `status`, `prescription` |
 | ServiceRequest | `_id`; `patient`; `subject`; `encounter` | `_id`, `patient`, `subject`, `encounter`, `status`, `authored` (≤2), `code` |
 | DiagnosticReport | `_id`; `patient`; `subject`; `encounter`; `based-on` | `_id`, `patient`, `subject`, `encounter`, `based-on`, `status`, `category`, `code`, `date` (≤2) |
-| DocumentReference | `_id`; `patient`; `subject` | `_id`, `patient`, `subject`, `date` (≤2), `type`, `category`, `status` |
+| DocumentReference | not available to staff (403) | `_id`, `patient`, `subject`, `date` (≤2), `type`, `category`, `status` |
 | Binary | (no search) | read by id only |
-| Consent | `_id`; `patient` | `_id`, `patient`, `status`, `scope` |
+| Consent | not available to staff (403) | `_id`, `patient`, `status`, `scope` |
 | Practitioner | `_id`; `name` | `_id`, `name`, `active` |
 | PractitionerRole | `_id`; `practitioner`; `role` | `_id`, `practitioner`, `role` |
 | Organization | `_id`; `name` | `_id`, `name` |
@@ -172,7 +190,11 @@ Extra conditions on top of the required groups:
 - `name` (Practitioner, Organization, Location): 2 to 64 letters, digits,
   spaces and `. ' ’ - _ % & ( ) /`; case-insensitive start of the name or
   of any word in it. `%` and `_` match themselves.
-- `birthdate`: an exact date `YYYY-MM-DD` only (other forms are 400).
+- `birthdate`: an exact date `YYYY-MM-DD` only (other forms are 400). It
+  matches the full stored date of birth. A birth date on the 1st of a month
+  is sent as `YYYY` (1 January) or `YYYY-MM` (any other month), so a
+  search for `2021-01-01` can return a Patient whose `birthDate` is
+  `2021`.
 - Dates (`date`, `authored`, `authoredon`, `recorded`):
   `[eq|ge|gt|le|lt]YYYY[-MM[-DD[Thh:mm[:ss]±zone]]]`.
   - A date without a time means the clinic day in Africa/Lagos (UTC+1),
@@ -203,9 +225,8 @@ Token values per type:
 | Observation | `status` | `final`, `preliminary` |
 | Condition | `clinical-status` | a condition-clinical code; records whose verification status is `entered-in-error` never match |
 | Condition | `code` | an mBHR condition code, with or without `https://mbhr.app/codes/condition` |
-| AllergyIntolerance | `clinical-status` | `active`, `inactive` (`resolved` matches nothing) |
-| AllergyIntolerance | `category` | `food`, `environment` (`medication` and `biologic` match nothing: the allergy form pre-selects "medication", so no category is published for it) |
-| AllergyIntolerance | `criticality` | `high` (`low`, `unable-to-assess` match nothing) |
+| AllergyIntolerance | `clinical-status` | `active` (`inactive` and `resolved` match nothing: allergies marked inactive in mBHR are not published) |
+| AllergyIntolerance | `criticality` | `high` (allergies rated severe or life-threatening; `low`, `unable-to-assess` match nothing) |
 | MedicationRequest | `status` | `active`, `completed`, `cancelled`, `unknown` match; other codes match nothing |
 | MedicationDispense | `status` | the published status; almost every record is `unknown`, and `completed` matches nothing |
 | ServiceRequest | `status` | `active`, `completed`, `revoked`, `unknown` |
@@ -215,7 +236,7 @@ Token values per type:
 | DocumentReference | `type` | `medical_record`, `lab_result`, `imaging`, `prescription`, `insurance`, `other` (system optional: `https://mbhr.app/codes/document-type`) |
 | DocumentReference | `category` | `patient`, `staff` (system optional: `https://mbhr.app/codes/document-source`) |
 | DocumentReference | `status` | `current` matches every published document; other codes match nothing |
-| Consent | `status` | `draft`, `proposed`, `active`, `rejected`, `inactive`, `entered-in-error` (the published status: a withdrawn record is `inactive`) |
+| Consent | `status` | `draft`, `proposed`, `active`, `rejected`, `inactive`, `entered-in-error` (the published status: a withdrawn record, or an active one past its end date, is `inactive`) |
 | Consent | `scope` | `adr`, `research`, `patient-privacy`, `treatment` |
 | Practitioner | `active` | `true`, `false`; an account that records no flag matches neither |
 | PractitionerRole | `role` | `admin`, `doctor`, `nurse`, `pharmacist`, `volunteer`, `auditor`, `lead_clinician`, `registration_lead` |
@@ -224,11 +245,13 @@ Token values per type:
 | AuditEvent | `subtype` | `read`, `search-type` |
 
 Not offered (400 if used), among others: Patient `gender`, `address`,
-`telecom`; Encounter `class`, `location`; MedicationDispense
-`whenhandedover`; DocumentReference `author`, `period`, `contenttype`;
-Practitioner `identifier`, `telecom`, `email`; Location `status`,
-`address`, `near`; Provenance `agent`, `entity`; AuditEvent `agent`,
-`entity`, `type`, `source`. Medication has no search other than `_id`.
+`telecom`; Encounter `class`, `location`; AllergyIntolerance `category`
+and `type` (answered with a message to ask for all allergies; see above);
+MedicationDispense `whenhandedover`; DocumentReference `author`,
+`period`, `contenttype`; Practitioner `identifier`, `telecom`, `email`;
+Location `status`, `address`, `near`; Provenance `agent`, `entity`;
+AuditEvent `agent`, `entity`, `type`, `source`. Medication has no search
+other than `_id`.
 
 ### Notes in a searchset
 
@@ -246,8 +269,9 @@ element at all (FHIR JSON allows no empty arrays).
 - Condition: every searchset says that diagnoses in consultation notes are
   not published.
 - AllergyIntolerance: every searchset says that mBHR does not record "no
-  known allergies".
-- Consent: coverage notes (different for staff and patients).
+  known allergies", and that an empty result means no active allergy
+  matched the search.
+- Consent: the patient's coverage note (staff cannot search Consent).
 - A `patient` naming a merged-away record: an empty result and a note
   naming the kept record.
 - Records left out: "N matching record(s) were left out because they
@@ -298,13 +322,16 @@ the resource has `meta.lastUpdated`, `Last-Modified`.
 of a SHA-256 over the resource without its `versionId`, as 24 hex
 characters. It changes whenever the served content changes. `ETag` uses
 the same value. `meta.lastUpdated` is the source row's last change time
-where the type publishes one. There is no version history (`vread` and
-`_history` are not supported).
+where the type publishes one; for a Consent that ended after its last
+change, it is the end date, from which it is served as `inactive`. There
+is no version history (`vread` and `_history` are not supported).
 
 ### Binary
 
 `GET /Binary/{id}` returns the stored file of the DocumentReference with
-the same id, never FHIR JSON. Headers:
+the same id, never FHIR JSON. Portal patients only (with
+`FHIR_PATIENT_ACCESS_ENABLED`), for files they uploaded to their own
+record; a staff account gets 403. Headers:
 
 ```
 Content-Type: <allowlisted type, else application/octet-stream>
@@ -333,10 +360,10 @@ traces or other patients' identifiers.
 | Status | issue.code | When |
 | --- | --- | --- |
 | 400 | `invalid` | malformed value, bad or foreign cursor, a request with a body, parameters on a read, a repeated parameter |
-| 400 | `not-supported` | unsupported parameter, modifier, OR list, interaction or path; `_count=0`; Binary search |
+| 400 | `not-supported` | unsupported parameter, modifier, OR list, interaction or path; `_count=0`; Binary search; an AllergyIntolerance search by type (`category` or `type`) |
 | 400 | `too-costly` | a laboratory search that matches more results than one page can gather (narrow it, for example with `based-on` or `_id`) |
 | 401 | `login` | no token, or an invalid, expired or wrong-audience session. Header `WWW-Authenticate: Bearer realm="mBHR FHIR"` |
-| 403 | `forbidden` | no staff role or linked record, missing permission (including a read of a laboratory Observation, `Observation/lab-<id>`, without consult or lab_review, decided from the id before any lookup), patient access off, type not available to patients, another patient named, purpose refused, search not narrowed |
+| 403 | `forbidden` | no staff role or linked record, missing permission (including a read of a laboratory Observation, `Observation/lab-<id>`, without consult or lab_review, decided from the id before any lookup, and any DocumentReference, Binary or Consent request from a staff account), patient access off, type not available to patients, another patient named, purpose refused, search not narrowed |
 | 404 | `not-found` | no such record **or a record the caller may not see** (indistinguishable); reads switched off; the interface disabled |
 | 404 | `not-supported` | a type that is not published |
 | 405 | `not-supported` | a method other than GET (`Allow: GET`) |

@@ -9,6 +9,7 @@ import {
   accessClass,
   evaluateConsent,
   parseDirectives,
+  periodEnded,
   type ConsentDirective,
   type ConsentInput,
   type ConsentProvision,
@@ -152,6 +153,25 @@ describe("withdrawal and expiry", () => {
 
   it("treats unparseable dates as out of period (fails closed)", () => {
     expect(evaluateConsent(external, [directive({ effective_from: "not a date" })], on).decision).toBe("deny");
+  });
+
+  it("a directive whose end is exactly the request time is expired", () => {
+    expect(evaluateConsent(external, [directive({ effective_until: "2026-09-25T12:00:00Z" })], on)).toMatchObject({
+      decision: "deny",
+      reason: "consent_expired",
+    });
+    expect(evaluateConsent(external, [directive({ effective_until: "2026-09-25T12:00:00.001Z" })], on).decision).toBe("permit");
+  });
+
+  it("periodEnded: the end is exclusive, compared as instants, an unreadable end has ended", () => {
+    // The rule the Consent mapper shares (a consent past its end date is published as inactive).
+    const t = NOW.getTime();
+    expect(periodEnded(null, t)).toBe(false);
+    expect(periodEnded("2026-09-25T12:00:00Z", t)).toBe(true);
+    expect(periodEnded("2026-09-25T12:00:00.001Z", t)).toBe(false);
+    expect(periodEnded("2026-09-25T13:00:00+01:00", t)).toBe(true);
+    expect(periodEnded("2026-09-25T13:00:01+01:00", t)).toBe(false);
+    expect(periodEnded("not a date", t)).toBe(true);
   });
 });
 

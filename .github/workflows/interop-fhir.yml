@@ -137,7 +137,7 @@ jobs:
         run: |
           sed -n '/^-- Rollback (in this order/,/^-- End of rollback/p' supabase/migrations-deferred/20260926130000_interop_phase2.sql \
             | grep -E '^--   (DROP|ALTER|GRANT|DELETE|DO) ' | sed 's/^--   //' > /tmp/down2.sql
-          test "$(wc -l < /tmp/down2.sql)" -eq 43
+          test "$(wc -l < /tmp/down2.sql)" -eq 44
           sed -n '/^-- Rollback/,/^-- Dropping/p' supabase/migrations-deferred/20260926110000_interop_foundation.sql \
             | grep -E '^--   (DROP|DELETE)' | sed 's/^--   //' > /tmp/down.sql
           test "$(wc -l < /tmp/down.sql)" -eq 5

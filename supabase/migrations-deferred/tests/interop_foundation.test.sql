@@ -26,9 +26,9 @@ VALUES
   ('condition', 'https://mbhr.app/codes/condition', 'pgtap-unverified',
    'http://hl7.org/fhir/sid/icd-10', 'Z00.1', 'unverified', NULL, NULL);
 
-INSERT INTO interop.consent_records (id, patient_id, status, scope, category, source_type)
+INSERT INTO interop.consent_records (id, patient_id, status, scope, category, source_type, policy_uri)
 VALUES ('88881111-0000-4000-8000-000000000001', 'pgtap-interop-patient', 'active',
-        'patient-privacy', '59284-0', 'paper_form');
+        'patient-privacy', '59284-0', 'paper_form', 'https://mbhr.app/policy/pgtap');
 INSERT INTO interop.consent_provisions (consent_id, provision_type, action, purpose)
 VALUES ('88881111-0000-4000-8000-000000000001', 'deny', 'disclose', 'HRESCH');
 
@@ -180,8 +180,8 @@ SELECT lives_ok(
      WHERE id = '88881111-0000-4000-8000-000000000001'$$,
   'a withdrawal is recorded by making the consent inactive');
 SELECT throws_ok(
-  $$INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
-    VALUES ('pgtap-interop-patient', 'granted', 'treatment', 'x', 'portal')$$,
+  $$INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type, policy_uri)
+    VALUES ('pgtap-interop-patient', 'granted', 'treatment', 'x', 'portal', 'https://mbhr.app/policy/pgtap')$$,
   '23514', NULL, 'only FHIR R4 Consent status codes are accepted');
 
 -- ---------------------------------------------------------------------------

@@ -5,7 +5,10 @@
 //   is_active     true: shown in every allergy warning; false: a staff
 //                 member chose "Mark inactive" (no reason is stored: it may
 //                 mean resolved, outgrown, wrong patient, a duplicate or an
-//                 entry made in error). The only status mBHR keeps.
+//                 entry made in error). The only status mBHR keeps. false
+//                 is not published at all (owner decision,
+//                 CLINICAL_LOGIC_CHANGES.md 2.7): the gateway reads only
+//                 allergies not marked inactive.
 //   allergy_type  medication | food | environmental | other. The form
 //                 pre-selects "medication", so a stored "medication" cannot
 //                 be told apart from "nobody chose".
@@ -51,12 +54,6 @@ export const ALLERGY_CLINICAL_STATUS: StatusMap<AllergyClinicalStatus> = {
       fhir: "active",
       reason: "The allergy is shown in every allergy warning in the app (patient header, prescribing and dispensing checks).",
     },
-    {
-      source: ["false"],
-      fhir: "inactive",
-      reason:
-        "A staff member marked the allergy inactive and the app no longer warns about it. mBHR stores no reason (resolved, recorded in error, duplicate), so it is never shown as resolved or entered-in-error, and never as active.",
-    },
   ],
   missing: {
     fhir: null,
@@ -66,7 +63,7 @@ export const ALLERGY_CLINICAL_STATUS: StatusMap<AllergyClinicalStatus> = {
   unrecognised: {
     fhir: null,
     reason:
-      "Not true or false: no clinical status, not guessed. As for a missing value, the record is withheld (invariant ait-1) and the searchset says a record was left out.",
+      "false: a staff member chose 'Mark inactive'; mBHR stores no reason (the same action removes entries made in error, for the wrong patient, or duplicated). Owner decision (CLINICAL_LOGIC_CHANGES.md 2.7): such an allergy is not published at all, never as inactive, resolved, entered-in-error or active. The gateway does not read it (NOT_MARKED_INACTIVE in resources/allergyIntolerance.ts), so it is left out without a note, as the app hides it. Any other value: no clinical status, not guessed; the record is withheld (invariant ait-1) and the searchset says a record was left out.",
   },
 };
 
@@ -128,12 +125,18 @@ export const ALLERGY_CRITICALITY: StatusMap<AllergyCriticality> = {
       reason:
         "Staff rated the allergy life-threatening, which is FHIR's definition of high criticality (a future exposure could be life-threatening).",
     },
+    {
+      source: ["severe"],
+      fhir: "high",
+      reason:
+        "Staff rated the allergy severe. Owner decision (CLINICAL_LOGIC_CHANGES.md 2.7, Severity: severe is high risk too): mBHR's patient header gives severe the same top red alert as life-threatening. Set whether or not a reaction was recorded.",
+    },
   ],
   missing: { fhir: null, reason: "No rating recorded: no criticality." },
   unrecognised: {
     fhir: null,
     reason:
-      "mild, moderate and severe rate how bad the allergy was, not the risk of a future reaction: no criticality. Never 'low' (mild is the form's pre-selected choice) and never 'unable-to-assess'.",
+      "mild and moderate rate how bad the allergy was, not the risk of a future reaction: no criticality. Never 'low' (mild is the form's pre-selected choice) and never 'unable-to-assess'.",
   },
 };
 

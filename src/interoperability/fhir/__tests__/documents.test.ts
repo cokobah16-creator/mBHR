@@ -13,6 +13,10 @@
 
 import { describe, expect, it } from "vitest";
 import { handleFhirRequest } from "../gateway/handler";
+import { capabilityStatement } from "../capability/capabilityStatement";
+import { Postgrest } from "../gateway/postgrest";
+import { ALL_PERMISSIONS } from "../authorization/permissions";
+import type { QueryCtx } from "../resources/module";
 import { fakeSupabase, makeToken, type FakeOptions, type FakeUser } from "./fakeSupabase";
 import { PATIENT_A, PATIENT_B } from "./fixtures";
 import {
@@ -170,6 +174,8 @@ const DOCTOR = makeToken("doctor-1");
 const NURSE = makeToken("nurse-1");
 const PHARMACIST = makeToken("pharm-1");
 const AUDITOR = makeToken("auditor-1");
+const LEAD = makeToken("lead-1");
+const ADMIN = makeToken("admin-1");
 const PAT_A = makeToken("portal-a");
 const PAT_B = makeToken("portal-b");
 
@@ -178,6 +184,9 @@ const USERS: Record<string, FakeUser> = {
   [NURSE]: { id: "nurse-1", role: "nurse", permissions: ["register", "vitals", "queue", "portal_manage"] },
   [PHARMACIST]: { id: "pharm-1", role: "pharmacist", permissions: ["dispense", "inventory", "queue"] },
   [AUDITOR]: { id: "auditor-1", role: "auditor", permissions: ["audit_access"] },
+  [LEAD]: { id: "lead-1", role: "lead_clinician", permissions: ["register", "vitals", "consult", "lab_review", "audit_access", "queue", "portal_manage"] },
+  // Every permission mBHR has: none of them opens documents.
+  [ADMIN]: { id: "admin-1", role: "admin", permissions: [...ALL_PERMISSIONS] },
   [PAT_A]: { id: "portal-a", role: null, permissions: [], kind: "patient", patientIds: [PATIENT_A.id] },
   [PAT_B]: { id: "portal-b", role: null, permissions: [], kind: "patient", patientIds: [PATIENT_B.id] },
 };
@@ -243,10 +252,9 @@ type Json = Record<string, any>;
 const json = async (res: Response) => (await res.json()) as Json;
 const matches = (b: Json) => (b.entry ?? []).filter((e: Json) => e.search.mode === "match").map((e: Json) => e.resource);
 const ids = (b: Json) => matches(b).map((r: Json) => r.id).sort();
-const outcomes = (b: Json) => (b.entry ?? []).filter((e: Json) => e.search.mode === "outcome").flatMap((e: Json) => e.resource.issue);
 const refs = { patientFhirIds: new Map([[PATIENT_A.id, PATIENT_A.fhir_id]]) };
 
-/** Every live document of A whose patient resolves (what staff see for A). */
+/** Every live document filed under A (what A's own search lists). */
 const A_LIVE = [DOC_A, DOC_A_CLINIC, DOC_A_HTML, DOC_A_DOTS, DOC_A_URL, DOC_A_WRONG_FOLDER, DOC_A_MISSING, DOC_A_EMPTY, DOC_A_MOVED];
 
 // ---------------------------------------------------------------------------
@@ -546,13 +554,15 @@ describe("Binary mapper and download name", () => {
 
 describe("definitions", () => {
   it("declare what is implemented, and only that", () => {
-    expect(documentDefinition.readPermissions).toEqual(["consult"]);
+    // Owner decision: no staff permission reads documents.
+    expect(documentDefinition.readPermissions).toEqual([]);
     expect(documentDefinition.requiredSearch).toEqual([["_id"], ["patient"], ["subject"]]);
     expect(documentDefinition.searchParams.map((p) => p.name)).toEqual(["_id", "patient", "subject", "date", "type", "category", "status"]);
     expect(documentDefinition.interactions).toEqual(["read", "search-type"]);
     expect(documentDefinition.patientAccess).toBe(true);
     expect(documentDefinition.sensitiveSearch).toBe(true);
-    expect(binaryDefinition.readPermissions).toEqual(["consult"]);
+    expect(binaryDefinition.readPermissions).toEqual([]);
+    expect(binaryDefinition.patientAccess).toBe(true);
     expect(binaryDefinition.interactions).toEqual(["read"]);
     expect(binaryDefinition.searchParams).toEqual([]);
     expect(binaryModule.search).toBeUndefined();
@@ -567,6 +577,29 @@ describe("definitions", () => {
       expect(BINARY_COLUMNS as readonly string[], c).not.toContain(c);
     }
   });
+
+  it("stay listed in the CapabilityStatement, saying staff are refused; what a patient gets only with patient access on", () => {
+    for (const patientAccessEnabled of [false, true]) {
+      const cs = capabilityStatement("https://mbhr.app/fhir/R4", undefined, { patientAccessEnabled });
+      const docs = (cs.rest[0].resource ?? []).filter((r) => r.type === "DocumentReference" || r.type === "Binary");
+      expect(docs.map((r) => r.type)).toEqual(["DocumentReference", "Binary"]);
+      const [doc, file] = docs.map((r) => r.documentation ?? "");
+      expect(doc).toMatch(/^Staff accounts cannot read or search documents here \(403\), whatever their role: mBHR has no staff documents screen yet\./);
+      expect(file).toContain("Staff accounts cannot download files here (403), whatever their role: mBHR has no staff documents screen yet.");
+      for (const text of [doc, file]) expect(text).not.toMatch(/consult/);
+      const patientPart = /Patients see their own documents|no other account gets (documents|files) here/;
+      if (patientAccessEnabled) {
+        expect(doc).toMatch(/Patients see their own documents that were not removed, as in the portal; no other account gets documents here\./);
+        expect(file).toMatch(/A patient gets only files they uploaded to their own record; no other account gets files here\.$/);
+      } else {
+        for (const text of [doc, file]) expect(text).not.toMatch(patientPart);
+      }
+      const patientParam = docs[0].searchParam?.find((p) => p.name === "patient")?.documentation;
+      expect(patientParam).toBe(
+        patientAccessEnabled ? "Patient/[id]. A patient gets only the documents of their own records, and need not give patient." : "Patient/[id].",
+      );
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -574,72 +607,61 @@ describe("definitions", () => {
 // ---------------------------------------------------------------------------
 
 describe("staff access to documents", () => {
-  it("a doctor (consult) reads a document's metadata, with the file at Binary/[id]", async () => {
-    const { call, audits } = setup();
-    const res = await call(`/fhir/R4/DocumentReference/${DOC_A.id}`, { token: DOCTOR });
-    expect(res.status).toBe(200);
-    const d = await json(res);
-    expect(d.resourceType).toBe("DocumentReference");
-    expect(d.subject.reference).toBe(`Patient/${PATIENT_A.fhir_id}`);
-    expect(d.content[0].attachment.url).toBe(`Binary/${DOC_A.id}`);
-    expect(d.meta.versionId).toMatch(/^[0-9a-f]{24}$/);
-    expect(res.headers.get("last-modified")).toBeNull();
-    expect(audits).toEqual([
-      expect.objectContaining({ p_resource_type: "DocumentReference", p_decision: "permit", p_patient_ids: [PATIENT_A.id], p_http_status: 200 }),
-    ]);
-  });
+  // Owner decision (docs/clinical/CLINICAL_LOGIC_CHANGES.md 2.7, signed off
+  // 2026-09-26, "Patients only"): staff get no documents through FHIR until
+  // mBHR has a staff documents screen.
+  const FORBIDDEN = {
+    resourceType: "OperationOutcome",
+    issue: [{ severity: "error", code: "forbidden", diagnostics: "The requested resource is not available to this client." }],
+  };
 
-  it("staff without consult are refused documents and files before anything is read", async () => {
-    for (const token of [NURSE, PHARMACIST, AUDITOR]) {
+  it("every staff account is refused documents and files before anything is read, whatever its permissions", async () => {
+    for (const token of [DOCTOR, LEAD, ADMIN, NURSE, PHARMACIST, AUDITOR]) {
       const { call, audits, documentQueries, storageCalls } = setup();
-      for (const path of [
+      const paths = [
         `/fhir/R4/DocumentReference/${DOC_A.id}`,
         `/fhir/R4/DocumentReference?patient=Patient/${PATIENT_A.fhir_id}`,
+        `/fhir/R4/DocumentReference?_id=${DOC_A.id}`,
         `/fhir/R4/Binary/${DOC_A.id}`,
-      ]) {
+        `/fhir/R4/Binary/${DOC_A_CLINIC.id}`,
+      ];
+      for (const path of paths) {
         const res = await call(path, { token });
         expect(res.status, path).toBe(403);
-        expect(JSON.stringify(await json(res))).not.toContain("blood");
+        expect(await json(res), path).toEqual(FORBIDDEN);
       }
       expect(documentQueries()).toHaveLength(0);
       expect(storageCalls()).toHaveLength(0);
-      expect(audits.map((a) => a.p_denial_reason)).toEqual(["missing_permission", "missing_permission", "missing_permission"]);
+      expect(audits.map((a) => [a.p_decision, a.p_denial_reason, a.p_http_status])).toEqual(
+        paths.map(() => ["deny", "missing_permission", 403]),
+      );
     }
   });
 
-  it("a removed document is not found, not listed, and its file is not served", async () => {
-    const { call, storageCalls } = setup();
-    expect((await call(`/fhir/R4/DocumentReference/${DOC_A_REMOVED.id}`, { token: DOCTOR })).status).toBe(404);
-    expect((await call(`/fhir/R4/Binary/${DOC_A_REMOVED.id}`, { token: DOCTOR })).status).toBe(404);
-    expect(storageCalls()).toHaveLength(0);
-    const b = await json(await call(`/fhir/R4/DocumentReference?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR }));
-    expect(ids(b)).not.toContain(DOC_A_REMOVED.id);
-    const byId = await json(await call(`/fhir/R4/DocumentReference?_id=${DOC_A_REMOVED.id}`, { token: DOCTOR }));
-    expect(matches(byId)).toEqual([]);
-  });
-
-  it("refuses searches that do not name a record (anti-enumeration)", async () => {
-    const { call, documentQueries, audits } = setup();
-    for (const q of ["", "?type=lab_result", "?category=patient", "?date=2026", "?status=current"]) {
-      const res = await call(`/fhir/R4/DocumentReference${q}`, { token: DOCTOR });
-      expect(res.status, q).toBe(403);
+  it("is decided before the search is checked: no search_not_narrowed and no 400 for staff", async () => {
+    const { call, audits, documentQueries } = setup();
+    for (const q of ["", "?type=lab_result", "?author=Practitioner/x", `?patient=Patient/${PATIENT_A.fhir_id}&period=2026`]) {
+      expect((await call(`/fhir/R4/DocumentReference${q}`, { token: ADMIN })).status, q).toBe(403);
     }
     expect(documentQueries()).toHaveLength(0);
-    expect(new Set(audits.map((a) => a.p_denial_reason))).toEqual(new Set(["search_not_narrowed"]));
+    expect(new Set(audits.map((a) => a.p_denial_reason))).toEqual(new Set(["missing_permission"]));
   });
 
-  it("answers invalid ids with 404 or 400 without querying or leaking", async () => {
-    const { call, documentQueries, storageCalls } = setup();
-    for (const path of ["/fhir/R4/DocumentReference/not-a-uuid", "/fhir/R4/Binary/not-a-uuid", `/fhir/R4/Binary/${docId("99")}`]) {
-      const res = await call(path, { token: DOCTOR });
-      expect(res.status, path).toBe(404);
-      expect(JSON.stringify(await json(res))).not.toMatch(/not-a-uuid|patient_documents|storage/);
-    }
-    expect((await call("/fhir/R4/Binary/a%2Cb", { token: DOCTOR })).status).toBe(400);
-    expect((await call(`/fhir/R4/Binary?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR })).status).toBe(400);
-    // Only the unknown uuid reached the database; no file was fetched.
-    expect(documentQueries()).toHaveLength(1);
-    expect(storageCalls()).toHaveLength(0);
+  it("the modules refuse a staff caller themselves, as the permission step does", async () => {
+    const fake = fakeSupabase({ users: USERS, tables: { patients: [PATIENT_A], patient_documents: DOCS }, visible });
+    const ctx: QueryCtx = {
+      db: new Postgrest({ supabaseUrl: "https://project.supabase.co", anonKey: "anon-key", accessToken: ADMIN, fetchImpl: fake.fetchImpl }),
+      scope: { kind: "staff", patientIds: null },
+      permissions: new Set(ALL_PERMISSIONS),
+      restrictions: new Set(),
+      baseUrl: "https://mbhr.app/fhir/R4",
+      cursorBinding: "",
+    };
+    const refused = { status: 403, code: "forbidden", auditReason: "missing_permission" };
+    await expect(documentReferenceModule.read(ctx, DOC_A.id)).rejects.toMatchObject(refused);
+    await expect(documentReferenceModule.search!(ctx, { values: new Map(), count: 5, cursor: null })).rejects.toMatchObject(refused);
+    await expect(binaryModule.read(ctx, DOC_A.id)).rejects.toMatchObject(refused);
+    expect(fake.calls.filter((c) => c.url.includes("/rest/v1/patient_documents") || c.url.includes("/storage/v1/"))).toHaveLength(0);
   });
 });
 
@@ -648,6 +670,31 @@ describe("staff access to documents", () => {
 // ---------------------------------------------------------------------------
 
 describe("patient access to documents", () => {
+  it("answers invalid ids with 404 or 400 without querying or leaking", async () => {
+    const { call, documentQueries, storageCalls } = setup();
+    for (const path of ["/fhir/R4/DocumentReference/not-a-uuid", "/fhir/R4/Binary/not-a-uuid", `/fhir/R4/Binary/${docId("99")}`]) {
+      const res = await call(path, { token: PAT_A });
+      expect(res.status, path).toBe(404);
+      expect(JSON.stringify(await json(res))).not.toMatch(/not-a-uuid|patient_documents|storage/);
+    }
+    expect((await call("/fhir/R4/Binary/a%2Cb", { token: PAT_A })).status).toBe(400);
+    expect((await call(`/fhir/R4/Binary?patient=Patient/${PATIENT_A.fhir_id}`, { token: PAT_A })).status).toBe(400);
+    // Only the unknown uuid reached the database; no file was fetched.
+    expect(documentQueries()).toHaveLength(1);
+    expect(storageCalls()).toHaveLength(0);
+  });
+
+  it("a removed document is not found, not listed, and its file is not served", async () => {
+    const { call, storageCalls } = setup();
+    expect((await call(`/fhir/R4/DocumentReference/${DOC_A_REMOVED.id}`, { token: PAT_A })).status).toBe(404);
+    expect((await call(`/fhir/R4/Binary/${DOC_A_REMOVED.id}`, { token: PAT_A })).status).toBe(404);
+    expect(storageCalls()).toHaveLength(0);
+    const b = await json(await call(`/fhir/R4/DocumentReference?patient=Patient/${PATIENT_A.fhir_id}`, { token: PAT_A }));
+    expect(ids(b)).not.toContain(DOC_A_REMOVED.id);
+    const byId = await json(await call(`/fhir/R4/DocumentReference?_id=${DOC_A_REMOVED.id}`, { token: PAT_A }));
+    expect(matches(byId)).toEqual([]);
+  });
+
   it("a patient reads their own document's metadata", async () => {
     const { call, audits } = setup();
     const res = await call(`/fhir/R4/DocumentReference/${DOC_A.id}`, { token: PAT_A });
@@ -741,22 +788,35 @@ describe("patient access to documents", () => {
   it("cannot reach another patient's file through a path with ../ in their own row", async () => {
     const { call, storageCalls } = setup();
     expect((await call(`/fhir/R4/Binary/${DOC_A_DOTS.id}`, { token: PAT_A })).status).toBe(404);
-    expect((await call(`/fhir/R4/Binary/${DOC_A_DOTS.id}`, { token: DOCTOR })).status).toBe(404);
     expect(storageCalls()).toHaveLength(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Gateway: Binary downloads (staff)
+// Gateway: Binary downloads
 // ---------------------------------------------------------------------------
 
 describe("Binary downloads", () => {
+  /** A's own uploads with unusual stored paths (rows written outside the portal). */
+  const OWN_PREFIXED = { ...DOC_A, id: docId("14"), file_path: `patient-documents/${PATIENT_A.id}/1756719900000.pdf` };
+  const OWN_URL = { ...DOC_A, id: docId("15"), file_path: SIGNED_URL };
+  const OWN_WRONG_FOLDER = { ...DOC_A, id: docId("16"), file_path: `${PATIENT_B.id}/1756719950000.pdf` };
+  const withOdd = () =>
+    setup({
+      tables: { patients: [PATIENT_A, PATIENT_B, PATIENT_M], patient_documents: [...DOCS, OWN_PREFIXED, OWN_URL, OWN_WRONG_FOLDER] },
+      storage: {
+        ...STORAGE,
+        [object(`${PATIENT_A.id}/1756719900000.pdf`)]: { body: "%PDF prefixed", contentType: "application/pdf" },
+        [object(`${PATIENT_B.id}/1756719950000.pdf`)]: { body: "%PDF B other", contentType: "application/pdf" },
+      },
+    });
+
   it("send no ETag and ignore If-None-Match, as the CapabilityStatement declares", async () => {
     const { call, audits } = setup();
     for (const inm of ["*", 'W/"anything"']) {
-      const res = await call(`/fhir/R4/Binary/${DOC_A_CLINIC.id}`, { token: DOCTOR, headers: { "If-None-Match": inm } });
+      const res = await call(`/fhir/R4/Binary/${DOC_A.id}`, { token: PAT_A, headers: { "If-None-Match": inm } });
       expect(res.status, inm).toBe(200);
-      expect(await res.text()).toBe("PNG clinic image");
+      expect(await res.text()).toBe("%PDF-1.4 A upload");
       expect(res.headers.get("etag")).toBeNull();
       expect(audits.at(-1)).toMatchObject({ p_decision: "permit", p_http_status: 200 });
     }
@@ -765,16 +825,16 @@ describe("Binary downloads", () => {
     expect(binary).toMatchObject({ versioning: "no-version", conditionalRead: "not-supported" });
   });
 
-  it("a doctor downloads a clinic record stored with the bucket prefix", async () => {
-    const { call, storageCalls } = setup();
-    const res = await call(`/fhir/R4/Binary/${DOC_A_CLINIC.id}`, { token: DOCTOR });
+  it("a patient downloads their own upload stored with the bucket prefix", async () => {
+    const { call, storageCalls } = withOdd();
+    const res = await call(`/fhir/R4/Binary/${OWN_PREFIXED.id}`, { token: PAT_A });
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe("PNG clinic image");
-    expect(res.headers.get("content-type")).toBe("image/png");
-    expect(res.headers.get("content-disposition")).toBe('attachment; filename="chest_x-ray.png"');
+    expect(await res.text()).toBe("%PDF prefixed");
+    expect(res.headers.get("content-type")).toBe("application/pdf");
+    expect(res.headers.get("content-disposition")).toBe('attachment; filename="blood_test.pdf"');
     // Fetched from the private bucket as the caller, never through a public or signed URL.
     expect(storageCalls().map((c) => new URL(c.url).pathname)).toEqual([
-      `/storage/v1/object/authenticated/patient-documents/${PATIENT_A.id}/1756719100000.png`,
+      `/storage/v1/object/authenticated/patient-documents/${PATIENT_A.id}/1756719900000.pdf`,
     ]);
   });
 
@@ -788,39 +848,39 @@ describe("Binary downloads", () => {
   });
 
   it("refuses a stored URL or a file outside the patient's folder without asking Storage", async () => {
-    const { call, storageCalls } = setup();
-    for (const doc of [DOC_A_URL, DOC_A_WRONG_FOLDER]) {
-      const res = await call(`/fhir/R4/Binary/${doc.id}`, { token: DOCTOR });
+    const { call, storageCalls } = withOdd();
+    for (const doc of [OWN_URL, OWN_WRONG_FOLDER]) {
+      const res = await call(`/fhir/R4/Binary/${doc.id}`, { token: PAT_A });
       expect(res.status, doc.id).toBe(404);
-      expect(await res.text()).not.toMatch(/token=|B secret|B upload|storage/);
+      expect(await res.text()).not.toMatch(/token=|B other|B upload|storage/);
     }
     expect(storageCalls()).toHaveLength(0);
   });
 
   it("answers 404, never an empty file, when the object is missing, empty or refused by Storage", async () => {
     const { call } = setup();
-    expect((await call(`/fhir/R4/Binary/${DOC_A_MISSING.id}`, { token: DOCTOR })).status).toBe(404);
-    expect((await call(`/fhir/R4/Binary/${DOC_A_EMPTY.id}`, { token: DOCTOR })).status).toBe(404);
+    expect((await call(`/fhir/R4/Binary/${DOC_A_MISSING.id}`, { token: PAT_A })).status).toBe(404);
+    expect((await call(`/fhir/R4/Binary/${DOC_A_EMPTY.id}`, { token: PAT_A })).status).toBe(404);
     const refusing = setup({ storageVisible: () => false });
-    const res = await refusing.call(`/fhir/R4/Binary/${DOC_A.id}`, { token: DOCTOR });
+    const res = await refusing.call(`/fhir/R4/Binary/${DOC_A.id}`, { token: PAT_A });
     expect(res.status).toBe(404);
     expect(refusing.storageCalls()).toHaveLength(1);
   });
 
   it("authorises every download on its own, whatever was read before", async () => {
     const { call } = setup();
-    expect((await call(`/fhir/R4/DocumentReference/${DOC_A.id}`, { token: DOCTOR })).status).toBe(200);
-    expect((await call(`/fhir/R4/Binary/${DOC_A.id}`, { token: NURSE })).status).toBe(403);
+    expect((await call(`/fhir/R4/DocumentReference/${DOC_A.id}`, { token: PAT_A })).status).toBe(200);
+    expect((await call(`/fhir/R4/Binary/${DOC_A.id}`, { token: DOCTOR })).status).toBe(403);
     expect((await call(`/fhir/R4/Binary/${DOC_A.id}`, { token: PAT_B })).status).toBe(404);
   });
 
   it("only offers the file itself, never a FHIR JSON wrapper", async () => {
     const { call } = setup();
-    const res = await call(`/fhir/R4/Binary/${DOC_A.id}`, { token: DOCTOR, headers: { Accept: "application/fhir+json" } });
+    const res = await call(`/fhir/R4/Binary/${DOC_A.id}`, { token: PAT_A, headers: { Accept: "application/fhir+json" } });
     expect(res.status).toBe(406);
     // _format overrides Accept, so asking for JSON there is refused too.
     for (const f of ["json", "application/fhir+json"]) {
-      const r = await call(`/fhir/R4/Binary/${DOC_A.id}?_format=${encodeURIComponent(f)}`, { token: DOCTOR });
+      const r = await call(`/fhir/R4/Binary/${DOC_A.id}?_format=${encodeURIComponent(f)}`, { token: PAT_A });
       expect(r.status, f).toBe(406);
     }
   });
@@ -831,32 +891,30 @@ describe("Binary downloads", () => {
 // ---------------------------------------------------------------------------
 
 describe("merged patients", () => {
-  it("a search by the kept record includes documents still on the merged-away record, shown under the kept one", async () => {
+  it("a patient's search lists the documents of their own record only, as the portal does", async () => {
     const { call } = setup();
-    const b = await json(await call(`/fhir/R4/DocumentReference?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR }));
-    expect(ids(b)).toContain(DOC_M.id);
-    const m = matches(b).find((d: Json) => d.id === DOC_M.id);
-    expect(m.subject.reference).toBe(`Patient/${PATIENT_A.fhir_id}`);
+    const b = await json(await call(`/fhir/R4/DocumentReference?patient=Patient/${PATIENT_A.fhir_id}`, { token: PAT_A }));
+    expect(ids(b)).toEqual(A_LIVE.map((d) => d.id).sort());
+    // A row still filed under the merged-away record is not theirs to read.
+    expect(ids(b)).not.toContain(DOC_M.id);
     expect(JSON.stringify(b)).not.toContain(PATIENT_M.fhir_id);
+    expect((await call(`/fhir/R4/DocumentReference/${DOC_M.id}`, { token: PAT_A })).status).toBe(404);
   });
 
-  it("a search by the merged-away record matches nothing and names the kept record", async () => {
-    const { call } = setup();
-    const b = await json(await call(`/fhir/R4/DocumentReference?patient=Patient/${PATIENT_M.fhir_id}`, { token: DOCTOR }));
-    expect(matches(b)).toEqual([]);
-    expect(outcomes(b)[0].diagnostics).toContain(`Patient/${PATIENT_A.fhir_id}`);
+  it("naming the merged-away record is refused for a patient (patient_not_in_context)", async () => {
+    const { call, audits } = setup();
+    const res = await call(`/fhir/R4/DocumentReference?patient=Patient/${PATIENT_M.fhir_id}`, { token: PAT_A });
+    expect(res.status).toBe(403);
+    expect(audits.at(-1)).toMatchObject({ p_decision: "deny", p_denial_reason: "patient_not_in_context" });
   });
 
-  it("the file of a moved document is served from the merged-away record's folder to staff", async () => {
-    const { call } = setup();
-    const moved = await call(`/fhir/R4/Binary/${DOC_A_MOVED.id}`, { token: DOCTOR });
-    expect(moved.status).toBe(200);
-    expect(await moved.text()).toBe("%PDF moved");
-    const onMerged = await call(`/fhir/R4/Binary/${DOC_M.id}`, { token: DOCTOR });
-    expect(onMerged.status).toBe(200);
-    // The patient's portal session cannot see the merged-away record, so the
-    // file is not reachable for them (a false 404, like Storage's own rule).
+  it("the file of a moved document stays in the merged-away record's folder, which the patient's session cannot reach", async () => {
+    const { call, storageCalls } = setup();
+    // The patient's session cannot see the merged-away record, so its folder is not one of theirs:
+    // a false 404, like Storage's own rule, and Storage is not asked.
     expect((await call(`/fhir/R4/Binary/${DOC_A_MOVED.id}`, { token: PAT_A })).status).toBe(404);
+    expect(storageCalls()).toHaveLength(0);
+    expect((await call(`/fhir/R4/Binary/${DOC_M.id}`, { token: PAT_A })).status).toBe(404);
   });
 });
 
@@ -866,13 +924,14 @@ describe("merged patients", () => {
 
 describe("DocumentReference search", () => {
   const byA = `/fhir/R4/DocumentReference?patient=Patient/${PATIENT_A.fhir_id}`;
-  const A_WITH_M = [...A_LIVE, DOC_M].map((d) => d.id).sort();
+  const A_IDS = A_LIVE.map((d) => d.id).sort();
+  const CLINIC_ROWS = [DOC_A_CLINIC.id, DOC_A_URL.id, DOC_A_WRONG_FOLDER.id].sort();
 
   it("filters by type (local codes only)", async () => {
     const { call } = setup();
-    const q = async (v: string) => ids(await json(await call(`${byA}&type=${encodeURIComponent(v)}`, { token: DOCTOR })));
-    expect(await q("imaging")).toEqual([DOC_A_CLINIC.id, DOC_A_URL.id, DOC_A_WRONG_FOLDER.id].sort());
-    expect(await q("https://mbhr.app/codes/document-type|imaging")).toEqual([DOC_A_CLINIC.id, DOC_A_URL.id, DOC_A_WRONG_FOLDER.id].sort());
+    const q = async (v: string) => ids(await json(await call(`${byA}&type=${encodeURIComponent(v)}`, { token: PAT_A })));
+    expect(await q("imaging")).toEqual(CLINIC_ROWS);
+    expect(await q("https://mbhr.app/codes/document-type|imaging")).toEqual(CLINIC_ROWS);
     // A type recorded as text only matches no code, not even "other".
     expect(await q("other")).toEqual([]);
     expect(await q("http://loinc.org|11502-2")).toEqual([]);
@@ -881,19 +940,17 @@ describe("DocumentReference search", () => {
 
   it("filters by category and status, and by date of upload", async () => {
     const { call } = setup();
-    const q = async (v: string) => ids(await json(await call(`${byA}&${v}`, { token: DOCTOR })));
-    expect(await q("category=staff")).toEqual([DOC_A_CLINIC.id, DOC_A_URL.id, DOC_A_WRONG_FOLDER.id].sort());
-    expect(await q("category=https://mbhr.app/codes/document-source|patient")).toEqual(
-      A_WITH_M.filter((id) => ![DOC_A_CLINIC.id, DOC_A_URL.id, DOC_A_WRONG_FOLDER.id].includes(id)),
-    );
+    const q = async (v: string) => ids(await json(await call(`${byA}&${v}`, { token: PAT_A })));
+    expect(await q("category=staff")).toEqual(CLINIC_ROWS);
+    expect(await q("category=https://mbhr.app/codes/document-source|patient")).toEqual(A_IDS.filter((id) => !CLINIC_ROWS.includes(id)));
     expect(await q("category=caregiver")).toEqual([]);
-    expect(await q("status=current")).toEqual(A_WITH_M);
-    expect(await q("status=http://hl7.org/fhir/document-reference-status|current")).toEqual(A_WITH_M);
+    expect(await q("status=current")).toEqual(A_IDS);
+    expect(await q("status=http://hl7.org/fhir/document-reference-status|current")).toEqual(A_IDS);
     expect(await q("status=entered-in-error")).toEqual([]);
     expect(await q("status=superseded")).toEqual([]);
     expect(await q("status=http://example.org|current")).toEqual([]);
     expect(await q("date=2026-09-04")).toEqual([DOC_A_HTML.id]);
-    expect(await q("date=ge2026-09-02&date=lt2026-09-04")).toEqual([DOC_A_CLINIC.id, DOC_A_URL.id, DOC_A_WRONG_FOLDER.id].sort());
+    expect(await q("date=ge2026-09-02&date=lt2026-09-04")).toEqual(CLINIC_ROWS);
     expect(await q(`_id=${DOC_A.id}`)).toEqual([DOC_A.id]);
     expect(await q("_id=not-a-uuid")).toEqual([]);
   });
@@ -901,7 +958,7 @@ describe("DocumentReference search", () => {
   it("refuses parameters it does not implement", async () => {
     const { call } = setup();
     for (const p of ["author=Practitioner/x", "period=2026", "_lastUpdated=ge2026", "contenttype=application/pdf", "type:text=x"]) {
-      expect((await call(`${byA}&${p}`, { token: DOCTOR })).status, p).toBe(400);
+      expect((await call(`${byA}&${p}`, { token: PAT_A })).status, p).toBe(400);
     }
   });
 
@@ -911,15 +968,15 @@ describe("DocumentReference search", () => {
     let url: string | null = `${byA}&_count=3`;
     let pages = 0;
     while (url && pages < 10) {
-      const b = await json(await call(url, { token: DOCTOR }));
+      const b = await json(await call(url, { token: PAT_A }));
       expect(b.total).toBeUndefined();
       seen.push(...matches(b).map((d: Json) => d.id));
       const next = b.link.find((l: Json) => l.relation === "next");
       url = next ? next.url.replace("https://mbhr.app", "") : null;
       pages++;
     }
-    expect(seen).toEqual(A_WITH_M);
-    expect(pages).toBe(4);
+    expect(seen).toEqual(A_IDS);
+    expect(pages).toBe(3);
   });
 });
 
@@ -932,15 +989,16 @@ describe("nothing forbidden is served", () => {
     const { call, served, logs, calls } = setup();
     const byA = `patient=Patient/${PATIENT_A.fhir_id}`;
     for (const [path, token] of [
-      [`/fhir/R4/DocumentReference?${byA}`, DOCTOR],
-      [`/fhir/R4/DocumentReference?${byA}&category=staff`, DOCTOR],
-      ...A_LIVE.map((d) => [`/fhir/R4/DocumentReference/${d.id}`, DOCTOR]),
+      [`/fhir/R4/DocumentReference?${byA}`, PAT_A],
+      [`/fhir/R4/DocumentReference?${byA}&category=staff`, PAT_A],
       ...A_LIVE.map((d) => [`/fhir/R4/DocumentReference/${d.id}`, PAT_A]),
-      ...A_LIVE.map((d) => [`/fhir/R4/Binary/${d.id}`, DOCTOR]),
       ...A_LIVE.map((d) => [`/fhir/R4/Binary/${d.id}`, PAT_A]),
-      [`/fhir/R4/DocumentReference/${DOC_M.id}`, DOCTOR],
+      // Staff refusals carry nothing either.
+      ...A_LIVE.map((d) => [`/fhir/R4/DocumentReference/${d.id}`, DOCTOR]),
+      ...A_LIVE.map((d) => [`/fhir/R4/Binary/${d.id}`, ADMIN]),
+      [`/fhir/R4/DocumentReference/${DOC_M.id}`, PAT_A],
       ["/fhir/R4/DocumentReference", PAT_A],
-      [`/fhir/R4/Binary/${DOC_A_REMOVED.id}`, DOCTOR],
+      [`/fhir/R4/Binary/${DOC_A_REMOVED.id}`, PAT_A],
     ] as [string, string][]) {
       await call(path, { token });
     }

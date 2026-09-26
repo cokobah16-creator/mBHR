@@ -9,7 +9,7 @@
 // before anything is released.
 
 import type { OperationOutcomeIssue, Resource } from "../types/fhir";
-import type { ParsedSearch, SearchParamDef } from "../search/params";
+import type { ParsedSearch, RefusedSearchParam, SearchParamDef } from "../search/params";
 import type { SearchPage } from "../search/bundle";
 import type { Postgrest } from "../gateway/postgrest";
 import type { StorageClient } from "../gateway/storage";
@@ -54,6 +54,13 @@ export interface QueryCtx {
    * resolving the parameter again.
    */
   patients?: PatientSearchContext;
+  /**
+   * The request's time: the instant authorizeFhirRequest() (and its consent
+   * check) decided with. A module whose published status depends on the
+   * time (Consent past its end date) uses it, so the decision and what is
+   * published agree. Absent only where a test builds a context by hand.
+   */
+  now?: Date;
 }
 
 /** Search parameters that name a patient, resolved by the gateway before authorization. */
@@ -94,6 +101,13 @@ export interface ResourceDefinition {
   profiles: string[];
   interactions: ("read" | "search-type")[];
   searchParams: SearchParamDef[];
+  /**
+   * Parameters this type refuses with its own explanation (400
+   * not-supported, whatever the value, modifier or other parameters)
+   * instead of the generic "not supported". Not offered in the
+   * CapabilityStatement; say why in `notes`.
+   */
+  refusedSearchParams?: readonly RefusedSearchParam[];
   /** A staff search must name one of these groups (anti-enumeration). */
   requiredSearch: string[][];
   writeSupport: false;

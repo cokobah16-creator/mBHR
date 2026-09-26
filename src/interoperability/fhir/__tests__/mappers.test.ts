@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { mapPatient, mapGender } from "../mappers/patient";
+import { mapPatient, mapGender, publishedBirthDate } from "../mappers/patient";
+import { calendarDate } from "../mappers/common";
 import { mapEncounter, mapVisitStatus } from "../mappers/encounter";
 import { mapVitalsRow, parseObservationId, mapVitalSign } from "../mappers/observation";
 import { mapCondition } from "../mappers/condition";
@@ -35,6 +36,65 @@ describe("Patient mapper", () => {
     expect(p.gender).toBe("female");
     expect(p.birthDate).toBe("1984-03-02");
     expect(p.address).toEqual([{ text: "12 Example Street", district: "Oshimili South", state: "Delta" }]);
+  });
+
+  // Owner decision, CLINICAL_LOGIC_CHANGES.md 2.7: quick registration saves
+  // an age as the 1st of a month, and the server cannot tell it from a real
+  // birthday, so every date on the 1st goes out with less precision.
+  it("sends a 1 January birth date as the year only", () => {
+    const jan1 = mapPatient({ ...PATIENT_A, dob: "2021-01-01" });
+    expect(jan1.birthDate).toBe("2021");
+    expect(validateResource(jan1)).toEqual([]);
+  });
+
+  it("sends a birth date on the 1st of any other month as the year and month", () => {
+    const jun1 = mapPatient({ ...PATIENT_A, dob: "2024-06-01" });
+    expect(jun1.birthDate).toBe("2024-06");
+    expect(validateResource(jun1)).toEqual([]);
+    expect(mapPatient({ ...PATIENT_A, dob: "2020-12-01" }).birthDate).toBe("2020-12");
+  });
+
+  it("sends any other birth date in full", () => {
+    expect(p.birthDate).toBe("1984-03-02");
+    for (const dob of ["2020-01-02", "2024-02-29", "2019-03-31", "2020-10-10"]) {
+      const full = mapPatient({ ...PATIENT_A, dob });
+      expect(full.birthDate, dob).toBe(dob);
+      expect(validateResource(full), dob).toEqual([]);
+    }
+  });
+
+  it("never changes the stored date, and leaves a missing or unreadable one out as before", () => {
+    const row = { ...PATIENT_A, dob: "2021-01-01" };
+    mapPatient(row);
+    expect(row.dob).toBe("2021-01-01");
+    // A timestamp-shaped value is read as its calendar date first.
+    expect(mapPatient({ ...PATIENT_A, dob: "2021-01-01T00:00:00+00:00" }).birthDate).toBe("2021");
+    for (const dob of [null, undefined, "", "  ", "2021", "2021-01", "01/01/2021", "not a date"]) {
+      expect("birthDate" in mapPatient({ ...PATIENT_A, dob }), String(dob)).toBe(false);
+    }
+    // A merged-away record still carries no birth date.
+    expect("birthDate" in mapPatient({ ...PATIENT_A, dob: "2021-01-01", merged_into: "01HZZSURVIVOR" })).toBe(false);
+    // Only the birth date is shortened: the shared date helper other mappers use is unchanged.
+    expect(calendarDate({ d: "2021-01-01" }, "d")).toBe("2021-01-01");
+  });
+
+  it("shortens only a full date on the 1st, working on the string alone", () => {
+    const cases: [string, string][] = [
+      ["2021-01-01", "2021"],
+      ["2024-06-01", "2024-06"],
+      ["2020-12-01", "2020-12"],
+      ["2020-01-02", "2020-01-02"],
+      ["1984-03-02", "1984-03-02"],
+      ["2024-02-29", "2024-02-29"],
+      ["2019-03-31", "2019-03-31"],
+      ["2021-01-10", "2021-01-10"],
+      // Not a full date: returned unchanged.
+      ["", ""],
+      ["2021", "2021"],
+      ["2021-01", "2021-01"],
+      ["2021-01-01T00:00:00Z", "2021-01-01T00:00:00Z"],
+    ];
+    for (const [dob, out] of cases) expect(publishedBirthDate(dob), dob).toBe(out);
   });
 
   it("does not assert active for an ordinary record, and marks a merged one replaced", () => {
@@ -232,28 +292,47 @@ describe("Condition mapper", () => {
     expect(c.verificationStatus).toBeUndefined();
   });
 
-  it("leaves out a stored 'confirmed', the column's default, and publishes every other verification code", () => {
-    // public.conditions.verification_status has DEFAULT 'confirmed': a row
-    // written without one is not a confirmed diagnosis.
+  it("publishes every verification code as recorded, 'confirmed' included, and none when none was recorded", () => {
+    // public.conditions.verification_status has no default (owner decision,
+    // CLINICAL_LOGIC_CHANGES.md 2.7): a stored 'confirmed' was chosen by staff.
     const c = mapCondition({ ...CONDITION_A, verification_status: "confirmed" }, ctx)!;
-    expect("verificationStatus" in c).toBe(false);
+    expect(c.verificationStatus).toStrictEqual({
+      coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code: "confirmed" }],
+    });
     expect(c.clinicalStatus?.coding?.[0].code).toBe("active"); // unchanged
     expect(validateResource(c)).toEqual([]);
-    for (const raw of ["Confirmed", " confirmed "]) {
+    for (const raw of ["Confirmed", "CONFIRMED"]) {
       expect("verificationStatus" in mapCondition({ ...CONDITION_A, verification_status: raw }, ctx)!, raw).toBe(false);
     }
-    for (const code of ["unconfirmed", "provisional", "differential", "refuted", "entered-in-error"]) {
+    for (const code of ["unconfirmed", "provisional", "differential", "confirmed", "refuted", "entered-in-error"]) {
       expect(mapCondition({ ...CONDITION_A, verification_status: code }, ctx)!.verificationStatus, code).toStrictEqual({
         coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code }],
       });
     }
-    // Search cannot find what the read leaves out: there is no
-    // verification-status parameter (an unknown parameter is refused).
+    expect(mapCondition({ ...CONDITION_A, verification_status: null }, ctx)!.verificationStatus).toBeUndefined();
+    // There is still no verification-status search parameter (an unknown parameter is refused).
     expect(conditionDefinition.searchParams.map((p) => p.name)).not.toContain("verification-status");
-    // The published notes say so, so a missing verificationStatus is not read as "unconfirmed".
-    expect(conditionDefinition.notes?.join(" ")).toMatch(
-      /verificationStatus is left out when the stored value is 'confirmed'.*cannot be told apart.*does not mean the diagnosis is unconfirmed/,
-    );
+    // The published notes say a missing status was not recorded, not that it is "unconfirmed".
+    const notes = conditionDefinition.notes?.join(" ");
+    expect(notes).not.toMatch(/'confirmed'/);
+    expect(notes).toMatch(/sent only as recorded.*does not mean the diagnosis is inactive, unconfirmed or not on the problem list/);
+  });
+
+  it("sends a diagnosis nobody marked with no clinical status, verification status or category", () => {
+    const unmarked = { ...CONDITION_A, clinical_status: null, verification_status: null, category: null };
+    const c = mapCondition(unmarked, ctx)!;
+    for (const k of ["clinicalStatus", "verificationStatus", "category"]) expect(k in c, k).toBe(false);
+    expect(c.code?.text).toBe("Malaria");
+    expect(validateResource(c)).toEqual([]);
+    // A ruled-out diagnosis saved without a clinical status is not shown as current.
+    const refuted = mapCondition({ ...unmarked, verification_status: "refuted" }, ctx)!;
+    expect(refuted.verificationStatus?.coding?.[0].code).toBe("refuted");
+    expect("clinicalStatus" in refuted).toBe(false);
+    // A category staff chose is sent; no clinical status is invented beside it.
+    const listed = mapCondition({ ...unmarked, category: "problem-list-item" }, ctx)!;
+    expect(listed.category?.[0].coding?.[0].code).toBe("problem-list-item");
+    expect("clinicalStatus" in listed).toBe(false);
+    expect(validateResource(listed)).toEqual([]);
   });
 });
 

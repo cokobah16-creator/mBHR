@@ -82,7 +82,8 @@ For an access class that needs consent:
    public-health; `research` for research.
 3. A withdrawn directive is skipped. A directive whose status is not
    `active` is skipped. A directive outside its effective period is
-   skipped.
+   skipped (the end is exclusive: a directive ending at 12:00 is expired
+   at 12:00).
 4. A provision matches when each of its fields is empty or equal to the
    request: actor type, action, purpose, resource type and data class. An
    empty field matches anything. The actor types that can match are:
@@ -139,6 +140,12 @@ path is covered by unit tests only: `consentPolicy.test.ts` tests the
 evaluator, `authorize.test.ts` calls `consentStep()` directly, and
 `consentDirectiveLoader.test.ts` tests the lookup below.
 
+The three permissions in step 4 are the step's own list
+(`CONSENT_READERS`). No staff account may read the Consent resource (owner
+decision, "Only what the app shows"), but once a governed purpose is
+served the step still loads directives for these staff inside the gateway,
+to decide a request for another type. It never returns them to the caller.
+
 How step 10 looks up directives once a governed purpose is served
 (`loadConsentDirectives()` in `gateway/handler.ts`):
 
@@ -167,7 +174,7 @@ functions below.
 | `scope` | FHIR consentscope: adr, research, patient-privacy, treatment |
 | `category` | free text today; see [terminology-review.md](terminology-review.md) |
 | `source_type` | paper_form, portal, verbal_witnessed, imported, mbhr_consent_record |
-| `source_document_id`, `policy_uri` | where the signed form or the policy is |
+| `source_document_id`, `policy_uri` | where the signed form or the policy is; `policy_uri` is required (Phase 2 CHECK) |
 | `granted_by`, `granted_by_relationship` | who consented (patient, guardian, …) |
 | `recorded_by`, `recorded_at` | who entered it and when |
 | `verified`, `verified_by`, `verified_at` | a verified record must say who verified it and when |
@@ -192,6 +199,9 @@ Rules the database enforces:
 - A withdrawal is final. It cannot be undone or rewritten.
 - A rejected, inactive or entered-in-error record never comes back into
   force.
+- Every record cites a policy link (Phase 2 CHECK
+  `consent_records_policy_required`): an absolute URI in ASCII, at most
+  500 characters, whoever writes it, the service role included.
 - Provisions never change. They can be added only in the transaction that
   created their record, and never to a verified or withdrawn record
   (Phase 2 triggers `consent_provisions_no_update` and
@@ -210,8 +220,8 @@ them. Each checks the caller itself.
 
 | Function | Who may call it | What it does |
 | --- | --- | --- |
-| `fhir_consent_directives()` | staff with `consult`, `portal_manage` or `audit_access` (any patient); a portal patient (own records, including records merged into theirs) | Directives and provisions for named patient ids or consent ids (one is required). Used by the gateway. Never returns account ids, the withdrawal reason, who signed, the source document or a provision's actor reference (only `names_recipient`: whether a rule names one specific recipient). |
-| `interop_record_consent()` | staff with `portal_manage` or `consult` | Records a directive with up to 20 provisions. Status draft, proposed or active. The patient must exist and must not be merged away. `policy_uri` may be empty. |
+| `fhir_consent_directives()` | staff with `consult`, `portal_manage` or `audit_access` (any patient); a portal patient (own records, including records merged into theirs) | Directives and provisions for named patient ids or consent ids (one is required). Used by the gateway: a patient's own Consent reads and searches, and the consent step's directive lookup (staff included). No staff account gets the Consent resource (owner decision); a direct API call by such staff still returns the directives, and no app screen makes one. Never returns account ids, the withdrawal reason, who signed, the source document or a provision's actor reference (only `names_recipient`: whether a rule names one specific recipient). |
+| `interop_record_consent()` | staff with `portal_manage` or `consult` | Records a directive with up to 20 provisions. Status draft, proposed or active. The patient must exist and must not be merged away. A policy link is required (22023 `a policy link is required` when missing or blank; `invalid consent` when it is not an absolute ASCII URI of at most 500 characters). |
 | `interop_verify_consent()` | staff with `portal_manage` or `consult` | Marks a draft, proposed or active record verified. A withdrawn record cannot be verified. |
 | `interop_withdraw_consent(p_consent_id, p_reason, p_patient_id)` | staff with `portal_manage` or `consult`; or the portal patient whose record it is (including records merged into theirs) | Withdraws a record, with an optional reason of at most 500 characters. Status becomes inactive (entered-in-error stays). A repeat returns false. A portal patient may withdraw only a permission to share: scope patient-privacy or research, and no deny provision (the database also accepts a record with no provisions, which the portal does not offer). A refusal, a treatment consent or an advance directive is changed with clinic staff: the patient gets 42501, whatever the record's status. `p_patient_id` is optional and names the page's patient. When given, the record must be that patient's or a record merged into it (42501 otherwise, for staff too), and a patient must name one of their own portal records (42501 otherwise). A malformed id is refused (22023). The portal always sends it, so a sign-in linked to two people (a shared phone) withdraws only for the person the page shows. Without it, a patient may still withdraw a permission of any person linked to the sign-in, and staff are not limited. |
 | `interop_my_consents(p_patient_id)` | a portal patient, for one of their own portal records | The directives (at most 500) of that record and of the records merged into it, not of every record linked to the sign-in (a shared phone can link several people). NULL or a malformed id is refused (22023); a record that is not one of the caller's gives 42501. There is no form without an argument. |
@@ -372,18 +382,26 @@ mBHR is in force."). That matches the default-deny rule.
 The gateway publishes register records as FHIR R4 Consent, read-only. The
 mapping is in [resource-mapping.md](resource-mapping.md#consent--the-consent-register).
 
-- Searches: `_id`, `patient`, `status`, `scope`. Staff must give `_id` or
-  `patient`.
-- Staff with `consult`, `portal_manage` or `audit_access` may read any
-  patient's consents. A patient sees only their own (restriction
+- Searches: `_id`, `patient`, `status`, `scope`.
+- No staff account may read or search it (owner decision, "Only what the
+  app shows"): in mBHR staff see only the External sharing chip, and FHIR
+  never shows staff more. Every staff request is 403 `missing_permission`
+  at the permission step, audited, before the register is read, until
+  mBHR has a staff consent screen. A patient (with
+  `FHIR_PATIENT_ACCESS_ENABLED`) sees only their own (restriction
   `own_consents_only`).
-- A staff search by patient includes directives still filed under records
-  merged into that patient, shown with the kept record as the patient.
 - A withdrawn record is published as `inactive`, never `active`.
-- A record is published whole or not at all. A record with no
-  `policy_uri` is not published (R4 needs a policy or a policy rule), and
-  neither is a record whose rules cannot be shown without changing their
-  meaning. That includes a rule for one named recipient (for example one
+- An active consent past its end date is published as `inactive` (no
+  longer in force) with its end date in `provision.period`, as the consent check
+  (`consent_expired`) and the portal (ended) treat it; `status=active`
+  never matches it. The time is the gateway's request time, the one the
+  access decision used. A draft or proposed record, never in force,
+  keeps its own status.
+- A record is published whole or not at all. Recording a consent needs a
+  policy link, so every record has one; a record that still cites no
+  usable `policy_uri` is not published (R4 needs a policy or a policy
+  rule), as defence in depth. Neither is a record whose rules cannot be
+  shown without changing their meaning. That includes a rule for one named recipient (for example one
   hospital): the recipient is never published, and without it the rule
   would read as a rule for every recipient of that kind. A searchset says
   how many were left out.
@@ -393,16 +411,13 @@ mapping is in [resource-mapping.md](resource-mapping.md#consent--the-consent-reg
 Consent is **Partial** for two reasons:
 
 1. **The register is empty.** Nothing in the app records a consent yet
-   (see above), so every search returns an empty searchset. Note also
-   that `interop_record_consent()` accepts a record with no `policy_uri`,
-   and such a record would not be published.
+   (see above), so every search returns an empty searchset.
 2. **Patients do not see merged-away directives.** A patient's search
    sends only the patient's current record ids. A directive still filed
    under a record that was merged into theirs is not returned to the
    patient through FHIR. The patient's searchset says so, and points to
-   the portal's privacy section, which does list them. Staff see these
-   directives. Closing the gap needs a database helper that resolves a
-   patient's merged records.
+   the portal's privacy section, which does list them. Closing the gap
+   needs a database helper that resolves a patient's merged records.
 
 ## Existing consent data (unchanged)
 
@@ -429,5 +444,9 @@ not enabled in any form until that review process exists **(owner)**.
 - Who records and verifies consents, and on which screen.
 - Whether and how to import `patient_consent_records`.
 - The consent category codes (free text today).
-- The policy URIs to cite (none is defined; examples only).
+- The policy URIs to cite (none is defined; examples only). A consent
+  cannot be recorded or imported without one, so this must be decided
+  first.
 - Break-glass: whether it is wanted, and the review process.
+- When mBHR has a staff consent screen, whether staff read Consent over
+  FHIR again (refused until then, by owner decision).

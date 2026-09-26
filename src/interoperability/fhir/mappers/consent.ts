@@ -12,9 +12,11 @@
 // What is published, and what is not:
 //
 //   - status: the stored consent-state code (CONSENT_STATUS); a withdrawn
-//     record is inactive (CONSENT_STATUS_WITHDRAWN), never active. A record
-//     with no usable status is not published (Consent.status is required
-//     and the value set has no "unknown").
+//     record is inactive (CONSENT_STATUS_WITHDRAWN), and so is an active
+//     record past its end date at the time of the request
+//     (CONSENT_STATUS_ENDED, the consent check's own rule), never active.
+//     A record with no usable status is not published (Consent.status is
+//     required and the value set has no "unknown").
 //   - scope: the stored consentscope code, with the R4 display. category:
 //     the stored category as an mBHR local code
 //     (https://mbhr.app/codes/consent-category), never a LOINC code, since
@@ -24,8 +26,11 @@
 //     patient cannot be resolved is not published.
 //   - dateTime: when the record was entered in the register (recorded_at).
 //   - policy.uri: the recorded policy. R4 requires policy or policyRule
-//     (invariant ppc-1) and mBHR records no policy rule, so a record that
-//     cites no policy is not published rather than given an invented rule.
+//     (invariant ppc-1) and mBHR records no policy rule. Recording a
+//     consent needs a policy link (interop_record_consent and the
+//     register's CHECK consent_records_policy_required); a record that
+//     still cites none is withheld here as defence in depth, never given
+//     an invented rule.
 //   - verification: only from the recorded flag. verified true: verified,
 //     with the date when recorded; false: verified false (the register
 //     records that nobody has verified it yet); absent: left out. Who
@@ -57,10 +62,12 @@ import { MBHR_CODES } from "../terminology/codeSystems";
 import {
   CONSENT_STATE_CODES,
   CONSENT_STATUS,
+  CONSENT_STATUS_ENDED,
   CONSENT_STATUS_WITHDRAWN,
   type ConsentState,
 } from "../terminology/status/consent";
 import { PURPOSE_OF_USE_SYSTEM } from "../consent/policy";
+import { periodEnded } from "../consent/evaluateConsent";
 import { DATETIME, isObj, type AddIssue } from "../validation/validate";
 import { instant, patientReference, versionMeta, type MapContext, type Row } from "./common";
 
@@ -237,9 +244,22 @@ export function isWithdrawn(row: Row): boolean {
   return row.withdrawn === true || (typeof row.withdrawn_at === "string" && row.withdrawn_at !== "");
 }
 
-/** Consent.status for a register record, or null (withheld): see terminology/status/consent.ts. */
-export function mapConsentStatus(row: Row): ConsentState | null {
-  return applyStatusMap(isWithdrawn(row) ? CONSENT_STATUS_WITHDRAWN : CONSENT_STATUS, row.status);
+/**
+ * A record whose own end date is at or before `at` (evaluateConsent's
+ * rule; a non-string end is no end, as parseDirectives reads it).
+ */
+export function hasEnded(row: Row, at: Date): boolean {
+  return periodEnded(typeof row.effective_until === "string" ? row.effective_until : null, at.getTime());
+}
+
+/**
+ * Consent.status for a register record at the request's time `at`, or null
+ * (withheld): see terminology/status/consent.ts. The withdrawn map takes
+ * precedence over the ended one.
+ */
+export function mapConsentStatus(row: Row, at: Date): ConsentState | null {
+  const map = isWithdrawn(row) ? CONSENT_STATUS_WITHDRAWN : hasEnded(row, at) ? CONSENT_STATUS_ENDED : CONSENT_STATUS;
+  return applyStatusMap(map, row.status);
 }
 
 /** Consent.scope code for a register record, or null when it is not a consentscope code. */
@@ -330,13 +350,17 @@ function withheld(reason: ConsentWithheld): ConsentMapResult {
   return { resource: null, withheld: reason };
 }
 
-/** A register record (fhir_consent_directives shape) as a Consent, or the reason it is withheld. */
-export function mapConsentRecord(row: Row, ctx: MapContext): ConsentMapResult {
+/**
+ * A register record (fhir_consent_directives shape) as a Consent at the
+ * request's time `at` (the gateway's; a mapper never reads the clock), or
+ * the reason it is withheld.
+ */
+export function mapConsentRecord(row: Row, ctx: MapContext, at: Date): ConsentMapResult {
   const id = typeof row.id === "string" && UUID.test(row.id) ? row.id.toLowerCase() : null;
   if (!id) return withheld("no_id");
   const patient = patientReference(ctx, row.patient_id);
   if (!patient) return withheld("no_patient");
-  const status = mapConsentStatus(row);
+  const status = mapConsentStatus(row, at);
   if (!status) return withheld("no_status");
   const scope = mapConsentScope(row);
   if (!scope) return withheld("no_scope");
@@ -357,10 +381,24 @@ export function mapConsentRecord(row: Row, ctx: MapContext): ConsentMapResult {
     nested.push(rule);
   }
 
+  // A consent that ended after its last recorded change is published as
+  // inactive from its end on, so that is when this version began.
+  const meta = versionMeta(row);
+  if (
+    period?.end &&
+    !isWithdrawn(row) &&
+    applyStatusMap(CONSENT_STATUS, row.status) === "active" &&
+    status === "inactive" &&
+    (!meta.lastUpdated || Date.parse(period.end) > Date.parse(meta.lastUpdated))
+  ) {
+    meta.lastUpdated = period.end;
+    meta.versionId = String(Date.parse(period.end));
+  }
+
   const consent: Consent = {
     resourceType: "Consent",
     id,
-    meta: versionMeta(row),
+    meta,
     status,
     scope: { coding: [{ system: CONSENT_SCOPE_SYSTEM, code: scope, display: CONSENT_SCOPES[scope] }] },
     category: [category],
@@ -370,8 +408,8 @@ export function mapConsentRecord(row: Row, ctx: MapContext): ConsentMapResult {
   if (recordedAt) consent.dateTime = recordedAt;
   consent.policy = [{ uri: policy }];
   if (row.verified === true) {
-    const at = instant(row, "verified_at");
-    consent.verification = [at ? { verified: true, verificationDate: at } : { verified: true }];
+    const verifiedAt = instant(row, "verified_at");
+    consent.verification = [verifiedAt ? { verified: true, verificationDate: verifiedAt } : { verified: true }];
   } else if (row.verified === false) {
     consent.verification = [{ verified: false }];
   }
@@ -382,8 +420,8 @@ export function mapConsentRecord(row: Row, ctx: MapContext): ConsentMapResult {
   return { resource: consent, withheld: null };
 }
 
-export function mapConsent(row: Row, ctx: MapContext): Consent | null {
-  return mapConsentRecord(row, ctx).resource;
+export function mapConsent(row: Row, ctx: MapContext, at: Date): Consent | null {
+  return mapConsentRecord(row, ctx, at).resource;
 }
 
 // ---------------------------------------------------------------------------

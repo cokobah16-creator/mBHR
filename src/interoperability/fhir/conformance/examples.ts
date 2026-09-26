@@ -12,7 +12,7 @@ import { capabilityStatement } from "../capability/capabilityStatement";
 import { searchsetBundle } from "../search/bundle";
 import { operationOutcome } from "../errors/operationOutcome";
 import { ALLERGY_NKA_CAVEAT, mapAllergy, type AllergyMapContext } from "../mappers/allergy";
-import { allergyLeftOutWarning } from "../resources/allergyIntolerance";
+import { ALLERGY_TYPE_SEARCH_REFUSED, allergyLeftOutWarning } from "../resources/allergyIntolerance";
 import {
   itemDescription,
   lineItemId,
@@ -166,8 +166,8 @@ const ALLERGY_ACTIVE = {
   created_at: "2026-05-01T09:00:00Z",
   updated_at: "2026-05-01T09:00:00Z",
 };
-/** Marked inactive by staff; no reaction recorded; recorded on a tablet account. */
-const ALLERGY_INACTIVE = {
+/** Active food allergy; no reaction recorded; recorded on a tablet account (not in the staff directory). */
+const ALLERGY_FOOD = {
   ...ALLERGY_ACTIVE,
   id: "a11e0000-0000-4000-8000-000000000002",
   allergen: "Groundnuts",
@@ -175,7 +175,7 @@ const ALLERGY_INACTIVE = {
   reaction: null,
   severity: "moderate",
   onset_date: null,
-  is_active: false,
+  is_active: true,
   created_by: DEVICE_ACCOUNT,
   updated_at: "2026-06-10T14:00:00Z",
 };
@@ -469,6 +469,21 @@ const CONSENT_RESEARCH_WITHDRAWN = {
   ],
 };
 
+/** A permission whose end date has passed: no longer in force (inactive), end date in provision.period. */
+const CONSENT_PRIVACY_ENDED = {
+  ...CONSENT_PRIVACY,
+  id: "c0a5e000-0000-4000-8000-0000000000e4",
+  verified_at: "2025-06-02T10:00:00Z",
+  effective_from: "2025-06-01T00:00:00Z",
+  effective_until: "2026-06-01T00:00:00Z",
+  recorded_at: "2025-06-01T09:30:00Z",
+  created_at: "2025-06-01T09:30:00Z",
+  updated_at: "2025-06-02T10:00:00Z",
+  provisions: [{ ...CONSENT_PRIVACY.provisions[0], id: "d0000000-0000-4000-8000-0000000000e5" }],
+};
+/** The request time the Consent examples are mapped at (as the example bundles), so they do not change with the date. */
+const EXAMPLE_NOW = new Date("2026-09-25T12:00:00Z");
+
 /** Merged into PATIENT (the Patient-merged example). */
 const MERGED_PATIENT = { id: "01HZZEXAMPLEMERGED0000000", fhir_id: "7c0f6a52-3d0e-4f7e-9a51-5b8d2c1e0a02" };
 
@@ -577,6 +592,11 @@ export function conformanceExamples(): Record<string, Resource> {
     { ...CONDITION, id: "c0ffee00-0000-4000-8000-000000000004", verification_status: "confirmed", severity: "severe" },
     ctx,
   )!;
+  // A diagnosis nobody marked: no clinical status, verification status or category is filled in.
+  const unmarked = mapCondition(
+    { ...CONDITION, id: "c0ffee00-0000-4000-8000-000000000005", clinical_status: null, verification_status: null, category: null },
+    ctx,
+  )!;
 
   const out: Record<string, Resource> = {
     "Patient-example": patient,
@@ -586,6 +606,7 @@ export function conformanceExamples(): Record<string, Resource> {
     "Condition-entered-in-error": enteredInError,
     "Condition-resolved-mild": resolvedMild,
     "Condition-active-severe": activeSevere,
+    "Condition-unmarked": unmarked,
     "CapabilityStatement-mbhr": capabilityStatement(EXAMPLE_BASE_URL) as Resource,
     "OperationOutcome-forbidden": operationOutcome("forbidden", "The requested resource is not available to this client."),
     "Bundle-observation-search": searchsetBundle({
@@ -631,9 +652,9 @@ function phase2Examples(ctx: MapContext): Record<string, Resource> {
   // AllergyIntolerance (resources/allergyIntolerance.ts: patient refs + staff directory).
   const allergyCtx: AllergyMapContext = { ...ctx, practitionerIds: PRACTITIONER_IDS };
   const allergyActive = mapAllergy(ALLERGY_ACTIVE, allergyCtx);
-  const allergyInactive = mapAllergy(ALLERGY_INACTIVE, allergyCtx);
+  const allergyFood = mapAllergy(ALLERGY_FOOD, allergyCtx);
   add("AllergyIntolerance-active", allergyActive);
-  add("AllergyIntolerance-inactive", allergyInactive);
+  add("AllergyIntolerance-food", allergyFood);
   // A patient search where one matching allergy was left out (its patient
   // record did not resolve): the searchset's outcome entry carries the
   // "no known allergies" caveat every allergy searchset has, and the warning.
@@ -644,12 +665,14 @@ function phase2Examples(ctx: MapContext): Record<string, Resource> {
       resourceType: "AllergyIntolerance",
       query: new URLSearchParams(`patient=Patient/${PATIENT.fhir_id}`),
       count: 20,
-      page: { resources: [allergyActive!, allergyInactive!], next: null },
+      page: { resources: [allergyActive!, allergyFood!], next: null },
       now: new Date("2026-09-25T12:00:00Z"),
       outcomes: [ALLERGY_NKA_CAVEAT, allergyLeftOutWarning(1)],
       newId: () => "0e0e0e0e-0000-4000-8000-000000000001",
     }),
   );
+  // A search by type is answered "ask for all allergies" (owner decision, 2.7).
+  add("OperationOutcome-allergy-type-search", operationOutcome("not-supported", ALLERGY_TYPE_SEARCH_REFUSED));
 
   // Medicines (resources/medication*.ts).
   for (const [name, item] of [
@@ -700,16 +723,19 @@ function phase2Examples(ctx: MapContext): Record<string, Resource> {
   add("Observation-lab-string", mapLabObservation(LAB_RESULT_MALARIA, LAB_ORDER_MALARIA, ctx));
   add("Observation-lab-data-absent", mapLabObservation(LAB_RESULT_MALARIA_REPEAT, LAB_ORDER_MALARIA, ctx));
 
-  // Documents (resources/documentReference.ts, binary.ts): staff see every
-  // file; a patient sees a clinic record's metadata without its file.
+  // Documents (resources/documentReference.ts, binary.ts): only portal
+  // patients read documents (staff are refused until mBHR has a staff
+  // documents screen). A patient gets the file of their own upload, and a
+  // clinic record's metadata without its file.
   add("DocumentReference-patient-upload", mapDocumentReference(DOCUMENT_UPLOAD, ctx, { contentAvailable: true }));
   add("DocumentReference-clinic-record-patient-view", mapDocumentReference(DOCUMENT_CLINIC, ctx, { contentAvailable: false }));
   add("Binary-patient-upload", mapBinary(DOCUMENT_UPLOAD, ctx));
 
   // Consent (resources/consent.ts).
-  add("Consent-privacy-rules", mapConsent(CONSENT_PRIVACY, ctx));
-  add("Consent-deny-external-actor", mapConsent(CONSENT_EXTERNAL_DENY, ctx));
-  add("Consent-research-withdrawn", mapConsent(CONSENT_RESEARCH_WITHDRAWN, ctx));
+  add("Consent-privacy-rules", mapConsent(CONSENT_PRIVACY, ctx, EXAMPLE_NOW));
+  add("Consent-deny-external-actor", mapConsent(CONSENT_EXTERNAL_DENY, ctx, EXAMPLE_NOW));
+  add("Consent-research-withdrawn", mapConsent(CONSENT_RESEARCH_WITHDRAWN, ctx, EXAMPLE_NOW));
+  add("Consent-privacy-ended", mapConsent(CONSENT_PRIVACY_ENDED, ctx, EXAMPLE_NOW));
 
   // Provenance (resources/provenance.ts) and AuditEvent (resources/auditEvent.ts):
   // staff resolve to Practitioner references through the staff directory.

@@ -77,7 +77,9 @@ Step 9 restrictions:
 Step 10 in practice: no purpose the surface accepts today (staff `TREAT`,
 patient `PATRQT`) is governed by stored consent, so the directive lookup
 is never reached through the gateway. The step does not load directives
-when enforcement is off or when the staff member cannot read consents.
+when enforcement is off or when the staff member holds none of consult,
+portal_manage or audit_access (the step's own list, `CONSENT_READERS`; no
+staff account reads the Consent resource itself).
 
 **Row-level security** applies on top of all of this. Clinical rows are
 read through PostgREST (and files through Storage) with the caller's own
@@ -106,8 +108,8 @@ security then decides which rows it sees.
 | Medication | consult, dispense, inventory |
 | MedicationRequest, MedicationDispense | consult, dispense |
 | ServiceRequest, DiagnosticReport | consult, lab_review |
-| DocumentReference, Binary | consult |
-| Consent | consult, portal_manage, audit_access |
+| DocumentReference, Binary | nothing: no staff account (owner decision, patients only until mBHR has a staff documents screen) |
+| Consent | nothing: no staff account (owner decision: the staff app shows only the External sharing badge, until mBHR has a staff consent screen) |
 | Practitioner, PractitionerRole, Organization, Location | any staff permission (every staff member) |
 | Provenance | audit_access, lab_review (lab_review alone: laboratory events only) |
 | AuditEvent | audit_access |
@@ -117,13 +119,13 @@ copy by `src/auth/roleMatrixParity.test.ts`), the directory types aside:
 
 | Role | Can read |
 | --- | --- |
-| admin | every type |
-| lead_clinician | every type |
-| doctor | every type except AuditEvent; Provenance laboratory events only |
-| nurse, volunteer | Patient, Encounter, Observation (vital signs only), AllergyIntolerance, Consent |
+| admin | every type except DocumentReference, Binary and Consent |
+| lead_clinician | every type except DocumentReference, Binary and Consent |
+| doctor | every type except DocumentReference, Binary, Consent and AuditEvent; Provenance laboratory events only |
+| nurse, volunteer | Patient, Encounter, Observation (vital signs only), AllergyIntolerance |
 | pharmacist | Patient, AllergyIntolerance, Medication, MedicationRequest, MedicationDispense |
-| registration_lead | Patient, AllergyIntolerance, Consent |
-| auditor | Consent, Provenance, AuditEvent |
+| registration_lead | Patient, AllergyIntolerance |
+| auditor | Provenance, AuditEvent |
 | guest | nothing |
 
 Row-level security may narrow this further: if a table's policies are
@@ -139,11 +141,21 @@ owner's decision before the gateway is enabled with real data:
 
 | Type | Who can read it | What the staff app shows today | Options |
 | --- | --- | --- | --- |
-| DocumentReference, Binary | consult (doctor, lead clinician, admin): every patient's document list and files, portal uploads and insurance documents included | No staff screen reads patient documents; only the patient portal does | Keep for consult; or patients only (their own files) until a staff documents screen exists |
 | AuditEvent | audit_access (admin, lead clinician, auditor): the FHIR access trail for any patient | No staff screen shows the FHIR access trail per patient | Keep for audit_access; or refuse until an audit screen exists |
+| Provenance of document uploads (`docup-<id>`) | audit_access (admin, lead clinician, auditor): for any patient, that a document was uploaded, its id, when, and whether through the portal or an mBHR account; never its content, and its DocumentReference target is refused to every staff account (decision 2.7) | No staff screen shows patient documents or their uploads | Keep for audit_access; or leave uploads out of staff Provenance until a staff documents screen exists |
 
-The clinical change log lists the documents question for sign-off
-(`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, section 2.7).
+Two such rows were decided on 2026-09-26 (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`,
+section 2.7):
+
+- **DocumentReference, Binary** (consult could read every patient's
+  document list and files, while no staff screen reads patient
+  documents): patients only. No staff account reads them until mBHR has a
+  staff documents screen; a portal patient reads their own.
+- **Consent** (consult, portal_manage and audit_access could read every
+  patient's full consent rules, while the staff app shows only the
+  External sharing badge): only what the app shows. No staff account reads
+  Consent until mBHR has a staff consent screen; the badge is unchanged,
+  and a portal patient reads their own.
 
 ## Patient self-access
 
@@ -232,14 +244,18 @@ never released even if the database returns them.
 
 ## Documents
 
-`DocumentReference` describes a file; `Binary/[id]` serves it. Controls:
+`DocumentReference` describes a file; `Binary/[id]` serves it. Both are
+for portal patients only: every staff account is refused (403
+`missing_permission` at step 5, owner decision, until mBHR has a staff
+documents screen), and the modules refuse a staff caller themselves too.
+Controls:
 
 - **Each download is authorised on its own.** An earlier DocumentReference
-  read never counts. Staff need consult; a patient gets only files they
-  uploaded to their own record (restriction `patient_uploads_only`).
+  read never counts. A patient gets only files they uploaded to their own
+  record (restriction `patient_uploads_only`).
 - **The row is read as the caller** (row-level security applies): the id,
   not removed (`deleted_at is null`), confined to the caller's records,
-  and for a patient `upload_source = 'patient'`.
+  and `upload_source = 'patient'`.
 - **The row's patient is resolved** through `fhir_resolve_patients()`; a
   chain that does not end is 404.
 - **The path is confined to the patient's folders.** The stored path comes
@@ -384,12 +400,12 @@ by the gateway; several are also in the CapabilityStatement notes.
 ## Findings
 
 Found in Phase 0 (at `mainone` 2140351). F1 to F4 must be resolved before
-FHIR is exposed beyond mBHR's own staff and portal patients; none is
-changed by this work.
+FHIR is exposed beyond mBHR's own staff and portal patients; this work
+changes none of them (F1 was resolved by the owner on 26 September 2026).
 
 | # | Severity | Finding | Status / owner |
 | --- | --- | --- | --- |
-| F1 | Critical | The deployed TEFCA edge functions (`tefca-ias`, `tefca-bulk`, `tefca-oauth`) still run code with the header bypass the September audit found; #135 fixed the repository copy only. Anyone who knows the URL can reach the old code. | Owner decision pending (delete them, or deploy the fixed versions); tracked in the System audit fixes work. This gateway does not use them. |
+| F1 | Critical → resolved | The deployed TEFCA edge functions (`tefca-ias`, `tefca-bulk`, `tefca-oauth`) still ran code with the header bypass the September audit found; #135 fixed the repository copy only. **Update, 26 September 2026:** the owner deleted all three from Supabase (about 09:22 UTC); a read-only check at 09:23 listed only `send-otp-email`, `send-otp-sms`, `send-sms-reminder` and `staff-admin`. | Resolved by deletion. The fixed code stays in the repository and must not be deployed until a partner needs it (F2). This gateway never used them. |
 | F2 | High | Those functions read with the **service-role key**, so row-level security does not apply, and they keep a second copy of clinical data in `fhir_resources`. | Keep them undeployed until a partner needs them; the SMART design decides whether they are retired or rebuilt on this gateway. |
 | F3 | High → reconciled | Production had drifted from the migrations (62 unapplied, including the Sept 24 permission helpers, the RLS rewrite and Wave A/B). **Update, 25 September 2026 (22:49 UTC):** production now has every file in `supabase/migrations/`; the TEFCA/FHIR files, including both interop migrations and `patients.fhir_id`, are deferred and not applied. | Reconciliation was done by the HRIS transformation work. The gateway still checks role and permission in the database itself instead of trusting RLS alone, and fails closed (503) where helpers or columns are missing. Enabling FHIR on production needs the deferred files applied first (re-versioned), with the owner's go-ahead. |
 | F4 | High | No organisation or site on clinical rows (F6) plus open sign-up: any external party would see all patients of any permitted role. | Blocks external clients and multi-organisation use; needs a data-model change first. |

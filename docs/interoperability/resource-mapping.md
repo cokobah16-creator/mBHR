@@ -82,12 +82,12 @@ Contents: [Patient](#patient--publicpatients) ·
 | name | family = `family_name`, given = `given_name` split on spaces, text = both. **No `use`**: mBHR does not record whether a name is official. |
 | telecom | `phone` (system phone), `email` (system email). **No `use`**. |
 | gender | `sex`: m/male → male; f/female → female; unknown → unknown; any other value → unknown; **`other` → left out** (registration also stores `other` when nothing was chosen, so it is not an assertion); empty → left out. |
-| birthDate | `dob` as recorded. Whether it was estimated is kept only on the tablet, so it is not flagged. |
+| birthDate | `dob`, with less precision on the 1st of a month: 1 January gives the year only (`2021`), the 1st of any other month gives year and month (`2024-06`), any other date is sent in full. Quick registration saves an age as such a date and whether it was estimated is kept only on the tablet, so every date on the 1st is treated alike (a real birthday on the 1st loses its day too; an estimated year can still be a year out). The stored date is not changed and no "estimated" mark is sent. Owner decision, CLINICAL_LOGIC_CHANGES.md 2.7. |
 | address | text = `address`, district = `lga`, state = `state`. **No `use`**, and no country (not recorded). |
 | link | merged-away record → `replaced-by` the kept record (when the caller can see it). |
 | Merged-away record | Served as a **tombstone**: id, identifier, name, `active: false` and the `replaced-by` link only. Contact details, gender, birth date and address are not repeated on it. |
 | Never published | `photo_url`, `auth_uid`, `family_id`, portal and sync columns, merge metadata. |
-| Searches | `_id`; `identifier`; `name` + `birthdate` together (starts-with on either name, exact date, merged-away records excluded). |
+| Searches | `_id`; `identifier`; `name` + `birthdate` together (starts-with on either name, exact date, merged-away records excluded). `birthdate` matches the full stored date, also when `birthDate` is sent shortened: `birthdate=2021-01-01` finds a record whose `birthDate` is `2021`. |
 | Who reads | Staff with register, vitals, consult, dispense or lab_review; a patient reads their own record. |
 
 ## Encounter ← `public.visits`
@@ -189,9 +189,9 @@ Served by the same Observation module, after vital signs.
 | | |
 | --- | --- |
 | FHIR id | `conditions.id` (uuid) |
-| clinicalStatus | `clinical_status` (already condition-clinical codes); left out when missing or not a code, and on an `entered-in-error` record (invariant con-5). |
-| verificationStatus | `verification_status` (already condition-ver-status codes): provisional stays provisional, differential stays differential. Left out when missing, not a code, or "confirmed": the column defaults to "confirmed", so a stored "confirmed" may just mean nobody recorded one; the two cannot be told apart. |
-| category | `problem-list-item`, `encounter-diagnosis` (R4 condition-category); `health-concern` (US Core code system). |
+| clinicalStatus | `clinical_status` as recorded (already condition-clinical codes); left out when none was recorded or not a code, and on an `entered-in-error` record (invariant con-5). Never filled in: the table has no default, so a diagnosis nobody marked is not sent as active. A problem-list-item with no clinical status is sent without one (R4 con-3 is a warning; none is invented). |
+| verificationStatus | `verification_status` as recorded (already condition-ver-status codes): provisional stays provisional, differential stays differential, confirmed stays confirmed. Left out when none was recorded or not a code; never assumed confirmed. The table has no default (owner decision, CLINICAL_LOGIC_CHANGES.md 2.7), so a stored value is one someone chose. |
+| category | `problem-list-item`, `encounter-diagnosis` (R4 condition-category); `health-concern` (US Core code system). Left out when none was recorded: the table has no default. |
 | severity | mild/moderate/severe → SNOMED CT 255604002 / 6736007 / 24484000 (R4 condition-severity value set). |
 | code | local `https://mbhr.app/codes/condition|<condition_code>` with `condition_name` as display and text; plus any **verified** mapping from `interop.terminology_map` (domain `condition`). |
 | onset / abatement | `onset_date`; `abatement_date` only beside a published clinical status of inactive, remission or resolved (invariant con-4). It is **left out** beside active, recurrence or relapse, and when no clinical status is published (entered in error, or a missing or unknown stored value): an ended status is never inferred from the date. |
@@ -206,10 +206,10 @@ Served by the same Observation module, after vital signs.
 | | |
 | --- | --- |
 | FHIR id | `patient_allergies.id` as stored (opaque: a uuid, or a device ULID where the column holds text). Whether production stores uuid or text is not verified. |
-| clinicalStatus | `is_active` (table below). A row with no usable value gets no clinical status, fails invariant ait-1 and is **withheld** (a searchset says how many; a read is 500), never shown as active. |
+| clinicalStatus | `is_active` (table below). Only `active` is ever published: an allergy marked inactive is left out entirely (see the table). A row with no usable value gets no clinical status, fails invariant ait-1 and is **withheld** (a searchset says how many; a read is 500), never shown as active. |
 | verificationStatus, type | **Never filled**: mBHR records neither. Nothing is "confirmed" by default. |
 | category | `allergy_type`: food → food, environmental → environment. "medication" is left out: the form pre-selects it, so it cannot be told apart from "not chosen". Anything else (including "other") → left out. |
-| criticality | `high` only for severity "life-threatening"; otherwise left out. |
+| criticality | `high` for severity "severe" or "life-threatening", whether or not a reaction was written; otherwise left out (never `low`). |
 | code | `code.text` = the allergen exactly as recorded (outer spaces trimmed). No substance coding; "Penicillin, codeine" stays one record. Blank → no code (the record is still published). |
 | patient | the canonical Patient. |
 | onsetDateTime | `onset_date` (date only). |
@@ -217,21 +217,21 @@ Served by the same Observation module, after vital signs.
 | recorder | `Practitioner/<id>` only when `created_by` resolves in the staff directory; otherwise left out. |
 | reaction | Only when a reaction was written: `manifestation.text` = the reaction as recorded, and `severity` from the severity rating (table below). The severity is not published without a reaction. |
 | Never published | `notes`, `created_by` (an account id), device sync columns, the internal patient id. |
-| Searches | `_id`, `patient`, `clinical-status`, `category`, `criticality`. No `subject`. `category=medication` matches nothing. |
+| Searches | `_id`, `patient`, `clinical-status`, `criticality`. No `subject`. `clinical-status=inactive` and `resolved` match nothing. `criticality=high` matches severe and life-threatening. A search by type (`category` or `type`, any value or modifier) is refused with 400 `not-supported` and a message to ask for all allergies instead: the form starts on "medication", so the recorded type cannot find every allergy of a type. Each allergy's own category (above) is unchanged. |
 | Who reads | Staff with register, vitals, consult or dispense. Not available to patients. |
 
 Every searchset carries a note: mBHR does not record "no known allergies";
-an empty result means no allergy has been recorded, not that the patient
-has none. Text such as "None" or "NKDA" typed as an allergen is published
+an empty result means no active allergy matched the search, not that the
+patient has none. Text such as "None" or "NKDA" typed as an allergen is published
 as written, as an allergy.
 
 | Source | FHIR | |
 | --- | --- | --- |
 | `is_active` true | clinicalStatus active | |
-| `is_active` false | clinicalStatus inactive | "Mark inactive" in the app; no reason is recorded (resolved, error or duplicate). The app hides inactive allergies; they are published. |
+| `is_active` false | not published | "Mark inactive" in the app; no reason is recorded (resolved, error or duplicate). The app hides inactive allergies, and so does the gateway (owner decision, CLINICAL_LOGIC_CHANGES.md 2.7): a read is 404 as for an unknown id, no search returns or counts it, and a system that copied it earlier is not told. |
 | `is_active` missing or not a boolean | none: record withheld | |
 | severity moderate | reaction.severity moderate | |
-| severity severe | reaction.severity severe | |
+| severity severe | reaction.severity severe, criticality high | criticality high even with no reaction written (owner sign-off, CLINICAL_LOGIC_CHANGES.md 2.7 "Severity"): the staff patient header gives severe the same top alert as life-threatening |
 | severity life-threatening | reaction.severity severe, criticality high | |
 | severity mild | left out | the form pre-selects mild |
 | allergy_type medication | no category | the form pre-selects medication |
@@ -389,11 +389,11 @@ recorded or published.
 | category | `upload_source`: local `https://mbhr.app/codes/document-source` `patient` ("Uploaded through the patient portal") or `staff` ("Clinic record (or added before mBHR recorded who uploaded documents)"). Any other value → left out. |
 | subject | the canonical Patient; unresolved → withheld. |
 | date | `created_at`: when the document was added to mBHR, not when it was written. |
-| description | **Only for documents the patient uploaded.** A clinic record's description is a staff note and is never published, to staff or patients. |
-| content.attachment | `contentType`: the declared type, lower-cased without parameters, when on the allowlist (PDF, JPEG, PNG, WebP, HEIC, HEIF, Word .doc and .docx), else `application/octet-stream`. `url`: `Binary/<id>`, relative; staff always get it, a patient only for documents they uploaded. `size`: the size the uploader's browser reported (0 to 2147483647), not checked. `title`: the last segment of the file name, with invisible and control characters removed; left out if blank, containing `://`, or over 255 characters. |
+| description | **Only for documents the patient uploaded.** A clinic record's description is a staff note and is never published, to anyone. |
+| content.attachment | `contentType`: the declared type, lower-cased without parameters, when on the allowlist (PDF, JPEG, PNG, WebP, HEIC, HEIF, Word .doc and .docx), else `application/octet-stream`. `url`: `Binary/<id>`, relative; only for documents the patient uploaded (the files Binary serves them). `size`: the size the uploader's browser reported (0 to 2147483647), not checked. `title`: the last segment of the file name, with invisible and control characters removed; left out if blank, containing `://`, or over 255 characters. |
 | Never published | `file_path`, the bucket, any Storage, signed or public URL; `uploaded_by_user_id`, `deleted_by`; the legacy `uploaded_by_patient` flag; `metadata`; `author`; `attachment.creation`, `hash`, `data`; `context`, `custodian`, `securityLabel`, `identifier`; `meta.lastUpdated`. |
 | Searches | `_id`, `patient`, `subject`, `date` (created_at), `type`, `category`, `status`. |
-| Who reads | Staff with consult. A patient sees their own documents that were not removed (as the portal lists them). |
+| Who reads | Portal patients only (with `FHIR_PATIENT_ACCESS_ENABLED`): their own documents that were not removed (as the portal lists them). No staff account (owner decision: until mBHR has a staff documents screen). |
 
 - **`author` is left out** on purpose: mBHR records who uploaded a file,
   not who wrote it. A portal upload may come from a caregiver's account,
@@ -423,7 +423,7 @@ recorded or published.
 | contentType | As for the DocumentReference: allowlisted type, else `application/octet-stream`, with a `.bin` file name. |
 | securityContext | `DocumentReference/<id>`, sent as `X-Security-Context`. |
 | Search | None (400). |
-| Who reads | Staff with consult. A patient only for files they uploaded to their own record. |
+| Who reads | A portal patient only, for files they uploaded to their own record. No staff account (owner decision: until mBHR has a staff documents screen). |
 
 Path checks, security and limits are in [security.md](security.md#documents).
 A removed document, a file missing from Storage, a file Storage refuses,
@@ -436,17 +436,17 @@ an empty file and a stored path outside the patient's folder all answer
 | --- | --- |
 | Source | `interop.consent_records` with `interop.consent_provisions`, read through `fhir_consent_directives()`, which never returns account ids (recorded, verified or withdrawn by), the withdrawal reason, who signed (`granted_by` and relationship), the source document or a provision's actor reference (only `names_recipient`: whether a rule names one specific recipient). |
 | FHIR id | `consent_records.id` (uuid). |
-| status | The stored consent-state code (table below); a withdrawn record is `inactive` (or stays `entered-in-error`). Missing or not a code → **withheld** (Consent.status is required and has no `unknown`). |
+| status | The stored consent-state code (tables below); a withdrawn record is `inactive` (or stays `entered-in-error`), and an active record past its end date (`effective_until` at or before the time of the request; the end is exclusive, the consent check's own rule) is `inactive`, no longer in force. Missing or not a code → **withheld** (Consent.status is required and has no `unknown`). |
 | scope | The stored consentscope code (adr, research, patient-privacy, treatment) with its R4 display. |
 | category | The stored category as a local `https://mbhr.app/codes/consent-category` code (text only if it is not code-like). Never LOINC. Blank → withheld. |
 | patient | The canonical Patient; unresolved → withheld. |
 | dateTime | `recorded_at`: when the record was entered in the register. |
-| policy | `policy.uri` = the recorded policy. R4 requires a policy or a policy rule (invariant ppc-1) and mBHR records no rule, so a record that cites no policy is **withheld**. |
+| policy | `policy.uri` = the recorded policy. R4 requires a policy or a policy rule (invariant ppc-1) and mBHR records no rule. Recording a consent requires a policy link (`interop_record_consent()` refuses one without, and the register's CHECK `consent_records_policy_required` refuses it from any other path). The mapper still **withholds** a record without a usable policy, as defence in depth. |
 | verification | Only from the recorded flag: verified true (with its date when recorded), or verified false. Who verified is never published. |
 | provision | Root: the record's effective period, no type. One nested provision per stored rule, in stored order, with only what was recorded: `type` (permit or deny), `period`, `actor` (the kind of recipient as a local `consent-actor-type` code, with a display-only reference; `any` means no actor element; a rule that names one specific recipient withholds the record, below), `action` (consentaction), `purpose` (v3 ActReason, no display), `class` (an R4 resource type, or a local `consent-resource-type` or `consent-data-class` code) and `securityLabel` (local `consent-security-label`). |
 | Never published | `performer`, `organization`, `source[x]`, `policyRule`, and every column listed under Source as not returned. |
 | Searches | `_id`, `patient`, `status`, `scope`. |
-| Who reads | Staff with consult, portal_manage or audit_access; a patient sees their own. |
+| Who reads | No staff account (owner decision: mBHR shows staff only the External sharing badge, until it has a staff consent screen). A patient sees their own (with `FHIR_PATIENT_ACCESS_ENABLED`). |
 
 A directive is published whole or not at all. When a stored rule cannot
 be shown in R4 without changing its meaning (a code outside the register's
@@ -461,14 +461,29 @@ not a boolean withholds the record. A searchset says how many were left
 out.
 
 `CONSENT_STATUS` maps each stored code to itself (draft, proposed, active,
-rejected, inactive, entered-in-error). An active record whose period has
-ended stays `active` as recorded; its period is in `provision.period`.
-`CONSENT_STATUS_WITHDRAWN`, used when `withdrawn_at` is set:
+rejected, inactive, entered-in-error).
+`CONSENT_STATUS_WITHDRAWN`, used when `withdrawn_at` is set (it takes
+precedence over the end date):
 
 | Stored status of a withdrawn record | Consent.status |
 | --- | --- |
 | inactive, active, draft, proposed, rejected | inactive |
 | entered-in-error | entered-in-error |
+| missing or anything else | none: withheld |
+
+`CONSENT_STATUS_ENDED`, used when a record that is not withdrawn has an
+end date (`effective_until`) at or before the time of the request: the
+end is exclusive, times are compared as instants, and an unreadable end
+counts as ended, as mBHR's consent check (`consent_expired`) and the
+portal (ended) treat it. The time is the gateway's request time, the one
+the access decision used. The end date is still published in
+`provision.period`, and a search for `status=active` never finds the
+record.
+
+| Stored status of a record past its end date | Consent.status |
+| --- | --- |
+| active | inactive |
+| draft, proposed, rejected, inactive, entered-in-error | the same code |
 | missing or anything else | none: withheld |
 
 Two partial points (see [consent.md](consent.md#the-consent-resource)):

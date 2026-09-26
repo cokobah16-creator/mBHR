@@ -44,8 +44,10 @@ What is not true yet:
   this repository records, to any shared database), nor is
   `patients.fhir_id` (`20260503010000`, also deferred). Production has
   every file in `supabase/migrations/` since 25 September 2026.
-- The representation rules still need clinical sign-off
-  (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7).
+- The representation rules were signed off by the owner on 26 September
+  2026 (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7),
+  and the changes that sign-off asked for are built. Signing off does not
+  switch anything on.
 
 | Document | What it covers |
 | --- | --- |
@@ -80,20 +82,20 @@ What each published type does today, as implemented in code. Write is
 
 | Resource | Read | Search | Write | Consent | Audit | Tests | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Patient | Yes | Yes | No | demographics | Every request | mappers, gateway, guard, security | Implemented. No MRN or national id is recorded; a merged-away record is served as a tombstone. |
+| Patient | Yes | Yes | No | demographics | Every request | mappers, gateway, guard, security | Implemented. No MRN or national id is recorded; a merged-away record is served as a tombstone; a birth date on the 1st of a month is sent as the year (1 January) or the year and month, while a name and birth-date search still matches the full stored date. |
 | Encounter | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Implemented. mBHR records no end time; a "Portal entry" visit has no start time and never matches a date search; patients see closed visits only. |
 | Observation (vital signs) | Yes | Yes | No | clinical | Every request | mappers, framework, gateway, security, reviewFixes.gateway | Implemented. LOINC and UCUM from the R4 vital signs profile; no interpretation or reference range. |
 | Observation (laboratory) | Yes | Yes | No | clinical | Every request | laboratory, security | Implemented. Staff need consult or lab_review (other staff get a note in their searches and 403 on a read); patients see released results only; tests carry local codes only (no LOINC). |
-| Condition | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Partial. Reads `public.conditions`, which no app code writes (repository check); diagnoses in consultation notes are not published; a stored "confirmed" verification status (the column's default) is left out. |
-| AllergyIntolerance | Yes | Yes | No | clinical | Every request | allergy | Implemented. Staff only; allergen and reaction as free text; "no known allergies" cannot be recorded; the form's pre-selected type (medication) is not sent as a category. |
+| Condition | Yes | Yes | No | clinical | Every request | mappers, gateway, security, reviewFixes.gateway | Partial. Reads `public.conditions`, which no app code writes (repository check); diagnoses in consultation notes are not published; clinical status, verification status and category are sent only as recorded (the held-back table fills in none of them), except that an entered-in-error record carries no clinical status. |
+| AllergyIntolerance | Yes | Yes | No | clinical | Every request | allergy | Implemented. Staff only; allergen and reaction as free text; "no known allergies" cannot be recorded; the form's pre-selected type (medication) is not sent as a category; allergies marked inactive are not published; a search by type (`category` or `type`) is refused with a message to ask for all allergies. |
 | Medication | Yes | `_id` only | No | medication | Every request | medication | Partial. Search by `_id` only; name and strength as text, no medicine code. |
 | MedicationRequest | Yes | Yes | No | medication | Every request | medication | Implemented. Staff only; dosing as free text. |
 | MedicationDispense | Yes | Yes | No | medication | Every request | medication | Implemented. Status is almost always `unknown`; no handover time is published. |
 | ServiceRequest | Yes | Yes | No | laboratory | Every request | laboratory | Implemented. Staff with consult or lab_review only; local test codes only. |
 | DiagnosticReport | Yes | Yes | No | laboratory | Every request | laboratory | Implemented. `final` only when every current result is reviewed; never `final` for a patient; no conclusion. |
-| DocumentReference | Yes | Yes | No | document | Every request | documents | Implemented. No author and no `meta.lastUpdated`; staff need consult. |
-| Binary | Yes (the file itself) | No | No | document | Every request | documents, guard, security | Implemented. Read by id only; no ETag or conditional read; the whole file is held in memory (25 MB cap); not scanned for malware. |
-| Consent | Yes | Yes | No | consent | Every request | consentResource, consentPolicy | Partial. The register is empty: nothing in the app records consents yet. Patients do not see directives filed under a record that was merged into theirs. |
+| DocumentReference | Yes | Yes | No | document | Every request | documents, authorize | Implemented, for portal patients only (staff get no documents: owner decision). No author and no `meta.lastUpdated`. |
+| Binary | Yes (the file itself) | No | No | document | Every request | documents, guard, security, authorize | Implemented. Portal patients only, for their own uploads. Read by id only; no ETag or conditional read; the whole file is held in memory (25 MB cap); not scanned for malware. |
+| Consent | Yes | Yes | No | consent | Every request | consentResource, consentPolicy, authorize | Partial. Staff are refused (owner decision: the staff app shows only the External sharing badge). The register is empty: nothing in the app records consents yet. Patients do not see directives filed under a record that was merged into theirs. |
 | Practitioner | Yes | Yes | No | directory | Every request | directory, security | Implemented. Name only; `active` is left out when the account records no flag. |
 | PractitionerRole | Yes | Yes | No | directory | Every request | directory | Implemented. The mBHR access role as a local code, not a qualification. |
 | Organization | Yes | Yes | No | directory | Every request | directory | Implemented. Only organisations the caller is a member of (row-level security); no app code creates memberships. |
@@ -279,7 +281,7 @@ re-run it on production without a reason.
 | `FHIR_ENABLED` on a preview deployment | not set |
 | `FHIR_ENABLED` in production | not set; do not set until the conditions below hold |
 | `FHIR_PATIENT_ACCESS_ENABLED` anywhere | not set |
-| Clinical review of the representation choices | pending (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7) |
+| Clinical review of the representation choices | signed off by the owner, 26 September 2026 (`docs/clinical/CLINICAL_LOGIC_CHANGES.md`, sections 2.5 and 2.7); the changes it asked for are built |
 
 Before enabling anywhere with real data:
 
@@ -310,8 +312,9 @@ Before enabling anywhere with real data:
    `app_users` policy) must both be on the database. On a database with an
    open `app_users` write policy, any self-registered account could add
    an admin row for itself and then read every patient over FHIR.
-3. A clinician has signed off sections 2.5 and 2.7 of the clinical change
-   log.
+3. Sections 2.5 and 2.7 of the clinical change log are signed off (done
+   26 September 2026 by the owner, whose sign-off the project accepts)
+   and the changes they asked for are merged.
 4. `FHIR_AUDIT_IP_SECRET` is set if IP hashes are wanted in the audit.
 5. The open items in [security.md](security.md#known-security-limitations)
    and the risks in [privacy-data-flow.md](privacy-data-flow.md#11-risks)
@@ -354,15 +357,16 @@ From least to most drastic:
    only with the owner's go-ahead for that database, and only after step 1,
    because the Phase 2 gateway fails without them). **Phase 2 first, then
    Phase 1:**
-   - Phase 2: the 43 statements in the header of
+   - Phase 2: the 44 statements in the header of
      `20260926130000_interop_phase2.sql`, in order. They drop the Phase 2
-     functions and triggers, `interop.consent_record_history` and the
-     Phase 2 audit columns (HTTP status, consent result, actor kind,
-     restrictions), and grant `EXECUTE` on the Phase 1
-     `fhir_record_access()` back to `authenticated`. **Export the consent
-     history and the audit trail first.** Minted `interop.resource_links`
-     rows (Practitioner and Medication ids) are left in place on purpose,
-     so published ids stay the same if Phase 2 is applied again.
+     functions and triggers, the consent policy CHECK,
+     `interop.consent_record_history` and the Phase 2 audit columns (HTTP
+     status, consent result, actor kind, restrictions), and grant
+     `EXECUTE` on the Phase 1 `fhir_record_access()` back to
+     `authenticated`. **Export the consent history and the audit trail
+     first.** Minted `interop.resource_links` rows (Practitioner and
+     Medication ids) are left in place on purpose, so published ids stay
+     the same if Phase 2 is applied again.
    - Phase 1: the five statements in the header of
      `20260926110000_interop_foundation.sql`. **Dropping the `interop`
      schema deletes the access audit trail and every consent record**, so
@@ -402,8 +406,8 @@ Recorded so the next phase starts from what was actually built.
 - **Consent** is evaluated in code, but no purpose the gateway accepts is
   governed by it, and the register has no entries yet
   ([consent.md](consent.md)).
-- **Documents** are served through `Binary/[id]` on the gateway, never as
-  Storage or signed URLs.
+- **Documents** are served, to portal patients only, through `Binary/[id]`
+  on the gateway, never as Storage or signed URLs.
 - **Condition** still reads `public.conditions` only. Diagnoses typed in
   consultations (`consultations.provisional_dx`) are not published, and
   every Condition searchset says so.

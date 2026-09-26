@@ -302,11 +302,12 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
     if (route.kind === "search") {
       binding = await cursorBinding({ resourceType: type, query, userId, scope: scopeKey(actor) });
       try {
-        search = parseSearch(query, def.searchParams, {
-          defaultCount: config.defaultPageSize,
-          maxCount: config.maxPageSize,
-          cursorBinding: binding,
-        });
+        search = parseSearch(
+          query,
+          def.searchParams,
+          { defaultCount: config.defaultPageSize, maxCount: config.maxPageSize, cursorBinding: binding },
+          def.refusedSearchParams,
+        );
       } catch (e) {
         searchError = e;
       }
@@ -331,6 +332,9 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       if (res) requestedPatientIds = [res.id];
     }
 
+    // One instant for this request: the access decision (and its consent
+    // check) and every time-dependent status a module publishes.
+    const at = now();
     decision = await authorizeFhirRequest(
       {
         actor,
@@ -345,7 +349,7 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       },
       {
         config,
-        now: now(),
+        now: at,
         loadDirectives: (ids) => loadConsentDirectives(db, ids, patients?.ids ?? null),
       },
     );
@@ -405,6 +409,7 @@ export async function handleFhirRequest(request: Request, deps: GatewayDeps): Pr
       cursorBinding: binding,
       storage: new SupabaseStorage(connection),
       patients,
+      now: at,
     };
 
     let result: QueryResult;

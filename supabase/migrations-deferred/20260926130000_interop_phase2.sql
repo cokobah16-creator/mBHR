@@ -47,8 +47,9 @@
 --                                inventory, as pharmacy_items row security)
 --   8. Consent: consent_record_history (append-only), change log and audit
 --      triggers, update guards (identity, withdrawal and final statuses),
---      provisions immutable and added only with their record, and the
---      functions
+--      a CHECK that every consent record cites a policy link
+--      (consent_records_policy_required), provisions immutable and added
+--      only with their record, and the functions
 --      fhir_consent_directives, interop_record_consent,
 --      interop_verify_consent, interop_withdraw_consent,
 --      interop_my_consents, interop_consent_summary
@@ -67,7 +68,9 @@
 -- locks public.patients is the fhir_id trigger (section 14), so patient
 -- writes wait only from there to the commit, not through the index builds.
 -- Patient writes still pause briefly while it commits: apply it at a quiet
--- time, and do not re-run it on production without a reason.
+-- time, and do not re-run it on production without a reason. The policy
+-- link CHECK (section 8b) locks interop.consent_records until the commit;
+-- the table is empty until consents are recorded.
 --
 -- Decisions taken where the design left room (the safer choice each time):
 --   - A caller with no auth.uid() gets 42501 from every new function (v1
@@ -90,7 +93,8 @@
 --     VOLATILE (it may mint ids): call it with POST.
 --   - fhir_consent_directives: a selector (patient ids or consent ids) is
 --     required from every caller, staff included. Staff must hold consult,
---     portal_manage or audit_access (the Consent read permissions) for it
+--     portal_manage or audit_access (the gateway consent step's lookup list;
+--     no staff account reads the FHIR Consent resource, decision 2.7) for it
 --     and for interop_consent_summary: the RPCs are open to every signed-in
 --     account through the API, so the gateway's narrowing is not a
 --     boundary. (The design said any staff role; the gateway must not load
@@ -154,9 +158,17 @@
 --   - fhir_record_access_v2: a portal patient's refusal may name only their
 --     own records; an account that is neither staff nor patient may record
 --     only refusals naming no patient, at most 30 a minute.
---   - interop_record_consent: status draft / proposed / active only; the
---     patient must exist and not be merged away; provisions: at most 20,
---     only the published keys (no actor_reference).
+--   - interop_record_consent: status draft / proposed / active only; a
+--     policy link is required (22023 'a policy link is required' when
+--     missing or blank; an absolute ASCII URI of at most 500 characters,
+--     so anything recorded can be published); the patient must exist and
+--     not be merged away; provisions: at most 20, only the published keys
+--     (no actor_reference).
+--   - Every consent record cites a policy link (CHECK
+--     consent_records_policy_required, validated, for every writer
+--     including the service role and the owner): FHIR publishes a Consent
+--     only with a policy (ppc-1), and the owner decided (2.7) that a
+--     refusal must never reach another system only as a count.
 --   - interop_withdraw_consent keeps 'entered-in-error' when withdrawing a
 --     record in that status; a repeat withdrawal returns false.
 --   - fhir_access_audit_events: p_from > p_to is refused; the keyset needs
@@ -189,6 +201,7 @@
 --   DROP TRIGGER IF EXISTS consent_records_guard ON interop.consent_records;
 --   DROP TRIGGER IF EXISTS consent_provisions_no_update ON interop.consent_provisions;
 --   DROP TRIGGER IF EXISTS consent_provisions_insert_guard ON interop.consent_provisions;
+--   ALTER TABLE interop.consent_records DROP CONSTRAINT IF EXISTS consent_records_policy_required;
 --   DROP TABLE IF EXISTS interop.consent_record_history;
 --   DROP FUNCTION IF EXISTS interop.consent_records_log_change();
 --   DROP FUNCTION IF EXISTS interop.consent_records_guard();
@@ -1054,6 +1067,29 @@ GRANT SELECT ON interop.consent_record_history TO service_role;
 -- ----------------------------------------------------------------------------
 -- 8b. Consent record guards
 -- ----------------------------------------------------------------------------
+-- Every consent record cites a policy link (owner decision,
+-- CLINICAL_LOGIC_CHANGES.md 2.7): FHIR R4 publishes a Consent only with a
+-- policy or a policy rule (ppc-1) and mBHR records no rule, so a record
+-- without a link would reach another system only as a count. The rule is
+-- the one interop_record_consent applies, and anything it accepts the
+-- gateway publishes (an absolute URI in ASCII, at most 500 characters). It
+-- holds for every writer, the service role and the owner included.
+-- Validated, not NOT VALID: a NOT VALID CHECK is still applied to every
+-- UPDATE, so an older row without a link could then never be withdrawn; if
+-- such a row exists this statement fails the migration instead.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'interop.consent_records'::regclass
+                    AND conname = 'consent_records_policy_required') THEN
+    ALTER TABLE interop.consent_records
+      ADD CONSTRAINT consent_records_policy_required CHECK (
+        policy_uri IS NOT NULL
+        AND length(policy_uri) <= 500
+        AND policy_uri ~ '^[a-z][a-z0-9+.-]*:[!-~]+$');
+  END IF;
+END $$;
+
 -- Who, whose and what a record is about never changes (a change is a new
 -- record), and a withdrawal is final: it cannot be undone or rewritten.
 -- The statuses that are not in force are final too: rejected may still
@@ -1263,8 +1299,9 @@ COMMENT ON FUNCTION interop.consent_directives_json(uuid[]) IS
 -- ----------------------------------------------------------------------------
 -- 8e. fhir_consent_directives (FHIR Consent source)
 -- ----------------------------------------------------------------------------
--- Staff holding consult, portal_manage or audit_access (the Consent read
--- permissions): any patient. A portal patient (or a staff account without
+-- Staff holding consult, portal_manage or audit_access (the gateway consent
+-- step's lookup list; no staff account reads the FHIR Consent resource,
+-- decision 2.7): any patient. A portal patient (or a staff account without
 -- those permissions that is also a portal patient): their own records,
 -- including records merged into them (interop.patient_members: a consent
 -- recorded before a merge keeps the old patient id); p_patient_ids must all
@@ -1334,10 +1371,13 @@ COMMENT ON FUNCTION public.fhir_consent_directives(text[], uuid[], uuid, integer
 -- ----------------------------------------------------------------------------
 -- Staff holding portal_manage or consult record a consent. Status draft,
 -- proposed or active; the patient must exist and not be merged away (record
--- consent on the kept record). p_provisions: a JSON array (at most 20) of
--- objects with only these keys: provision_type, actor_type, action,
--- purpose, data_class, resource_type, security_label, effective_from,
--- effective_until. The tables' CHECKs validate the codes (23514).
+-- consent on the kept record). A policy link (p_policy_uri) is required: an
+-- absolute URI in ASCII, at most 500 characters (22023 'a policy link is
+-- required' when it is missing or blank, 'invalid consent' when malformed).
+-- p_provisions: a JSON array (at most 20) of objects with only these keys:
+-- provision_type, actor_type, action, purpose, data_class, resource_type,
+-- security_label, effective_from, effective_until. The tables' CHECKs
+-- validate the codes (23514).
 CREATE OR REPLACE FUNCTION public.interop_record_consent(
   p_patient_id       text,
   p_scope            text,
@@ -1366,13 +1406,15 @@ BEGIN
      OR NOT interop.caller_has_any(ARRAY['portal_manage', 'consult']) THEN
     RAISE EXCEPTION 'not allowed' USING ERRCODE = '42501';
   END IF;
+  IF p_policy_uri IS NULL OR p_policy_uri !~ '[^[:space:]]' THEN
+    RAISE EXCEPTION 'a policy link is required' USING ERRCODE = '22023';
+  END IF;
   IF COALESCE(
         p_patient_id !~ '^[A-Za-z0-9._-]{1,128}$'
      OR p_scope IS NULL OR p_source_type IS NULL
      OR p_category !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
      OR p_status NOT IN ('draft', 'proposed', 'active')
-     OR (p_policy_uri IS NOT NULL AND (length(p_policy_uri) > 500
-                                       OR p_policy_uri !~ '^[a-z][a-z0-9+.-]*:[^[:space:]]+$'))
+     OR length(p_policy_uri) > 500 OR p_policy_uri !~ '^[a-z][a-z0-9+.-]*:[!-~]+$'
      OR jsonb_typeof(v_prov) <> 'array'
      OR jsonb_array_length(v_prov) > 20, true) THEN
     RAISE EXCEPTION 'invalid consent' USING ERRCODE = '22023';
@@ -1422,8 +1464,8 @@ $$;
 
 COMMENT ON FUNCTION public.interop_record_consent(text, text, text, text, text, text, timestamptz, timestamptz, jsonb) IS
   'Consent management: record a consent directive and its provisions for a patient (staff '
-  'holding portal_manage or consult). The change is written to the consent history and the '
-  'access audit.';
+  'holding portal_manage or consult). A policy link is required. The change is written to '
+  'the consent history and the access audit.';
 
 -- Mark a consent verified (staff holding portal_manage or consult). true =
 -- verified now; false = it already was. Only a draft, proposed or active

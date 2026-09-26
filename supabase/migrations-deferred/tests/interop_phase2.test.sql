@@ -13,7 +13,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(277);
+SELECT plan(284);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (as the migration owner)
@@ -214,6 +214,10 @@ SELECT throws_ok(
 SELECT throws_ok(
   $$INSERT INTO interop.access_audit (request_id, action, decision, actor_kind) VALUES (gen_random_uuid(), 'read', 'deny', 'robot')$$,
   '23514', NULL, 'access_audit: a NOT VALID CHECK still refuses a new bad row (actor_kind)');
+SELECT ok(
+  (SELECT convalidated FROM pg_constraint
+    WHERE conrelid = 'interop.consent_records'::regclass AND conname = 'consent_records_policy_required'),
+  'register: every consent record must cite a policy link (validated CHECK)');
 
 -- ---------------------------------------------------------------------------
 -- 2. anon: no function
@@ -455,18 +459,30 @@ SELECT isnt(
   NULL,
   'a doctor records a consent for patient A');
 SELECT isnt(
-  public.interop_record_consent('pgtap-p2-b', 'patient-privacy', 'pgtap-share', 'paper_form'),
+  public.interop_record_consent('pgtap-p2-b', 'patient-privacy', 'pgtap-share', 'paper_form', 'active', 'https://mbhr.app/policy/pgtap'),
   NULL,
   'a doctor records a consent for patient B');
-SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-nope', 'patient-privacy', 'x', 'portal')$$, '22023', NULL,
+SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-nope', 'patient-privacy', 'x', 'portal', 'active', 'https://mbhr.app/policy/pgtap')$$,
+  '22023', 'unknown patient',
   'consent: an unknown patient is refused');
-SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-m1', 'patient-privacy', 'x', 'portal')$$, '22023', NULL,
+SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-m1', 'patient-privacy', 'x', 'portal', 'active', 'https://mbhr.app/policy/pgtap')$$,
+  '22023', 'this record was merged: record the consent on the kept record',
   'consent: a merged-away record is refused');
-SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'inactive')$$, '22023', NULL,
+SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'inactive', 'https://mbhr.app/policy/pgtap')$$,
+  '22023', 'invalid consent',
   'consent: a new record cannot start inactive');
-SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'active', NULL, NULL, NULL,
-    '[{"provision_type":"permit","actor_reference":"Organization/1"}]'::jsonb)$$, '22023', NULL,
+SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'active', 'https://mbhr.app/policy/pgtap', NULL, NULL,
+    '[{"provision_type":"permit","actor_reference":"Organization/1"}]'::jsonb)$$, '22023', 'invalid consent provision',
   'consent: a provision key outside the list is refused');
+SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'pgtap-nopolicy', 'portal', 'active', NULL, NULL, NULL,
+    '[{"provision_type":"deny","actor_type":"external_system"}]'::jsonb)$$, '22023', 'a policy link is required',
+  'consent: a refusal cannot be recorded without a policy link (it would reach another system only as a count)');
+SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'active', E'  \t\n ')$$,
+  '22023', 'a policy link is required',
+  'consent: a blank policy link (spaces, tabs or new lines) is refused');
+SELECT throws_ok($$SELECT public.interop_record_consent('pgtap-p2-a', 'patient-privacy', 'x', 'portal', 'active', 'mbhr data sharing policy')$$,
+  '22023', 'invalid consent',
+  'consent: a policy that is not a link is refused');
 RESET ROLE;
 
 DO $$ BEGIN PERFORM set_config('pgtap_p2.c_a', (SELECT id::text FROM interop.consent_records WHERE patient_id = 'pgtap-p2-a' AND category = 'pgtap-share'), true); END $$;
@@ -516,101 +532,103 @@ SELECT ok(
 
 -- The summary follows the gateway's consent evaluator (external sharing).
 DO $$
-DECLARE v uuid;
+DECLARE
+  v   uuid;
+  pol constant text := 'https://mbhr.app/policy/pgtap';
 BEGIN
   -- C1: verified permit, actor any.
-  v := public.interop_record_consent('pgtap-p2-c1', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c1', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"any"}]');
   PERFORM public.interop_verify_consent(v);
   -- C2: verified permit, no actor, purpose TREAT (an external TREAT request is external sharing).
-  v := public.interop_record_consent('pgtap-p2-c2', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c2', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","purpose":"TREAT"}]');
   PERFORM public.interop_verify_consent(v);
   -- C3: verified external permit, but in the research scope.
-  v := public.interop_record_consent('pgtap-p2-c3', 'research', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c3', 'research', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   PERFORM public.interop_verify_consent(v);
   -- C4: verified external permit, and an unverified refusal on another record.
-  v := public.interop_record_consent('pgtap-p2-c4', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c4', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   PERFORM public.interop_verify_consent(v);
-  PERFORM public.interop_record_consent('pgtap-p2-c4', 'patient-privacy', 'pgtap-sum', 'portal', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c4', 'patient-privacy', 'pgtap-sum', 'portal', 'active', pol, NULL, NULL,
          '[{"provision_type":"deny","actor_type":"organization","resource_type":"Observation"}]');
   -- C5: an external permit not verified yet.
-  PERFORM public.interop_record_consent('pgtap-p2-c5', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c5', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   -- C6: verified external permit limited to labelled data (mBHR labels none).
-  v := public.interop_record_consent('pgtap-p2-c6', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c6', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system","security_label":"R"}]');
   PERFORM public.interop_verify_consent(v);
   -- C7: verified external permit that starts tomorrow. C8: no record.
-  v := public.interop_record_consent('pgtap-p2-c7', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL,
+  v := public.interop_record_consent('pgtap-p2-c7', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol,
          now() + interval '1 day', NULL, '[{"provision_type":"permit","actor_type":"external_system"}]');
   PERFORM public.interop_verify_consent(v);
   -- C9: a refusal that staff withdrew (a correction). No permission was
   -- ever given, so nothing was "withdrawn" for the chip.
-  v := public.interop_record_consent('pgtap-p2-c9', 'patient-privacy', 'pgtap-sum', 'portal', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c9', 'patient-privacy', 'pgtap-sum', 'portal', 'active', pol, NULL, NULL,
          '[{"provision_type":"deny","actor_type":"external_system"}]');
   PERFORM public.interop_withdraw_consent(v, 'pgTAP staff correction');
   -- C10: a verified full permit, beside refusals the evaluator would not
   -- apply: a draft record, a proposed record, a record that starts
   -- tomorrow, a provision that starts tomorrow, and one for the care team.
-  v := public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"any"}]');
   PERFORM public.interop_verify_consent(v);
-  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'draft', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'draft', pol, NULL, NULL,
          '[{"provision_type":"deny","actor_type":"external_system"}]');
-  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'proposed', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'proposed', pol, NULL, NULL,
          '[{"provision_type":"deny"}]');
-  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'active', NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'active', pol,
          now() + interval '1 day', NULL, '[{"provision_type":"deny","actor_type":"organization"}]');
-  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'active', pol, NULL, NULL,
          jsonb_build_array(jsonb_build_object('provision_type', 'deny', 'actor_type', 'any',
                                               'effective_from', now() + interval '1 day')));
-  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c10', 'patient-privacy', 'pgtap-sum', 'portal', 'active', pol, NULL, NULL,
          '[{"provision_type":"deny","actor_type":"care_team"}]');
   -- C11: a verified full permit, and an active refusal for research only.
-  v := public.interop_record_consent('pgtap-p2-c11', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c11', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   PERFORM public.interop_verify_consent(v);
-  PERFORM public.interop_record_consent('pgtap-p2-c11', 'patient-privacy', 'pgtap-sum', 'portal', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c11', 'patient-privacy', 'pgtap-sum', 'portal', 'active', pol, NULL, NULL,
          '[{"provision_type":"deny","actor_type":"organization","purpose":"HRESCH"}]');
   -- C12: a verified permit that was withdrawn, then a new permit that
   -- staff have not checked yet.
-  v := public.interop_record_consent('pgtap-p2-c12', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c12', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   PERFORM public.interop_verify_consent(v);
   PERFORM public.interop_withdraw_consent(v, 'pgTAP withdrawn');
-  PERFORM public.interop_record_consent('pgtap-p2-c12', 'patient-privacy', 'pgtap-sum', 'portal', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-c12', 'patient-privacy', 'pgtap-sum', 'portal', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   -- C13: an empty record and a care team permit, both withdrawn.
-  v := public.interop_record_consent('pgtap-p2-c13', 'patient-privacy', 'pgtap-sum', 'paper_form');
+  v := public.interop_record_consent('pgtap-p2-c13', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol);
   PERFORM public.interop_withdraw_consent(v);
-  v := public.interop_record_consent('pgtap-p2-c13', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-c13', 'patient-privacy', 'pgtap-sum', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"care_team"}]');
   PERFORM public.interop_withdraw_consent(v);
   -- BX (merged into B in section 6c): a verified external permit.
-  v := public.interop_record_consent('pgtap-p2-bx', 'patient-privacy', 'pgtap-merge', 'paper_form', 'active', NULL, NULL, NULL,
+  v := public.interop_record_consent('pgtap-p2-bx', 'patient-privacy', 'pgtap-merge', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   PERFORM public.interop_verify_consent(v);
   -- W (section 6d): a refusal, a permit with a refusal, an advance
   -- directive, a treatment consent, and two plain permissions.
-  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-deny', 'verbal_witnessed', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-deny', 'verbal_witnessed', 'active', pol, NULL, NULL,
          '[{"provision_type":"deny","actor_type":"external_system"}]');
-  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-mixed', 'paper_form', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-mixed', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system","purpose":"PATRQT"},
            {"provision_type":"deny","actor_type":"organization","purpose":"HRESCH"}]');
-  PERFORM public.interop_record_consent('pgtap-p2-w', 'adr', 'pgtap-w-adr', 'paper_form');
-  PERFORM public.interop_record_consent('pgtap-p2-w', 'treatment', 'pgtap-w-treat', 'paper_form', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'adr', 'pgtap-w-adr', 'paper_form', 'active', pol);
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'treatment', 'pgtap-w-treat', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"practitioner","purpose":"TREAT"}]');
-  PERFORM public.interop_record_consent('pgtap-p2-w', 'research', 'pgtap-w-research', 'paper_form', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'research', 'pgtap-w-research', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"organization","purpose":"HRESCH"}]');
-  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-permit', 'paper_form', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-w', 'patient-privacy', 'pgtap-w-permit', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
   -- S1 and S2 (section 6e): one record each.
-  PERFORM public.interop_record_consent('pgtap-p2-s1', 'research', 'pgtap-phone', 'paper_form', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-s1', 'research', 'pgtap-phone', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"organization","purpose":"HRESCH"}]');
-  PERFORM public.interop_record_consent('pgtap-p2-s2', 'patient-privacy', 'pgtap-phone', 'paper_form', 'active', NULL, NULL, NULL,
+  PERFORM public.interop_record_consent('pgtap-p2-s2', 'patient-privacy', 'pgtap-phone', 'paper_form', 'active', pol, NULL, NULL,
          '[{"provision_type":"permit","actor_type":"external_system"}]');
 END $$;
 SELECT is(public.interop_consent_summary('pgtap-p2-c1') ->> 'external_sharing', 'allowed',
@@ -1130,20 +1148,28 @@ SELECT is(
   2,
   'history: an update that changes nothing is not recorded');
 SELECT throws_ok(
+  $$UPDATE interop.consent_records SET policy_uri = NULL WHERE id = current_setting('pgtap_p2.c_b')::uuid$$,
+  '23514', NULL, 'register: a policy link cannot be removed later');
+SELECT throws_ok(
+  $$INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type, policy_uri)
+    VALUES ('pgtap-p2-c1', 'active', 'patient-privacy', 'pgtap-nbsp', 'paper_form', 'https://mbhr.app/policy/a' || chr(160) || 'b')$$,
+  '23514', NULL, 'register: a policy link the gateway could not publish (non-ASCII) is refused');
+SELECT throws_ok(
   $$UPDATE interop.consent_provisions SET purpose = 'TREAT' WHERE consent_id = current_setting('pgtap_p2.c_a')::uuid$$,
   '42501', NULL, 'provisions: UPDATE is refused (record a new consent)');
 SELECT throws_ok(
   $$INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type)
     VALUES (current_setting('pgtap_p2.c_a')::uuid, 'permit', 'any')$$,
   '42501', NULL, 'provisions: none can be added to a verified, withdrawn consent');
-INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type, created_at, recorded_at)
-VALUES ('pgtap-p2-c1', 'active', 'patient-privacy', 'pgtap-old', 'paper_form', now() - interval '1 day', now() - interval '1 day');
+INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type, policy_uri, created_at, recorded_at)
+VALUES ('pgtap-p2-c1', 'active', 'patient-privacy', 'pgtap-old', 'paper_form', 'https://mbhr.app/policy/pgtap',
+        now() - interval '1 day', now() - interval '1 day');
 SELECT throws_ok(
   $$INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type)
     SELECT id, 'permit', 'any' FROM interop.consent_records WHERE category = 'pgtap-old'$$,
   '42501', NULL, 'provisions: none can be added to a consent created in an earlier transaction');
-INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
-VALUES ('pgtap-p2-c1', 'draft', 'patient-privacy', 'pgtap-new', 'paper_form');
+INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type, policy_uri)
+VALUES ('pgtap-p2-c1', 'draft', 'patient-privacy', 'pgtap-new', 'paper_form', 'https://mbhr.app/policy/pgtap');
 SELECT lives_ok(
   $$INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type)
     SELECT id, 'deny', 'any' FROM interop.consent_records WHERE category = 'pgtap-new'$$,
@@ -1151,8 +1177,8 @@ SELECT lives_ok(
 -- Rules for one named recipient (interop_record_consent refuses
 -- actor_reference; a direct insert can store it): the JSON says that a
 -- rule names one, never who.
-INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
-VALUES ('pgtap-p2-c1', 'draft', 'patient-privacy', 'pgtap-named', 'paper_form');
+INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type, policy_uri)
+VALUES ('pgtap-p2-c1', 'draft', 'patient-privacy', 'pgtap-named', 'paper_form', 'https://mbhr.app/policy/pgtap');
 INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type, actor_reference, created_at)
 SELECT r.id, v.t, 'organization', v.ref, now() + v.n * interval '1 second'
   FROM interop.consent_records AS r,
@@ -1174,9 +1200,9 @@ SELECT ok(
   'directives: the named recipient itself is never returned');
 -- The summary follows the evaluator: a verified permit for one named
 -- recipient allows nothing, and the chip shows it as limited.
-INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
-VALUES ('pgtap-p2-c14', 'active', 'patient-privacy', 'pgtap-named-sum', 'paper_form'),
-       ('pgtap-p2-c14', 'active', 'patient-privacy', 'pgtap-open-sum', 'paper_form');
+INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type, policy_uri)
+VALUES ('pgtap-p2-c14', 'active', 'patient-privacy', 'pgtap-named-sum', 'paper_form', 'https://mbhr.app/policy/pgtap'),
+       ('pgtap-p2-c14', 'active', 'patient-privacy', 'pgtap-open-sum', 'paper_form', 'https://mbhr.app/policy/pgtap');
 INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type, actor_reference)
 SELECT id, 'permit', 'organization', 'Organization/pgtap-named-hospital'
   FROM interop.consent_records WHERE category = 'pgtap-named-sum';
@@ -1206,8 +1232,8 @@ SELECT is(
 RESET ROLE;
 -- A refusal for one named recipient still refuses (as the evaluator), and
 -- the chip reads it as a refusal in part, since it names one recipient.
-INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
-VALUES ('pgtap-p2-c15', 'active', 'patient-privacy', 'pgtap-named-deny', 'paper_form');
+INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type, policy_uri)
+VALUES ('pgtap-p2-c15', 'active', 'patient-privacy', 'pgtap-named-deny', 'paper_form', 'https://mbhr.app/policy/pgtap');
 INSERT INTO interop.consent_provisions (consent_id, provision_type, actor_type, actor_reference)
 SELECT id, 'deny', 'organization', 'Organization/pgtap-named-hospital'
   FROM interop.consent_records WHERE category = 'pgtap-named-deny';
@@ -1251,6 +1277,10 @@ SELECT throws_ok(
   $$INSERT INTO interop.consent_record_history (consent_id, event, status_after, changed_by_kind)
     VALUES (current_setting('pgtap_p2.c_b')::uuid, 'created', 'active', 'system')$$,
   '42501', NULL, 'history: the service role cannot write history rows');
+SELECT throws_ok(
+  $$INSERT INTO interop.consent_records (patient_id, status, scope, category, source_type)
+    VALUES ('pgtap-p2-c1', 'active', 'patient-privacy', 'pgtap-nopolicy', 'paper_form')$$,
+  '23514', NULL, 'register: the service role cannot add a consent without a policy link');
 RESET ROLE;
 
 -- ---------------------------------------------------------------------------
