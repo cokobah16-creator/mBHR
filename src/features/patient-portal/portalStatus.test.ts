@@ -1,3 +1,4 @@
+import enLocale from "@/i18n/locales/en.json";
 import { describe, it, expect } from "vitest";
 import {
   appendUnique,
@@ -265,5 +266,28 @@ describe("appendUnique", () => {
       (x) => x.id,
     );
     expect(out.map((x) => x.id)).toEqual(["1", "2", "3"]);
+  });
+});
+
+describe("lab wording in the English locale", () => {
+  // The lab results screen shows these through translation keys. The English
+  // must stay word for word the signed-off wording above.
+  const en = enLocale as Record<string, string>;
+
+  it("matches the interpretation labels and advice", () => {
+    for (const value of ["normal", "abnormal", "critical"]) {
+      expect(en[`portal.lab.interp.${value}`]).toBe(portalLabInterpretationInfo(value).label);
+      expect(en[`portal.lab.advice.${value}`]).toBe(portalLabAdvice(value).text);
+    }
+    expect(en["portal.lab.interp.unknown"]).toBe(portalLabInterpretationInfo(null).label);
+    expect(en["portal.lab.advice.unknown"]).toBe(portalLabAdvice(null).text);
+  });
+
+  it("matches the load notices", () => {
+    for (const status of ["unavailable", "offline", "not_signed_in", "not_updated", "failed"]) {
+      const notice = portalLabLoadNotice(status);
+      expect(en[`portal.lab.notice.${status}.title`]).toBe(notice?.title);
+      expect(en[`portal.lab.notice.${status}.body`]).toBe(notice?.body);
+    }
   });
 });
