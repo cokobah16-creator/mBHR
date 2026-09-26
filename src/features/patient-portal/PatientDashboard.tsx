@@ -10,7 +10,6 @@ import {
 } from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
 import { PortalHome, type NextAppointment } from "./PortalHome";
-import { PortalSkeleton } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getPatientAppointments } from "@/services/appointments";
 import { useT } from "@/hooks/useT";
@@ -27,7 +26,9 @@ import type {
   Medication,
   Visit,
 } from "@/services/patientService";
-import { isSupabaseEnabled } from "@/lib/supabaseClient";
+import { isSupabaseEnabled, supabase } from "@/lib/supabaseClient";
+import { loadHomeExtras, type HomeExtras } from "./home/homeData";
+import { PortalHomeSkeleton } from "./ui/PortalSkeletons";
 // Legacy offline dashboard
 import { loadPatientDashboard } from "@/services/patientPortalData";
 import type {
@@ -331,9 +332,26 @@ function SupabaseDashboard() {
   const [loading, setLoading] = useState(true);
   // Stored as a translation key so the loader does not depend on `t`.
   const [errorKey, setErrorKey] = useState("");
+  // "What's new" and the next outreach; undefined until loaded.
+  const [extras, setExtras] = useState<HomeExtras | undefined>(undefined);
+  const [patientId, setPatientId] = useState<string | undefined>(undefined);
 
   const userId = user?.id;
   const userEmail = user?.email;
+
+  const loadExtras = useCallback(
+    (id: string) => {
+      if (!supabase) return;
+      // Best effort: each block reports its own failure on the home screen.
+      loadHomeExtras(supabase, id, userId)
+        .then(setExtras)
+        .catch((err) => {
+          logger.warn("[PatientDashboard] home updates error:", errorName(err));
+          setExtras({});
+        });
+    },
+    [userId],
+  );
 
   const load = useCallback(async () => {
     if (!userId) return;
@@ -354,6 +372,8 @@ function SupabaseDashboard() {
       }
 
       const patientId = profileRes.data.id;
+      setPatientId(patientId);
+      loadExtras(patientId);
       const [vitalsResult, medsResult, visitsResult] = await Promise.all([
         getVitals(patientId),
         getMedications(patientId),
@@ -397,13 +417,13 @@ function SupabaseDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [userId, userEmail]);
+  }, [userId, userEmail, loadExtras]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (authLoading || (loading && !!userId)) return <PortalSkeleton />;
+  if (authLoading || (loading && !!userId)) return <PortalHomeSkeleton />;
   if (!userId) return <ErrorCard message={t("portal.error.loadProfile")} />;
   if (errorKey) {
     return (
@@ -423,7 +443,19 @@ function SupabaseDashboard() {
   const latest = vitals[0] ?? null;
 
   return (
-    <PortalHome name={profile.givenName} nextAppointment={nextAppointment}>
+    <PortalHome
+      name={profile.givenName}
+      nextAppointment={nextAppointment}
+      updates={extras}
+      onRetryUpdates={
+        patientId
+          ? () => {
+              setExtras(undefined);
+              loadExtras(patientId);
+            }
+          : undefined
+      }
+    >
       {!online && (
         <div className="banner banner-warning" role="status">
           <SignalSlashIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
@@ -572,7 +604,7 @@ function OfflineDashboard() {
     load();
   }, [load]);
 
-  if (loading) return <PortalSkeleton />;
+  if (loading) return <PortalHomeSkeleton />;
   if (errorKey) {
     return (
       <ErrorCard
@@ -722,7 +754,7 @@ function ErrorCard({
 export function PatientDashboard() {
   const { user, loading } = useAuth();
 
-  if (loading) return <PortalSkeleton />;
+  if (loading) return <PortalHomeSkeleton />;
 
   // Use Supabase-backed dashboard when available and user is signed in
   if (isSupabaseEnabled && user) return <SupabaseDashboard />;
