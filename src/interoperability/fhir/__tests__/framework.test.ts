@@ -214,6 +214,10 @@ describe("access decision", () => {
     expect(await decide(auditor, "Patient")).toBe(false);
     expect(await decide(auditor, "AuditEvent")).toBe(true);
     expect(await decide(nurse, "AuditEvent")).toBe(false);
+    // Owner decisions: staff get no documents and no consents until mBHR has a screen for them.
+    for (const a of [doctor, nurse, pharmacist, auditor]) {
+      for (const t of ["DocumentReference", "Binary", "Consent"] as const) expect(await decide(a, t), `${a.role} ${t}`).toBe(false);
+    }
   });
 
   it("gives accounts that are neither staff nor a linked patient nothing", async () => {

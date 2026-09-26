@@ -139,6 +139,12 @@ path is covered by unit tests only: `consentPolicy.test.ts` tests the
 evaluator, `authorize.test.ts` calls `consentStep()` directly, and
 `consentDirectiveLoader.test.ts` tests the lookup below.
 
+The three permissions in step 4 are the step's own list
+(`CONSENT_READERS`). No staff account may read the Consent resource (owner
+decision, "Only what the app shows"), but once a governed purpose is
+served the step still loads directives for these staff inside the gateway,
+to decide a request for another type. It never returns them to the caller.
+
 How step 10 looks up directives once a governed purpose is served
 (`loadConsentDirectives()` in `gateway/handler.ts`):
 
@@ -210,7 +216,7 @@ them. Each checks the caller itself.
 
 | Function | Who may call it | What it does |
 | --- | --- | --- |
-| `fhir_consent_directives()` | staff with `consult`, `portal_manage` or `audit_access` (any patient); a portal patient (own records, including records merged into theirs) | Directives and provisions for named patient ids or consent ids (one is required). Used by the gateway. Never returns account ids, the withdrawal reason, who signed, the source document or a provision's actor reference (only `names_recipient`: whether a rule names one specific recipient). |
+| `fhir_consent_directives()` | staff with `consult`, `portal_manage` or `audit_access` (any patient); a portal patient (own records, including records merged into theirs) | Directives and provisions for named patient ids or consent ids (one is required). Used by the gateway: a patient's own Consent reads and searches, and the consent step's directive lookup (staff included). No staff account gets the Consent resource (owner decision); a direct API call by such staff still returns the directives, and no app screen makes one. Never returns account ids, the withdrawal reason, who signed, the source document or a provision's actor reference (only `names_recipient`: whether a rule names one specific recipient). |
 | `interop_record_consent()` | staff with `portal_manage` or `consult` | Records a directive with up to 20 provisions. Status draft, proposed or active. The patient must exist and must not be merged away. `policy_uri` may be empty. |
 | `interop_verify_consent()` | staff with `portal_manage` or `consult` | Marks a draft, proposed or active record verified. A withdrawn record cannot be verified. |
 | `interop_withdraw_consent(p_consent_id, p_reason, p_patient_id)` | staff with `portal_manage` or `consult`; or the portal patient whose record it is (including records merged into theirs) | Withdraws a record, with an optional reason of at most 500 characters. Status becomes inactive (entered-in-error stays). A repeat returns false. A portal patient may withdraw only a permission to share: scope patient-privacy or research, and no deny provision (the database also accepts a record with no provisions, which the portal does not offer). A refusal, a treatment consent or an advance directive is changed with clinic staff: the patient gets 42501, whatever the record's status. `p_patient_id` is optional and names the page's patient. When given, the record must be that patient's or a record merged into it (42501 otherwise, for staff too), and a patient must name one of their own portal records (42501 otherwise). A malformed id is refused (22023). The portal always sends it, so a sign-in linked to two people (a shared phone) withdraws only for the person the page shows. Without it, a patient may still withdraw a permission of any person linked to the sign-in, and staff are not limited. |
@@ -372,13 +378,14 @@ mBHR is in force."). That matches the default-deny rule.
 The gateway publishes register records as FHIR R4 Consent, read-only. The
 mapping is in [resource-mapping.md](resource-mapping.md#consent--the-consent-register).
 
-- Searches: `_id`, `patient`, `status`, `scope`. Staff must give `_id` or
-  `patient`.
-- Staff with `consult`, `portal_manage` or `audit_access` may read any
-  patient's consents. A patient sees only their own (restriction
+- Searches: `_id`, `patient`, `status`, `scope`.
+- No staff account may read or search it (owner decision, "Only what the
+  app shows"): in mBHR staff see only the External sharing chip, and FHIR
+  never shows staff more. Every staff request is 403 `missing_permission`
+  at the permission step, audited, before the register is read, until
+  mBHR has a staff consent screen. A patient (with
+  `FHIR_PATIENT_ACCESS_ENABLED`) sees only their own (restriction
   `own_consents_only`).
-- A staff search by patient includes directives still filed under records
-  merged into that patient, shown with the kept record as the patient.
 - A withdrawn record is published as `inactive`, never `active`.
 - A record is published whole or not at all. A record with no
   `policy_uri` is not published (R4 needs a policy or a policy rule), and
@@ -400,9 +407,8 @@ Consent is **Partial** for two reasons:
    sends only the patient's current record ids. A directive still filed
    under a record that was merged into theirs is not returned to the
    patient through FHIR. The patient's searchset says so, and points to
-   the portal's privacy section, which does list them. Staff see these
-   directives. Closing the gap needs a database helper that resolves a
-   patient's merged records.
+   the portal's privacy section, which does list them. Closing the gap
+   needs a database helper that resolves a patient's merged records.
 
 ## Existing consent data (unchanged)
 
@@ -431,3 +437,5 @@ not enabled in any form until that review process exists **(owner)**.
 - The consent category codes (free text today).
 - The policy URIs to cite (none is defined; examples only).
 - Break-glass: whether it is wanted, and the review process.
+- When mBHR has a staff consent screen, whether staff read Consent over
+  FHIR again (refused until then, by owner decision).

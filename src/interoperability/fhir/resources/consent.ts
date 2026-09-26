@@ -10,6 +10,13 @@
 // takes a patient-id or consent-id selector (at least one), returns records
 // ordered by id and pages with p_after / p_limit.
 //
+// No staff account reaches this module through the gateway:
+// READ_PERMISSIONS.Consent is empty (owner decision, "Only what the app
+// shows", docs/clinical/CLINICAL_LOGIC_CHANGES.md 2.7: in mBHR staff see only
+// the External sharing badge, and FHIR never shows staff more). The staff
+// branches below (no patient restriction, a named patient's merge family,
+// CONSENT_COVERAGE_NOTE) are kept, unreachable, for a staff consent screen.
+//
 // This module applies the caller's scope in the call itself, the same rule
 // scopeFilter() and namedPatientFilter() apply in SQL elsewhere:
 //
@@ -22,12 +29,12 @@
 //     the kept record, and shown with the kept record as its patient)
 //
 // Known gap for patients: a directive still filed under a record that was
-// merged into the patient's own is not shown to the patient yet (staff see
-// it under the kept record, and the portal lists it). A patient cannot see
-// merged-away records under row-level security, so the gateway can neither
-// name them in the call nor resolve them to the kept record; that needs a
-// database helper (requested). Until then every patient searchset says so
-// (CONSENT_COVERAGE_NOTE_PATIENT) instead of claiming to be complete.
+// merged into the patient's own is not shown to the patient yet (the portal
+// lists it). A patient cannot see merged-away records under row-level
+// security, so the gateway can neither name them in the call nor resolve
+// them to the kept record; that needs a database helper (requested). Until
+// then every patient searchset says so (CONSENT_COVERAGE_NOTE_PATIENT)
+// instead of claiming to be complete.
 //
 // status and scope are filtered after mapping, on the published values,
 // so a search always finds exactly what a read shows (a withdrawn record
@@ -124,8 +131,7 @@ export const definition: ResourceDefinition = {
     {
       name: "patient",
       type: "reference",
-      documentation:
-        "Patient/[id]. Directives about this patient, including ones still filed under records merged into it. Required unless _id is given.",
+      documentation: "Patient/[id]. Directives about this patient.",
       patientDocumentation:
         "A patient gets only directives filed under their own current record, not ones filed under records merged into it, and need not give patient.",
     },
@@ -148,7 +154,7 @@ export const definition: ResourceDefinition = {
   patientAccess: true,
   sensitiveSearch: false,
   notes: [
-    "Staff with consult, portal_manage or audit_access may read consents.",
+    "Staff accounts cannot read or search consents here (403), whatever their role: the mBHR staff app shows only an External sharing badge (Allowed, Restricted or Withdrawn), and this interface shows staff no more than the app does. This holds until mBHR has a staff consent screen.",
     "A withdrawn consent is kept and published as inactive: it is never deleted and never shown as active.",
     "Who recorded, verified or withdrew a consent, the reason for a withdrawal, who signed it and its source document are never published; neither is a performer.",
     "A rule's actor names the kind of recipient recorded (for example External system), never a specific one. A consent with a rule for one specific recipient is therefore not published: it would read as a rule for every recipient of that kind.",
@@ -162,11 +168,14 @@ export const definition: ResourceDefinition = {
   ],
   patientAccessNotes: [
     "Patients see only their own consents.",
-    "Patients do not yet see directives still filed under another record of theirs that was merged into their current one (staff see them under the kept record, and the patient portal lists them); a patient's searchset says so.",
+    "Patients do not yet see directives still filed under another record of theirs that was merged into their current one (the patient portal lists them); a patient's searchset says so.",
   ],
 };
 
-/** Every staff Consent searchset says what an empty result does and does not mean. */
+/**
+ * Every staff Consent searchset says what an empty result does and does not
+ * mean (unreachable while no staff account reads Consent: owner decision).
+ */
 export const CONSENT_COVERAGE_NOTE: OperationOutcomeIssue = {
   severity: "information",
   code: "informational",

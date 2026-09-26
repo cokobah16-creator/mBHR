@@ -106,9 +106,11 @@ not show are refused.
    until it expires, leaks through logs and referrers, and is not audited
    per use. The DocumentReference's attachment URL is the gateway's own
    `Binary/<id>`.
-6. Portal patients (with `FHIR_PATIENT_ACCESS_ENABLED`) get file content
-   only for documents they uploaded themselves (`upload_source =
-   'patient'`); clinic documents have no release step yet.
+6. Only portal patients download documents: staff accounts are refused
+   (owner decision, until mBHR has a staff documents screen). Portal
+   patients (with `FHIR_PATIENT_ACCESS_ENABLED`) get file content only for
+   documents they uploaded themselves (`upload_source = 'patient'`);
+   clinic documents have no release step yet.
 
 ### 2.5 Consent views (Phase 2)
 
@@ -121,12 +123,14 @@ gateway is not involved. What crosses:
   reads it), and for the staff chip `sharing_state` (allowed, restricted
   or withdrawn) with `sharing_reason` (for example `refused_partly`),
   record counts, last change time. No provision details, no staff
-  identities.
+  identities. This summary is all a staff member sees of a patient's
+  consents.
 - **Records** (`interop_my_consents(p_patient_id)`: one of the patient's
-  own portal records and the records merged into it; and the Consent
-  resource through the gateway, from `fhir_consent_directives()`): status,
-  scope, category, periods, verification state, withdrawal state and
-  provisions. Never returned:
+  own portal records and the records merged into it; and, for a portal
+  patient's own records only, the Consent resource through the gateway,
+  from `fhir_consent_directives()`; no staff account gets it, by owner
+  decision): status, scope, category, periods, verification state,
+  withdrawal state and provisions. Never returned:
   `recorded_by`, `verified_by`, `withdrawn_by` (account ids),
   `withdrawal_reason`, `granted_by`, `source_document_id` or
   `actor_reference` (only `names_recipient`, whether a provision names
@@ -194,11 +198,11 @@ is trivially reversible. The user agent is cut to 200 characters.
 
 ## 6. Document downloads
 
-See 2.4. In short: content only through the gateway, as the caller, after
-the permission check and the audit record; `Content-Disposition:
-attachment`; no caching; no signed or public URL ever created or
-published. The downloaded file then lives in the device's downloads
-folder, outside mBHR's control (risk R4).
+See 2.4. In short: content only through the gateway, to portal patients
+only, as the caller, after the permission check and the audit record;
+`Content-Disposition: attachment`; no caching; no signed or public URL
+ever created or published. The downloaded file then lives in the device's
+downloads folder, outside mBHR's control (risk R4).
 
 ## 7. Browser storage
 
@@ -290,7 +294,7 @@ data; today it is off.
 | R1 | Search values (names with birth dates, patient ids) sit in URLs and reach Vercel request logs and Supabase API logs, outside the audit trail | High | Medium | parameter allowlists; name search only with an exact birth date; the gateway's own log has no query; confirm log retention, access and drains on both platforms before enabling; consider `POST _search` for demographic searches | Owner (DIOF) with engineering |
 | R2 | A Supabase session left on a shared tablet is used to call the gateway | Medium | High | access tokens expire after an hour (`jwt_expiry` in `supabase/config.toml`; production to confirm); the gateway re-checks the session with Supabase Auth on every request; sign-out clears the stored session even offline; per-account and sensitive-search rate limits; every access audited | Site operations with engineering |
 | R3 | Production database drift (F3): row-level security or helpers differ from the repository, so reads return more than intended | Low (production has every file in `supabase/migrations/` since 25 September 2026; the interop files are deferred) | High | the gateway checks role and permission in the database itself and fails closed when helpers are missing; apply the deferred interop files (re-versioned) and rehearse before enabling | HRIS database work, owner go-ahead |
-| R4 | Downloaded documents stay on devices | High | Medium | `attachment` disposition, no caching, allowlisted content types, one audit row per download; device guidance for staff; portal patients limited to their own uploads | Site operations |
+| R4 | Downloaded documents stay on devices | High | Medium | `attachment` disposition, no caching, allowlisted content types, one audit row per download; staff get no documents over FHIR (owner decision); portal patients limited to their own uploads | Site operations |
 | R5 | Uploaded files are not scanned; `.doc`/`.docx` can carry macros | Low | High | never rendered inline (`attachment`, `nosniff`, octet-stream fallback); scanning is an owner decision | Owner (DIOF) |
 | R6 | The audit trail is lost (rollback drops the schema) or kept for no defined period | Low | High | export before any rollback; decide retention; append-only guards | Owner (DIOF) |
 | R7 | The audit trail itself reveals who was seen and by whom | Medium | Medium | no direct API read; AuditEvent only for `audit_access`, without account ids, IP hashes or internal ids; admin view shows counts only | Owner (DIOF) |
@@ -302,3 +306,4 @@ data; today it is off.
 | R13 | A clinic document reaches a patient before any release step | Low | Medium | Phase 2 gives portal patients content only for their own uploads | Clinical lead |
 | R14 | A consent withdrawal cannot recall data already disclosed | Low (no disclosures are enabled) | Medium | consent is evaluated per request, so withdrawal stops future access; say so in consent wording | Owner (DIOF) |
 | R15 | Error answers leak database detail | Low | Medium | fixed OperationOutcome messages; only the SQLSTATE of a database error is examined, never its message | Engineering |
+| R16 | Staff with consult, portal_manage or audit_access call `fhir_consent_directives()` directly through the Supabase API and read full consent rules that no screen or FHIR request shows them | Low (the register is empty; the deferred migration is not applied) | Medium | no app code calls it; the gateway's consent check needs it to answer for staff, so closing it means moving the consent decision into the database | Owner (DIOF) with engineering |

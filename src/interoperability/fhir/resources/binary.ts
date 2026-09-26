@@ -5,14 +5,16 @@
 // Each download is decided on its own, never on the strength of an earlier
 // DocumentReference read:
 //
-//   1. The gateway has authorised the caller for Binary (staff: consult;
-//      a portal patient: their own records, restriction
-//      patient_uploads_only).
+//   1. The gateway has authorised the caller for Binary: a portal patient
+//      only, for their own records (restriction patient_uploads_only).
+//      Staff are refused at the permission step (owner decision: no
+//      documents over FHIR until mBHR has a staff documents screen), and
+//      assertPatient() refuses them here too.
 //   2. The document row is read AS THE CALLER, under row-level security,
 //      with the same limits as a DocumentReference read: not removed
-//      (deleted_at IS NULL), the patient's own records, and for a patient
-//      only documents they uploaded (clinic documents have no release step
-//      yet, so their files are not handed to patients).
+//      (deleted_at IS NULL), the patient's own records, and only documents
+//      they uploaded (clinic documents have no release step yet, so their
+//      files are not handed to patients).
 //   3. The row's patient must resolve to a kept record, as for the
 //      DocumentReference (otherwise the document is not published at all).
 //   4. The stored object path must be a plain relative path (no "..", no
@@ -65,12 +67,13 @@ export const definition: ResourceDefinition = {
   sensitiveSearch: true,
   notes: [
     "Binary/[id] is read by id only and answers with the file itself (Content-Disposition: attachment), never as FHIR JSON.",
-    "Each download is authorised on its own: staff need consult.",
+    "Each download is authorised on its own.",
+    "Staff accounts cannot download files here (403), whatever their role: mBHR has no staff documents screen yet.",
     "A removed document, a file that is missing from storage, or a stored path outside the patient's folder answers 404.",
     "The file type is the uploader's declaration; files are not scanned for malware in this release.",
     "A download carries no ETag and no version, so a conditional read (If-None-Match) is not supported.",
   ],
-  patientAccessNotes: ["A patient gets only files they uploaded to their own record."],
+  patientAccessNotes: ["A patient gets only files they uploaded to their own record; no other account gets files here."],
 };
 
 /** Same rule as the DocumentReference attachment url: may this patient download this document's file? */
@@ -78,10 +81,17 @@ export function patientMayDownload(row: Row): boolean {
   return row.upload_source === "patient";
 }
 
-/** A patient downloads only what they uploaded (restriction patient_uploads_only). */
-function patientView(ctx: QueryCtx): Filters {
-  return ctx.scope.kind === "patient" || ctx.restrictions.has("patient_uploads_only") ? [["upload_source", "eq.patient"]] : [];
+/**
+ * Portal patients only. The gateway refuses staff first (READ_PERMISSIONS
+ * for DocumentReference and Binary is empty); this keeps the modules from
+ * answering them, with the same audit reason as that refusal.
+ */
+export function assertPatient(ctx: QueryCtx): void {
+  if (ctx.scope.kind !== "patient") throw errors.forbidden(undefined, { auditReason: "missing_permission" });
 }
+
+/** A patient downloads only what they uploaded (restriction patient_uploads_only). */
+const PATIENT_UPLOADS: Filters = [["upload_source", "eq.patient"]];
 
 const BUCKET_PREFIX = `${DOCUMENT_BUCKET}/`;
 
@@ -103,16 +113,17 @@ export function documentObjectPath(raw: unknown, patientFolders: readonly string
 }
 
 async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
+  assertPatient(ctx);
   if (!UUID.test(id)) return emptyResult();
   const rows = await ctx.db.select(
     "patient_documents",
     BINARY_COLUMNS,
-    [["id", `eq.${id}`], ["deleted_at", "is.null"], ...scopeFilter(ctx), ...patientView(ctx)],
+    [["id", `eq.${id}`], ["deleted_at", "is.null"], ...scopeFilter(ctx), ...PATIENT_UPLOADS],
     { limit: 1 },
   );
   const row = rows[0];
   if (!row) return emptyResult();
-  if (ctx.scope.kind === "patient" && !patientMayDownload(row)) return emptyResult();
+  if (!patientMayDownload(row)) return emptyResult();
   const owner = typeof row.patient_id === "string" ? row.patient_id : null;
   if (!owner) return emptyResult();
 

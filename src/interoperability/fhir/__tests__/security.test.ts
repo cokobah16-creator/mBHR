@@ -369,6 +369,7 @@ describe("audit of every request after sign-in", () => {
     await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR });
     await call(`/fhir/R4/Encounter?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR });
     await call(`/fhir/R4/Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR });
+    // Counted before the access decision, which then refuses a staff download (403).
     await call("/fhir/R4/Binary/doc1", { token: DOCTOR });
     expect(contexts.map((c) => c.p_sensitive)).toEqual([true, false, false, true]);
   });

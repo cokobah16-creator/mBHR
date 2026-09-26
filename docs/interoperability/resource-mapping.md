@@ -389,11 +389,11 @@ recorded or published.
 | category | `upload_source`: local `https://mbhr.app/codes/document-source` `patient` ("Uploaded through the patient portal") or `staff` ("Clinic record (or added before mBHR recorded who uploaded documents)"). Any other value → left out. |
 | subject | the canonical Patient; unresolved → withheld. |
 | date | `created_at`: when the document was added to mBHR, not when it was written. |
-| description | **Only for documents the patient uploaded.** A clinic record's description is a staff note and is never published, to staff or patients. |
-| content.attachment | `contentType`: the declared type, lower-cased without parameters, when on the allowlist (PDF, JPEG, PNG, WebP, HEIC, HEIF, Word .doc and .docx), else `application/octet-stream`. `url`: `Binary/<id>`, relative; staff always get it, a patient only for documents they uploaded. `size`: the size the uploader's browser reported (0 to 2147483647), not checked. `title`: the last segment of the file name, with invisible and control characters removed; left out if blank, containing `://`, or over 255 characters. |
+| description | **Only for documents the patient uploaded.** A clinic record's description is a staff note and is never published, to anyone. |
+| content.attachment | `contentType`: the declared type, lower-cased without parameters, when on the allowlist (PDF, JPEG, PNG, WebP, HEIC, HEIF, Word .doc and .docx), else `application/octet-stream`. `url`: `Binary/<id>`, relative; only for documents the patient uploaded (the files Binary serves them). `size`: the size the uploader's browser reported (0 to 2147483647), not checked. `title`: the last segment of the file name, with invisible and control characters removed; left out if blank, containing `://`, or over 255 characters. |
 | Never published | `file_path`, the bucket, any Storage, signed or public URL; `uploaded_by_user_id`, `deleted_by`; the legacy `uploaded_by_patient` flag; `metadata`; `author`; `attachment.creation`, `hash`, `data`; `context`, `custodian`, `securityLabel`, `identifier`; `meta.lastUpdated`. |
 | Searches | `_id`, `patient`, `subject`, `date` (created_at), `type`, `category`, `status`. |
-| Who reads | Staff with consult. A patient sees their own documents that were not removed (as the portal lists them). |
+| Who reads | Portal patients only (with `FHIR_PATIENT_ACCESS_ENABLED`): their own documents that were not removed (as the portal lists them). No staff account (owner decision: until mBHR has a staff documents screen). |
 
 - **`author` is left out** on purpose: mBHR records who uploaded a file,
   not who wrote it. A portal upload may come from a caregiver's account,
@@ -423,7 +423,7 @@ recorded or published.
 | contentType | As for the DocumentReference: allowlisted type, else `application/octet-stream`, with a `.bin` file name. |
 | securityContext | `DocumentReference/<id>`, sent as `X-Security-Context`. |
 | Search | None (400). |
-| Who reads | Staff with consult. A patient only for files they uploaded to their own record. |
+| Who reads | A portal patient only, for files they uploaded to their own record. No staff account (owner decision: until mBHR has a staff documents screen). |
 
 Path checks, security and limits are in [security.md](security.md#documents).
 A removed document, a file missing from Storage, a file Storage refuses,
@@ -446,7 +446,7 @@ an empty file and a stored path outside the patient's folder all answer
 | provision | Root: the record's effective period, no type. One nested provision per stored rule, in stored order, with only what was recorded: `type` (permit or deny), `period`, `actor` (the kind of recipient as a local `consent-actor-type` code, with a display-only reference; `any` means no actor element; a rule that names one specific recipient withholds the record, below), `action` (consentaction), `purpose` (v3 ActReason, no display), `class` (an R4 resource type, or a local `consent-resource-type` or `consent-data-class` code) and `securityLabel` (local `consent-security-label`). |
 | Never published | `performer`, `organization`, `source[x]`, `policyRule`, and every column listed under Source as not returned. |
 | Searches | `_id`, `patient`, `status`, `scope`. |
-| Who reads | Staff with consult, portal_manage or audit_access; a patient sees their own. |
+| Who reads | No staff account (owner decision: mBHR shows staff only the External sharing badge, until it has a staff consent screen). A patient sees their own (with `FHIR_PATIENT_ACCESS_ENABLED`). |
 
 A directive is published whole or not at all. When a stored rule cannot
 be shown in R4 without changing its meaning (a code outside the register's

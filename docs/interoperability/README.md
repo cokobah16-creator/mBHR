@@ -91,9 +91,9 @@ What each published type does today, as implemented in code. Write is
 | MedicationDispense | Yes | Yes | No | medication | Every request | medication | Implemented. Status is almost always `unknown`; no handover time is published. |
 | ServiceRequest | Yes | Yes | No | laboratory | Every request | laboratory | Implemented. Staff with consult or lab_review only; local test codes only. |
 | DiagnosticReport | Yes | Yes | No | laboratory | Every request | laboratory | Implemented. `final` only when every current result is reviewed; never `final` for a patient; no conclusion. |
-| DocumentReference | Yes | Yes | No | document | Every request | documents | Implemented. No author and no `meta.lastUpdated`; staff need consult. |
-| Binary | Yes (the file itself) | No | No | document | Every request | documents, guard, security | Implemented. Read by id only; no ETag or conditional read; the whole file is held in memory (25 MB cap); not scanned for malware. |
-| Consent | Yes | Yes | No | consent | Every request | consentResource, consentPolicy | Partial. The register is empty: nothing in the app records consents yet. Patients do not see directives filed under a record that was merged into theirs. |
+| DocumentReference | Yes | Yes | No | document | Every request | documents, authorize | Implemented, for portal patients only (staff get no documents: owner decision). No author and no `meta.lastUpdated`. |
+| Binary | Yes (the file itself) | No | No | document | Every request | documents, guard, security, authorize | Implemented. Portal patients only, for their own uploads. Read by id only; no ETag or conditional read; the whole file is held in memory (25 MB cap); not scanned for malware. |
+| Consent | Yes | Yes | No | consent | Every request | consentResource, consentPolicy, authorize | Partial. Staff are refused (owner decision: the staff app shows only the External sharing badge). The register is empty: nothing in the app records consents yet. Patients do not see directives filed under a record that was merged into theirs. |
 | Practitioner | Yes | Yes | No | directory | Every request | directory, security | Implemented. Name only; `active` is left out when the account records no flag. |
 | PractitionerRole | Yes | Yes | No | directory | Every request | directory | Implemented. The mBHR access role as a local code, not a qualification. |
 | Organization | Yes | Yes | No | directory | Every request | directory | Implemented. Only organisations the caller is a member of (row-level security); no app code creates memberships. |
@@ -402,8 +402,8 @@ Recorded so the next phase starts from what was actually built.
 - **Consent** is evaluated in code, but no purpose the gateway accepts is
   governed by it, and the register has no entries yet
   ([consent.md](consent.md)).
-- **Documents** are served through `Binary/[id]` on the gateway, never as
-  Storage or signed URLs.
+- **Documents** are served, to portal patients only, through `Binary/[id]`
+  on the gateway, never as Storage or signed URLs.
 - **Condition** still reads `public.conditions` only. Diagnoses typed in
   consultations (`consultations.provisional_dx`) are not published, and
   every Condition searchset says so.

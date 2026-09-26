@@ -137,7 +137,13 @@ const PATIENT_CLASS_RESTRICTIONS: Partial<Record<FhirResourceType, string>> = {
 
 /** Consent refusals that do not depend on any directive. */
 const DIRECTIVE_INDEPENDENT = new Set(["consent_enforcement_disabled", "break_glass_not_enabled"]);
-/** Permissions fhir_consent_directives accepts (Phase 2 migration). */
+/**
+ * Permissions fhir_consent_directives accepts (Phase 2 migration). The
+ * consent step loads directives with them to decide a request for another
+ * type; the directives are never returned to the caller. Deliberately not
+ * READ_PERMISSIONS.Consent, which is empty: no staff account reads the
+ * Consent resource (owner decision, "Only what the app shows").
+ */
 const CONSENT_READERS = ["consult", "portal_manage", "audit_access"] as const;
 
 export async function authorizeFhirRequest(
@@ -259,8 +265,9 @@ export async function consentStep(
   // are final without reading anyone's consent records.
   if (probe.decision === "deny" && DIRECTIVE_INDEPENDENT.has(probe.reason)) return { denied: probe.reason, consent: probe };
   if (!named.length) return { denied: "consent_requires_patient_context", consent: probe };
-  // fhir_consent_directives answers only callers who may read consent
-  // records; anyone else is refused here rather than by an empty answer.
+  // fhir_consent_directives answers only staff holding CONSENT_READERS (and
+  // portal patients); other staff are refused here rather than by an empty
+  // answer.
   if (actor.kind === "staff" && !hasAny(actor.permissions, CONSENT_READERS)) {
     return { denied: "consent_not_readable", consent: probe };
   }

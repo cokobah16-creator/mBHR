@@ -5,12 +5,15 @@
 // staff row-level security returns removed rows too, so the filter is the
 // gateway's own, applied in the query, and the mapper withholds a removed
 // row that slips through. A removed document answers 404 and never appears
-// in a search, for staff and patients alike.
+// in a search, for every caller.
 //
-// Staff need consult. A portal patient (restriction own_documents_only)
-// reads the documents of their own records only, through scopeFilter() in
-// every query, as the portal lists them; the attachment url is given only
-// for documents they uploaded, the ones Binary will serve them.
+// Portal patients only (owner decision: staff get no documents over FHIR
+// until mBHR has a staff documents screen; the gateway refuses staff at the
+// permission step and assertPatient() refuses them here too). A patient
+// (restriction own_documents_only) reads the documents of their own records
+// only, through scopeFilter() in every query, as the portal lists them; the
+// attachment url is given only for documents they uploaded, the ones
+// Binary will serve them.
 
 import { READ_PERMISSIONS } from "../authorization/permissions";
 import type { Row } from "../mappers/common";
@@ -43,7 +46,7 @@ import {
   scopeFilter,
   type Filters,
 } from "./shared";
-import { patientMayDownload } from "./binary";
+import { assertPatient, patientMayDownload } from "./binary";
 
 export const definition: ResourceDefinition = {
   type: "DocumentReference",
@@ -62,7 +65,12 @@ export const definition: ResourceDefinition = {
   interactions: ["read", "search-type"],
   searchParams: [
     { name: "_id", type: "token", documentation: "Logical id of the resource." },
-    { name: "patient", type: "reference", documentation: "Patient/[id]. Required unless _id is given." },
+    {
+      name: "patient",
+      type: "reference",
+      documentation: "Patient/[id].",
+      patientDocumentation: "A patient gets only the documents of their own records, and need not give patient.",
+    },
     { name: "subject", type: "reference", documentation: "Same as patient (Patient/[id] only)." },
     {
       name: "date",
@@ -95,7 +103,7 @@ export const definition: ResourceDefinition = {
   patientAccess: true,
   sensitiveSearch: true,
   notes: [
-    "Staff need consult.",
+    "Staff accounts cannot read or search documents here (403), whatever their role: mBHR has no staff documents screen yet.",
     "The file is at content.attachment.url (Binary/[id]).",
     "No storage URL, signed URL or storage path is ever published.",
     "author is not published: mBHR records who uploaded a file, not who wrote it (a portal upload may come from a caregiver).",
@@ -104,7 +112,7 @@ export const definition: ResourceDefinition = {
     "meta.lastUpdated is not published.",
   ],
   patientAccessNotes: [
-    "Patients see their own documents that were not removed, as in the portal.",
+    "Patients see their own documents that were not removed, as in the portal; no other account gets documents here.",
     "A patient gets a file url only for documents they uploaded.",
   ],
 };
@@ -113,12 +121,11 @@ export const documentReferenceDefinition = definition;
 
 async function mapDocuments(ctx: QueryCtx, rows: Row[]): Promise<(DocumentReference | null)[]> {
   const refs = await referenceContext(ctx.db, ownersOf(rows).filter((v): v is string => v !== null));
-  return rows.map((r) =>
-    mapDocumentReference(r, refs, { contentAvailable: ctx.scope.kind === "staff" || patientMayDownload(r) }),
-  );
+  return rows.map((r) => mapDocumentReference(r, refs, { contentAvailable: patientMayDownload(r) }));
 }
 
 async function read(ctx: QueryCtx, id: string): Promise<QueryResult> {
+  assertPatient(ctx);
   if (!UUID.test(id)) return emptyResult();
   const rows = await ctx.db.select(
     "patient_documents",
@@ -146,6 +153,7 @@ function localCode(raw: string, name: string, system: string, codes: ReadonlyMap
 }
 
 async function search(ctx: QueryCtx, search: ParsedSearch): Promise<QueryResult> {
+  assertPatient(ctx);
   const notes = patientNotes(ctx);
   const named = namedPatientFilter(ctx);
   if (named === null) return emptyResult(notes);

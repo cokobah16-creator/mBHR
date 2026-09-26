@@ -708,8 +708,10 @@ function phase2Examples(ctx: MapContext): Record<string, Resource> {
   add("Observation-lab-string", mapLabObservation(LAB_RESULT_MALARIA, LAB_ORDER_MALARIA, ctx));
   add("Observation-lab-data-absent", mapLabObservation(LAB_RESULT_MALARIA_REPEAT, LAB_ORDER_MALARIA, ctx));
 
-  // Documents (resources/documentReference.ts, binary.ts): staff see every
-  // file; a patient sees a clinic record's metadata without its file.
+  // Documents (resources/documentReference.ts, binary.ts): only portal
+  // patients read documents (staff are refused until mBHR has a staff
+  // documents screen). A patient gets the file of their own upload, and a
+  // clinic record's metadata without its file.
   add("DocumentReference-patient-upload", mapDocumentReference(DOCUMENT_UPLOAD, ctx, { contentAvailable: true }));
   add("DocumentReference-clinic-record-patient-view", mapDocumentReference(DOCUMENT_CLINIC, ctx, { contentAvailable: false }));
   add("Binary-patient-upload", mapBinary(DOCUMENT_UPLOAD, ctx));

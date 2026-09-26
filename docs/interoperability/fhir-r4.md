@@ -29,7 +29,10 @@ search.
 
 "Session" means an mBHR Supabase access token: a staff member's, or (only
 with `FHIR_PATIENT_ACCESS_ENABLED`) a portal patient's for the types in
-[Patient self-access](#patient-self-access).
+[Patient self-access](#patient-self-access). DocumentReference, Binary and
+Consent are for portal patients only: a staff token gets 403
+`missing_permission` (owner decisions, until mBHR has a staff documents
+screen and a staff consent screen).
 
 ### metadata
 
@@ -47,9 +50,13 @@ service.
 - What patients get is published only while `FHIR_PATIENT_ACCESS_ENABLED`
   is on. That covers each type's patient notes, the patient part of a
   search parameter's documentation (DiagnosticReport `status`,
-  MedicationDispense `prescription`, Consent `patient`), and the patient
-  part of the implementation and security descriptions. With it off,
-  nothing in the statement describes what a patient gets.
+  MedicationDispense `prescription`, DocumentReference `patient`, Consent
+  `patient`), and the patient part of the implementation and security
+  descriptions. With it off, nothing in the statement describes what a
+  patient gets.
+- DocumentReference, Binary and Consent are listed whether patient access
+  is on or off. Their notes say that staff accounts are refused (403); what
+  a patient gets is added only while patient access is on.
 - It takes no parameters other than `_format` (anything else is 400).
 - With `FHIR_READ_ENABLED=false` it is still served, but lists no resource
   types.
@@ -138,9 +145,9 @@ call:
 | MedicationDispense | `_id`; `patient`; `subject`; `prescription` | `_id`, `patient`, `subject`, `status`, `prescription` |
 | ServiceRequest | `_id`; `patient`; `subject`; `encounter` | `_id`, `patient`, `subject`, `encounter`, `status`, `authored` (≤2), `code` |
 | DiagnosticReport | `_id`; `patient`; `subject`; `encounter`; `based-on` | `_id`, `patient`, `subject`, `encounter`, `based-on`, `status`, `category`, `code`, `date` (≤2) |
-| DocumentReference | `_id`; `patient`; `subject` | `_id`, `patient`, `subject`, `date` (≤2), `type`, `category`, `status` |
+| DocumentReference | not available to staff (403) | `_id`, `patient`, `subject`, `date` (≤2), `type`, `category`, `status` |
 | Binary | (no search) | read by id only |
-| Consent | `_id`; `patient` | `_id`, `patient`, `status`, `scope` |
+| Consent | not available to staff (403) | `_id`, `patient`, `status`, `scope` |
 | Practitioner | `_id`; `name` | `_id`, `name`, `active` |
 | PractitionerRole | `_id`; `practitioner`; `role` | `_id`, `practitioner`, `role` |
 | Organization | `_id`; `name` | `_id`, `name` |
@@ -264,7 +271,7 @@ element at all (FHIR JSON allows no empty arrays).
 - AllergyIntolerance: every searchset says that mBHR does not record "no
   known allergies", and that an empty result means no active allergy is
   recorded.
-- Consent: coverage notes (different for staff and patients).
+- Consent: the patient's coverage note (staff cannot search Consent).
 - A `patient` naming a merged-away record: an empty result and a note
   naming the kept record.
 - Records left out: "N matching record(s) were left out because they
@@ -321,7 +328,9 @@ where the type publishes one. There is no version history (`vread` and
 ### Binary
 
 `GET /Binary/{id}` returns the stored file of the DocumentReference with
-the same id, never FHIR JSON. Headers:
+the same id, never FHIR JSON. Portal patients only (with
+`FHIR_PATIENT_ACCESS_ENABLED`), for files they uploaded to their own
+record; a staff account gets 403. Headers:
 
 ```
 Content-Type: <allowlisted type, else application/octet-stream>
@@ -353,7 +362,7 @@ traces or other patients' identifiers.
 | 400 | `not-supported` | unsupported parameter, modifier, OR list, interaction or path; `_count=0`; Binary search; an AllergyIntolerance search by type (`category` or `type`) |
 | 400 | `too-costly` | a laboratory search that matches more results than one page can gather (narrow it, for example with `based-on` or `_id`) |
 | 401 | `login` | no token, or an invalid, expired or wrong-audience session. Header `WWW-Authenticate: Bearer realm="mBHR FHIR"` |
-| 403 | `forbidden` | no staff role or linked record, missing permission (including a read of a laboratory Observation, `Observation/lab-<id>`, without consult or lab_review, decided from the id before any lookup), patient access off, type not available to patients, another patient named, purpose refused, search not narrowed |
+| 403 | `forbidden` | no staff role or linked record, missing permission (including a read of a laboratory Observation, `Observation/lab-<id>`, without consult or lab_review, decided from the id before any lookup, and any DocumentReference, Binary or Consent request from a staff account), patient access off, type not available to patients, another patient named, purpose refused, search not narrowed |
 | 404 | `not-found` | no such record **or a record the caller may not see** (indistinguishable); reads switched off; the interface disabled |
 | 404 | `not-supported` | a type that is not published |
 | 405 | `not-supported` | a method other than GET (`Allow: GET`) |

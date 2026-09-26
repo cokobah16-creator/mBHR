@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { authorizeFhirRequest, consentStep, type Actor, type AuthorizeDeps, type FhirAuthorizationRequest } from "../authorization/authorize";
 import type { ConsentDirective } from "../consent/evaluateConsent";
+import { ALL_PERMISSIONS, canRead } from "../authorization/permissions";
 
 const NOW = new Date("2026-09-25T12:00:00Z");
 const A = "01HZZPATIENTA0000000000000";
@@ -84,6 +85,48 @@ describe("order of the steps", () => {
     expect(
       await authorizeFhirRequest(req({ actor: patientA, purposeOfUse: "PATRQT", resourceType: "AuditEvent" }), deps()),
     ).toMatchObject({ reason: "not_available_to_patients" });
+  });
+
+  it("5 permission: no staff account may read documents, whatever it holds (owner decision: patients only)", async () => {
+    const admin = staff("admin", [...ALL_PERMISSIONS]);
+    for (const actor of [admin, doctor, nurse, labOnly]) {
+      for (const resourceType of ["DocumentReference", "Binary"] as const) {
+        for (const interaction of ["read", "search"] as const) {
+          expect(await authorizeFhirRequest(req({ actor, resourceType, interaction, patientIds: [A] }), deps()), `${actor.role} ${resourceType}`).toMatchObject({
+            allowed: false,
+            step: "permission",
+            reason: "missing_permission",
+            status: 403,
+            consent: null,
+          });
+        }
+      }
+    }
+    // A portal patient still reads their own documents.
+    for (const resourceType of ["DocumentReference", "Binary"] as const) {
+      expect(
+        await authorizeFhirRequest(req({ actor: patientA, purposeOfUse: "PATRQT", resourceType, patientIds: [A] }), deps()),
+      ).toMatchObject({ allowed: true });
+    }
+  });
+
+  it("5 permission: no staff account reads Consent, whatever it holds (owner decision: only what the app shows); a patient still reads their own", async () => {
+    const admin = staff("admin", [...ALL_PERMISSIONS]);
+    expect(canRead(new Set(ALL_PERMISSIONS), "Consent")).toBe(false);
+    for (const actor of [admin, doctor, nurse, labOnly]) {
+      for (const interaction of ["read", "search"] as const) {
+        expect(await authorizeFhirRequest(req({ actor, interaction, resourceType: "Consent", patientIds: [A] }), deps()), `${actor.role}`).toMatchObject({
+          allowed: false,
+          step: "permission",
+          reason: "missing_permission",
+          status: 403,
+          consent: null,
+        });
+      }
+    }
+    const own = await authorizeFhirRequest(req({ actor: patientA, purposeOfUse: "PATRQT", resourceType: "Consent", patientIds: [A] }), deps());
+    expect(own).toMatchObject({ allowed: true, status: 200 });
+    expect(own.restrictions).toContain("own_consents_only");
   });
 
   it("6 organisation: a request naming an organisation scope is refused rather than ignored", async () => {
@@ -227,6 +270,45 @@ describe("consent step on a governed purpose (consentStep)", () => {
     const r = await consentStep(doctor, research, deps({ loadDirectives: c.loadDirectives }));
     expect(c.calls).toEqual([[A]]);
     expect(r).toMatchObject({ denied: "no_consent_permit", consent: { decision: "deny" } });
+  });
+
+  it("still reads directives for staff with consult, portal_manage or audit_access, although no staff account reads the Consent resource", async () => {
+    const auditor = staff("auditor", ["audit_access"]);
+    for (const actor of [doctor, nurse, auditor]) {
+      const c = counting();
+      const r = await consentStep(actor, research, deps({ loadDirectives: c.loadDirectives }));
+      expect(c.calls, actor.role ?? "").toEqual([[A]]);
+      expect(r).toMatchObject({ denied: "no_consent_permit", consent: { decision: "deny" } });
+    }
+    const permit: ConsentDirective = {
+      id: "c-r",
+      patient_id: A,
+      status: "active",
+      scope: "research",
+      category: "research",
+      verified: true,
+      effective_from: null,
+      effective_until: null,
+      withdrawn: false,
+      withdrawn_at: null,
+      provisions: [
+        {
+          id: "p-r",
+          provision_type: "permit",
+          actor_type: null,
+          names_recipient: false,
+          action: null,
+          purpose: null,
+          data_class: null,
+          resource_type: null,
+          security_label: null,
+          effective_from: null,
+          effective_until: null,
+        },
+      ],
+    };
+    const r = await consentStep(nurse, research, deps({ loadDirectives: async () => [permit] }));
+    expect(r).toMatchObject({ denied: null, consent: { decision: "permit", consentId: "c-r", provisionId: "p-r" } });
   });
 
   it("is not applicable to internal treatment, so nothing is loaded", async () => {

@@ -380,7 +380,9 @@ describe("L9 and L16: the CapabilityStatement", () => {
     const withPatientDocs = PUBLISHED_TYPES.flatMap((t) =>
       RESOURCE_DEFINITIONS[t].searchParams.filter((p) => p.patientDocumentation).map((p) => `${t}.${p.name}`),
     );
-    expect(withPatientDocs).toEqual(expect.arrayContaining(["DiagnosticReport.status", "MedicationDispense.prescription", "Consent.patient"]));
+    expect(withPatientDocs).toEqual(
+      expect.arrayContaining(["DiagnosticReport.status", "MedicationDispense.prescription", "Consent.patient", "DocumentReference.patient"]),
+    );
     for (const t of PUBLISHED_TYPES) {
       for (const p of RESOURCE_DEFINITIONS[t].searchParams) {
         // The text published either way never describes patients.

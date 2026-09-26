@@ -8,7 +8,9 @@
 //
 // The lists follow what the staff app already shows each role. FHIR never
 // widens that: where the app shows less than row-level security would allow
-// (labs, documents, messages), the narrower app rule is used here.
+// (labs, documents, messages), the narrower app rule is used here, and where
+// the app shows staff nothing of a type (documents; consents, of which staff
+// see only the External sharing badge), no staff permission reads it.
 
 export type MbhrPermission =
   | "register"
@@ -84,9 +86,17 @@ export type FhirResourceType =
  *   MedicationDispense
  *   ServiceRequest,    lab orders and reports: consult or lab_review (the lab
  *   DiagnosticReport   screens are not shown to other roles).
- *   DocumentReference, patient documents: consult (owner decision: the staff
- *   Binary             app has no documents screen yet).
- *   Consent            consent status: consult, portal_manage, audit_access.
+ *   DocumentReference, patient documents: no staff permission. Owner decision
+ *   Binary             (docs/clinical/CLINICAL_LOGIC_CHANGES.md 2.7, "Patients
+ *                      only"): staff get no documents over FHIR until mBHR
+ *                      has a staff documents screen; portal patients read
+ *                      their own (PATIENT_SELF_ACCESS).
+ *   Consent            consents: no staff permission. Owner decision (2.7,
+ *                      "Only what the app shows"): staff see only the
+ *                      External sharing badge until mBHR has a staff consent
+ *                      screen; portal patients read their own. The consent
+ *                      step loads directives with its own list
+ *                      (CONSENT_READERS in authorize.ts).
  *   Practitioner,      staff directory and places: every staff member.
  *   PractitionerRole,
  *   Organization,
@@ -105,9 +115,10 @@ export const READ_PERMISSIONS: Record<FhirResourceType, readonly MbhrPermission[
   MedicationDispense: ["consult", "dispense"],
   ServiceRequest: ["consult", "lab_review"],
   DiagnosticReport: ["consult", "lab_review"],
-  DocumentReference: ["consult"],
-  Binary: ["consult"],
-  Consent: ["consult", "portal_manage", "audit_access"],
+  // Empty: no staff account may read these (403 missing_permission at step 5).
+  DocumentReference: [],
+  Binary: [],
+  Consent: [],
   Practitioner: ALL_PERMISSIONS,
   PractitionerRole: ALL_PERMISSIONS,
   Organization: ALL_PERMISSIONS,

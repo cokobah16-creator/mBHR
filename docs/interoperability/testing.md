@@ -28,7 +28,7 @@ Locally, where `npm install` is not possible, the same files run under Bun:
 bun test src/interoperability
 ```
 
-With Bun this is 19 files and 702 tests (702 pass, 0 fail). Vitest is
+With Bun this is 19 files and 705 tests (705 pass, 0 fail). Vitest is
 what CI uses; the Bun run is a local convenience.
 
 Files in `src/interoperability/fhir/__tests__/` (plus
@@ -39,16 +39,16 @@ Files in `src/interoperability/fhir/__tests__/` (plus
 | `security.test.ts` | The Phase 2 security matrix at the gateway (below) |
 | `gateway.test.ts` | The whole request path: feature flag, metadata, authentication, authorisation, enumeration protection, reads, searches (including a birth date on the 1st of a month: sent shortened, still found by name and the stored date), errors and request limits |
 | `guard.test.ts` | The routing guard (`routeRequest`), keyset paging, `LIKE` escaping, reference checks in the validator |
-| `authorize.test.ts` | The order of the 12 steps, the restrictions handed to modules, and the consent step, including `consentStep()` on a governed purpose |
+| `authorize.test.ts` | The order of the 12 steps (no staff account reads DocumentReference, Binary or Consent, whatever it holds), the restrictions handed to modules, and the consent step, including `consentStep()` on a governed purpose (it still loads directives for staff with consult, portal_manage or audit_access) |
 | `consentPolicy.test.ts` | `evaluateConsent()`: which accesses consent governs, default-deny, withdrawal and expiry, a permit for one named recipient never permits, parsing of directives |
-| `consentResource.test.ts` | Consent status maps, mapper, who may read, searches, patient self-access, nothing forbidden is served, a rule for one named recipient withholds the record |
+| `consentResource.test.ts` | Consent status maps, mapper, no staff account reads or searches Consent (owner decision), patient reads and searches, patient self-access, nothing forbidden is served, a rule for one named recipient withholds the record |
 | `consentDirectiveLoader.test.ts` | The consent step's directive lookup: the named patient's merge family, directives read as the named patient's, more than 100 refused (503) |
-| `framework.test.ts` | Configuration and flags, search parameter parsing (including a type's refused parameters, answered with the type's own message), the access decision, the CapabilityStatement |
+| `framework.test.ts` | Configuration and flags, search parameter parsing (including a type's refused parameters, answered with the type's own message), the access decision (no staff role reads documents or consents), the CapabilityStatement |
 | `mappers.test.ts` | Patient, Encounter, vital-sign Observation and Condition mapping (including birth dates on the 1st of a month: 1 January as the year, any other 1st as year and month, every other date in full); the structural validator; the conformance examples |
 | `laboratory.test.ts` | Lab status maps, test codes, values, interpretation, review state; laboratory Observation, DiagnosticReport and ServiceRequest; staff and patient access, including staff without consult or lab_review (a note on every search that could include laboratory results; a 403 read audited as `missing_permission`); status tokens in their own code system; merged patients; what is never published |
 | `allergy.test.ts` | AllergyIntolerance mapping, status tables, validation, access, enumeration, search, read, recorder, what is never published; allergies marked inactive are never served (never read, 404 like an unknown id, not counted in any note); severe and life-threatening allergies are high criticality with or without a reaction; a search by type (`category` or `type`) is refused with "ask for all allergies" (every value, modifier and combination) |
 | `medication.test.ts` | Medication, MedicationRequest and MedicationDispense: status maps, mappers, who may read, ids, gateway behaviour |
-| `documents.test.ts` | DocumentReference and Binary: mapping, stored paths, staff and patient access, downloads, merged patients, search |
+| `documents.test.ts` | DocumentReference and Binary: mapping, stored paths, every staff account refused (owner decision: patients only) at the permission step and by the modules themselves, the CapabilityStatement notes, patient access, downloads, merged patients, search |
 | `directory.test.ts` | Practitioner, PractitionerRole, Organization and Location: mappers, name searches, gateway behaviour |
 | `provenanceAudit.test.ts` | Provenance and AuditEvent: activity and outcome maps, ids, mapping, gateway behaviour |
 | `statusMaps.test.ts` | Every status map against the owner's rules: unknown stays unknown, and no status is promoted |

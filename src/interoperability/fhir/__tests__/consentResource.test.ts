@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { handleFhirRequest } from "../gateway/handler";
-import { READ_PERMISSIONS } from "../authorization/permissions";
+import { ALL_PERMISSIONS, READ_PERMISSIONS } from "../authorization/permissions";
 import { validateResource } from "../validation/validate";
 import { applyStatusMap, explainStatus } from "../terminology/statusMaps";
 import { STATUS_MAPS } from "../terminology/status";
@@ -586,10 +586,10 @@ describe("Consent mapper", () => {
 // ---------------------------------------------------------------------------
 
 describe("Consent definition", () => {
-  it("declares only what is implemented, with the Consent permissions and a narrowing rule", () => {
+  it("declares only what is implemented, with no staff permission (owner decision: only what the app shows) and a narrowing rule", () => {
     expect(consentModule.definition).toBe(definition);
     expect(definition.readPermissions).toBe(READ_PERMISSIONS.Consent);
-    expect([...definition.readPermissions].sort()).toEqual(["audit_access", "consult", "portal_manage"]);
+    expect(definition.readPermissions).toEqual([]);
     expect(definition.interactions).toEqual(["read", "search-type"]);
     expect(definition.searchParams.map((p) => p.name)).toEqual(["_id", "patient", "status", "scope"]);
     expect(definition.requiredSearch).toEqual([["_id"], ["patient"]]);
@@ -618,8 +618,10 @@ const NURSE = makeToken("nurse-1");
 const AUDITOR = makeToken("auditor-1");
 const PHARMACIST = makeToken("pharm-1");
 const VOLUNTEER = makeToken("vol-1");
+const ADMIN = makeToken("admin-1");
 const PAT_A = makeToken("portal-a");
 const PAT_B = makeToken("portal-b");
+const PAT_C = makeToken("portal-c");
 
 const USERS: Record<string, FakeUser> = {
   [DOCTOR]: { id: "doctor-1", role: "doctor", permissions: ["consult", "register", "vitals", "queue"] },
@@ -627,8 +629,10 @@ const USERS: Record<string, FakeUser> = {
   [AUDITOR]: { id: "auditor-1", role: "auditor", permissions: ["audit_access"] },
   [PHARMACIST]: { id: "pharm-1", role: "pharmacist", permissions: ["dispense", "inventory", "queue"] },
   [VOLUNTEER]: { id: "vol-1", role: "volunteer", permissions: ["register", "queue"] },
+  [ADMIN]: { id: "admin-1", role: "admin", permissions: [...ALL_PERMISSIONS] },
   [PAT_A]: { id: "portal-a", role: null, permissions: [], kind: "patient", patientIds: [PATIENT_A.id] },
   [PAT_B]: { id: "portal-b", role: null, permissions: [], kind: "patient", patientIds: [PATIENT_B.id] },
+  [PAT_C]: { id: "portal-c", role: null, permissions: [], kind: "patient", patientIds: [PATIENT_C.id] },
 };
 
 function kindOf(user: FakeUser) {
@@ -720,15 +724,21 @@ const outcomes = (b: Json): Json[] =>
 const ids = (b: Json) => matches(b).map((r) => r.id);
 
 describe("Consent at the gateway: who may read", () => {
-  it("staff with consult, portal_manage or audit_access read a consent", async () => {
-    const { call } = setup();
-    for (const token of [DOCTOR, NURSE, AUDITOR]) {
-      const res = await call(`/fhir/R4/Consent/${A1.id}`, token);
-      expect(res.status).toBe(200);
-      expect(res.json.resourceType).toBe("Consent");
-      expect(res.json.id).toBe(A1.id);
-      expect(res.json.patient).toEqual({ reference: `Patient/${PATIENT_A.fhir_id}` });
+  it("no staff account reads or searches a consent, whatever it holds (owner decision: only what the app shows): refused before the register is read, and audited", async () => {
+    const { call, audits, directiveCalls, served } = setup();
+    const tokens = [DOCTOR, NURSE, AUDITOR, ADMIN];
+    for (const token of tokens) {
+      expect((await call(`/fhir/R4/Consent/${A1.id}`, token)).status).toBe(403);
+      expect((await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}`, token)).status).toBe(403);
+      expect((await call(`/fhir/R4/Consent?_id=${A1.id}`, token)).status).toBe(403);
     }
+    expect(directiveCalls()).toEqual([]);
+    expect(audits).toHaveLength(tokens.length * 3);
+    for (const a of audits) {
+      expect(a).toMatchObject({ p_decision: "deny", p_denial_reason: "missing_permission", p_http_status: 403, p_resource_type: "Consent", p_actor_kind: "staff" });
+    }
+    const text = served.join("\n");
+    for (const leak of [A1.category, A1.policy_uri, "data-sharing", "provision"]) expect(text).not.toContain(leak);
   });
 
   it("other staff are refused before the register is read, and the refusal is audited", async () => {
@@ -743,60 +753,53 @@ describe("Consent at the gateway: who may read", () => {
 
   it("serves the mapped resource as is, with the version as a content digest", async () => {
     const { call } = setup();
-    const { json } = await call(`/fhir/R4/Consent/${A1.id}`, DOCTOR);
+    const { json } = await call(`/fhir/R4/Consent/${A1.id}`, PAT_A);
     const expected = mapConsent(A1, ctx) as Consent;
     expect(json).toEqual({ ...expected, meta: { ...expected.meta, versionId: expect.stringMatching(/^[0-9a-f]{24}$/) } });
   });
 });
 
 describe("Consent at the gateway: searches", () => {
-  it("finds the kept record's directives, including one still filed under a merged-away record", async () => {
+  it("a patient's search by their own record finds their directives, with the patient note", async () => {
     const { call } = setup();
-    const { status, json } = await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}`, DOCTOR);
+    const { status, json } = await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}`, PAT_A);
     expect(status).toBe(200);
-    expect(ids(json)).toEqual([A1.id, A2.id, A3.id, M1.id]);
-    // The merged-away record's directive is shown with the kept record as patient.
+    expect(ids(json)).toEqual([A1.id, A2.id, A3.id]);
     for (const r of matches(json)) expect(r.patient).toEqual({ reference: `Patient/${PATIENT_A.fhir_id}` });
     const issues = outcomes(json);
-    expect(issues).toContainEqual(CONSENT_COVERAGE_NOTE);
+    expect(issues).toContainEqual(CONSENT_COVERAGE_NOTE_PATIENT);
+    expect(issues).not.toContainEqual(CONSENT_COVERAGE_NOTE);
     // The record without a policy is left out, and the client is told.
     expect(issues).toContainEqual(expect.objectContaining({ severity: "warning", diagnostics: expect.stringMatching(/^1 consent record\(s\) were left out/) }));
     expect(json.total).toBeUndefined();
   });
 
-  it("searching by the merged-away record matches nothing and names the kept record", async () => {
-    const { call } = setup();
-    const { json } = await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_M.fhir_id}`, DOCTOR);
-    expect(ids(json)).toEqual([]);
-    expect(outcomes(json).some((i) => String(i.diagnostics).includes(`Patient/${PATIENT_A.fhir_id}`))).toBe(true);
-  });
-
   it("a withdrawn consent is kept, served as inactive, and never matches status=active", async () => {
     const { call } = setup();
-    const read = await call(`/fhir/R4/Consent/${A2.id}`, DOCTOR);
+    const read = await call(`/fhir/R4/Consent/${A2.id}`, PAT_A);
     expect(read.status).toBe(200);
     expect(read.json.status).toBe("inactive");
     const p = `patient=Patient/${PATIENT_A.fhir_id}`;
-    expect(ids((await call(`/fhir/R4/Consent?${p}&status=active`, DOCTOR)).json)).toEqual([A1.id, M1.id]);
-    expect(ids((await call(`/fhir/R4/Consent?${p}&status=inactive`, DOCTOR)).json)).toEqual([A2.id]);
-    expect(ids((await call(`/fhir/R4/Consent?${p}&status=http://hl7.org/fhir/consent-state-codes|draft`, DOCTOR)).json)).toEqual([A3.id]);
+    expect(ids((await call(`/fhir/R4/Consent?${p}&status=active`, PAT_A)).json)).toEqual([A1.id]);
+    expect(ids((await call(`/fhir/R4/Consent?${p}&status=inactive`, PAT_A)).json)).toEqual([A2.id]);
+    expect(ids((await call(`/fhir/R4/Consent?${p}&status=http://hl7.org/fhir/consent-state-codes|draft`, PAT_A)).json)).toEqual([A3.id]);
     // A withdrawn record whose status column still said active (the register
     // forbids it; the map is the defence) is still inactive.
     const odd = { ...A2, status: "active" };
     const s = setup({ rpcs: { fhir_consent_directives: directivesRpc([odd]) } });
-    expect((await s.call(`/fhir/R4/Consent/${A2.id}`, DOCTOR)).json.status).toBe("inactive");
-    expect(ids((await s.call(`/fhir/R4/Consent?${p}&status=active`, DOCTOR)).json)).toEqual([]);
+    expect((await s.call(`/fhir/R4/Consent/${A2.id}`, PAT_A)).json.status).toBe("inactive");
+    expect(ids((await s.call(`/fhir/R4/Consent?${p}&status=active`, PAT_A)).json)).toEqual([]);
   });
 
   it("filters by scope, and a code or system outside the value set matches nothing", async () => {
     const { call } = setup();
     const p = `patient=Patient/${PATIENT_A.fhir_id}`;
-    expect(ids((await call(`/fhir/R4/Consent?${p}&scope=research`, DOCTOR)).json)).toEqual([A2.id]);
+    expect(ids((await call(`/fhir/R4/Consent?${p}&scope=research`, PAT_A)).json)).toEqual([A2.id]);
     expect(
-      ids((await call(`/fhir/R4/Consent?${p}&scope=http://terminology.hl7.org/CodeSystem/consentscope|treatment`, DOCTOR)).json),
+      ids((await call(`/fhir/R4/Consent?${p}&scope=http://terminology.hl7.org/CodeSystem/consentscope|treatment`, PAT_A)).json),
     ).toEqual([A3.id]);
     for (const q of ["scope=https://example.org/other|research", "scope=marketing", "status=unknown", "status=withdrawn", "status=https://example.org|active"]) {
-      const res = await call(`/fhir/R4/Consent?${p}&${q}`, DOCTOR);
+      const res = await call(`/fhir/R4/Consent?${p}&${q}`, PAT_A);
       expect(res.status, q).toBe(200);
       expect(ids(res.json), q).toEqual([]);
     }
@@ -804,27 +807,28 @@ describe("Consent at the gateway: searches", () => {
 
   it("searches by _id, alone or with the patient", async () => {
     const { call } = setup();
-    expect(ids((await call(`/fhir/R4/Consent?_id=${A1.id}`, DOCTOR)).json)).toEqual([A1.id]);
-    expect(ids((await call(`/fhir/R4/Consent?_id=${B1.id}&patient=Patient/${PATIENT_A.fhir_id}`, DOCTOR)).json)).toEqual([]);
-    expect(ids((await call(`/fhir/R4/Consent?_id=${M1.id}&patient=Patient/${PATIENT_A.fhir_id}`, DOCTOR)).json)).toEqual([M1.id]);
+    expect(ids((await call(`/fhir/R4/Consent?_id=${A1.id}`, PAT_A)).json)).toEqual([A1.id]);
+    expect(ids((await call(`/fhir/R4/Consent?_id=${A1.id}&patient=Patient/${PATIENT_A.fhir_id}`, PAT_A)).json)).toEqual([A1.id]);
+    expect(ids((await call(`/fhir/R4/Consent?_id=${B1.id}`, PAT_A)).json)).toEqual([]);
+    // Still filed under the record merged into A: not shown to the patient yet (see below).
+    expect(ids((await call(`/fhir/R4/Consent?_id=${M1.id}&patient=Patient/${PATIENT_A.fhir_id}`, PAT_A)).json)).toEqual([]);
   });
 
-  it("refuses a staff search that names neither _id nor patient (anti-enumeration)", async () => {
+  it("refuses every staff search at the permission step, narrowed or not, before the register is read", async () => {
     const { call, directiveCalls, audits } = setup();
-    for (const q of ["", "?status=active", "?scope=research", "?status=inactive&scope=patient-privacy"]) {
+    for (const q of ["", "?status=active", "?scope=research", "?status=inactive&scope=patient-privacy", `?patient=Patient/${PATIENT_A.fhir_id}`]) {
       const res = await call(`/fhir/R4/Consent${q}`, DOCTOR);
       expect(res.status, q).toBe(403);
     }
     expect(directiveCalls()).toEqual([]);
-    expect(audits.every((a) => a.p_denial_reason === "search_not_narrowed")).toBe(true);
+    expect(audits.map((a) => a.p_denial_reason)).toEqual(Array(5).fill("missing_permission"));
   });
 
   it("refuses parameters it does not implement instead of ignoring them", async () => {
     const { call } = setup();
     for (const q of ["category=data-sharing", "date=2026", "subject=Patient/x", "actor=Organization/x", "patient:missing=true"]) {
-      const res = await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}&${q}`, DOCTOR);
-      expect(res.status, q).toBeGreaterThanOrEqual(400);
-      expect(res.status, q).toBeLessThan(500);
+      const res = await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}&${q}`, PAT_A);
+      expect(res.status, q).toBe(400);
     }
   });
 
@@ -834,14 +838,14 @@ describe("Consent at the gateway: searches", () => {
     let warnings = 0;
     let path: string | null = `/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}&_count=1`;
     for (let i = 0; path && i < 10; i++) {
-      const { status, json } = await call(path, DOCTOR);
+      const { status, json } = await call(path, PAT_A);
       expect(status).toBe(200);
       seen.push(...ids(json));
       warnings += outcomes(json).filter((o) => o.severity === "warning").length;
       const next = (json.link as Json[]).find((l) => l.relation === "next");
       path = next ? new URL(next.url).pathname + new URL(next.url).search : null;
     }
-    expect(seen).toEqual([A1.id, A2.id, A3.id, M1.id]);
+    expect(seen).toEqual([A1.id, A2.id, A3.id]);
     expect(warnings).toBe(1);
   });
 });
@@ -849,19 +853,20 @@ describe("Consent at the gateway: searches", () => {
 describe("Consent at the gateway: ids and failures", () => {
   it("answers an invalid id with 404 without calling the database, and a bad _id with 400", async () => {
     const { call, directiveCalls } = setup();
-    const res = await call("/fhir/R4/Consent/not-a-uuid", DOCTOR);
+    const res = await call("/fhir/R4/Consent/not-a-uuid", PAT_A);
     expect(res.status).toBe(404);
     expect(directiveCalls()).toEqual([]);
-    expect((await call("/fhir/R4/Consent?_id=bad!!", DOCTOR)).status).toBe(400);
-    expect(ids((await call("/fhir/R4/Consent?_id=not-a-uuid", DOCTOR)).json)).toEqual([]);
-    expect((await call("/fhir/R4/Consent/c0a5e000-0000-4000-8000-0000000000ff", DOCTOR)).status).toBe(404);
+    expect((await call("/fhir/R4/Consent?_id=bad!!", PAT_A)).status).toBe(400);
+    expect(ids((await call("/fhir/R4/Consent?_id=not-a-uuid", PAT_A)).json)).toEqual([]);
+    expect((await call("/fhir/R4/Consent/c0a5e000-0000-4000-8000-0000000000ff", PAT_A)).status).toBe(404);
   });
 
-  it("does not publish a record whose patient does not resolve, or one without a policy", async () => {
+  it("does not publish a record without a policy, and a search says it was left out", async () => {
     const { call } = setup();
-    expect((await call(`/fhir/R4/Consent/${ORPHAN.id}`, DOCTOR)).status).toBe(404);
-    expect((await call(`/fhir/R4/Consent/${A_NO_POLICY.id}`, DOCTOR)).status).toBe(404);
-    expect(ids((await call(`/fhir/R4/Consent?_id=${ORPHAN.id}`, DOCTOR)).json)).toEqual([]);
+    expect((await call(`/fhir/R4/Consent/${A_NO_POLICY.id}`, PAT_A)).status).toBe(404);
+    const search = (await call(`/fhir/R4/Consent?_id=${A_NO_POLICY.id}`, PAT_A)).json;
+    expect(ids(search)).toEqual([]);
+    expect(outcomes(search)).toContainEqual(withheldNote(1));
   });
 
   it("a directive with a rule for a kind of recipient is served with that rule, or said not to be: never without it", async () => {
@@ -871,9 +876,9 @@ describe("Consent at the gateway: ids and failures", () => {
       reference: { display: "External system" },
     };
     const pC = `patient=Patient/${PATIENT_C.fhir_id}`;
-    const readC1 = await call(`/fhir/R4/Consent/${C1.id}`, DOCTOR);
-    const readC2 = await call(`/fhir/R4/Consent/${C2.id}`, AUDITOR);
-    const search = (await call(`/fhir/R4/Consent?${pC}`, DOCTOR)).json;
+    const readC1 = await call(`/fhir/R4/Consent/${C1.id}`, PAT_C);
+    const readC2 = await call(`/fhir/R4/Consent/${C2.id}`, PAT_C);
+    const search = (await call(`/fhir/R4/Consent?${pC}`, PAT_C)).json;
     if (ACTOR_RULES_SERVED) {
       // The shared checker takes the actor's Reference: served whole.
       expect(readC1.status).toBe(200);
@@ -897,8 +902,8 @@ describe("Consent at the gateway: ids and failures", () => {
       expect(outcomes(search)).toContainEqual(actorRulesNote(2));
       expect(outcomes(search).some((o) => /valid FHIR/.test(String(o.diagnostics)))).toBe(false);
       // The count follows the search's own filters.
-      expect(outcomes((await call(`/fhir/R4/Consent?${pC}&status=inactive`, DOCTOR)).json).filter((o) => o.severity === "warning")).toEqual([]);
-      expect(outcomes((await call(`/fhir/R4/Consent?_id=${C2.id}`, DOCTOR)).json)).toContainEqual(actorRulesNote(1));
+      expect(outcomes((await call(`/fhir/R4/Consent?${pC}&status=inactive`, PAT_C)).json).filter((o) => o.severity === "warning")).toEqual([]);
+      expect(outcomes((await call(`/fhir/R4/Consent?_id=${C2.id}`, PAT_C)).json)).toContainEqual(actorRulesNote(1));
       // The gateway never had to hold back an invalid resource.
       expect(logs.join("\n")).not.toContain("invalid_resource");
     }
@@ -913,8 +918,8 @@ describe("Consent at the gateway: ids and failures", () => {
     const permit = { ...good, id: "c0a5e000-0000-4000-8000-00000000000b", provisions: [{ ...PROVISION_PERMIT, actor_type: "organization", ...NAMED }] };
     const deny = { ...good, id: "c0a5e000-0000-4000-8000-00000000000c", provisions: [{ ...PROVISION_DENY, actor_type: "organization", ...NAMED }] };
     const { call, served } = setup({ rpcs: { fhir_consent_directives: directivesRpc([good, permit, deny]) } });
-    for (const r of [permit, deny]) expect((await call(`/fhir/R4/Consent/${r.id}`, DOCTOR)).status, r.id).toBe(404);
-    const { json } = await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_C.fhir_id}`, DOCTOR);
+    for (const r of [permit, deny]) expect((await call(`/fhir/R4/Consent/${r.id}`, PAT_C)).status, r.id).toBe(404);
+    const { json } = await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_C.fhir_id}`, PAT_C);
     expect(ids(json)).toEqual([good.id]);
     expect(outcomes(json)).toContainEqual(withheldNote(2));
     expect(served.join("\n")).not.toContain(ACTOR_REFERENCE);
@@ -929,7 +934,7 @@ describe("Consent at the gateway: ids and failures", () => {
     const { call } = setup({
       rpcs: { fhir_consent_directives: () => new Response(JSON.stringify({ code: "42P01", message: "relation interop.consent_records" }), { status: 500 }) },
     });
-    const res = await call(`/fhir/R4/Consent/${A1.id}`, DOCTOR);
+    const res = await call(`/fhir/R4/Consent/${A1.id}`, PAT_A);
     expect(res.status).toBe(503);
     expect(JSON.stringify(res.json)).not.toMatch(/interop|consent_records|42P01/);
   });
@@ -994,13 +999,8 @@ describe("Consent at the gateway: patient self-access", () => {
     const read = await call(`/fhir/R4/Consent/${M1.id}`, PAT_A);
     expect(read.status).toBe(404);
     expect(JSON.stringify(read.json)).not.toContain(PATIENT_M.id);
-    // Staff searching by the kept record do see it, under the kept record,
-    // with the staff note.
-    const staff = (await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}`, DOCTOR)).json;
-    expect(ids(staff)).toContain(M1.id);
-    expect(matches(staff).find((r) => r.id === M1.id)?.patient).toEqual({ reference: `Patient/${PATIENT_A.fhir_id}` });
-    expect(outcomes(staff)).toContainEqual(CONSENT_COVERAGE_NOTE);
-    expect(outcomes(staff)).not.toContainEqual(CONSENT_COVERAGE_NOTE_PATIENT);
+    // Staff do not see it either: no staff account reads consents (owner decision: only what the app shows).
+    expect((await call(`/fhir/R4/Consent?patient=Patient/${PATIENT_A.fhir_id}`, DOCTOR)).status).toBe(403);
   });
 
   it("never names a merged-away record in a patient's call, so the database's check is the only thing that could widen it", async () => {
@@ -1023,14 +1023,16 @@ describe("Consent at the gateway: nothing forbidden is served", () => {
     const { call, served, logs } = setup();
     const pA = `patient=Patient/${PATIENT_A.fhir_id}`;
     for (const [path, token] of [
+      [`/fhir/R4/Consent/${A1.id}`, PAT_A],
+      [`/fhir/R4/Consent/${A3.id}`, PAT_A],
+      [`/fhir/R4/Consent/${C1.id}`, PAT_C],
+      [`/fhir/R4/Consent?${pA}`, PAT_A],
+      [`/fhir/R4/Consent?${pA}&status=inactive`, PAT_A],
+      [`/fhir/R4/Consent?patient=Patient/${PATIENT_C.fhir_id}`, PAT_C],
+      [`/fhir/R4/Consent?_id=${A_NO_POLICY.id}`, PAT_A],
       [`/fhir/R4/Consent/${A1.id}`, DOCTOR],
       [`/fhir/R4/Consent/${A2.id}`, NURSE],
-      [`/fhir/R4/Consent/${A3.id}`, AUDITOR],
-      [`/fhir/R4/Consent/${C1.id}`, DOCTOR],
-      [`/fhir/R4/Consent?${pA}`, DOCTOR],
-      [`/fhir/R4/Consent?${pA}&status=inactive`, DOCTOR],
-      [`/fhir/R4/Consent?patient=Patient/${PATIENT_C.fhir_id}`, DOCTOR],
-      [`/fhir/R4/Consent?_id=${ORPHAN.id}`, DOCTOR],
+      [`/fhir/R4/Consent?${pA}`, AUDITOR],
       ["/fhir/R4/Consent", PAT_A],
       [`/fhir/R4/Consent/${A2.id}`, PAT_A],
       [`/fhir/R4/Consent/${B1.id}`, PAT_A],
