@@ -69,3 +69,31 @@ export async function edgeFunctionErrorBody(
     return null;
   }
 }
+
+/**
+ * The whole JSON object the function replied with, or null when the reply
+ * was not a JSON object (or there was no reply). Reads the body at most
+ * once, so call either this or edgeFunctionErrorBody for an error, not both.
+ */
+export async function edgeFunctionJsonBody(
+  error: unknown,
+): Promise<Record<string, unknown> | null> {
+  if (!error || typeof error !== "object") return null;
+  const context = (error as { context?: unknown }).context as
+    | { json?: unknown; bodyUsed?: unknown }
+    | null
+    | undefined;
+  if (!context || typeof context !== "object") return null;
+  if (typeof context.json !== "function" || context.bodyUsed === true) {
+    return null;
+  }
+  try {
+    const body = (await (context.json as () => Promise<unknown>).call(
+      context,
+    )) as unknown;
+    if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+    return body as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}

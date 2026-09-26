@@ -28,14 +28,41 @@ export type StaffFormErrors = Partial<Record<StaffFormField, string>>;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** Longest full name and email the server accepts. */
+const NAME_MAX = 120;
+const EMAIL_MAX = 254;
+
 /**
- * Checks a staff account form. When editing, the PIN may be left blank to
- * keep the current one; when adding, a PIN is required.
+ * The problem with a full name for an online staff account, or undefined.
+ * The same rules as the server: 2 to 120 characters after collapsing
+ * spaces, and no < or >.
+ */
+export function staffNameError(fullName: string): string | undefined {
+  const name = fullName.replace(/\s+/g, " ").trim();
+  if (!name) return "Enter the person's full name.";
+  if (name.length < 2) return "Enter the full name, not initials.";
+  if (name.length > NAME_MAX || /[<>]/.test(name)) {
+    return "Enter their full name (2 to 120 characters, no < or >).";
+  }
+  return undefined;
+}
+
+/**
+ * Checks a staff account form.
+ * - "create" and "edit": the account on this device. When editing, the PIN
+ *   may be left blank to keep the current one; when adding, a PIN is
+ *   required.
+ * - "invite": Add Staff online. The email is required and the role must be
+ *   one of `allowedRoles` (the server's list). PIN and phone are not part of
+ *   an invitation and are ignored.
  */
 export function validateStaffForm(
   values: StaffFormValues,
-  mode: "create" | "edit",
+  mode: "create" | "edit" | "invite",
+  allowedRoles?: readonly string[],
 ): StaffFormErrors {
+  if (mode === "invite") return validateInvite(values, allowedRoles ?? ASSIGNABLE_ROLES);
+
   const errors: StaffFormErrors = {};
   const name = values.fullName.trim();
 
@@ -68,6 +95,27 @@ export function validateStaffForm(
     }
   }
 
+  return errors;
+}
+
+function validateInvite(
+  values: StaffFormValues,
+  allowedRoles: readonly string[],
+): StaffFormErrors {
+  const errors: StaffFormErrors = {};
+  const nameError = staffNameError(values.fullName);
+  if (nameError) errors.fullName = nameError;
+
+  const email = values.email.trim();
+  if (!email) {
+    errors.email = "Enter their email address. Their invitation is sent there.";
+  } else if (!EMAIL_PATTERN.test(email) || email.length > EMAIL_MAX) {
+    errors.email = "Enter an email address like name@example.com.";
+  }
+
+  if (!allowedRoles.includes(values.role)) {
+    errors.role = "Choose one of the listed roles.";
+  }
   return errors;
 }
 

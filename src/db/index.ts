@@ -35,7 +35,8 @@ export interface User {
   adminAccess?: boolean;
   adminPermanent?: boolean;
   // Device-local, never uploaded: who last saved this account on the Users
-  // screen. Only such a save uploads role and admin access.
+  // screen. Uploads don't depend on it: a device never uploads a staff
+  // member's role or admin flags (uploadPayload in src/sync/adapter.ts).
   _staffEditBy?: string;
   createdAt: Date;
   updatedAt: Date;

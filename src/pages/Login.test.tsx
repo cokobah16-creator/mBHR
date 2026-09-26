@@ -76,6 +76,8 @@ function renderLogin() {
 const NOT_SET_UP = "This device hasn't been set up for mBHR yet.";
 const NO_PINS =
   "Offline sign-in hasn't been set up on this device yet. Sign in online once to create your offline PIN.";
+const NEW_STAFF_NOTE =
+  "New staff member? Your administrator creates your account and emails you a link to set your password. You can't create a staff account yourself.";
 
 const ada = {
   id: "u-ada",
@@ -348,9 +350,48 @@ describe("Login explains refusals and replaces a forgotten PIN", () => {
 
     expect(await screen.findByText("This is not a staff account")).toBeInTheDocument();
     expect(
+      screen.getByText(/If you're staff, ask your administrator to check your account under Users\./),
+    ).toBeInTheDocument();
+    expect(
       screen.queryByRole("heading", { name: "Choose a PIN for this device" }),
     ).not.toBeInTheDocument();
     expect(mocks.setDevicePin).not.toHaveBeenCalled();
+  });
+
+  it("says an administrator disabled the account, not that the password is wrong", async () => {
+    authState.loginOnline.mockImplementation(async () => {
+      authState.signInRefusal = "account_disabled";
+      return false;
+    });
+    renderLogin();
+    await screen.findByText("Who's signing in?");
+    fireEvent.click(screen.getByRole("button", { name: "Online" }));
+    signInOnline();
+
+    expect(await screen.findByText("This account has been disabled")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "An administrator has disabled your staff account. Ask them if you think this is wrong.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Invalid email or password")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Failed attempts/)).not.toBeInTheDocument();
+  });
+
+  it("tells new staff their administrator creates their account, in the online form only", async () => {
+    renderLogin();
+    await screen.findByText("Who's signing in?");
+    expect(screen.queryByText(NEW_STAFF_NOTE)).not.toBeInTheDocument();
+
+    // The PIN form for a chosen person does not show it.
+    fireEvent.click(screen.getByRole("button", { name: /Ada Okafor/ }));
+    expect(screen.getByLabelText("PIN")).toBeInTheDocument();
+    expect(screen.queryByText(NEW_STAFF_NOTE)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Online" }));
+    expect(screen.getByText(NEW_STAFF_NOTE)).toBeInTheDocument();
+    // The note is not a label: the password field is still the only match.
+    expect(screen.getAllByLabelText(/password/i)).toHaveLength(1);
   });
 
   it("Forgot PIN: signs in online, then asks for a new PIN even though one exists", async () => {

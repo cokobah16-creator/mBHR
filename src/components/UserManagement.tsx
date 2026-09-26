@@ -6,7 +6,7 @@ import { devicePinFields, clearDevicePin } from "@/db/devicePin";
 import { hasDevicePin } from "@/db/offlineAccess";
 import { countOtherActiveAdmins, LAST_ADMIN_MESSAGE } from "@/db/firstRun";
 import { can, getRoleDisplayName } from "@/auth/roles";
-import { supabase } from "@/lib/supabase";
+import { pullStaffRoster } from "@/sync/staffRoster";
 import { formatNigerianDate } from "@/utils/dateFormat";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -22,6 +22,34 @@ import {
   type StaffFormValues,
 } from "@/features/admin/staffForm";
 import {
+  disableStaffAccount,
+  resendInvitation,
+  sendPasswordReset,
+  type AccountView,
+} from "@/services/staffAccounts";
+import { useStaffAccounts, type StaffScreenState } from "@/features/admin/useStaffAccounts";
+import {
+  adminRoleIsOneWay,
+  disableResultMessage,
+  mergeStaffRows,
+  resendResultMessage,
+  resetPasswordResultMessage,
+  roleName,
+  rowActions,
+  STAFF_COPY,
+  type RowAction,
+  type RowActionKind,
+  type StaffMessage,
+  type StaffRow,
+} from "@/features/admin/staffAccountView";
+import StaffStatusBadge from "@/features/admin/StaffStatusBadge";
+import InviteStaffDialog from "@/features/admin/InviteStaffDialog";
+import EditStaffAccountDialog from "@/features/admin/EditStaffAccountDialog";
+import StaffLoginStatusDialog from "@/features/admin/StaffLoginStatusDialog";
+import ReactivateDialog from "@/features/admin/ReactivateDialog";
+import AccountHealthPanel from "@/features/admin/AccountHealthPanel";
+import CreateLoginDialog from "@/features/admin/CreateLoginDialog";
+import {
   UserPlusIcon,
   PencilIcon,
   TrashIcon,
@@ -29,6 +57,10 @@ import {
   NoSymbolIcon,
   CheckCircleIcon,
   KeyIcon,
+  EnvelopeIcon,
+  ArrowPathIcon,
+  InformationCircleIcon,
+  ArchiveBoxIcon,
 } from "@heroicons/react/24/outline";
 
 type FormState = StaffFormValues & {
@@ -47,24 +79,100 @@ const EMPTY_FORM: FormState = {
   adminPermanent: false,
 };
 
+/** Server actions that ask for confirmation on this screen. */
+type PendingServerAction = {
+  action: "disable" | "resend_invitation" | "reset_password";
+  row: StaffRow;
+  account: AccountView;
+};
+
+/** The server-mode dialog that is open, if any. */
+type ServerDialog =
+  | { kind: "invite" }
+  | { kind: "edit_account"; account: AccountView }
+  | { kind: "login_status"; row: StaffRow }
+  | { kind: "reactivate"; row: StaffRow; account: AccountView }
+  | { kind: "create_login"; account: AccountView };
+
+const ACTION_ICONS: Record<RowActionKind, typeof PencilIcon> = {
+  edit_account: PencilIcon,
+  resend_invitation: ArrowPathIcon,
+  reset_password: EnvelopeIcon,
+  login_status: InformationCircleIcon,
+  disable: NoSymbolIcon,
+  reactivate: CheckCircleIcon,
+  create_login: UserPlusIcon,
+  edit_on_device: KeyIcon,
+  reset_device_pin: KeyIcon,
+  deactivate_on_device: NoSymbolIcon,
+  activate_on_device: CheckCircleIcon,
+  delete: TrashIcon,
+  retire_device_record: ArchiveBoxIcon,
+};
+
+/** Only the PIN problems of a form check. */
+function pinErrors(found: StaffFormErrors): StaffFormErrors {
+  const out: StaffFormErrors = {};
+  if (found.pin) out.pin = found.pin;
+  if (found.confirmPin) out.confirmPin = found.confirmPin;
+  return out;
+}
+
 function errorName(error: unknown) {
   return error instanceof Error ? error.name : error;
 }
 
+/** The line above the staff list for a server-mode screen state, or null. */
+function screenStateText(state: StaffScreenState, failureMessage: string | null): string | null {
+  switch (state) {
+    case "device_mode":
+    case "ready":
+      return null;
+    case "error":
+      return failureMessage || STAFF_COPY.state.error;
+    default:
+      return STAFF_COPY.state[state];
+  }
+}
+
+function screenStateBanner(state: StaffScreenState): string {
+  if (state === "checking") return "banner-info";
+  if (state === "unreachable" || state === "error") return "banner-danger";
+  return "banner-warning";
+}
+
+function sameId(a: string | null | undefined, b: string | null | undefined): boolean {
+  return !!a && !!b && a.toLowerCase() === b.toLowerCase();
+}
+
 /**
- * Staff accounts stored on this device. PINs are only ever typed in: they
- * are stored as PBKDF2 hashes and never shown again after they are set.
+ * Staff accounts.
+ *
+ * - Device mode (this device has no server): staff records live on this
+ *   device only, each with a PIN, as before.
+ * - Server mode: accounts are created, invited, disabled and reactivated
+ *   through the server's staff account service. Each person chooses their
+ *   own PIN on a device at their first online sign-in; an administrator can
+ *   still set or reset a PIN on this device. PINs are only ever typed in:
+ *   they are stored as PBKDF2 hashes and never shown again after they are
+ *   set.
  */
 export function UserManagement() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const { push: pushToast } = useToast();
   const canManage = !!currentUser && can(currentUser.role, "users");
 
+  const staff = useStaffAccounts();
+  const serverMode = staff.state !== "device_mode";
+  const serverReady = serverMode && staff.state === "ready" && !!staff.overview;
+
   const [users, setUsers] = useState<User[] | null>(null);
   const [loadError, setLoadError] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  /** The form sets only this device's PIN (a record the server owns). */
+  const [pinOnly, setPinOnly] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<StaffFormErrors>({});
   const [formError, setFormError] = useState("");
@@ -77,6 +185,11 @@ export function UserManagement() {
   const [pendingPinReset, setPendingPinReset] = useState<User | null>(null);
   const [pinResetBusy, setPinResetBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [pendingRetire, setPendingRetire] = useState<User | null>(null);
+
+  const [serverDialog, setServerDialog] = useState<ServerDialog | null>(null);
+  const [pendingServer, setPendingServer] = useState<PendingServerAction | null>(null);
+  const [serverBusy, setServerBusy] = useState(false);
 
   const loadUsers = useCallback(async () => {
     try {
@@ -94,6 +207,24 @@ export function UserManagement() {
     loadUsers();
   }, [loadUsers]);
 
+  const rows = mergeStaffRows(users ?? [], serverMode ? staff.overview : null);
+
+  const showMessage = (message: StaffMessage) => {
+    pushToast({ id: generateId(), ...message });
+  };
+
+  /**
+   * After the server changed an account: bring the staff directory down to
+   * this device, then read the server's list and this device's records
+   * again. The list is read first so that a newly downloaded record never
+   * shows beside an older list that does not have it yet.
+   */
+  const refreshAfterServerChange = async () => {
+    await pullStaffRoster();
+    await staff.reload();
+    await loadUsers();
+  };
+
   const denied = () =>
     pushToast({
       id: generateId(),
@@ -108,18 +239,22 @@ export function UserManagement() {
     setFormError("");
     setShowForm(false);
     setEditingUser(null);
+    setPinOnly(false);
     setConfirmRoleChange(false);
   };
 
   const openCreate = () => {
+    // Server mode adds staff with Add Staff (an invitation), never here.
+    if (serverMode) return;
     setForm(EMPTY_FORM);
     setErrors({});
     setFormError("");
     setEditingUser(null);
+    setPinOnly(false);
     setShowForm(true);
   };
 
-  const startEdit = (user: User) => {
+  const startEdit = (user: User, onlyPin = false) => {
     setForm({
       fullName: user.fullName,
       role: user.role,
@@ -133,6 +268,7 @@ export function UserManagement() {
     setErrors({});
     setFormError("");
     setEditingUser(user);
+    setPinOnly(onlyPin);
     setShowForm(true);
   };
 
@@ -141,6 +277,23 @@ export function UserManagement() {
     setFormError("");
     if (!canManage) {
       denied();
+      return;
+    }
+
+    if (pinOnly) {
+      // Name, role and contact details belong to the online account: only
+      // the PIN on this device is checked and saved.
+      const found = pinErrors(validateStaffForm(form, "create"));
+      setErrors(found);
+      if (Object.keys(found).length > 0) {
+        setFormError("Check the highlighted fields.");
+        return;
+      }
+      if (editingUser?.adminPermanent && !currentUser?.adminPermanent) {
+        setFormError("Only a permanent admin can change a permanent admin account.");
+        return;
+      }
+      void savePin();
       return;
     }
 
@@ -174,9 +327,39 @@ export function UserManagement() {
     save();
   };
 
+  /** Sets someone's PIN on this device only; their account is not changed. */
+  const savePin = async () => {
+    const target = editingUser;
+    if (!target) return;
+    setSaving(true);
+    setFormError("");
+    try {
+      const pinFields = await devicePinFields(form.pin, form.confirmPin);
+      await db.users.update(target.id, pinFields);
+      pushToast({
+        id: generateId(),
+        tone: "success",
+        title: "Device PIN set",
+        body: `A new PIN is set for ${target.fullName} on this device.`,
+      });
+      resetForm();
+      await loadUsers();
+    } catch (error) {
+      console.error("Error setting device PIN:", errorName(error));
+      setFormError("The PIN was not saved. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const save = async () => {
     if (!canManage) {
       denied();
+      return;
+    }
+    if (serverMode && !editingUser) {
+      // New staff are added online with Add Staff, never on this device.
+      setFormError("Use Add Staff to add someone.");
       return;
     }
     setSaving(true);
@@ -281,7 +464,9 @@ export function UserManagement() {
         id: generateId(),
         tone: "success",
         title: "Device PIN reset",
-        body: `${user.fullName} chooses a new PIN the next time they sign in online here, or you can set one with Edit.`,
+        body: serverMode
+          ? `${user.fullName} chooses a new PIN the next time they sign in online here, or you can set one with ${STAFF_COPY.action.set_device_pin}.`
+          : `${user.fullName} chooses a new PIN the next time they sign in online here, or you can set one with Edit.`,
       });
       await loadUsers();
     } catch (error) {
@@ -298,7 +483,15 @@ export function UserManagement() {
     }
   };
 
-  const setActive = async (user: User, active: boolean) => {
+  /**
+   * Switches someone on or off on this device only. `done` replaces the
+   * usual confirmation (Retire device-only record uses its own).
+   */
+  const setActive = async (
+    user: User,
+    active: boolean,
+    done?: { title: string; body: string },
+  ) => {
     if (!canManage) {
       denied();
       return;
@@ -335,10 +528,12 @@ export function UserManagement() {
       pushToast({
         id: generateId(),
         tone: "success",
-        title: active ? "Account activated" : "Account deactivated",
-        body: active
-          ? `${user.fullName} can sign in on this device again.`
-          : `${user.fullName} can no longer sign in on this device.`,
+        title: done?.title ?? (active ? "Account activated" : "Account deactivated"),
+        body:
+          done?.body ??
+          (active
+            ? `${user.fullName} can sign in on this device again.`
+            : `${user.fullName} can no longer sign in on this device.`),
       });
       await loadUsers();
     } catch (error) {
@@ -348,6 +543,16 @@ export function UserManagement() {
       setStatusBusy(false);
       setPendingStatusUser(null);
     }
+  };
+
+  const retireDeviceRecord = async () => {
+    const target = pendingRetire;
+    if (!target) return;
+    await setActive(target, false, {
+      title: STAFF_COPY.retire.doneTitle,
+      body: STAFF_COPY.retire.done(target.fullName),
+    });
+    setPendingRetire(null);
   };
 
   const deleteUser = async () => {
@@ -370,6 +575,12 @@ export function UserManagement() {
       refuse("Permanent admin accounts cannot be deleted.");
       return;
     }
+    // In server mode only a record that exists on this device alone can be
+    // deleted; an online account is disabled instead.
+    if (serverMode && rows.find((r) => r.id === target.id)?.source !== "device_only") {
+      refuse("This person has an online account. Use Disable to stop them signing in.");
+      return;
+    }
 
     setDeleting(true);
     try {
@@ -380,44 +591,13 @@ export function UserManagement() {
 
       await db.users.delete(target.id);
 
-      // Staff accounts sync through the server's app_users table. Ask for the
-      // deleted row back: row-level security can silently match nothing.
-      let serverResult: "none" | "removed" | "not_removed" = "none";
-      if (supabase) {
-        try {
-          const { data, error } = await supabase
-            .from("app_users")
-            .delete()
-            .eq("id", target.id)
-            .select("id");
-          serverResult = !error && (data?.length ?? 0) > 0 ? "removed" : "not_removed";
-        } catch (error) {
-          console.error("Error deleting user on server:", errorName(error));
-          serverResult = "not_removed";
-        }
-      }
-
       setPendingDeleteUser(null);
-      const otherDevices =
-        " Other devices switch the account off the next time someone signs in online there; until then it may still unlock them with its PIN.";
-      if (serverResult === "not_removed") {
-        pushToast({
-          id: generateId(),
-          tone: "warning",
-          title: "Deleted on this device only",
-          body: `${target.fullName} was removed here, but the server copy was not removed (offline, not permitted, or not on the server). The account may come back after the next sync; delete it again when online.${otherDevices}`,
-        });
-      } else {
-        pushToast({
-          id: generateId(),
-          tone: "success",
-          title: "Account deleted",
-          body:
-            serverResult === "removed"
-              ? `${target.fullName} was removed from this device and from the server.${otherDevices}`
-              : `${target.fullName} was removed from this device.`,
-        });
-      }
+      pushToast({
+        id: generateId(),
+        tone: "success",
+        title: "Account deleted",
+        body: `${target.fullName} was removed from this device.`,
+      });
       await loadUsers();
     } catch (error) {
       console.error("Error deleting user:", errorName(error));
@@ -426,6 +606,137 @@ export function UserManagement() {
       setDeleting(false);
     }
   };
+
+  // ---------------------------------------------------------------------------
+  // Server actions
+
+  const runServerAction = async () => {
+    const pending = pendingServer;
+    if (!pending || serverBusy) return;
+    if (!canManage) {
+      denied();
+      setPendingServer(null);
+      return;
+    }
+    const { action, account } = pending;
+    const name = pending.row.fullName || account.fullName;
+    const email = account.email || "their email address";
+    setServerBusy(true);
+    try {
+      if (action === "disable") {
+        const result = await disableStaffAccount(account.userId);
+        if (result.ok === false) {
+          showMessage({ tone: "error", title: STAFF_COPY.disable.failedTitle, body: result.message });
+          return;
+        }
+        showMessage(disableResultMessage(name, result.data.rowUpdated));
+        setPendingServer(null);
+        // Never switched off here by hand: the directory download brings
+        // the disabled account to this device, like every other device.
+        await refreshAfterServerChange();
+        return;
+      }
+      if (action === "resend_invitation") {
+        const result = await resendInvitation(account.userId);
+        if (result.ok === false) {
+          showMessage({ tone: "error", title: STAFF_COPY.resend.failedTitle, body: result.message });
+          return;
+        }
+        showMessage(resendResultMessage(email, result.data.invitation));
+        setPendingServer(null);
+        await staff.reload();
+        return;
+      }
+      const result = await sendPasswordReset(account.userId);
+      if (result.ok === false) {
+        showMessage({
+          tone: "error",
+          title: STAFF_COPY.resetPassword.failedTitle,
+          body: result.message,
+        });
+        return;
+      }
+      showMessage(resetPasswordResultMessage(email, result.data.invitation));
+    } finally {
+      setServerBusy(false);
+      setPendingServer(null);
+    }
+  };
+
+  /** Reactivated on the server: undo a deactivation by hand on this device. */
+  const afterReactivate = async (row: StaffRow, message: StaffMessage) => {
+    showMessage(message);
+    const device = row.device;
+    if (device && (device.disabledLocallyAt || device.accessConflict === 1)) {
+      try {
+        await db.users.update(device.id, {
+          isActive: 1,
+          disabledLocallyAt: undefined,
+          accessConflict: 0,
+          updatedAt: new Date(),
+        });
+      } catch (error) {
+        console.error("Error clearing the deactivation on this device:", errorName(error));
+      }
+    }
+    await refreshAfterServerChange();
+  };
+
+  const afterServerChange = (message: StaffMessage) => {
+    showMessage(message);
+    void refreshAfterServerChange();
+  };
+
+  const runRowAction = (row: StaffRow, kind: RowActionKind) => {
+    if (!canManage) {
+      denied();
+      return;
+    }
+    const account = row.account;
+    const device = row.device;
+    switch (kind) {
+      case "edit_account":
+        if (account) setServerDialog({ kind: "edit_account", account });
+        return;
+      case "resend_invitation":
+      case "reset_password":
+      case "disable":
+        if (account) setPendingServer({ action: kind, row, account });
+        return;
+      case "login_status":
+        setServerDialog({ kind: "login_status", row });
+        return;
+      case "reactivate":
+        if (account) setServerDialog({ kind: "reactivate", row, account });
+        return;
+      case "create_login":
+        if (account) setServerDialog({ kind: "create_login", account });
+        return;
+      case "edit_on_device":
+        // Only a record that exists on this device alone is edited in full;
+        // for everyone else this form sets their PIN here.
+        if (device) startEdit(device, row.source !== "device_only");
+        return;
+      case "reset_device_pin":
+        if (device) setPendingPinReset(device);
+        return;
+      case "deactivate_on_device":
+        if (device) setPendingStatusUser(device);
+        return;
+      case "activate_on_device":
+        if (device) void setActive(device, true);
+        return;
+      case "delete":
+        if (device) setPendingDeleteUser(device);
+        return;
+      case "retire_device_record":
+        if (device) setPendingRetire(device);
+        return;
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Rendering
 
   const isEditing = !!editingUser;
   const roleOptions = ASSIGNABLE_ROLES.includes(form.role)
@@ -452,6 +763,7 @@ export function UserManagement() {
   const canChangeStatus = (u: User) => u.id !== currentUser?.id && !u.adminPermanent;
   const canDeleteUser = (u: User) => u.id !== currentUser?.id && !u.adminPermanent;
 
+  /** Device mode: the actions on a record on this device. */
   const renderActions = (u: User, compact = false) => {
     const editable = canEditUser(u);
     const statusable = canChangeStatus(u);
@@ -521,16 +833,73 @@ export function UserManagement() {
     );
   };
 
-  const renderAdminFlags = (u: User) => (
+  /** Server mode: the actions a row offers (rowActions). */
+  const renderRowActions = (row: StaffRow, compact = false) => {
+    if (!canManage) return null;
+    const actions: RowAction[] = rowActions(row, {
+      currentUserId: currentUser?.id,
+      currentUserPermanent:
+        staff.overview?.caller?.adminPermanent ?? !!currentUser?.adminPermanent,
+      serverReady,
+      online: typeof navigator === "undefined" || navigator.onLine !== false,
+      offeredRoles: staff.overview?.roles ?? [],
+    });
+    if (actions.length === 0) {
+      const permanent = row.account?.adminPermanent || row.device?.adminPermanent;
+      return permanent ? (
+        <span className="text-caption text-ink-muted">Protected account</span>
+      ) : null;
+    }
+    return (
+      <div className={`flex flex-wrap items-center gap-1 ${compact ? "" : "justify-end"}`}>
+        {actions.map((a) => {
+          const Icon = ACTION_ICONS[a.kind];
+          // Records the server owns only get their PIN set on this device.
+          const label =
+            a.kind === "edit_on_device" && row.source !== "device_only"
+              ? STAFF_COPY.action.set_device_pin
+              : a.label;
+          return (
+            <button
+              key={a.kind}
+              type="button"
+              onClick={() => runRowAction(row, a.kind)}
+              disabled={a.kind === "activate_on_device" && statusBusy}
+              className={a.danger ? "btn-ghost text-danger-fg hover:text-danger-fg" : "btn-ghost"}
+              aria-label={`${label}, ${row.fullName}`}
+            >
+              <Icon className="h-4 w-4" aria-hidden />
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderAdminFlags = (f: { adminAccess?: boolean; adminPermanent?: boolean }) => (
     <div className="flex flex-wrap gap-1">
-      {u.adminPermanent && <StatusBadge tone="info">Permanent admin</StatusBadge>}
-      {u.adminAccess && <StatusBadge>Admin access</StatusBadge>}
-      {!u.adminAccess && !u.adminPermanent && (
+      {f.adminPermanent && <StatusBadge tone="info">Permanent admin</StatusBadge>}
+      {f.adminAccess && <StatusBadge>Admin access</StatusBadge>}
+      {!f.adminAccess && !f.adminPermanent && (
         <span className="text-caption text-ink-muted">None</span>
       )}
     </div>
   );
 
+  const keepDeactivatedButton = (u: User) =>
+    canManage ? (
+      <button
+        type="button"
+        onClick={() => keepDeactivated(u)}
+        className="btn-ghost"
+        aria-label={`Keep ${u.fullName} deactivated`}
+      >
+        Keep deactivated
+      </button>
+    ) : null;
+
+  /** Device mode: the record's status on this device. */
   const renderStatus = (u: User) =>
     u.accessConflict === 1 ? (
       <span className="flex flex-col items-start gap-1">
@@ -540,16 +909,7 @@ export function UserManagement() {
         <span className="text-caption text-ink-muted">
           Deactivated on this device, still active online.
         </span>
-        {canManage && (
-          <button
-            type="button"
-            onClick={() => keepDeactivated(u)}
-            className="btn-ghost"
-            aria-label={`Keep ${u.fullName} deactivated`}
-          >
-            Keep deactivated
-          </button>
-        )}
+        {keepDeactivatedButton(u)}
       </span>
     ) : u.isActive === 1 ? (
       <StatusBadge tone="success" icon>
@@ -561,16 +921,87 @@ export function UserManagement() {
       </StatusBadge>
     );
 
-  const renderOfflineAccess = (u: User) =>
-    hasDevicePin(u) ? (
+  /**
+   * Server mode: the account's status, and its record on this device. When
+   * the server says the account is disabled, a record switched off here is
+   * expected and never needs review.
+   */
+  const renderRowStatus = (row: StaffRow) => {
+    const u = row.device;
+    const reviewWithoutAccount = !row.account && u?.accessConflict === 1;
+    const offWithoutAccount = !row.account && !!u && u.isActive === 0 && u.accessConflict !== 1;
+    const review = row.deviceNote === "needs_review" || reviewWithoutAccount;
+    return (
+      <span className="flex flex-col items-start gap-1">
+        <StaffStatusBadge row={row} />
+        {reviewWithoutAccount && (
+          <>
+            <StatusBadge tone="warning" icon>
+              {STAFF_COPY.deviceNote.needs_review}
+            </StatusBadge>
+            <span className="text-caption text-ink-muted">
+              {STAFF_COPY.deviceNote.needs_review_detail}
+            </span>
+          </>
+        )}
+        {offWithoutAccount && (
+          <StatusBadge tone="neutral">{STAFF_COPY.deviceNote.off_on_device}</StatusBadge>
+        )}
+        {review && u && keepDeactivatedButton(u)}
+      </span>
+    );
+  };
+
+  const renderOfflineAccess = (u: User | null) =>
+    u && hasDevicePin(u) ? (
       <StatusBadge tone="success">PIN on this device</StatusBadge>
     ) : (
       <StatusBadge tone="neutral">No PIN here</StatusBadge>
     );
 
+  const statusCell = (row: StaffRow) =>
+    serverMode ? renderRowStatus(row) : row.device ? renderStatus(row.device) : null;
+
+  const actionsCell = (row: StaffRow, compact = false) =>
+    serverMode
+      ? renderRowActions(row, compact)
+      : row.device
+        ? renderActions(row.device, compact)
+        : null;
+
+  const adminFlagsOf = (row: StaffRow) =>
+    row.account
+      ? { adminAccess: row.account.adminAccess, adminPermanent: row.account.adminPermanent }
+      : { adminAccess: !!row.device?.adminAccess, adminPermanent: !!row.device?.adminPermanent };
+
+  const addedOn = (row: StaffRow) =>
+    formatNigerianDate(row.device?.createdAt ?? row.account?.createdAt ?? null);
+
   const oldRole = editingUser?.role;
   const gained = oldRole ? gainedAccess(oldRole, form.role) : [];
   const lost = oldRole ? lostAccess(oldRole, form.role) : [];
+
+  const stateText = serverMode ? screenStateText(staff.state, staff.failureMessage) : null;
+  const canRetry = staff.state === "unreachable" || staff.state === "error";
+  const pendingCopy = pendingServer
+    ? serverConfirmCopy(pendingServer, staff.overview?.roles ?? [])
+    : null;
+  const inviting = serverDialog?.kind === "invite";
+  const editingAccount = serverDialog?.kind === "edit_account" ? serverDialog : null;
+  const viewingLogin = serverDialog?.kind === "login_status" ? serverDialog : null;
+  const reactivating = serverDialog?.kind === "reactivate" ? serverDialog : null;
+  const creatingLogin = serverDialog?.kind === "create_login" ? serverDialog : null;
+  // Only records still switched on that no server account covers yet: a
+  // record retired at sign-in, or one whose email already has an account,
+  // needs no Add Staff.
+  const deviceOnlyNames = serverReady
+    ? rows
+        .filter(
+          (r) =>
+            r.source === "device_only" && r.device?.isActive === 1 && !r.sameEmailServerAccount,
+        )
+        .map((r) => r.fullName)
+    : [];
 
   return (
     <div className="space-y-4">
@@ -592,7 +1023,11 @@ export function UserManagement() {
         >
           <div className="panel-header">
             <h2 id="staff-form-title" className="panel-title">
-              {isEditing ? `Edit ${editingUser?.fullName}` : "Add staff member"}
+              {pinOnly
+                ? `Set a PIN for ${editingUser?.fullName ?? "this person"} on this device`
+                : isEditing
+                  ? `Edit ${editingUser?.fullName}`
+                  : "Add staff member"}
             </h2>
           </div>
           <div className="panel-body space-y-4">
@@ -602,84 +1037,96 @@ export function UserManagement() {
               </div>
             )}
 
+            {pinOnly && (
+              <p className="field-hint">
+                {editingUser?.fullName} ({roleName(form.role)}). Their name and role come
+                from their online account and are changed with Edit, not here. This
+                form only sets their PIN on this device.
+              </p>
+            )}
+
             <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label htmlFor="staff-fullName" className="field-label">
-                  Full name
-                </label>
-                <input
-                  id="staff-fullName"
-                  type="text"
-                  required
-                  autoComplete="off"
-                  value={form.fullName}
-                  onChange={(e) => setForm({ ...form, fullName: e.target.value })}
-                  className="input-field"
-                  {...fieldProps("fullName")}
-                />
-                {fieldError("fullName")}
-              </div>
+              {!pinOnly && (
+                <>
+                  <div>
+                    <label htmlFor="staff-fullName" className="field-label">
+                      Full name
+                    </label>
+                    <input
+                      id="staff-fullName"
+                      type="text"
+                      required
+                      autoComplete="off"
+                      value={form.fullName}
+                      onChange={(e) => setForm({ ...form, fullName: e.target.value })}
+                      className="input-field"
+                      {...fieldProps("fullName")}
+                    />
+                    {fieldError("fullName")}
+                  </div>
 
-              <div>
-                <label htmlFor="staff-role" className="field-label">
-                  Role
-                </label>
-                <select
-                  id="staff-role"
-                  value={form.role}
-                  onChange={(e) => {
-                    const next = roleOptions.find((r) => r === e.target.value);
-                    if (next) setForm({ ...form, role: next });
-                  }}
-                  className="input-field"
-                  aria-describedby="staff-role-hint"
-                  aria-invalid={errors.role ? true : undefined}
-                >
-                  {roleOptions.map((r) => (
-                    <option key={r} value={r}>
-                      {getRoleDisplayName(r)}
-                    </option>
-                  ))}
-                </select>
-                <p id="staff-role-hint" className="field-hint">
-                  {describeRoleAccess(form.role)}
-                </p>
-                {fieldError("role")}
-              </div>
+                  <div>
+                    <label htmlFor="staff-role" className="field-label">
+                      Role
+                    </label>
+                    <select
+                      id="staff-role"
+                      value={form.role}
+                      onChange={(e) => {
+                        const next = roleOptions.find((r) => r === e.target.value);
+                        if (next) setForm({ ...form, role: next });
+                      }}
+                      className="input-field"
+                      aria-describedby="staff-role-hint"
+                      aria-invalid={errors.role ? true : undefined}
+                    >
+                      {roleOptions.map((r) => (
+                        <option key={r} value={r}>
+                          {getRoleDisplayName(r)}
+                        </option>
+                      ))}
+                    </select>
+                    <p id="staff-role-hint" className="field-hint">
+                      {describeRoleAccess(form.role)}
+                    </p>
+                    {fieldError("role")}
+                  </div>
 
-              <div>
-                <label htmlFor="staff-email" className="field-label">
-                  Email <span className="font-normal text-ink-muted">(optional)</span>
-                </label>
-                <input
-                  id="staff-email"
-                  type="email"
-                  autoComplete="off"
-                  value={form.email}
-                  onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  className="input-field"
-                  placeholder="name@example.com"
-                  {...fieldProps("email")}
-                />
-                {fieldError("email")}
-              </div>
+                  <div>
+                    <label htmlFor="staff-email" className="field-label">
+                      Email <span className="font-normal text-ink-muted">(optional)</span>
+                    </label>
+                    <input
+                      id="staff-email"
+                      type="email"
+                      autoComplete="off"
+                      value={form.email}
+                      onChange={(e) => setForm({ ...form, email: e.target.value })}
+                      className="input-field"
+                      placeholder="name@example.com"
+                      {...fieldProps("email")}
+                    />
+                    {fieldError("email")}
+                  </div>
 
-              <div>
-                <label htmlFor="staff-phone" className="field-label">
-                  Phone <span className="font-normal text-ink-muted">(optional)</span>
-                </label>
-                <input
-                  id="staff-phone"
-                  type="tel"
-                  autoComplete="off"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  className="input-field"
-                  placeholder="0803 123 4567"
-                  {...fieldProps("phone")}
-                />
-                {fieldError("phone")}
-              </div>
+                  <div>
+                    <label htmlFor="staff-phone" className="field-label">
+                      Phone <span className="font-normal text-ink-muted">(optional)</span>
+                    </label>
+                    <input
+                      id="staff-phone"
+                      type="tel"
+                      autoComplete="off"
+                      value={form.phone}
+                      onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                      className="input-field"
+                      placeholder="0803 123 4567"
+                      {...fieldProps("phone")}
+                    />
+                    {fieldError("phone")}
+                  </div>
+                </>
+              )}
 
               <div>
                 <label htmlFor="staff-pin" className="field-label">
@@ -691,7 +1138,7 @@ export function UserManagement() {
                   inputMode="numeric"
                   autoComplete="new-password"
                   maxLength={6}
-                  required={!isEditing}
+                  required={!isEditing || pinOnly}
                   value={form.pin}
                   onChange={(e) =>
                     setForm({ ...form, pin: e.target.value.replace(/\D/g, "").slice(0, 6) })
@@ -701,9 +1148,11 @@ export function UserManagement() {
                   aria-describedby={pinDescribedBy}
                 />
                 <p id="staff-pin-hint" className="field-hint">
-                  {isEditing
-                    ? "Sets this person's PIN on this device only. Leave blank to keep the current one. Hand the device to them to type it."
-                    : "Works on this device only. Give the PIN to the person privately. It cannot be shown again."}
+                  {pinOnly
+                    ? "Sets this person's PIN on this device only. Hand the device to them to type it."
+                    : isEditing
+                      ? "Sets this person's PIN on this device only. Leave blank to keep the current one. Hand the device to them to type it."
+                      : "Works on this device only. Give the PIN to the person privately. It cannot be shown again."}
                 </p>
                 {fieldError("pin")}
               </div>
@@ -718,7 +1167,7 @@ export function UserManagement() {
                   inputMode="numeric"
                   autoComplete="new-password"
                   maxLength={6}
-                  required={!isEditing}
+                  required={!isEditing || pinOnly}
                   value={form.confirmPin}
                   onChange={(e) =>
                     setForm({
@@ -733,7 +1182,7 @@ export function UserManagement() {
               </div>
 
               {/* Admin flags */}
-              {currentUser?.role === "admin" && (
+              {!pinOnly && currentUser?.role === "admin" && (
                 <fieldset className="space-y-2 border-t border-line pt-4 md:col-span-2">
                   <legend className="section-label">Admin flags</legend>
 
@@ -784,7 +1233,13 @@ export function UserManagement() {
               Cancel
             </button>
             <button type="submit" disabled={saving} className="btn-primary">
-              {saving ? "Saving…" : isEditing ? "Save changes" : "Add staff member"}
+              {saving
+                ? "Saving…"
+                : pinOnly
+                  ? "Set PIN"
+                  : isEditing
+                    ? "Save changes"
+                    : "Add staff member"}
             </button>
           </div>
         </form>
@@ -793,15 +1248,48 @@ export function UserManagement() {
       <section className="panel" aria-labelledby="staff-list-title">
         <div className="panel-header">
           <h2 id="staff-list-title" className="panel-title">
-            Staff{users ? ` (${users.length})` : ""}
+            Staff{users ? ` (${rows.length})` : ""}
           </h2>
-          {canManage && !showForm && (
+          {canManage && serverMode && (
+            <button
+              type="button"
+              onClick={() => setServerDialog({ kind: "invite" })}
+              disabled={!serverReady}
+              className="btn-primary"
+              aria-describedby={stateText ? "staff-server-state" : undefined}
+            >
+              <UserPlusIcon className="h-5 w-5" aria-hidden />
+              {STAFF_COPY.addStaff}
+            </button>
+          )}
+          {canManage && !serverMode && !showForm && (
             <button type="button" onClick={openCreate} className="btn-primary">
               <UserPlusIcon className="h-5 w-5" aria-hidden />
               Add staff member
             </button>
           )}
         </div>
+
+        {stateText && (
+          <div
+            id="staff-server-state"
+            className={`banner ${screenStateBanner(staff.state)} m-4`}
+            role={staff.state === "checking" ? "status" : "alert"}
+          >
+            <span className="flex-1">{stateText}</span>
+            {canRetry && (
+              <button type="button" onClick={() => void staff.reload()} className="btn-secondary">
+                {STAFF_COPY.tryAgain}
+              </button>
+            )}
+          </div>
+        )}
+
+        {serverReady && staff.notice && (
+          <div className="banner banner-info m-4" role="status">
+            <span className="flex-1">{staff.notice}</span>
+          </div>
+        )}
 
         {loadError && (
           <div className="banner banner-danger m-4" role="alert">
@@ -827,14 +1315,17 @@ export function UserManagement() {
               ))}
             </div>
           </div>
-        ) : users.length === 0 ? (
-          !loadError && (
+        ) : rows.length === 0 ? (
+          !loadError &&
+          (serverMode ? (
+            <EmptyState icon={UsersIcon} title={STAFF_COPY.emptyServer} />
+          ) : (
             <EmptyState
               icon={UsersIcon}
               title="No staff accounts on this device"
               description="Add the people who will sign in here, with a role and a 6-digit PIN."
             />
-          )
+          ))
         ) : (
           <>
             <div className="hidden overflow-x-auto md:block">
@@ -845,41 +1336,45 @@ export function UserManagement() {
                     <th scope="col">Role</th>
                     <th scope="col">Admin flags</th>
                     <th scope="col">Contact</th>
-                    <th scope="col">Status</th>
+                    <th scope="col">{STAFF_COPY.columns.status}</th>
                     <th scope="col">Offline access</th>
                     <th scope="col">Added</th>
                     <th scope="col">
-                      <span className="sr-only">Actions</span>
+                      <span className="sr-only">{STAFF_COPY.columns.actions}</span>
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => (
-                    <tr key={u.id}>
+                  {rows.map((row) => (
+                    <tr key={row.id}>
                       <td>
                         <span className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-ink">{u.fullName}</span>
-                          {u.id === currentUser?.id && <StatusBadge tone="info">You</StatusBadge>}
+                          <span className="font-medium text-ink">{row.fullName}</span>
+                          {sameId(row.id, currentUser?.id) && (
+                            <StatusBadge tone="info">You</StatusBadge>
+                          )}
                         </span>
                         <span className="block text-caption text-ink-muted tabular-nums">
-                          ID {u.id.slice(-8).toUpperCase()}
+                          ID {row.id.slice(-8).toUpperCase()}
                         </span>
                       </td>
                       <td>
-                        <StatusBadge>{getRoleDisplayName(u.role)}</StatusBadge>
+                        <StatusBadge>{roleName(row.role)}</StatusBadge>
                       </td>
-                      <td>{renderAdminFlags(u)}</td>
+                      <td>{renderAdminFlags(adminFlagsOf(row))}</td>
                       <td className="text-caption text-ink-secondary">
-                        {u.email && <span className="block">{u.email}</span>}
-                        {u.phone && <span className="block tabular-nums">{u.phone}</span>}
-                        {!u.email && !u.phone && <span className="text-ink-muted">None</span>}
+                        {row.email && <span className="block">{row.email}</span>}
+                        {row.device?.phone && (
+                          <span className="block tabular-nums">{row.device.phone}</span>
+                        )}
+                        {!row.email && !row.device?.phone && (
+                          <span className="text-ink-muted">None</span>
+                        )}
                       </td>
-                      <td>{renderStatus(u)}</td>
-                      <td>{renderOfflineAccess(u)}</td>
-                      <td className="text-caption text-ink-muted tabular-nums">
-                        {formatNigerianDate(u.createdAt)}
-                      </td>
-                      <td className="text-right">{renderActions(u)}</td>
+                      <td>{statusCell(row)}</td>
+                      <td>{renderOfflineAccess(row.device)}</td>
+                      <td className="text-caption text-ink-muted tabular-nums">{addedOn(row)}</td>
+                      <td className="text-right">{actionsCell(row)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -887,27 +1382,107 @@ export function UserManagement() {
             </div>
 
             <ul className="divide-y divide-line md:hidden">
-              {users.map((u) => (
-                <li key={u.id} className="space-y-2 px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-ink">{u.fullName}</span>
-                    {u.id === currentUser?.id && <StatusBadge tone="info">You</StatusBadge>}
-                    <StatusBadge>{getRoleDisplayName(u.role)}</StatusBadge>
-                    {renderStatus(u)}
-                    {renderOfflineAccess(u)}
-                  </div>
-                  {(u.adminAccess || u.adminPermanent) && renderAdminFlags(u)}
-                  <p className="text-caption text-ink-muted">
-                    {[u.email, u.phone].filter(Boolean).join(" · ") || "No contact details"}
-                    {" · "}Added {formatNigerianDate(u.createdAt)}
-                  </p>
-                  {renderActions(u, true)}
-                </li>
-              ))}
+              {rows.map((row) => {
+                const flags = adminFlagsOf(row);
+                return (
+                  <li key={row.id} className="space-y-2 px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-ink">{row.fullName}</span>
+                      {sameId(row.id, currentUser?.id) && (
+                        <StatusBadge tone="info">You</StatusBadge>
+                      )}
+                      <StatusBadge>{roleName(row.role)}</StatusBadge>
+                      {statusCell(row)}
+                      {renderOfflineAccess(row.device)}
+                    </div>
+                    {(flags.adminAccess || flags.adminPermanent) && renderAdminFlags(flags)}
+                    <p className="text-caption text-ink-muted">
+                      {[row.email, row.device?.phone].filter(Boolean).join(" · ") ||
+                        "No contact details"}
+                      {" · "}Added {addedOn(row)}
+                    </p>
+                    {actionsCell(row, true)}
+                  </li>
+                );
+              })}
             </ul>
           </>
         )}
       </section>
+
+      {serverMode && canManage && staff.overview && (
+        <AccountHealthPanel
+          overview={staff.overview}
+          deviceOnlyNames={deviceOnlyNames}
+          canRepair={serverReady}
+          onRepaired={afterServerChange}
+          onMaybeRepaired={() => void refreshAfterServerChange()}
+        />
+      )}
+
+      {inviting && staff.overview && (
+        <InviteStaffDialog
+          overview={staff.overview}
+          onClose={() => setServerDialog(null)}
+          onCreated={(message) => afterServerChange(message)}
+          onMaybeCreated={() => void refreshAfterServerChange()}
+        />
+      )}
+
+      {editingAccount && staff.overview && (
+        <EditStaffAccountDialog
+          account={editingAccount.account}
+          overview={staff.overview}
+          onClose={() => setServerDialog(null)}
+          onSaved={(message) => afterServerChange(message)}
+        />
+      )}
+
+      {viewingLogin && (
+        <StaffLoginStatusDialog
+          userId={viewingLogin.row.id}
+          fullName={viewingLogin.row.fullName}
+          onClose={() => setServerDialog(null)}
+        />
+      )}
+
+      {reactivating && staff.overview && (
+        <ReactivateDialog
+          account={reactivating.account}
+          overview={staff.overview}
+          onClose={() => setServerDialog(null)}
+          onReactivated={(message) => void afterReactivate(reactivating.row, message)}
+        />
+      )}
+
+      {creatingLogin && staff.overview && (
+        <CreateLoginDialog
+          userId={creatingLogin.account.userId}
+          fullName={creatingLogin.account.fullName}
+          inviteLifetimeSeconds={staff.overview.inviteLifetimeSeconds}
+          onClose={() => setServerDialog(null)}
+          onCreated={(message) => afterServerChange(message)}
+          onMaybeCreated={() => void refreshAfterServerChange()}
+        />
+      )}
+
+      {pendingServer && pendingCopy && (
+        <ConfirmDialog
+          open
+          title={pendingCopy.title}
+          confirmLabel={pendingCopy.confirm}
+          tone={pendingCopy.danger ? "danger" : "primary"}
+          busy={serverBusy}
+          busyLabel={pendingCopy.busy}
+          onConfirm={() => void runServerAction()}
+          onCancel={() => setPendingServer(null)}
+        >
+          <p>{pendingCopy.body}</p>
+          {pendingCopy.warning && (
+            <p className="font-medium text-warning-fg">{pendingCopy.warning}</p>
+          )}
+        </ConfirmDialog>
+      )}
 
       <ConfirmDialog
         open={confirmRoleChange && !!editingUser}
@@ -939,8 +1514,12 @@ export function UserManagement() {
 
       <ConfirmDialog
         open={!!pendingStatusUser}
-        title={`Deactivate ${pendingStatusUser?.fullName ?? "this account"}?`}
-        confirmLabel="Deactivate account"
+        title={
+          serverMode
+            ? `Deactivate ${pendingStatusUser?.fullName ?? "this account"} on this device?`
+            : `Deactivate ${pendingStatusUser?.fullName ?? "this account"}?`
+        }
+        confirmLabel={serverMode ? STAFF_COPY.action.deactivate_on_device : "Deactivate account"}
         tone="danger"
         busy={statusBusy}
         busyLabel="Deactivating…"
@@ -951,7 +1530,25 @@ export function UserManagement() {
           They will not be able to sign in on this device until an administrator
           activates the account again.
         </p>
+        {serverMode && (
+          <p>
+            This only changes this device. To stop them signing in anywhere, use
+            Disable.
+          </p>
+        )}
         <p>Records they created are kept.</p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={!!pendingRetire}
+        title={STAFF_COPY.retire.title(pendingRetire?.fullName ?? "this person")}
+        confirmLabel={STAFF_COPY.retire.confirm}
+        busy={statusBusy}
+        busyLabel="Saving…"
+        onConfirm={() => void retireDeviceRecord()}
+        onCancel={() => setPendingRetire(null)}
+      >
+        <p>{STAFF_COPY.retire.body}</p>
       </ConfirmDialog>
 
       <ConfirmDialog
@@ -965,8 +1562,8 @@ export function UserManagement() {
       >
         <p>
           Their current PIN stops working on this device. They choose a new one
-          the next time they sign in online here, or you can set one now with
-          Edit.
+          the next time they sign in online here, or you can set one now with{" "}
+          {serverMode ? STAFF_COPY.action.set_device_pin : "Edit"}.
         </p>
         <p>Their account and records are not changed.</p>
       </ConfirmDialog>
@@ -982,13 +1579,71 @@ export function UserManagement() {
         onConfirm={deleteUser}
         onCancel={() => setPendingDeleteUser(null)}
       >
-        <p>
-          The account is removed from this device and they lose access
-          immediately. Records they created are kept.
-        </p>
-        <p>To stop someone signing in but keep the account, deactivate it instead.</p>
+        {serverMode ? (
+          <p>{STAFF_COPY.deleteDeviceOnly.body(pendingDeleteUser?.fullName ?? "This person")}</p>
+        ) : (
+          <p>
+            The account is removed from this device and they lose access
+            immediately. Records they created are kept.
+          </p>
+        )}
+        {serverMode ? (
+          <p>Records they created are kept.</p>
+        ) : (
+          <p>To stop someone signing in but keep the account, deactivate it instead.</p>
+        )}
         <p className="font-medium text-danger-fg">This cannot be undone.</p>
       </ConfirmDialog>
     </div>
   );
+}
+
+/**
+ * Title, body and button of the confirmation before a server action.
+ * `offeredRoles` is overview.roles: disabling an administrator warns when
+ * the administrator role can't be given back from this screen.
+ */
+function serverConfirmCopy(
+  pending: PendingServerAction,
+  offeredRoles: readonly string[],
+): {
+  title: string;
+  body: string;
+  warning: string | null;
+  confirm: string;
+  busy: string;
+  danger: boolean;
+} {
+  const name = pending.row.fullName || pending.account.fullName;
+  switch (pending.action) {
+    case "disable":
+      return {
+        title: STAFF_COPY.disable.title(name),
+        body: STAFF_COPY.disable.body,
+        warning: adminRoleIsOneWay(pending.account.role, offeredRoles)
+          ? STAFF_COPY.disable.adminOneWay
+          : null,
+        confirm: STAFF_COPY.disable.confirm,
+        busy: STAFF_COPY.disable.busy,
+        danger: true,
+      };
+    case "resend_invitation":
+      return {
+        title: STAFF_COPY.resend.title(name),
+        body: STAFF_COPY.resend.body,
+        warning: null,
+        confirm: STAFF_COPY.resend.confirm,
+        busy: STAFF_COPY.resend.busy,
+        danger: false,
+      };
+    default:
+      return {
+        title: STAFF_COPY.resetPassword.title(name),
+        body: STAFF_COPY.resetPassword.body,
+        warning: null,
+        confirm: STAFF_COPY.resetPassword.confirm,
+        busy: STAFF_COPY.resetPassword.busy,
+        danger: false,
+      };
+  }
 }

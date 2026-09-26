@@ -116,7 +116,14 @@
    - **anon/public key:** `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
    - **service_role key:** (keep secret! only for server-side operations)
 
-### 1.6 Create Admin User
+### 1.6 Bootstrap the first administrator only: create the login
+
+> **Only for the first administrator, once.** This step and 1.7 are the only
+> time a staff account is made in the Supabase dashboard. Everyone else,
+> including training accounts, is added by an administrator on the app's
+> **Users** screen (see [4.1](#41-add-staff-from-the-users-screen)). Staff
+> created in the dashboard get no invitation, are not tracked by the Users
+> screen and show up as problems in Account Health.
 
 1. Go to **Authentication** → **Users** in Supabase dashboard
 2. Click "Add user" → "Create new user"
@@ -127,7 +134,10 @@
 4. Click "Create user"
 5. Note the User ID (you'll need it next)
 
-### 1.7 Grant Admin Access
+### 1.7 Bootstrap the first administrator only: grant admin access
+
+This gives the login from 1.6 its staff record, as the permanent
+administrator. Do not use it for anyone else.
 
 1. Go to **SQL Editor**
 2. Run this query (replace `USER_ID` with actual ID from step 1.6):
@@ -144,6 +154,10 @@ VALUES (
 ```
 
 3. Verify in **Table Editor** → `app_users` that the admin user appears
+4. Once the app is deployed (Step 2), sign in at the app with **Online**
+   sign-in, using this email and password. The first online sign-in on each
+   device asks you to choose a 6-digit PIN for offline use on that device.
+   From then on, add every other staff member from **Users** (4.1).
 
 ---
 
@@ -333,47 +347,121 @@ Both Netlify and Vercel automatically provision SSL certificates via Let's Encry
 
 ## 👥 Step 4: User Training (4 hours)
 
-### 4.1 Create Training Accounts
+### 4.1 Add staff from the Users screen
 
-For each role, create test accounts:
+Every staff member, including training accounts, is added by an
+administrator on the app's **Users** screen. The app creates their login and
+staff record on the server and emails them an invitation. Nobody types SQL
+and nobody chooses a password for someone else.
 
-```sql
--- Community Health Worker
-INSERT INTO app_users (id, full_name, role, admin_access)
-VALUES (
-  gen_random_uuid(),
-  'CHW Training Account',
-  'chw',
-  false
-);
+**Before you start**
 
--- Nurse
-INSERT INTO app_users (id, full_name, role, admin_access)
-VALUES (
-  gen_random_uuid(),
-  'Nurse Training Account',
-  'nurse',
-  false
-);
+- The `staff-admin` function is deployed: see
+  [STAFF_ADMIN_FUNCTION.md](./STAFF_ADMIN_FUNCTION.md). Until it is, Users
+  says "Staff account setup isn't available on this server yet" and Add
+  Staff is switched off.
+- Outgoing email is set up and the staff invitation email is installed: see
+  [STAFF_INVITE_EMAIL.md](./STAFF_INVITE_EMAIL.md).
+- You are signed in with **Online** sign-in as an administrator. A PIN
+  unlock is not enough, and Add Staff needs an internet connection.
 
--- Doctor
-INSERT INTO app_users (id, full_name, role, admin_access)
-VALUES (
-  gen_random_uuid(),
-  'Doctor Training Account',
-  'doctor',
-  false
-);
+**Add a staff member**
 
--- Pharmacist
-INSERT INTO app_users (id, full_name, role, admin_access)
-VALUES (
-  gen_random_uuid(),
-  'Pharmacist Training Account',
-  'pharmacist',
-  false
-);
-```
+1. Open **Users** and press **Add Staff**.
+2. Enter their full name, their work email and their role. The roles offered
+   are the ones the server allows (for example volunteer, nurse, doctor and
+   pharmacist). Administrator accounts can't be added here yet.
+3. Press **Send invitation**. There is no PIN or password field: the
+   administrator never sets either.
+4. They receive an email called "You've been added to mBHR". The link works
+   once and expires after the time set in **Email OTP Expiration** (1 hour
+   by default; `STAFF_INVITE_LIFETIME_SECONDS` must match it).
+5. They open the link, press **Continue** and choose a password.
+6. They sign in at the app with **Online** sign-in using that email and
+   password. The first time they sign in online on each device, they choose
+   a 6-digit PIN for offline use on that device. PINs never leave the device.
+
+If the invitation email didn't go out (for example outgoing email isn't set
+up yet), the account is still created: use **Resend invitation** on their
+row once email works. If the screen says it couldn't confirm the account was
+created, press **Send invitation** again: it won't create a duplicate.
+
+For training, add one account per role with email addresses you control,
+and disable them when training is over.
+
+Facility, individual permissions and an offline-access switch aren't
+available yet. What someone can do comes from their role.
+
+**Statuses**
+
+| Status | Meaning | What to do |
+| --- | --- | --- |
+| Invited | The invitation was sent and not used yet. "Link may have expired" means it is older than the link lifetime. | **Resend invitation** if they can't find it or it expired. |
+| Active | They have set a password. "Never signed in" means they haven't signed in yet. | Nothing. **Reset password** emails them a link to choose a new one; their current password keeps working until they use it. |
+| Setup required | "No login yet", "Invitation not sent" or "Password not set yet". | **Resend invitation**, or fix it from Account Health (below). |
+| Disabled | An administrator disabled them. "Devices not updated yet" means their login is blocked but devices haven't been told yet; open **Login status** to check. "No staff role" means the staff record has no role that can sign in. "Turned off outside this screen" means the staff record was switched off some other way; Reactivate can't undo that, so ask whoever runs your server. | **Reactivate** to let them back in. A disabled administrator can't be reactivated from this screen yet. |
+| This device only | A staff record that exists only on this device (made before staff accounts were created on the server). | Add them with **Add Staff** using their email, then use **Retire device-only record** or **Delete** on their old row. |
+| Not checked | The server couldn't be asked (for example you are offline). | Try again when online. |
+
+**Login status** on a row shows their email, when the invitation was sent,
+when they set a password and when they last signed in online. **Edit**
+changes a staff member's name and role. You can't change your own role or a
+permanent administrator's; the screen shows the server's reason. To set or
+reset someone's PIN on this device, use **Set PIN on this device** or
+**Reset PIN on this device** on their row.
+
+**Disable and Reactivate**
+
+- **Disable** blocks their online sign-in straight away and removes their
+  role until they are reactivated. Every device switches them off the next
+  time it syncs, PIN sign-in included. If they are signed in right now, that
+  can continue for a short while. When they try to sign in, the app tells
+  them an administrator has disabled their account. You can't disable your
+  own account or a permanent administrator. While administrator accounts
+  can't be added here, disabling another administrator (or using **Edit** to
+  give them another role) can't be undone from this screen: the screen warns
+  you before you confirm.
+- **Reactivate** gives them back the role they had. If the server doesn't
+  know which role that was, it asks you to choose one. They are switched back
+  on for the device you reactivate them from, even if they were switched off
+  there by hand. Other devices where an administrator switched them off by
+  hand ("Deactivate on this device") stay off until they are activated there.
+- **Deactivate on this device** and **Activate on this device** only change
+  this one device and never the server.
+- **Delete** is only offered for records on this device only. Staff who have
+  a server account are disabled, never deleted.
+
+**Account Health**
+
+The **Account health** panel under the list compares logins with staff
+records and lists anything that doesn't match:
+
+- A staff record that can't sign in online: **Create login** (type their full
+  name to confirm, and the email they'll use). They get an invitation.
+- A login with no staff record, so it can't open the staff app: **Create
+  staff record** (type their email in full, choose a role, and tick "I know
+  this person and they should have staff access"). Only do this for someone
+  you know.
+- Staff records that weren't created from the Users screen (listed for
+  information when `STAFF_ADMIN_LAUNCHED_AT` is set). If you don't know the
+  person, use **Disable** on their row.
+- A login that was never confirmed can't be repaired: if they work here, add
+  them with **Add Staff**.
+- Patient portal logins are counted but need no action: they are not staff.
+
+**Never create staff in the Supabase dashboard**
+
+After the first administrator (1.6 and 1.7), never create, edit or delete
+staff logins or `app_users` rows in the Supabase dashboard or the SQL
+editor. Accounts made there get no invitation, aren't tracked by the Users
+screen and show up in Account Health. Roles and administrator settings are
+changed only on the server by the Users screen: a device never uploads a
+staff member's role or administrator flags, so a role changed any other way
+on a device does not reach the server.
+
+A staff member who used to have a record on this device only and now signs
+in online with the same email gets their server account: the old device
+record is switched off on that device, and they choose a new PIN.
 
 ### 4.2 Training Session Structure
 
