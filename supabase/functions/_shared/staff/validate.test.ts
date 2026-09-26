@@ -98,13 +98,22 @@ describe("normaliseFullName", () => {
 
 describe("parseProvisionableRole", () => {
   it("accepts the roles the Users screen offers", () => {
-    for (const role of ["volunteer", "nurse", "doctor", "pharmacist", "admin"]) {
+    for (const role of [
+      "volunteer",
+      "registration_lead",
+      "nurse",
+      "doctor",
+      "pharmacist",
+      "lead_clinician",
+      "auditor",
+      "admin",
+    ]) {
       expect(parseProvisionableRole(role)).toBe(role);
     }
   });
 
-  it("refuses guest, unconfirmed roles and anything else", () => {
-    for (const raw of ["guest", "registration_lead", "auditor", "lead_clinician", "superuser", "Nurse", " nurse", "", null, 1]) {
+  it("refuses guest and anything else", () => {
+    for (const raw of ["guest", "superuser", "owner", "Nurse", " nurse", "", null, 1]) {
       expect(parseProvisionableRole(raw)).toBeNull();
     }
   });
@@ -218,7 +227,7 @@ describe("routeStaffAdminRequest: actions", () => {
     expect(refusedWith({ ...CREATE, userId: undefined })).toMatchObject({ error: "invalid_id" });
     expect(refusedWith({ ...CREATE, fullName: "A" })).toMatchObject({ status: 422, error: "invalid_name", field: "fullName" });
     expect(refusedWith({ ...CREATE, email: undefined })).toMatchObject({ error: "invalid_email", field: "email" });
-    for (const role of ["guest", "registration_lead", "owner", undefined]) {
+    for (const role of ["guest", "superuser", "owner", undefined]) {
       expect(refusedWith({ ...CREATE, role })).toMatchObject({ status: 422, error: "role_not_allowed", field: "role" });
     }
   });

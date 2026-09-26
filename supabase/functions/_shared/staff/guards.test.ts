@@ -1,4 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// These tests pin administrator accounts off (constants.ts,
+// ADMIN_ACCOUNTS_ENABLED = false) so the refusals stay covered whichever way
+// it is set. actions.adminAccounts.test.ts covers it switched on.
+vi.mock("./constants", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./constants")>();
+  return { ...actual, ADMIN_ACCOUNTS_ENABLED: false };
+});
+
 import {
   countOtherActiveAdmins,
   countsAsActiveAdmin,
@@ -349,7 +358,7 @@ describe("staffActionRefusal: update", () => {
       error: "role_not_allowed",
       field: "role",
     });
-    expect(update({ requestedRole: "registration_lead" })).toBe("role_not_allowed");
+    expect(update({ requestedRole: "owner" })).toBe("role_not_allowed");
   });
 
   it("6. refuses a change to the caller's own role, but not to their own name", () => {
@@ -405,7 +414,7 @@ describe("staffActionRefusal: create_login", () => {
   it("needs a staff record with a role that can be given", () => {
     expect(code({ ...base, row: null })).toBe("not_staff_account");
     expect(code({ ...base, row: row(TARGET, { role: "guest" }) })).toBe("no_staff_role");
-    expect(code({ ...base, row: row(TARGET, { role: "registration_lead" }) })).toBe("no_staff_role");
+    expect(code({ ...base, row: row(TARGET, { role: "owner" }) })).toBe("no_staff_role");
   });
 
   it("never recreates a permanent administrator's login", () => {

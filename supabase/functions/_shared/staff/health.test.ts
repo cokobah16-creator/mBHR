@@ -84,7 +84,7 @@ describe("accountHealth", () => {
         row("r1", { role: "nurse" }),
         row("r2", { role: "admin", admin_access: true, admin_permanent: true }),
         row("r3", { role: "guest" }),
-        row("r4", { role: "registration_lead" }),
+        row("r4", { role: "owner" }),
       ],
       new Set<string>(),
       NOW,

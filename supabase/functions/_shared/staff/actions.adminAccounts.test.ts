@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 
-// Making and restoring administrators once it is switched on (constants.ts,
-// ADMIN_ACCOUNTS_ENABLED = true): only a permanent administrator may.
-// In its own file because the whole module graph sees the mocked value.
+// Making and restoring administrators while it is switched on (constants.ts,
+// ADMIN_ACCOUNTS_ENABLED = true, as shipped): only a permanent administrator
+// may. The mock pins it on so these tests hold whichever way it is set; it is
+// in its own file because the whole module graph sees the mocked value.
 vi.mock("./constants", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./constants")>();
   return { ...actual, ADMIN_ACCOUNTS_ENABLED: true };

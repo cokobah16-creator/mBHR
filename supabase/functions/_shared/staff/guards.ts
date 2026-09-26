@@ -11,7 +11,7 @@
 // this function never disabled or tagged as staff (that would promote an
 // unknown login, as create_staff_record does).
 //
-// Until ADMIN_ACCOUNTS_ENABLED is turned on, nothing here lets a request
+// While ADMIN_ACCOUNTS_ENABLED is off, nothing here lets a request
 // make or restore an administrator.
 
 import {

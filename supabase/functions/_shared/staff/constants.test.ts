@@ -68,12 +68,11 @@ describe("staff-admin constants", () => {
     expect(new Set(STAFF_ADMIN_ACTIONS).size).toBe(STAFF_ADMIN_ACTIONS.length);
   });
 
-  it("offers only confirmed roles, all of them staff roles, and never guest", () => {
-    expect([...PROVISIONABLE_ROLES]).toEqual(["volunteer", "nurse", "doctor", "pharmacist", "admin"]);
-    for (const role of PROVISIONABLE_ROLES) expect(KNOWN_STAFF_ROLES).toContain(role);
+  it("offers every staff role, and never guest", () => {
+    expect([...PROVISIONABLE_ROLES].sort()).toEqual([...KNOWN_STAFF_ROLES].sort());
     expect(KNOWN_STAFF_ROLES).not.toContain("guest");
     expect(PROVISIONABLE_ROLES).not.toContain("guest");
-    expect(PROVISIONABLE_ROLES).not.toContain("registration_lead");
+    expect(new Set(PROVISIONABLE_ROLES).size).toBe(PROVISIONABLE_ROLES.length);
     expect(new Set(KNOWN_STAFF_ROLES).size).toBe(KNOWN_STAFF_ROLES.length);
   });
 
@@ -84,8 +83,8 @@ describe("staff-admin constants", () => {
     expect(UNBAN).toBe("none");
   });
 
-  it("does not make or restore administrators until the database protects them", () => {
-    expect(ADMIN_ACCOUNTS_ENABLED).toBe(false);
+  it("lets a permanent administrator make or restore administrators (Wave A protects them)", () => {
+    expect(ADMIN_ACCOUNTS_ENABLED).toBe(true);
   });
 
   it("keeps the request and name limits", () => {

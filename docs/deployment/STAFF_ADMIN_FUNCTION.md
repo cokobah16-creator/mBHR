@@ -19,13 +19,12 @@ Two rules are built in:
 
 - **Disable** blocks the person's sign-in and also removes their role until
   they are reactivated. Reactivate gives the role back.
-- **Administrator accounts can't be added from the Users screen yet.** The
-  function refuses to add an administrator, restore one, or give someone
-  the administrator role until the database changes that protect
-  administrator accounts (migration `20260927100000`) are on production.
-  A later update turns this on (`ADMIN_ACCOUNTS_ENABLED` in
-  `supabase/functions/_shared/staff/constants.ts`), and even then only a
-  permanent administrator can do it.
+- **Only a permanent administrator can add or restore an administrator.**
+  Any administrator can give the other staff roles: volunteer, registration
+  lead, nurse, doctor, pharmacist, lead clinician and auditor. Setting
+  `ADMIN_ACCOUNTS_ENABLED` to `false` in
+  `supabase/functions/_shared/staff/constants.ts` (then redeploying)
+  refuses every administrator change instead.
 
 This page covers, in order:
 

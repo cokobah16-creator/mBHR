@@ -44,14 +44,19 @@ export const KNOWN_STAFF_ROLES: readonly string[] = [
 ];
 
 /**
- * Roles an administrator may give from the Users screen. "guest" and the
- * roles whose database labels are not confirmed on every server are left out.
+ * Roles an administrator may give from the Users screen: every staff role,
+ * never "guest". registration_lead is on production since Wave B
+ * (20260925100600); auditor and lead_clinician were already there. Giving
+ * "admin" also needs ADMIN_ACCOUNTS_ENABLED and a permanent administrator.
  */
 export const PROVISIONABLE_ROLES: readonly string[] = [
   "volunteer",
+  "registration_lead",
   "nurse",
   "doctor",
   "pharmacist",
+  "lead_clinician",
+  "auditor",
   "admin",
 ];
 
@@ -84,11 +89,12 @@ export const DISABLE_DEMOTES_ROLE: boolean = true;
 /**
  * Whether this function may make or restore an administrator: create with
  * the admin role, update to admin, reactivate into admin, or create_login
- * for an admin record. Off until the database changes that protect
- * administrator accounts (migration 20260927100000) are on production; a
- * later change turns it on. Even then only a permanent administrator may.
+ * for an admin record. Only a permanent administrator may. On since Wave A
+ * (20260924110200) reached production: no signed-in caller can change a
+ * permanent administrator's record through the API any more. Set it to
+ * false to refuse all of these with admin_accounts_unavailable.
  */
-export const ADMIN_ACCOUNTS_ENABLED: boolean = false;
+export const ADMIN_ACCOUNTS_ENABLED: boolean = true;
 
 /** Rate-limit buckets (public.check_and_increment_rate_limit). */
 export const STAFF_IP_BUCKET = "edge_staff_admin";

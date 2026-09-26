@@ -1,4 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// These tests pin administrator accounts off (constants.ts,
+// ADMIN_ACCOUNTS_ENABLED = false) so the refusals stay covered whichever way
+// it is set. actions.adminAccounts.test.ts covers it switched on.
+vi.mock("./constants", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./constants")>();
+  return { ...actual, ADMIN_ACCOUNTS_ENABLED: false };
+});
+
 import {
   configuredOrigin,
   mergeAppMetadata,
@@ -413,7 +422,15 @@ describe("overview", () => {
     });
     // No admin role while administrators can't be added (ADMIN_ACCOUNTS_ENABLED).
     expect(body.roles).toEqual(PROVISIONABLE_ROLES.filter((role) => role !== "admin"));
-    expect(body.roles).toEqual(["volunteer", "nurse", "doctor", "pharmacist"]);
+    expect(body.roles).toEqual([
+      "volunteer",
+      "registration_lead",
+      "nurse",
+      "doctor",
+      "pharmacist",
+      "lead_clinician",
+      "auditor",
+    ]);
     expect(body.adminRoleNeedsPermanent).toBe(true);
     expect(body.inviteLifetimeSeconds).toBe(3600);
     expect(body.caller).toEqual({ userId: ACTOR, adminPermanent: false });
@@ -988,7 +1005,7 @@ describe("update", () => {
       status: 422,
       error: "invalid_name",
     });
-    for (const role of ["guest", "registration_lead", "superuser"]) {
+    for (const role of ["guest", "owner", "superuser"]) {
       expect(routeStaffAdminRequest({ ...base, role }, 80)).toMatchObject({
         kind: "refused",
         status: 422,
