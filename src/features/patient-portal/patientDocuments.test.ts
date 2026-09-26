@@ -22,6 +22,7 @@ describe("toPortalDocument", () => {
         description: "Chest X-ray",
         upload_source: "patient",
         deleted_at: null,
+        file_path: "p1/1700000000000.pdf",
       }),
     ).toEqual({
       id: "d1",
@@ -32,6 +33,7 @@ describe("toPortalDocument", () => {
       description: "Chest X-ray",
       source: "patient",
       removed: false,
+      filePath: "p1/1700000000000.pdf",
     });
   });
 
@@ -48,6 +50,13 @@ describe("toPortalDocument", () => {
     expect(doc?.fileSize).toBe(10);
     expect(doc?.createdAt).toBe("2026-08-01T10:00:00Z");
     expect(doc?.source).toBe("staff");
+    expect(doc?.filePath).toBeNull();
+  });
+
+  it("reads the file path without the bucket name in front", () => {
+    expect(
+      toPortalDocument({ id: "d5", storage_path: "patient-documents/p1/a.png" })?.filePath,
+    ).toBe("p1/a.png");
   });
 
   it("treats a row without a known upload_source as a clinic record", () => {

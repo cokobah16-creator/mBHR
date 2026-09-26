@@ -3,8 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate } from "@/utils/dateFormat";
+import { useT } from "@/hooks/useT";
 import {
   ArrowPathIcon,
+  ArrowTopRightOnSquareIcon,
   CheckCircleIcon,
   DocumentArrowUpIcon,
   DocumentTextIcon,
@@ -22,7 +24,6 @@ import { isDeviceOnline, useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   buildDocumentInsert,
   canPatientRemove,
-  documentSourceLabel,
   documentStoragePath,
   isConnectionFailure,
   readRemoveResult,
@@ -32,24 +33,33 @@ import {
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
-const DOCUMENT_TYPES = [
-  { value: "medical_record", label: "Medical record" },
-  { value: "lab_result", label: "Test result" },
-  { value: "imaging", label: "Scan or X-ray" },
-  { value: "prescription", label: "Prescription" },
-  { value: "insurance", label: "Insurance document" },
-  { value: "other", label: "Other" },
-];
+// How long a link to open a stored file works. Short, because anyone with
+// the link can open the file until it runs out.
+const OPEN_LINK_SECONDS = 60;
 
-function documentTypeLabel(value: string): string {
-  return (
-    DOCUMENT_TYPES.find((t) => t.value === value)?.label ??
-    value.replace(/_/g, " ")
-  );
+// Stored values stay English; only the labels are translated.
+const DOCUMENT_TYPES = [
+  "medical_record",
+  "lab_result",
+  "imaging",
+  "prescription",
+  "insurance",
+  "other",
+] as const;
+
+function documentTypeLabel(
+  t: (key: string, fallback?: string) => string,
+  value: string,
+): string {
+  if ((DOCUMENT_TYPES as readonly string[]).includes(value)) {
+    return t(`portal.docs.type.${value}`);
+  }
+  return value.replace(/_/g, " ");
 }
 
 export function DocumentUpload() {
   const navigate = useNavigate();
+  const { t } = useT();
   const isOnline = useOnlineStatus();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [documents, setDocuments] = useState<PortalDocument[]>([]);
@@ -68,6 +78,7 @@ export function DocumentUpload() {
   const [toDelete, setToDelete] = useState<PortalDocument | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
 
   const loadDocuments = useCallback(async () => {
     if (!supabase) {
@@ -114,7 +125,7 @@ export function DocumentUpload() {
     setSuccess("");
     setNotice("");
     if (file && file.size > MAX_BYTES) {
-      setError("This file is larger than 10 MB. Choose a smaller file.");
+      setError(t("portal.docs.tooLarge"));
       setSelectedFile(null);
       e.target.value = "";
       return;
@@ -177,7 +188,7 @@ export function DocumentUpload() {
         throw insertError;
       }
 
-      setSuccess(`${file.name} was uploaded to your online account.`);
+      setSuccess(t("portal.docs.uploaded", { name: file.name }));
       setUploadData({ documentType: "medical_record", description: "" });
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -186,8 +197,8 @@ export function DocumentUpload() {
       logger.error("[DocumentUpload] upload failed:", errorName(err));
       setError(
         isConnectionFailure(err, isDeviceOnline())
-          ? "We could not confirm the upload because the connection dropped. When you are back online, reload this page and check your documents before uploading it again."
-          : "The document was not uploaded. Try again. If it keeps happening, bring a paper copy to your next visit.",
+          ? t("portal.docs.uploadUnconfirmed")
+          : t("portal.docs.uploadFailed"),
       );
     } finally {
       setUploading(false);
@@ -220,44 +231,75 @@ export function DocumentUpload() {
         case "already_removed":
           setToDelete(null);
           setSuccess(
-            `${doc.name} was removed from your documents. Clinic staff can still see it in your health record.`,
+            t("portal.docs.removed", { name: doc.name }),
           );
           await loadDocuments();
           return;
         case "clinic_document":
-          setDeleteError(
-            "This is a clinic record, so it cannot be removed here. If it looks wrong, ask clinic staff.",
-          );
+          setDeleteError(t("portal.docs.clinicRecordNoRemove"));
           await loadDocuments();
           return;
         case "not_found":
           setToDelete(null);
           setNotice(
-            `${doc.name} could not be found in your account. Your list has been refreshed.`,
+            t("portal.docs.notFound", { name: doc.name }),
           );
           await loadDocuments();
           return;
         default:
-          setDeleteError(
-            "We could not confirm that the document was removed. Reload this page to check your documents.",
-          );
+          setDeleteError(t("portal.docs.removeUnknown"));
       }
     } catch (err) {
       logger.error("[DocumentUpload] remove failed:", errorName(err));
       setDeleteError(
         isConnectionFailure(err, isDeviceOnline())
-          ? "We could not confirm the removal because the connection dropped. When you are back online, reload this page to check your documents."
-          : "The document was not removed. Try again later. If it keeps happening, ask clinic staff.",
+          ? t("portal.docs.removeUnconfirmed")
+          : t("portal.docs.removeFailed"),
       );
     } finally {
       setDeleting(false);
     }
   };
 
+  // Opens the stored file through a short-lived private link. The storage
+  // rules let a patient read only files in their own folder that they have
+  // not removed. The tab is opened first, while the tap still counts, so
+  // phones do not block it as a pop-up.
+  const openDocument = async (doc: PortalDocument) => {
+    if (!supabase || !doc.filePath || openingId) return;
+    setOpeningId(doc.id);
+    setError("");
+    setSuccess("");
+    setNotice("");
+    const tab = window.open("", "_blank");
+    try {
+      const { data, error: linkError } = await supabase.storage
+        .from("patient-documents")
+        .createSignedUrl(doc.filePath, OPEN_LINK_SECONDS);
+      if (linkError || !data?.signedUrl) throw linkError ?? new Error("no link");
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = data.signedUrl;
+      } else {
+        window.location.assign(data.signedUrl);
+      }
+    } catch (err) {
+      tab?.close();
+      logger.error("[DocumentUpload] open failed:", errorName(err));
+      setError(
+        isConnectionFailure(err, isDeviceOnline())
+          ? t("portal.docs.openOffline")
+          : t("portal.docs.openFailed"),
+      );
+    } finally {
+      setOpeningId(null);
+    }
+  };
+
   const header = (
     <PageHeader
-      title="Your documents"
-      description="Keep copies of letters, test results or scans in your online account."
+      title={t("portal.docs.title")}
+      description={t("portal.docs.description")}
     />
   );
 
@@ -268,9 +310,7 @@ export function DocumentUpload() {
         <div className="banner banner-info">
           <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <p>
-            Documents are stored in your online account. This device is not
-            connected to one, so documents cannot be uploaded or shown here.
-            Bring paper copies to your next clinic visit instead.
+            {t("portal.docs.notConnected")}
           </p>
         </div>
       </div>
@@ -282,7 +322,7 @@ export function DocumentUpload() {
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
         {header}
         <span role="status" className="sr-only">
-          Loading your documents
+          {t("portal.docs.loading")}
         </span>
         <div className="panel p-5" aria-hidden>
           <Skeleton className="mb-4 h-5 w-40" />
@@ -323,7 +363,7 @@ export function DocumentUpload() {
               className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent"
               aria-hidden
             />
-            Uploading {selectedFile?.name}…
+            {t("portal.docs.uploadingName", { name: selectedFile?.name ?? "" })}
           </p>
         )}
       </div>
@@ -331,26 +371,25 @@ export function DocumentUpload() {
       {!isOnline && (
         <div className="banner banner-warning" role="status">
           <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-          <p>You are offline. Connect to the internet to upload or remove documents.</p>
+          <p>{t("portal.docs.offline")}</p>
         </div>
       )}
 
       <section className="panel" aria-labelledby="doc-upload-title">
         <div className="panel-header">
           <h2 id="doc-upload-title" className="panel-title">
-            Upload a document
+            {t("portal.docs.uploadTitle")}
           </h2>
         </div>
         <div className="panel-body space-y-4">
           <p className="flex items-start gap-2 text-caption text-ink-muted">
             <InformationCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
-            Documents you upload are private health information. They are saved
-            to your online account.
+            {t("portal.docs.privateNote")}
           </p>
 
           <div>
             <label htmlFor="doc-file" className="field-label">
-              File
+              {t("portal.docs.fileLabel")}
             </label>
             <input
               ref={fileInputRef}
@@ -363,15 +402,20 @@ export function DocumentUpload() {
               className="block w-full min-h-touch-target rounded-md border border-line-strong bg-surface px-3 py-2 text-body text-ink file:mr-3 file:rounded-md file:border-0 file:bg-surface-hover file:px-3 file:py-2 file:text-label file:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
             />
             <p id="doc-file-hint" className="field-hint">
-              PDF, JPG, PNG, DOC or DOCX. Up to 10 MB.
-              {selectedFile ? ` Chosen: ${selectedFile.name} (${formatFileSize(selectedFile.size)}).` : ""}
+              {t("portal.docs.fileHint")}
+              {selectedFile
+                ? ` ${t("portal.docs.chosen", {
+                    name: selectedFile.name,
+                    size: formatFileSize(selectedFile.size),
+                  })}`
+                : ""}
             </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="doc-type" className="field-label">
-                What kind of document is it?
+                {t("portal.docs.typeLabel")}
               </label>
               <select
                 id="doc-type"
@@ -382,9 +426,9 @@ export function DocumentUpload() {
                 disabled={uploading}
                 className="input-field"
               >
-                {DOCUMENT_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
+                {DOCUMENT_TYPES.map((value) => (
+                  <option key={value} value={value}>
+                    {documentTypeLabel(t, value)}
                   </option>
                 ))}
               </select>
@@ -392,7 +436,7 @@ export function DocumentUpload() {
 
             <div>
               <label htmlFor="doc-description" className="field-label">
-                Short description (optional)
+                {t("portal.docs.descLabel")}
               </label>
               <input
                 id="doc-description"
@@ -402,7 +446,7 @@ export function DocumentUpload() {
                   setUploadData({ ...uploadData, description: e.target.value })
                 }
                 disabled={uploading}
-                placeholder="For example: blood test from General Hospital"
+                placeholder={t("portal.docs.descPlaceholder")}
                 className="input-field"
               />
             </div>
@@ -416,7 +460,7 @@ export function DocumentUpload() {
               className="btn-primary"
             >
               <DocumentArrowUpIcon className="h-5 w-5" aria-hidden />
-              {uploading ? "Uploading…" : "Upload document"}
+              {uploading ? t("portal.docs.uploading") : t("portal.docs.upload")}
             </button>
           </div>
         </div>
@@ -425,7 +469,7 @@ export function DocumentUpload() {
       <section className="panel" aria-labelledby="doc-list-title">
         <div className="panel-header">
           <h2 id="doc-list-title" className="panel-title">
-            Documents in your account
+            {t("portal.docs.listTitle")}
           </h2>
           {!loadFailed && (
             <span className="text-caption text-ink-muted tabular-nums">
@@ -438,14 +482,14 @@ export function DocumentUpload() {
             <div className="banner banner-danger" role="alert">
               <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
               <div className="space-y-3">
-                <p>We could not load your list of documents.</p>
+                <p>{t("portal.docs.loadFailed")}</p>
                 <button
                   type="button"
                   onClick={() => void loadDocuments()}
                   className="btn-secondary"
                 >
                   <ArrowPathIcon className="h-5 w-5" aria-hidden />
-                  Try again
+                  {t("portal.error.retry")}
                 </button>
               </div>
             </div>
@@ -453,16 +497,14 @@ export function DocumentUpload() {
         ) : documents.length === 0 ? (
           <EmptyState
             icon={DocumentArrowUpIcon}
-            title="No documents uploaded"
-            description="Documents you upload will be listed here."
+            title={t("portal.docs.emptyTitle")}
+            description={t("portal.docs.emptyBody")}
           />
         ) : (
           <>
             <p className="flex items-start gap-2 px-4 pt-3 text-caption text-ink-muted">
               <InformationCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
-              You can remove documents you uploaded. Documents marked
-              &ldquo;Clinic record&rdquo; are part of your health record and
-              cannot be removed here. If one looks wrong, ask clinic staff.
+              {t("portal.docs.removeHint")}
             </p>
             <ul className="divide-y divide-line">
               {documents.map((doc) => (
@@ -474,7 +516,7 @@ export function DocumentUpload() {
                     </p>
                     <p className="text-caption text-ink-muted">
                       {[
-                        documentTypeLabel(doc.documentType),
+                        documentTypeLabel(t, doc.documentType),
                         doc.fileSize === null ? "" : formatFileSize(doc.fileSize),
                         formatNigerianDate(doc.createdAt),
                       ]
@@ -487,13 +529,27 @@ export function DocumentUpload() {
                           doc.source === "patient" ? "badge badge-info" : "badge badge-neutral"
                         }
                       >
-                        {documentSourceLabel(doc.source)}
+                        {t(`portal.docs.source.${doc.source}`)}
                       </span>
                     </p>
                     {doc.description && (
                       <p className="mt-1 text-body text-ink-secondary">{doc.description}</p>
                     )}
                   </div>
+                  {doc.filePath && (
+                    <button
+                      type="button"
+                      onClick={() => void openDocument(doc)}
+                      disabled={!isOnline || openingId !== null}
+                      aria-label={t("portal.docs.openName", { name: doc.name })}
+                      className="btn-ghost min-w-touch-target"
+                    >
+                      <ArrowTopRightOnSquareIcon className="h-5 w-5" aria-hidden />
+                      <span className="sr-only sm:not-sr-only">
+                        {openingId === doc.id ? t("portal.docs.opening") : t("portal.docs.open")}
+                      </span>
+                    </button>
+                  )}
                   {canPatientRemove(doc) && (
                     <button
                       type="button"
@@ -502,7 +558,7 @@ export function DocumentUpload() {
                         setToDelete(doc);
                       }}
                       disabled={!isOnline}
-                      aria-label={`Remove ${doc.name}`}
+                      aria-label={t("portal.docs.removeName", { name: doc.name })}
                       className="btn-ghost min-w-touch-target text-danger-fg hover:text-danger-fg"
                     >
                       <TrashIcon className="h-5 w-5" aria-hidden />
@@ -518,19 +574,17 @@ export function DocumentUpload() {
       <ConfirmDialog
         open={!!toDelete}
         destructive
-        title={toDelete ? `Remove ${toDelete.name}?` : ""}
-        confirmLabel="Remove document"
-        cancelLabel="Keep document"
-        busyLabel="Removing…"
+        title={toDelete ? t("portal.docs.removeTitle", { name: toDelete.name }) : ""}
+        confirmLabel={t("portal.docs.removeConfirm")}
+        cancelLabel={t("portal.docs.keep")}
+        busyLabel={t("portal.docs.removing")}
         busy={deleting}
         error={deleteError}
         onConfirm={() => void removeDocument()}
         onCancel={() => setToDelete(null)}
       >
         <p>
-          It will be removed from your list of documents. Clinic staff can
-          still see it in your health record. This cannot be undone from the
-          portal.
+          {t("portal.docs.removeBody")}
         </p>
       </ConfirmDialog>
     </div>
