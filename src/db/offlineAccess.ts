@@ -44,6 +44,29 @@ export async function offlineSignInState(): Promise<OfflineSignInState> {
   return { kind: "ready", accounts };
 }
 
+/**
+ * The older offline entry this device had for the same person: a record
+ * under another id with the same email and a PIN here, made on this device
+ * before staff accounts were created on the server, and switched off by
+ * their online sign-in (src/stores/auth.ts). The PIN they choose next
+ * replaces its PIN.
+ */
+export async function olderDeviceEntry(
+  user: Pick<User, "id" | "email">,
+): Promise<User | undefined> {
+  const email = user.email?.trim().toLowerCase();
+  if (!email) return undefined;
+  return db.users
+    .filter(
+      (u) =>
+        u.id !== user.id &&
+        u.isActive !== 1 &&
+        u.email?.trim().toLowerCase() === email &&
+        hasDevicePin(u),
+    )
+    .first();
+}
+
 /** This device's current copy of one staff record (PIN state included). */
 export async function deviceAccount(userId: string): Promise<User | undefined> {
   return db.users.get(userId);

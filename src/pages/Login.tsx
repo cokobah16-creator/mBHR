@@ -16,6 +16,7 @@ import {
   deviceAccount,
   hasDevicePin,
   offlineSignInState,
+  olderDeviceEntry,
   type OfflineSignInState,
 } from "@/db/offlineAccess";
 import { setDevicePin } from "@/db/devicePin";
@@ -895,6 +896,23 @@ function DevicePinSetup({
   const [confirmPin, setConfirmPin] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // This person's older offline entry on this device, under another name
+  // perhaps: the new PIN replaces its PIN, so the screen says so.
+  const [older, setOlder] = useState<User | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    olderDeviceEntry(user)
+      .then((found) => {
+        if (!cancelled) setOlder(found ?? null);
+      })
+      .catch(() => {
+        // Only the wording depends on it.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   // Nothing is saved until the PIN is chosen and confirmed. A form left
   // untouched signs the person out, so the next person on the tablet
@@ -922,6 +940,8 @@ function DevicePinSetup({
     }
   };
 
+  const signedInAs = user.email ? `${user.fullName} (${user.email})` : user.fullName;
+
   return (
     <div className="panel">
       <div className="panel-header flex-col items-start gap-0.5">
@@ -930,9 +950,16 @@ function DevicePinSetup({
         </h2>
         <p className="text-caption text-ink-muted">
           {replacing
-            ? `You are signed in as ${user.fullName}. Your old PIN stops working on this device once you save a new one.`
-            : `You are signed in as ${user.fullName}. Choose a PIN to finish setting up this device. You'll use it to sign in here without internet.`}
+            ? `You are signed in as ${signedInAs}. Your old PIN stops working on this device once you save a new one.`
+            : `You are signed in as ${signedInAs}. This is your account, not a new one: the PIN lets you sign in to it on this device without internet.`}
         </p>
+        {!replacing && older && (
+          <p className="text-caption text-ink-muted">
+            {older.fullName === user.fullName
+              ? "It replaces your older offline PIN on this device."
+              : `It replaces the older offline PIN this device had for you as ${older.fullName}.`}
+          </p>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} className="panel-body space-y-4">

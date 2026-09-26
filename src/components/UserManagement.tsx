@@ -32,6 +32,7 @@ import {
   adminRoleIsOneWay,
   disableResultMessage,
   mergeStaffRows,
+  removedFromServer,
   resendResultMessage,
   resetPasswordResultMessage,
   roleName,
@@ -208,6 +209,33 @@ export function UserManagement() {
   }, [loadUsers]);
 
   const rows = mergeStaffRows(users ?? [], serverMode ? staff.overview : null);
+
+  // A record the server has removed stops working on this device too (see
+  // removedFromServer); the list is then read again without it.
+  const removedIds =
+    serverReady && canManage
+      ? removedFromServer(rows, staff.overview, currentUser?.id)
+          .map((u) => u.id)
+          .join(",")
+      : "";
+  useEffect(() => {
+    if (!removedIds) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        await Promise.all(
+          removedIds.split(",").map((id) => db.users.update(id, { isActive: 0 })),
+        );
+      } catch (error) {
+        console.error("Error switching off removed staff:", errorName(error));
+        return;
+      }
+      if (!cancelled) await loadUsers();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [removedIds, loadUsers]);
 
   const showMessage = (message: StaffMessage) => {
     pushToast({ id: generateId(), ...message });
