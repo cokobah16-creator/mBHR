@@ -33,6 +33,20 @@ export interface PortalDocument {
    */
   source: DocumentSource;
   removed: boolean;
+  /** Path inside the patient-documents bucket, or null when not recorded. */
+  filePath: string | null;
+}
+
+const BUCKET_PREFIX = "patient-documents/";
+
+/**
+ * The stored file's path inside the bucket. Some rows keep the bucket name
+ * in front ("patient-documents/<patient id>/..."); storage wants it without.
+ */
+export function documentFilePath(value: unknown): string | null {
+  const path = textOrNull(value);
+  if (!path) return null;
+  return path.startsWith(BUCKET_PREFIX) ? path.slice(BUCKET_PREFIX.length) : path;
 }
 
 function textOrNull(value: unknown): string | null {
@@ -63,6 +77,7 @@ export function toPortalDocument(row: unknown): PortalDocument | null {
     description: textOrNull(r.description),
     source: r.upload_source === "patient" ? "patient" : "staff",
     removed: r.deleted_at !== undefined && r.deleted_at !== null,
+    filePath: documentFilePath(r.file_path) ?? documentFilePath(r.storage_path),
   };
 }
 
