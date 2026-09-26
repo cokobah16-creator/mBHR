@@ -254,7 +254,7 @@ describe("PatientLogin (online: the server decides portal access)", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("alert").textContent).toMatch(
-        /not turned on portal access/i,
+        /online access is currently unavailable/i,
       );
     });
     expect(online.signOut).toHaveBeenCalledWith({ scope: "local" });

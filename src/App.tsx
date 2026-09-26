@@ -134,6 +134,11 @@ const PatientLogin = lazy(() =>
     default: m.PatientLogin,
   })),
 );
+const PortalCodeSignIn = lazy(() =>
+  import("@/features/patient-portal/PortalCodeSignIn").then((m) => ({
+    default: m.PortalCodeSignIn,
+  })),
+);
 const PatientRegister = lazy(() =>
   import("@/features/patient-portal/PatientRegister").then((m) => ({
     default: m.PatientRegister,
@@ -559,6 +564,7 @@ function App() {
           {/* Patient Portal Routes */}
           <Route path="/patient" element={<PatientPortalLanding />} />
           <Route path="/patient/login" element={<PatientLogin />} />
+          <Route path="/patient/sign-in-code" element={<PortalCodeSignIn />} />
           <Route path="/patient/register" element={<PatientRegister />} />
           <Route
             path="/patient/forgot-password"

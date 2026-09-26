@@ -11,15 +11,13 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { loginPatientPortal } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
-import { clearStoredSupabaseAuth } from "@/lib/supabaseAuthStorage";
-import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
-import {
-  fetchPortalAccessStatus,
-  linkDetailsFromUser,
-  linkPortalAccount,
-} from "@/services/portalSignIn";
-import { portalSignInRefusalMessage } from "@/services/portalAccessRules";
 import { AuthShell } from "./account/AuthShell";
+import { completePortalSignIn } from "@/services/portalCompleteSignIn";
+import { env } from "@/config/env";
+import { parseCodeChannels } from "@/services/portalCodeSignIn";
+
+const SIGN_IN_FAILED_MESSAGE =
+  "We couldn't sign you in. Check your internet connection and try again.";
 
 const onlineSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -39,6 +37,8 @@ export function PatientLogin() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
+  const codeSignInOn =
+    isSupabaseEnabled && parseCodeChannels(env.VITE_PORTAL_CODE_CHANNELS).length > 0;
 
   const form = useForm<LoginForm>({
     resolver: zodResolver(schema),
@@ -64,7 +64,9 @@ export function PatientLogin() {
           "Too many login attempts. Please wait a moment and try again.",
         );
       } else {
-        setError(authError.message);
+        // Never show the provider's own text: it is technical and may
+        // repeat what was typed.
+        setError(SIGN_IN_FAILED_MESSAGE);
       }
       return;
     }
@@ -72,71 +74,11 @@ export function PatientLogin() {
     // Portal access is decided by the clinic's server: open the portal only
     // when it says access is on. Anything else (off, not linked, no answer)
     // signs the account out again on this device.
-    const refuse = async (message: string) => {
-      // Local only: a refused portal sign-in must not end this account's
-      // sign-ins on other devices (a staff account shares the login).
-      if (supabase) await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
-      clearStoredSupabaseAuth();
-      localStorage.removeItem("patient_portal_user");
-      setError(message);
-    };
-
-    let access = await fetchPortalAccessStatus(supabase);
-    if (access.kind === "not_linked" && supabase) {
-      // First sign-in after confirming the email: link the clinic record
-      // with the details given at registration.
-      const {
-        data: { user: signedIn },
-      } = await supabase.auth.getUser();
-      const link = await linkPortalAccount(supabase, linkDetailsFromUser(signedIn));
-      if (!link.linked) {
-        await refuse(link.message ?? portalSignInRefusalMessage("not_linked"));
-        return;
-      }
-      access = await fetchPortalAccessStatus(supabase);
-    }
-    if (access.kind !== "allowed") {
-      await refuse(portalSignInRefusalMessage(access.kind));
+    if (!supabase) return;
+    const result = await completePortalSignIn(supabase);
+    if (result.kind === "refused") {
+      setError(result.message);
       return;
-    }
-
-    // Populate patient_portal_user so Medical History / Messages can find the patient ID
-    if (supabase) {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (user) {
-          let profileRes = await getPatientProfile(user.id);
-
-          // Fallback: find patient by email and link auth_uid for this session
-          if (!profileRes.data && user.email) {
-            profileRes = await getPatientProfileByEmail(user.id, user.email);
-          }
-
-          if (profileRes.data) {
-            localStorage.setItem(
-              "patient_portal_user",
-              JSON.stringify({
-                id: user.id,
-                patientId: profileRes.data.id,
-                givenName: profileRes.data.givenName,
-                familyName: profileRes.data.familyName,
-                email: profileRes.data.email,
-              }),
-            );
-          } else {
-            setError(
-              "Your account was created but we couldn't find your patient profile. " +
-              "Please contact the clinic so staff can link your record."
-            );
-            return;
-          }
-        }
-      } catch {
-        setError("An error occurred loading your profile. Please try again.");
-        return;
-      }
     }
     navigate("/patient/dashboard");
   };
@@ -306,6 +248,15 @@ export function PatientLogin() {
             </>
           )}
         </button>
+
+        {codeSignInOn && (
+          <Link
+            to="/patient/sign-in-code"
+            className="btn-secondary w-full"
+          >
+            Sign in with a code instead
+          </Link>
+        )}
 
         <p className="text-center text-body text-ink-secondary">
           Don&apos;t have an account?{" "}
