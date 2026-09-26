@@ -425,10 +425,12 @@ is switched on anywhere real data exists. Full rules:
       or entered-in-error state for vitals. Confirm that a saved reading is
       a completed measurement.
 - [ ] **Pulse is published as LOINC "Heart rate" (8867-4) and SpO₂ as
-      arterial oxygen saturation by pulse oximetry (2708-6 and 59408-5)**,
-      the codes the FHIR vital signs profile requires, with mBHR's own
-      column name kept alongside. Confirm these match how outreach readings
-      are taken.
+      oxygen saturation (2708-6) plus oxygen saturation by pulse oximetry
+      (59408-5)**. The FHIR vital signs profile requires 8867-4 and 2708-6;
+      59408-5 is mBHR's addition, because SpO₂ is read with a pulse
+      oximeter. mBHR's own column name is kept alongside. mBHR does not
+      record how a reading was taken. Confirm these match how outreach
+      readings are taken.
 - [ ] **Diagnosis status is carried over exactly.** A provisional or
       differential diagnosis stays provisional or differential; only
       diagnoses in the `conditions` table are exported. Provisional
@@ -524,11 +526,11 @@ Changes to what Phase 1 published (2.5)
       still sent as active. Nothing in mBHR writes this table yet. Confirm
       both, before anything starts writing diagnoses there.
 - [ ] **A diagnosis end date is sent only beside an ended status**
-      (inactive, remission or resolved), as FHIR requires. Beside active,
-      recurrence or relapse it was already left out; it is now also left
-      out when no status is sent (entered in error, or a status that is
-      missing or not recognised). An ended status is never guessed from the
-      date. Confirm.
+      (inactive, remission or resolved), as FHIR requires. Phase 1 sent a
+      stored end date beside any status. It is now left out beside active,
+      recurrence or relapse, and when no status is sent (entered in error,
+      or a status that is missing or not recognised). An ended status is
+      never guessed from the date. Confirm.
 - [ ] **An estimated date of birth is sent as an exact date** (unchanged
       from Phase 1). Quick registration turns an age into 1 January of the
       birth year, or the 1st of the birth month, and the "estimated" mark
@@ -549,10 +551,13 @@ Allergies
       risk"), although mBHR stores no reason and the same action is used for
       wrong-patient or duplicate entries. The app hides inactive allergies.
       Publish them as inactive, or leave them out?
-- [ ] **Severity.** Life-threatening becomes criticality `high` and
-      reaction severity `severe` (the top of the FHIR scale). Severe and
-      moderate become the same reaction severity; `mild` is left out because
-      the form pre-selects it. Should `severe` also be criticality `high`?
+- [ ] **Severity.** Life-threatening becomes criticality `high` and,
+      when a reaction was typed, reaction severity `severe` (the top of the
+      FHIR scale). Severe and moderate are sent as reaction severity
+      `severe` and `moderate`, but only when a reaction was typed, so a
+      severe allergy with no reaction typed carries no rating. `mild` is
+      left out because the form pre-selects it. Should `severe` also be
+      criticality `high`?
 - [ ] **No verification status is published.** mBHR does not record
       whether an allergy was confirmed (the old export said "confirmed").
 - [ ] **An allergy's type "medication" is not published as a category.**
@@ -567,10 +572,14 @@ Allergies
 Medicines
 
 - [ ] **A dispense is never published as `completed` and carries no
-      hand-over time.** mBHR does not record a hand-over; the only
-      `completed` values were set by a migration for every older row.
-      Should a recorded dispense count as a hand-over (then `completed`,
-      with the dispense time)?
+      hand-over time.** mBHR has no separate hand-over record. The pharmacy
+      queue screen asks staff to confirm who they hand the medicine to
+      before pressing Dispense; the visit pharmacy form does not, and its
+      dispenses have no prescription. The held-back migration
+      `20260503010200` would mark every dispense that exists when it is
+      applied as `completed`; the gateway ignores that value. Should a
+      recorded dispense count as a hand-over (then `completed`, with the
+      dispense time)?
 - [ ] **Prescription status.** Open is `active` (mBHR sets no expiry, so an
       old open prescription stays active), dispensed is `completed` (every
       line given, not the course finished), partial is `unknown`, void is
@@ -581,8 +590,9 @@ Medicines
 
 Laboratory
 
-- [ ] **A result is `preliminary` until a clinician reviews it**, then
-      `final`. A result with no value is never final. Normal, abnormal and
+- [ ] **A result is `preliminary` until someone with the review
+      permission reviews it** (a doctor, lead clinician or admin; an admin
+      need not be a clinician), then `final`. A result with no value is never final. Normal, abnormal and
       critical become N, A and AA; H and L are never inferred, and an
       unreviewed "normal" is left out (older rows may carry the form's old
       default). Confirm.
@@ -616,8 +626,10 @@ Consents, staff and sites
 
 - [ ] **Consents are published exactly as recorded.** A withdrawn consent is
       `inactive` and kept. An unverified one is marked unverified. One with
-      no policy, or with a rule the register cannot express exactly, is not
-      published at all rather than shown broader than the patient agreed.
+      no policy, or with a rule the shared format cannot show exactly
+      (including a rule that names one specific recipient), is not
+      published at all rather than shown broader than the patient agreed;
+      a search says how many were left out.
 - [ ] **Staff are published by name and mBHR access role only** (the role is
       not a qualification). Confirm "Administrator" and "Lead clinician" as
       the role names.
