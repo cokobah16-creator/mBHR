@@ -24,16 +24,16 @@ production until the owner decides FHIR/TEFCA goes live.
   only by 20260125091118. It already shows its error state on production;
   deferring changes nothing.
 
-`tests/interop_foundation.test.sql` is the pgTAP file for 20260926110000. It
-lives here so `supabase test db` (which runs `supabase/tests/`) does not run it
-against a database that lacks the interop schema. The FHIR CI job
+`tests/interop_foundation.test.sql` and `tests/interop_phase2.test.sql` are
+the pgTAP files for 20260926110000 and 20260926130000. They live here so
+`supabase test db` (which runs `supabase/tests/`) does not run them against a
+database that lacks the interop schema. The FHIR CI job
 (`.github/workflows/interop-fhir.yml`, with `scripts/ci/interop_db_base.py`)
-still applies 20260926110000 and runs this test on plain PostgreSQL 16 from
+still applies both migrations and runs these tests on plain PostgreSQL 16 from
 this folder.
 
-New FHIR migrations (for example the FHIR thread's
-`20260926130000_interop_phase2`) belong in this folder too, until FHIR goes
-live.
+`20260926130000_interop_phase2` (FHIR Phase 2) is here for the same reason.
+New FHIR migrations belong in this folder too, until FHIR goes live.
 
 ## Rules for un-deferring any file
 
@@ -51,7 +51,8 @@ live.
    and attach `merge_redirect_patient` (20260925100300) to any new table with a
    `patient_id`.
 3. Keep dependency order: 20260125091118 before 20260503030000;
-   20260503020000 before 060000 and 070000; 010000 before 20260926110000.
+   20260503020000 before 060000 and 070000; 010000 before 20260926110000;
+   20260926110000 before 20260926130000.
 4. Rehearse (db-migrations.yml `rehearse`) before `dry-run` and `apply`.
 
 ## Must-fix list per file
@@ -73,3 +74,4 @@ fixes C4, C5 and C11-C17. Line numbers refer to the files as they are here.
 | 20260503060000 | extend_resource_versions_triggers | **C16.** Safe only after 020000 with C12's DEFINER fix (otherwise staff `UPDATE visits` fails). Optionally repeat the `ALTER FUNCTION ... SECURITY DEFINER SET search_path` and REVOKE at the top. Needs 020000, C5 and C11 first, or its triggers are silently skipped. |
 | 20260503070000 | add_fhir_resources_writes | **C17.** Cast fix at L88 (with 020000's L85). Pin `search_path` on its 2 functions. Needs 020000 (C12). REVOKE anon on fhir_resources. |
 | 20260926110000 | interop_foundation | No known defect (applies twice cleanly in the FHIR CI and passes its 42 pgTAP tests there). Needs, at call time, the Wave A helpers, 20260925100600 and 20260503010000 (`patients.fhir_id`) for the gateway. Re-version it above production's newest, together with (and after) 20260503010000. |
+| 20260926130000 | interop_phase2 | No known defect (applies twice cleanly in the FHIR CI, passes its 272 pgTAP tests, and the rollback in its header returns the database to Phase 1). Needs 20260926110000 applied first and, at call time, the Wave A/B helpers it names in its header, 20260503010000 (`patients.fhir_id`) and 20260503010200 (dispense columns). Re-version it above production's newest, after 20260926110000. |

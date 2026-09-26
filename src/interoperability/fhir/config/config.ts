@@ -6,6 +6,21 @@
 // outside systems (writes, SMART, external clients) cannot be switched on in
 // this release at all: readFhirConfig() refuses to produce a configuration
 // that claims them, so the gateway fails closed instead of pretending.
+//
+//   FHIR_ENABLED                      the gateway answers at all (default off)
+//   FHIR_READ_ENABLED                 read and search (default: follows
+//                                     FHIR_ENABLED; "false" leaves only
+//                                     /metadata)
+//   FHIR_PATIENT_ACCESS_ENABLED       portal patients may read their own
+//                                     records (default off)
+//   FHIR_CONSENT_ENFORCEMENT_ENABLED  stored consent directives are evaluated
+//                                     for disclosures that consent governs;
+//                                     off = those disclosures are refused
+//   FHIR_AUDIT_ENABLED                must stay on: "false" is refused, the
+//                                     gateway never serves unaudited data
+//   FHIR_EXTERNAL_ACCESS_ENABLED,     refused when set to true
+//   FHIR_WRITE_ENABLED, SMART_ENABLED,
+//   SMART_EXTERNAL_CLIENTS_ENABLED
 
 export interface FhirConfig {
   /** FHIR_ENABLED: the /fhir/R4 gateway answers at all. */
@@ -18,15 +33,33 @@ export interface FhirConfig {
   maxPageSize: number;
   /** FHIR_RATE_LIMIT_PER_MINUTE per signed-in user (default 60). */
   rateLimitPerMinute: number;
+  /**
+   * FHIR_SENSITIVE_RATE_LIMIT_PER_MINUTE (default 20): a second, stricter
+   * limit for searches on the types marked sensitiveSearch (Patient,
+   * Observation, ServiceRequest, DiagnosticReport, DocumentReference,
+   * Provenance, AuditEvent) and for every Binary download, counted on top of
+   * the general one.
+   */
+  sensitiveRateLimitPerMinute: number;
+  /** FHIR_READ_ENABLED; defaults to FHIR_ENABLED. */
+  readEnabled: boolean;
+  /** FHIR_PATIENT_ACCESS_ENABLED (default off). */
+  patientAccessEnabled: boolean;
+  /** Always true: FHIR_AUDIT_ENABLED=false is refused. */
+  auditEnabled: true;
   /** Always false in this release (see refusals below). */
+  externalAccessEnabled: false;
   writeEnabled: false;
   smartEnabled: false;
   smartExternalClientsEnabled: false;
   /**
-   * FHIR_CONSENT_ENFORCEMENT_ENABLED. The first release only serves internal
-   * treatment access, where the policy decision does not depend on a stored
-   * consent; the flag is carried so later releases can turn stored-consent
-   * checks on independently. See docs/interoperability/consent.md.
+   * FHIR_CONSENT_ENFORCEMENT_ENABLED. Internal treatment by mBHR staff and a
+   * patient reading their own record are not governed by stored consent, so
+   * this flag changes nothing for them. For disclosures that consent does
+   * govern (external sharing, research, third-party apps), on means stored
+   * directives are evaluated (no explicit permit = deny) and off means they
+   * are refused outright. None of those disclosures is enabled in this
+   * release. See docs/interoperability/consent.md.
    */
   consentEnforcementEnabled: boolean;
   /** Supabase project URL and anon (publishable) key for user-scoped reads. */
@@ -47,9 +80,21 @@ export class FhirConfigError extends Error {
 
 export const MAX_PAGE_SIZE_CEILING = 100;
 
+const TRUE_VALUES = ["true", "1", "yes", "on"];
+const FALSE_VALUES = ["false", "0", "no", "off"];
+
+/** Lenient: only an explicit true-like value counts as on. */
 function flag(env: Env, name: string): boolean {
+  return TRUE_VALUES.includes((env[name] ?? "").trim().toLowerCase());
+}
+
+/** true / false when the variable says so, null when unset or blank. */
+function flagValue(env: Env, name: string): boolean | null {
   const raw = (env[name] ?? "").trim().toLowerCase();
-  return raw === "true" || raw === "1" || raw === "yes" || raw === "on";
+  if (raw === "") return null;
+  if (TRUE_VALUES.includes(raw)) return true;
+  if (FALSE_VALUES.includes(raw)) return false;
+  throw new FhirConfigError(`${name} must be true or false`);
 }
 
 function positiveInt(env: Env, name: string, fallback: number): number {
@@ -93,6 +138,7 @@ export function readFhirConfig(env: Env): FhirConfig {
     "FHIR_WRITE_ENABLED",
     "SMART_ENABLED",
     "SMART_EXTERNAL_CLIENTS_ENABLED",
+    "FHIR_EXTERNAL_ACCESS_ENABLED",
   ]) {
     if (flag(env, name)) {
       throw new FhirConfigError(
@@ -110,6 +156,10 @@ export function readFhirConfig(env: Env): FhirConfig {
     maxPageSize,
   );
   const rateLimitPerMinute = positiveInt(env, "FHIR_RATE_LIMIT_PER_MINUTE", 60);
+  const sensitiveRateLimitPerMinute = Math.min(
+    positiveInt(env, "FHIR_SENSITIVE_RATE_LIMIT_PER_MINUTE", 20),
+    rateLimitPerMinute,
+  );
 
   const base: FhirConfig = {
     enabled,
@@ -117,6 +167,11 @@ export function readFhirConfig(env: Env): FhirConfig {
     defaultPageSize,
     maxPageSize,
     rateLimitPerMinute,
+    sensitiveRateLimitPerMinute,
+    readEnabled: false,
+    patientAccessEnabled: false,
+    auditEnabled: true,
+    externalAccessEnabled: false,
     writeEnabled: false,
     smartEnabled: false,
     smartExternalClientsEnabled: false,
@@ -126,6 +181,16 @@ export function readFhirConfig(env: Env): FhirConfig {
     auditIpSecret: null,
   };
   if (!enabled) return base;
+
+  // Strictly parsed once the gateway is on: a typo fails closed.
+  if (flagValue(env, "FHIR_AUDIT_ENABLED") === false) {
+    // Every request is audited before data is released; there is no
+    // unaudited mode to switch to.
+    throw new FhirConfigError("FHIR_AUDIT_ENABLED cannot be switched off");
+  }
+  const readEnabled = flagValue(env, "FHIR_READ_ENABLED") !== false;
+  const patientAccessEnabled = flagValue(env, "FHIR_PATIENT_ACCESS_ENABLED") === true;
+  const consentEnforcementEnabled = flagValue(env, "FHIR_CONSENT_ENFORCEMENT_ENABLED") === true;
 
   const baseUrlRaw = (env.FHIR_BASE_URL ?? "").trim();
   if (!baseUrlRaw) {
@@ -145,9 +210,29 @@ export function readFhirConfig(env: Env): FhirConfig {
 
   return {
     ...base,
+    readEnabled,
+    patientAccessEnabled,
+    consentEnforcementEnabled,
     baseUrl: httpsOrLocalUrl(baseUrlRaw, "FHIR_BASE_URL"),
     supabaseUrl: httpsOrLocalUrl(supabaseUrlRaw, "SUPABASE_URL"),
     supabaseAnonKey: anonKey,
     auditIpSecret: (env.FHIR_AUDIT_IP_SECRET ?? "").trim() || null,
   };
+}
+
+/**
+ * The flags as a response header on /metadata (X-MBHR-FHIR-Flags), so the
+ * admin screen can show them. Only on/off states, never URLs or keys.
+ */
+export function flagsHeader(c: FhirConfig): string {
+  const v = (b: boolean) => (b ? "on" : "off");
+  return [
+    `read=${v(c.readEnabled)}`,
+    `patient=${v(c.patientAccessEnabled)}`,
+    `consent=${v(c.consentEnforcementEnabled)}`,
+    `audit=${v(c.auditEnabled)}`,
+    `external=${v(c.externalAccessEnabled)}`,
+    `write=${v(c.writeEnabled)}`,
+    `smart=${v(c.smartEnabled)}`,
+  ].join("; ");
 }

@@ -27,6 +27,7 @@ import {
 import { ConfirmDialog } from "./account/ConfirmDialog";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { errorName } from "./account/portalSession";
+import { PrivacyConsentSection } from "./PrivacyConsentSection";
 
 interface DataSharingPreferences {
   id?: string;
@@ -330,6 +331,8 @@ export function DataSharingPreferences({ patientId }: Props) {
             </button>
           </div>
         </div>
+        {/* Stored permissions load separately: this failure does not affect them. */}
+        <PrivacyConsentSection patientId={patientId} />
         {explainer}
       </div>
     );
@@ -338,6 +341,9 @@ export function DataSharingPreferences({ patientId }: Props) {
   return (
     <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
       {header}
+      {/* What mBHR does with the records, and stored permissions to share
+          them (consent records). Separate from the choices below. */}
+      <PrivacyConsentSection patientId={patientId} />
       {explainer}
 
       {!isOnline && (

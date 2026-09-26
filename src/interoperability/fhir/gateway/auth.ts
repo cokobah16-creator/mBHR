@@ -6,14 +6,15 @@
 // from the token or the request.
 
 import { errors } from "../errors/operationOutcome";
-import type { Actor } from "../authorization/policy";
+import type { Actor } from "../authorization/authorize";
 import type { FetchLike, Postgrest } from "./postgrest";
 
 const JWT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
 export function bearerToken(header: string | null): string | null {
   if (!header) return null;
-  const m = /^Bearer ([A-Za-z0-9_\-.]+)$/.exec(header.trim());
+  // The scheme name is case-insensitive (RFC 7235).
+  const m = /^Bearer ([A-Za-z0-9_\-.]+)$/i.exec(header.trim());
   return m && JWT.test(m[1]) ? m[1] : null;
 }
 
@@ -64,23 +65,51 @@ export async function authenticate(
 }
 
 interface GatewayContext {
-  role: string | null;
-  permissions: string[] | null;
-  rate_allowed: boolean;
-  retry_after_seconds: number | null;
+  role: unknown;
+  permissions: unknown;
+  actor_kind: unknown;
+  patient_ids: unknown;
+  rate_allowed: unknown;
+  retry_after_seconds: unknown;
+}
+
+/** The caller, and whether this request is within their rate limit(s). */
+export interface LoadedActor {
+  actor: Actor;
+  /** null: allowed; otherwise the seconds to wait (the request is refused with 429). */
+  retryAfter: number | null;
 }
 
 /**
- * The caller's role and permissions, and one step of their rate limit, from
- * public.fhir_gateway_context() (see the interop migration).
+ * Who the caller is to mBHR, and one step of their rate limit(s), from
+ * public.fhir_gateway_context_v2() (see the Phase 2 interop migration):
+ * the staff role and permissions, or the patient records a portal account
+ * is linked to. Nothing here comes from the token or the request.
+ *
+ * Only an explicit rate_allowed = true lets the request through; the
+ * gateway still records a rate-limited request in the access audit.
  */
-export async function loadActor(db: Postgrest, userId: string, ratePerMinute: number): Promise<Actor> {
-  const ctx = await db.rpc<GatewayContext>("fhir_gateway_context", { p_rate_limit: ratePerMinute });
-  if (!ctx || typeof ctx !== "object") throw errors.unavailable();
-  if (ctx.rate_allowed === false) throw errors.tooMany(ctx.retry_after_seconds ?? 60);
-  return {
+export async function loadActor(
+  db: Postgrest,
+  userId: string,
+  limits: { perMinute: number; sensitivePerMinute: number; sensitive: boolean },
+): Promise<LoadedActor> {
+  const ctx = await db.rpc<GatewayContext>("fhir_gateway_context_v2", {
+    p_rate_limit: limits.perMinute,
+    p_sensitive_rate_limit: limits.sensitivePerMinute,
+    p_sensitive: limits.sensitive,
+  });
+  if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) throw errors.unavailable();
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
+  const role = typeof ctx.role === "string" && ctx.role ? ctx.role : null;
+  const kind = ctx.actor_kind === "staff" && role ? "staff" : ctx.actor_kind === "patient" ? "patient" : "none";
+  const actor: Actor = {
     userId,
-    role: typeof ctx.role === "string" && ctx.role ? ctx.role : null,
-    permissions: new Set(Array.isArray(ctx.permissions) ? ctx.permissions.filter((p) => typeof p === "string") : []),
+    kind,
+    role: kind === "staff" ? role : null,
+    permissions: new Set(kind === "staff" ? strings(ctx.permissions) : []),
+    patientIds: new Set(kind === "patient" ? strings(ctx.patient_ids) : []),
   };
+  const retry = typeof ctx.retry_after_seconds === "number" && ctx.retry_after_seconds > 0 ? ctx.retry_after_seconds : 60;
+  return { actor, retryAfter: ctx.rate_allowed === true ? null : retry };
 }

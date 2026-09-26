@@ -4,6 +4,7 @@ import { mapPatient, mapGender } from "../mappers/patient";
 import { mapEncounter, mapVisitStatus } from "../mappers/encounter";
 import { mapVitalsRow, parseObservationId, mapVitalSign } from "../mappers/observation";
 import { mapCondition } from "../mappers/condition";
+import { conditionDefinition } from "../resources/condition";
 import { validateResource } from "../validation/validate";
 import { VITAL_SIGNS } from "../terminology/codeSystems";
 import { CONDITION_A, PATIENT_A, VISIT_A, VITALS_A } from "./fixtures";
@@ -25,14 +26,15 @@ describe("Patient mapper", () => {
   });
 
   it("maps name, telecom, gender, birth date and address", () => {
-    expect(p.name).toEqual([{ use: "official", family: "Okafor", given: ["Ada", "Chioma"], text: "Ada Chioma Okafor" }]);
+    // No name.use, telecom use or address use: mBHR does not record them (not guessed).
+    expect(p.name).toEqual([{ family: "Okafor", given: ["Ada", "Chioma"], text: "Ada Chioma Okafor" }]);
     expect(p.telecom).toEqual([
-      { system: "phone", value: "08000000001", use: "mobile" },
+      { system: "phone", value: "08000000001" },
       { system: "email", value: "ada@example.org" },
     ]);
     expect(p.gender).toBe("female");
     expect(p.birthDate).toBe("1984-03-02");
-    expect(p.address).toEqual([{ use: "home", text: "12 Example Street", district: "Oshimili South", state: "Delta" }]);
+    expect(p.address).toEqual([{ text: "12 Example Street", district: "Oshimili South", state: "Delta" }]);
   });
 
   it("does not assert active for an ordinary record, and marks a merged one replaced", () => {
@@ -55,7 +57,8 @@ describe("Patient mapper", () => {
   it("maps local sex values without guessing", () => {
     expect(mapGender("M")).toBe("male");
     expect(mapGender("f")).toBe("female");
-    expect(mapGender("other")).toBe("other");
+    // "other" is also the app's default when nothing was chosen: not an assertion.
+    expect(mapGender("other")).toBeUndefined();
     expect(mapGender("intersex?")).toBe("unknown");
     expect(mapGender(undefined)).toBeUndefined();
   });
@@ -184,10 +187,73 @@ describe("Condition mapper", () => {
     expect(validateResource(c)).toEqual([]);
   });
 
+  it("publishes an end date only beside an ended clinical status (con-4)", () => {
+    const ended = { ...CONDITION_A, abatement_date: "2026-03-01" };
+    for (const status of ["inactive", "remission", "resolved"]) {
+      const c = mapCondition({ ...ended, clinical_status: status }, ctx)!;
+      expect(c.abatementDateTime, status).toBe("2026-03-01");
+      expect(validateResource(c), status).toEqual([]);
+    }
+    // No clinical status is published for these, so the date is left out
+    // and no ended status is inferred from it.
+    for (const row of [
+      { ...ended, verification_status: "entered-in-error", clinical_status: "resolved" },
+      { ...ended, clinical_status: null },
+      { ...ended, clinical_status: "cured?" },
+      { ...ended, clinical_status: "active" },
+      { ...ended, clinical_status: "relapse" },
+    ]) {
+      const c = mapCondition(row, ctx)!;
+      expect("abatementDateTime" in c, JSON.stringify(row.clinical_status)).toBe(false);
+      expect(validateResource(c)).toEqual([]);
+    }
+  });
+
+  it("refuses a Condition that is abated without an ended clinical status (con-4)", () => {
+    const base = { resourceType: "Condition", id: "c1", subject: { reference: "Patient/p1" }, abatementDateTime: "2026-03-01" };
+    expect(validateResource(base).map((i) => i.path)).toContain("abatement[x]");
+    expect(
+      validateResource({
+        ...base,
+        clinicalStatus: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-clinical", code: "active" }] },
+      }).map((i) => i.path),
+    ).toContain("abatement[x]");
+    expect(
+      validateResource({
+        ...base,
+        clinicalStatus: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-clinical", code: "resolved" }] },
+      }).map((i) => i.path),
+    ).not.toContain("abatement[x]");
+  });
+
   it("drops unknown status values rather than inventing one", () => {
     const c = mapCondition({ ...CONDITION_A, clinical_status: "cured?", verification_status: null }, ctx)!;
     expect(c.clinicalStatus).toBeUndefined();
     expect(c.verificationStatus).toBeUndefined();
+  });
+
+  it("leaves out a stored 'confirmed', the column's default, and publishes every other verification code", () => {
+    // public.conditions.verification_status has DEFAULT 'confirmed': a row
+    // written without one is not a confirmed diagnosis.
+    const c = mapCondition({ ...CONDITION_A, verification_status: "confirmed" }, ctx)!;
+    expect("verificationStatus" in c).toBe(false);
+    expect(c.clinicalStatus?.coding?.[0].code).toBe("active"); // unchanged
+    expect(validateResource(c)).toEqual([]);
+    for (const raw of ["Confirmed", " confirmed "]) {
+      expect("verificationStatus" in mapCondition({ ...CONDITION_A, verification_status: raw }, ctx)!, raw).toBe(false);
+    }
+    for (const code of ["unconfirmed", "provisional", "differential", "refuted", "entered-in-error"]) {
+      expect(mapCondition({ ...CONDITION_A, verification_status: code }, ctx)!.verificationStatus, code).toStrictEqual({
+        coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-ver-status", code }],
+      });
+    }
+    // Search cannot find what the read leaves out: there is no
+    // verification-status parameter (an unknown parameter is refused).
+    expect(conditionDefinition.searchParams.map((p) => p.name)).not.toContain("verification-status");
+    // The published notes say so, so a missing verificationStatus is not read as "unconfirmed".
+    expect(conditionDefinition.notes?.join(" ")).toMatch(
+      /verificationStatus is left out when the stored value is 'confirmed'.*cannot be told apart.*does not mean the diagnosis is unconfirmed/,
+    );
   });
 });
 

@@ -18,8 +18,12 @@
 //     clinical sign-off, not part of the recorded measurement.
 //   - status is "final": a saved vitals row is a completed measurement. mBHR
 //     has no preliminary or entered-in-error state for vitals.
+//   - A blood pressure with only one of systolic/diastolic recorded is
+//     still published: the recorded component carries its value and the
+//     other a dataAbsentReason "unknown" (it was not recorded; why is not
+//     known). Dropping it would hide a real measurement.
 
-import type { Observation, Quantity } from "../types/fhir";
+import type { CodeableConcept, Observation, Quantity } from "../types/fhir";
 import {
   BP_COMPONENTS,
   LOCAL,
@@ -68,10 +72,13 @@ function quantity(value: number, unit: { code: string; display: string }): Quant
 export function vitalKindsPresent(row: Row): VitalSignDef[] {
   return VITAL_SIGNS.filter((def) =>
     def.kind === "bp"
-      ? measured(row, "systolic") !== undefined && measured(row, "diastolic") !== undefined
+      ? measured(row, "systolic") !== undefined || measured(row, "diastolic") !== undefined
       : measured(row, def.columns[0]) !== undefined,
   );
 }
+
+export const DATA_ABSENT_REASON = "http://terminology.hl7.org/CodeSystem/data-absent-reason";
+const NOT_RECORDED = { coding: [{ system: DATA_ABSENT_REASON, code: "unknown", display: "Unknown" }] };
 
 /** Split "<vitals id>-<kind>" into its parts, or null. */
 export function parseObservationId(id: string): { vitalsId: string; kind: string } | null {
@@ -82,6 +89,20 @@ export function parseObservationId(id: string): { vitalsId: string; kind: string
     }
   }
   return null;
+}
+
+/** Observation.code of a vital sign; a code= search matches exactly these codings (resources/observation.ts). */
+export function vitalSignCode(def: VitalSignDef): CodeableConcept {
+  return {
+    coding: [
+      ...def.loinc.map((c) => ({ system: LOINC, code: c.code, display: c.display })),
+      // Codings in one CodeableConcept must mean the same thing, so the
+      // local column code goes here only for single-column kinds; blood
+      // pressure carries its column codes on its components.
+      ...(def.columns.length === 1 ? [{ system: LOCAL.vitals, code: def.columns[0] }] : []),
+    ],
+    text: def.display,
+  };
 }
 
 export function mapVitalSign(row: Row, def: VitalSignDef, ctx: MapContext): Observation | null {
@@ -99,16 +120,7 @@ export function mapVitalSign(row: Row, def: VitalSignDef, ctx: MapContext): Obse
     meta: versionMeta(row, effective ? [VITAL_SIGNS_PROFILE, def.profile] : undefined),
     status: "final",
     category: VITAL_SIGNS_CATEGORY,
-    code: {
-      coding: [
-        ...def.loinc.map((c) => ({ system: LOINC, code: c.code, display: c.display })),
-        // Codings in one CodeableConcept must mean the same thing, so the
-        // local column code goes here only for single-column kinds; blood
-        // pressure carries its column codes on its components.
-        ...(def.columns.length === 1 ? [{ system: LOCAL.vitals, code: def.columns[0] }] : []),
-      ],
-      text: def.display,
-    },
+    code: vitalSignCode(def),
     subject,
   };
   const visitId = str(row, "visit_id");
@@ -118,21 +130,21 @@ export function mapVitalSign(row: Row, def: VitalSignDef, ctx: MapContext): Obse
   if (def.kind === "bp") {
     const systolic = measured(row, "systolic");
     const diastolic = measured(row, "diastolic");
-    if (systolic === undefined || diastolic === undefined) return null;
+    if (systolic === undefined && diastolic === undefined) return null;
     obs.component = [
       {
         code: {
           coding: [{ system: LOINC, ...BP_COMPONENTS.systolic }, { system: LOCAL.vitals, code: "systolic" }],
           text: BP_COMPONENTS.systolic.display,
         },
-        valueQuantity: quantity(systolic, BP_COMPONENTS.unit),
+        ...(systolic !== undefined ? { valueQuantity: quantity(systolic, BP_COMPONENTS.unit) } : { dataAbsentReason: NOT_RECORDED }),
       },
       {
         code: {
           coding: [{ system: LOINC, ...BP_COMPONENTS.diastolic }, { system: LOCAL.vitals, code: "diastolic" }],
           text: BP_COMPONENTS.diastolic.display,
         },
-        valueQuantity: quantity(diastolic, BP_COMPONENTS.unit),
+        ...(diastolic !== undefined ? { valueQuantity: quantity(diastolic, BP_COMPONENTS.unit) } : { dataAbsentReason: NOT_RECORDED }),
       },
     ];
     return obs;

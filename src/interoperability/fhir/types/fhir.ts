@@ -18,6 +18,8 @@ export interface CodeableConcept {
 
 export interface Reference {
   reference?: string;
+  type?: string;
+  identifier?: Identifier;
   display?: string;
 }
 
@@ -109,6 +111,12 @@ export interface Encounter extends Resource {
 export interface ObservationComponent {
   code: CodeableConcept;
   valueQuantity?: Quantity;
+  dataAbsentReason?: CodeableConcept;
+}
+
+export interface Annotation {
+  text: string;
+  time?: string;
 }
 
 export interface Observation extends Resource {
@@ -122,12 +130,20 @@ export interface Observation extends Resource {
     | "cancelled"
     | "entered-in-error"
     | "unknown";
+  basedOn?: Reference[];
   category?: CodeableConcept[];
   code: CodeableConcept;
   subject?: Reference;
   encounter?: Reference;
   effectiveDateTime?: string;
+  issued?: string;
   valueQuantity?: Quantity;
+  valueString?: string;
+  dataAbsentReason?: CodeableConcept;
+  interpretation?: CodeableConcept[];
+  note?: Annotation[];
+  referenceRange?: { text?: string }[];
+  derivedFrom?: Reference[];
   component?: ObservationComponent[];
 }
 
@@ -147,6 +163,7 @@ export interface Condition extends Resource {
 export interface OperationOutcomeIssue {
   severity: "fatal" | "error" | "warning" | "information";
   code: string;
+  details?: CodeableConcept;
   diagnostics?: string;
 }
 
@@ -172,5 +189,6 @@ export interface Bundle extends Resource {
   timestamp?: string;
   total?: number;
   link: BundleLink[];
-  entry: BundleEntry[];
+  /** 0..*: left out when there is nothing to list (FHIR JSON forbids empty arrays). */
+  entry?: BundleEntry[];
 }

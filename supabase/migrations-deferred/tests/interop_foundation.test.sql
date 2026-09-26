@@ -87,11 +87,17 @@ SELECT ok((public.fhir_gateway_context(60) -> 'permissions') ? 'vitals', 'a nurs
 SELECT ok(NOT ((public.fhir_gateway_context(60) -> 'permissions') ? 'consult'), 'a nurse does not hold consult');
 SELECT is((public.fhir_gateway_context(60) ->> 'rate_allowed')::boolean, true, 'within the rate limit');
 
+-- The Phase 2 migration (20260926130000) closes v1 fhir_record_access to
+-- authenticated (the gateway writes through v2). The v1 checks below run as
+-- the owner, with the nurse's claims still set, so this file passes with or
+-- without Phase 2 applied.
+RESET ROLE;
 SELECT isnt(
   public.fhir_record_access('88882222-0000-4000-8000-000000000001', 'search', 'Observation', NULL,
     ARRAY['pgtap-interop-patient'], 'TREAT', 'permit', NULL, 3, ARRAY['patient'], 'pgtap', NULL),
   NULL,
   'a nurse records an access');
+SET LOCAL ROLE authenticated;
 
 SELECT is(
   (SELECT count(*)::int FROM public.fhir_terminology_lookup('condition', ARRAY['pgtap-verified', 'pgtap-unverified'])),
@@ -108,9 +114,8 @@ SELECT ok(
   'the audit row names the caller from the session, with their role');
 
 -- ---------------------------------------------------------------------------
--- 4. Audit arguments are checked
+-- 4. Audit arguments are checked (as the owner with the nurse's claims: see section 3)
 -- ---------------------------------------------------------------------------
-SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"88880000-0000-4000-8000-000000000001","role":"authenticated"}';
 SELECT throws_ok(
   $$SELECT public.fhir_record_access(gen_random_uuid(), 'delete', 'Patient', NULL, '{}', 'TREAT', 'permit', NULL, 0, '{}', NULL, NULL)$$,

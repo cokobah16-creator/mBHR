@@ -17,6 +17,11 @@ including who may call its functions (row-level security and permissions).
 
 Queue tickets (`20260925100200`) have no pgTAP file yet.
 
+The FHIR Phase 2 test (`interop_phase2.test.sql`) lives with its deferred
+migration in `supabase/migrations-deferred/tests/`, so `supabase test db`
+does not run it against a database that never gets that migration. The
+interop CI workflow runs it (see `docs/interoperability/testing.md`).
+
 ## Running them
 
 They target the Supabase CLI:

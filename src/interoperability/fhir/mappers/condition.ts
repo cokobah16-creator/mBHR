@@ -2,7 +2,10 @@
 //
 // mBHR's conditions table already stores FHIR-shaped statuses, so they are
 // carried over exactly: a provisional or differential diagnosis stays
-// provisional or differential, never confirmed. The code is published under
+// provisional or differential, never confirmed. The one exception is a
+// stored verification_status 'confirmed': it is the column's default, so it
+// cannot be told apart from a row written without a verification status,
+// and it is left out (see VERIFICATION below). The code is published under
 // mBHR's local condition code system unless interop.terminology_map holds a
 // reviewed ('verified') mapping for it, in which case that coding is added
 // next to the local one. Free-text notes and the recorder are not published.
@@ -39,11 +42,21 @@ export const CONDITION_COLUMNS = [
 ] as const;
 
 const CLINICAL = ["active", "recurrence", "relapse", "inactive", "remission", "resolved"];
+/** The clinical statuses an abatement may stand beside (R4 con-4). */
+const ENDED = ["inactive", "remission", "resolved"];
+/**
+ * The verification codes published as stored. "confirmed" is not one of
+ * them: public.conditions.verification_status has DEFAULT 'confirmed'
+ * (20260125091822_add_immunizations_conditions_sdoh.sql), so a stored
+ * 'confirmed' may just mean that nobody recorded a verification status;
+ * the two cannot be told apart. It is left out, never published as a
+ * confirmed diagnosis. Condition search offers no verification-status
+ * parameter, so search cannot disagree with this.
+ */
 const VERIFICATION = [
   "unconfirmed",
   "provisional",
   "differential",
-  "confirmed",
   "refuted",
   "entered-in-error",
 ];
@@ -110,8 +123,16 @@ export function mapCondition(
 
   const onset = calendarDate(row, "onset_date");
   if (onset) condition.onsetDateTime = onset;
+  // R4 invariant con-4: an abatement needs a clinical status of inactive,
+  // remission or resolved. When the record says otherwise (active,
+  // recurrence or relapse beside an end date), the clinical status is the
+  // recorder's primary statement: it is kept and the contradicting date is
+  // left out rather than guessed between. Where no clinical status is
+  // published (entered in error, or a missing or unknown stored value), the
+  // date is left out too: an ended status is never inferred from it.
   const abatement = calendarDate(row, "abatement_date");
-  if (abatement) condition.abatementDateTime = abatement;
+  const ended = ENDED.includes(condition.clinicalStatus?.coding?.[0]?.code ?? "");
+  if (abatement && ended) condition.abatementDateTime = abatement;
   const recorded = instant(row, "created_at");
   if (recorded) condition.recordedDate = recorded;
   return condition;

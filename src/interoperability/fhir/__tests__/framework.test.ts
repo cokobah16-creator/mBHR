@@ -11,10 +11,11 @@ import {
   parseReferenceId,
 } from "../search/params";
 import { searchsetBundle } from "../search/bundle";
-import { canAccessFHIRResource, type Actor } from "../authorization/policy";
+import { authorizeFhirRequest, type Actor } from "../authorization/policy";
+import type { FhirResourceType } from "../authorization/permissions";
 import { parsePurposeOfUse, type PurposeOfUse } from "../consent/policy";
 import { capabilityStatement } from "../capability/capabilityStatement";
-import { RESOURCE_DEFINITIONS } from "../mappers/registry";
+import { PUBLISHED_TYPES, RESOURCE_DEFINITIONS } from "../mappers/registry";
 import { FhirError } from "../errors/operationOutcome";
 
 const ENABLED = {
@@ -81,10 +82,12 @@ describe("search parameters", () => {
     expect(() => parse("patient=x&date=ge2026&date=lt2027&date=eq2026-05")).toThrow(FhirError);
   });
 
-  it("parses dates into half-open ranges", () => {
-    expect(parseDateSearch("2026-05-01", "date")).toEqual({ from: "2026-05-01T00:00:00.000Z", to: "2026-05-02T00:00:00.000Z" });
-    expect(parseDateSearch("ge2026-05", "date")).toEqual({ from: "2026-05-01T00:00:00.000Z", to: null });
-    expect(parseDateSearch("lt2026", "date")).toEqual({ from: null, to: "2026-01-01T00:00:00.000Z" });
+  it("parses dates into half-open ranges, a date without a time being a clinic day in Africa/Lagos", () => {
+    expect(parseDateSearch("2026-05-01", "date")).toEqual({ from: "2026-04-30T23:00:00.000Z", to: "2026-05-01T23:00:00.000Z" });
+    expect(parseDateSearch("ge2026-05", "date")).toEqual({ from: "2026-04-30T23:00:00.000Z", to: null });
+    expect(parseDateSearch("lt2026", "date")).toEqual({ from: null, to: "2025-12-31T23:00:00.000Z" });
+    // Years before 100 are not shifted into the 1900s.
+    expect(parseDateSearch("0050-01-01", "date").from).toBe("0049-12-31T23:00:00.000Z");
     expect(parseDateSearch("gt2026-05-01T10:00+01:00", "date").from).toBe("2026-05-01T09:01:00.000Z");
     expect(parseDateSearch("gt2026-05-01T10:00:00+01:00", "date").from).toBe("2026-05-01T09:00:01.000Z");
     for (const bad of ["2026-13-01", "2026-02-30", "2026-05-01T10:00", "sa2026", "yesterday", "2026-05-01;drop"]) {
@@ -126,38 +129,74 @@ describe("search parameters", () => {
     expect(b.link[0]).toEqual({ relation: "self", url: "https://mbhr.app/fhir/R4/Observation?code=8867-4&patient=Patient%2Fp1&_count=2" });
     expect(b.link[1].relation).toBe("next");
     expect(new URL(b.link[1].url).searchParams.get("_cursor")).toBe(encodeCursor({ k: "row1", s: 2 }));
-    expect(b.entry[0]).toEqual({ fullUrl: "https://mbhr.app/fhir/R4/Observation/o1", resource: { resourceType: "Observation", id: "o1" }, search: { mode: "match" } });
+    expect(b.entry).toStrictEqual([
+      { fullUrl: "https://mbhr.app/fhir/R4/Observation/o1", resource: { resourceType: "Observation", id: "o1" }, search: { mode: "match" } },
+    ]);
+  });
+
+  it("leaves entry out of a searchset with nothing to list (FHIR JSON has no empty arrays)", () => {
+    const opts = {
+      baseUrl: "https://mbhr.app/fhir/R4",
+      resourceType: "Encounter",
+      query: new URLSearchParams("patient=Patient/p1"),
+      count: 20,
+      page: { resources: [], next: null },
+      now: new Date("2026-09-25T00:00:00Z"),
+      newId: () => "0e0e0e0e-0000-4000-8000-000000000001",
+    };
+    const empty = searchsetBundle(opts);
+    expect("entry" in empty).toBe(false);
+    expect(JSON.stringify(empty)).not.toContain("[]");
+    // A note alone is still listed, as the one outcome entry.
+    const noted = searchsetBundle({ ...opts, outcomes: [{ severity: "information", code: "informational", diagnostics: "A note." }] });
+    expect(noted.entry?.map((e) => e.search?.mode)).toStrictEqual(["outcome"]);
   });
 });
 
 describe("access decision", () => {
-  const actor = (role: string | null, permissions: string[]): Actor => ({ userId: "u", role, permissions: new Set(permissions) });
+  const actor = (role: string | null, permissions: string[]): Actor => ({
+    userId: "u",
+    kind: role ? "staff" : "none",
+    role,
+    permissions: new Set(permissions),
+    patientIds: new Set(),
+  });
   const nurse = actor("nurse", ["register", "vitals", "queue", "portal_manage", "resolve_conflicts", "merge_patients"]);
   const doctor = actor("doctor", ["register", "vitals", "consult", "lab_review", "queue"]);
   const pharmacist = actor("pharmacist", ["dispense", "inventory", "queue"]);
   const auditor = actor("auditor", ["export", "audit_access", "approve_phi_conflicts", "resolve_conflicts", "merge_patients"]);
-  const portalPatient = actor(null, []);
-  const decide = (a: Actor, resourceType: "Patient" | "Encounter" | "Observation" | "Condition", purpose: PurposeOfUse = "TREAT") =>
-    canAccessFHIRResource({ actor: a, action: "read", resourceType, purposeOfUse: purpose }).permit;
+  const noRole = actor(null, []);
+  const config = { enabled: true, readEnabled: true, patientAccessEnabled: false, consentEnforcementEnabled: false };
+  const decide = async (a: Actor, resourceType: FhirResourceType, purpose: PurposeOfUse | null = "TREAT") =>
+    (
+      await authorizeFhirRequest(
+        { actor: a, client: null, interaction: "read", resourceType, purposeOfUse: purpose },
+        { config, now: new Date("2026-09-25T12:00:00Z") },
+      )
+    ).allowed;
 
-  it("follows mBHR permissions, not titles", () => {
-    expect(decide(nurse, "Observation")).toBe(true);
-    expect(decide(nurse, "Condition")).toBe(false);
-    expect(decide(doctor, "Condition")).toBe(true);
-    expect(decide(pharmacist, "Patient")).toBe(true);
-    expect(decide(pharmacist, "Condition")).toBe(false);
-    expect(decide(pharmacist, "Observation")).toBe(false);
-    expect(decide(auditor, "Patient")).toBe(false);
+  it("follows mBHR permissions, not titles", async () => {
+    expect(await decide(nurse, "Observation")).toBe(true);
+    expect(await decide(nurse, "Condition")).toBe(false);
+    expect(await decide(doctor, "Condition")).toBe(true);
+    expect(await decide(pharmacist, "Patient")).toBe(true);
+    expect(await decide(pharmacist, "Condition")).toBe(false);
+    expect(await decide(pharmacist, "Observation")).toBe(false);
+    expect(await decide(pharmacist, "MedicationDispense")).toBe(true);
+    expect(await decide(auditor, "Patient")).toBe(false);
+    expect(await decide(auditor, "AuditEvent")).toBe(true);
+    expect(await decide(nurse, "AuditEvent")).toBe(false);
   });
 
-  it("gives accounts without a staff role nothing (patient self-access is a later release)", () => {
-    for (const t of ["Patient", "Encounter", "Observation", "Condition"] as const) expect(decide(portalPatient, t)).toBe(false);
+  it("gives accounts that are neither staff nor a linked patient nothing", async () => {
+    for (const t of PUBLISHED_TYPES) expect(await decide(noRole, t)).toBe(false);
   });
 
-  it("permits treatment only; everything else is default-deny", () => {
-    expect(decide(doctor, "Patient", "TREAT")).toBe(true);
-    for (const p of ["ETREAT", "HOPERAT", "PATRQT", "HRESCH"] as const) expect(decide(doctor, "Patient", p)).toBe(false);
+  it("permits treatment only for staff; everything else is default-deny", async () => {
+    expect(await decide(doctor, "Patient", "TREAT")).toBe(true);
+    for (const p of ["ETREAT", "HOPERAT", "PATRQT", "HRESCH", "PUBHLTH", null] as const) expect(await decide(doctor, "Patient", p)).toBe(false);
     expect(parsePurposeOfUse(null)).toBe("TREAT");
+    expect(parsePurposeOfUse(null, "PATRQT")).toBe("PATRQT");
     expect(parsePurposeOfUse("treat")).toBe("TREAT");
     expect(parsePurposeOfUse("MARKETING")).toBeNull();
   });
@@ -169,15 +208,27 @@ describe("CapabilityStatement", () => {
   it("advertises exactly what is implemented", () => {
     expect(cs.fhirVersion).toBe("4.0.1");
     expect(cs.format).toEqual(["application/fhir+json"]);
-    const types = cs.rest[0].resource.map((r) => r.type);
-    expect(types).toEqual(["Patient", "Encounter", "Observation", "Condition"]);
-    for (const r of cs.rest[0].resource) {
-      expect(r.interaction.map((i) => i.code).sort()).toEqual(["read", "search-type"]);
-      expect(r.searchParam.map((p) => p.name)).toEqual(RESOURCE_DEFINITIONS[r.type].searchParams.map((p) => p.name));
+    const resources = cs.rest[0].resource ?? [];
+    expect(resources.map((r) => r.type)).toEqual(PUBLISHED_TYPES);
+    for (const r of resources) {
+      const def = RESOURCE_DEFINITIONS[r.type];
+      expect(r.interaction.map((i) => i.code)).toEqual(def.interactions);
+      for (const code of r.interaction.map((i) => i.code)) expect(["read", "search-type"]).toContain(code);
+      expect((r.searchParam ?? []).map((p) => p.name)).toEqual(def.searchParams.map((p) => p.name));
+      expect(r.readHistory).toBe(false);
+      expect(r.updateCreate).toBe(false);
     }
     const json = JSON.stringify(cs);
     expect(json).not.toMatch(/"code":"(create|update|patch|delete|history-instance|batch|transaction)"/);
     expect(json).not.toMatch(/SMART-on-FHIR|oauth-uris|_include|_revinclude/);
     expect(cs.implementation.url).toBe("https://mbhr.app/fhir/R4");
+  });
+
+  it("lists no resource when reads are switched off, and names patient access only when on", () => {
+    expect(capabilityStatement("https://mbhr.app/fhir/R4", undefined, { readEnabled: false }).rest[0].resource).toBeUndefined();
+    expect(cs.implementation.description).not.toMatch(/patients reading/);
+    expect(capabilityStatement("https://x.example/fhir/R4", undefined, { patientAccessEnabled: true }).implementation.description).toMatch(
+      /patients reading their own records/,
+    );
   });
 });

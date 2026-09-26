@@ -13,8 +13,28 @@ import { FhirError, errors } from "../errors/operationOutcome";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-export const READABLE_TABLES = ["patients", "visits", "vitals", "conditions"] as const;
+/** Every table the gateway may read, as the caller. */
+export const READABLE_TABLES = [
+  "patients",
+  "visits",
+  "vitals",
+  "conditions",
+  "patient_allergies",
+  "pharmacy_items",
+  "prescriptions",
+  "dispenses",
+  "lab_orders",
+  "lab_results",
+  "lab_result_release_log",
+  "patient_documents",
+  "patient_merges",
+  "organizations",
+  "sites",
+] as const;
 export type ReadableTable = (typeof READABLE_TABLES)[number];
+
+/** Database functions the gateway may call: the fhir_* family only. */
+export const RPC_NAME = /^fhir_[a-z0-9_]+$/;
 
 export interface PostgrestOptions {
   supabaseUrl: string;
@@ -56,7 +76,7 @@ export class Postgrest {
   }
 
   async rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
-    if (!/^fhir_[a-z_]+$/.test(fn)) throw errors.internal();
+    if (!RPC_NAME.test(fn)) throw errors.internal();
     const res = await this.call(`${this.opts.supabaseUrl}/rest/v1/rpc/${fn}`, {
       method: "POST",
       headers: { ...this.headers(), "Content-Type": "application/json" },
@@ -73,15 +93,42 @@ export class Postgrest {
       throw errors.unavailable();
     }
     if (res.ok) return res;
-    if (res.status === 401) throw errors.unauthenticated("The session is not valid. Sign in again.");
-    // Anything else (a policy refusal, a missing function or column on this
-    // database, an overload) is reported without detail.
-    throw new FhirError(res.status === 403 ? 403 : 503, res.status === 403 ? "forbidden" : "exception",
-      res.status === 403 ? "The requested resource is not available to this client." : "The service is temporarily unavailable.");
+    throw await postgrestError(res);
   }
+}
+
+/**
+ * A PostgREST failure as a caller-safe FhirError. Only the SQLSTATE is
+ * looked at, never the message (it can name tables, columns or values).
+ *
+ *   401                    the session is not valid
+ *   42501 / HTTP 403       refused by a policy or a function's own check
+ *   22P02, 22023, 22007    a value the database could not accept for its
+ *                          column (e.g. a malformed id): the request is bad
+ *   anything else          503 without detail (a missing function or column
+ *                          on this database, an overload)
+ */
+export async function postgrestError(res: Response): Promise<FhirError> {
+  if (res.status === 401) return errors.unauthenticated("The session is not valid. Sign in again.");
+  let code: unknown;
+  try {
+    code = ((await res.json()) as { code?: unknown })?.code;
+  } catch {
+    code = undefined;
+  }
+  if (res.status === 403 || code === "42501") return errors.forbidden();
+  if (code === "22P02" || code === "22023" || code === "22007" || code === "22008") {
+    return errors.badRequest("A search or id value is not valid for this field.");
+  }
+  return new FhirError(503, "exception", "The service is temporarily unavailable.");
 }
 
 /** Quote a value for use inside a PostgREST in.(...) list or or=(...) group. */
 export function pgrstQuote(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** A PostgREST in.(...) list of quoted values. */
+export function inList(values: Iterable<string>): string {
+  return `in.(${[...values].map(pgrstQuote).join(",")})`;
 }

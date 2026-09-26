@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { handleFhirRequest, fhirPath } from "../gateway/handler";
+import { PUBLISHED_TYPES } from "../resources/registry";
 import { fakeSupabase, makeToken, type FakeOptions } from "./fakeSupabase";
 import { CONDITION_A, PATIENT_A, PATIENT_B, VISIT_A, VITALS_A } from "./fixtures";
 
@@ -64,6 +65,11 @@ async function body(res: Response) {
   return res.json() as Promise<Record<string, any>>; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
+/** Ids of a searchset's matches (a searchset with nothing to list has no entry). */
+function matchIds(b: Record<string, any>): string[] { // eslint-disable-line @typescript-eslint/no-explicit-any
+  return (b.entry ?? []).filter((e: { search: { mode: string } }) => e.search.mode === "match").map((e: { resource: { id: string } }) => e.resource.id);
+}
+
 describe("feature flag", () => {
   it("answers nothing but a 404 OperationOutcome when FHIR_ENABLED is off", async () => {
     const { call, calls } = setup();
@@ -92,7 +98,11 @@ describe("metadata", () => {
     expect(res.headers.get("content-type")).toBe("application/fhir+json; charset=utf-8");
     const cs = await body(res);
     expect(cs.resourceType).toBe("CapabilityStatement");
-    expect(cs.rest[0].resource.map((r: { type: string }) => r.type)).toEqual(["Patient", "Encounter", "Observation", "Condition"]);
+    expect(cs.rest[0].resource.map((r: { type: string }) => r.type)).toEqual(PUBLISHED_TYPES);
+    expect(res.headers.get("x-mbhr-fhir-flags")).toBe("read=on; patient=off; consent=off; audit=on; external=off; write=off; smart=off");
+    // No write interaction, no SMART or OAuth claim anywhere.
+    const text = JSON.stringify(cs);
+    expect(text).not.toMatch(/"code":"(create|update|patch|delete)"|oauth-uris|smart-app-launch|supportedProfile/);
   });
 
   it("reads the rewritten path too", () => {
@@ -128,11 +138,13 @@ describe("authentication", () => {
 });
 
 describe("authorisation", () => {
-  it("a portal patient (no staff role) is refused and the denial is audited", async () => {
+  it("an account that is neither staff nor a linked patient is refused and the denial is audited", async () => {
     const { call, audits } = setup();
     const res = await call(`/fhir/R4/Patient/${PATIENT_A.fhir_id}`, { token: PORTAL });
     expect(res.status).toBe(403);
-    expect(audits).toEqual([expect.objectContaining({ p_decision: "deny", p_denial_reason: "no_staff_role", actor: "portal-1" })]);
+    expect(audits).toEqual([
+      expect.objectContaining({ p_decision: "deny", p_denial_reason: "no_active_account", p_http_status: 403, actor: "portal-1" }),
+    ]);
   });
 
   it("a pharmacist cannot read diagnoses or vital signs, but can read the patient", async () => {
@@ -167,7 +179,8 @@ describe("authorisation", () => {
     // Changing the patient in the search does not reach B's vital signs.
     const search = await body(await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_B.fhir_id}`, { token: DOCTOR }));
     expect(search.resourceType).toBe("Bundle");
-    expect(search.entry).toEqual([]);
+    // Nothing to list: no entry at all (FHIR JSON has no empty arrays).
+    expect(search).not.toHaveProperty("entry");
     // Nor does naming B's vitals row directly.
     const direct = await call(`/fhir/R4/Observation/${VITALS_B.id}-heart-rate`, { token: DOCTOR });
     expect(direct.status).toBe(404);
@@ -217,7 +230,9 @@ describe("reads", () => {
     expect(p.id).toBe(PATIENT_A.fhir_id);
     expect(res.headers.get("etag")).toBe(`W/"${p.meta.versionId}"`);
     expect(res.headers.get("last-modified")).toBe("Fri, 01 May 2026 10:30:00 GMT");
-    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    // The version is a digest of what was served (stable for the same content).
+    expect(p.meta.versionId).toMatch(/^[0-9a-f]{24}$/);
     expect(res.headers.get("x-request-id")).toBe("11111111-2222-4333-8444-555555555555");
   });
 
@@ -243,13 +258,16 @@ describe("reads", () => {
     expect(audits).toEqual([
       expect.objectContaining({
         actor: "nurse-1",
-        p_action: "read",
+        p_interaction: "read",
         p_resource_type: "Observation",
         p_resource_id: `${VITALS_A.id}-weight`,
         p_patient_ids: [PATIENT_A.id],
         p_decision: "permit",
         p_result_count: 1,
         p_purpose: "TREAT",
+        p_http_status: 200,
+        p_consent_decision: "not-applicable",
+        p_actor_kind: "staff",
       }),
     ]);
   });
@@ -272,9 +290,9 @@ describe("searches", () => {
     const byName = await body(await call("/fhir/R4/Patient?name=oka&birthdate=1984-03-02", { token: NURSE }));
     expect(byName.entry).toHaveLength(1);
     const wrongDob = await body(await call("/fhir/R4/Patient?name=oka&birthdate=1984-03-03", { token: NURSE }));
-    expect(wrongDob.entry).toEqual([]);
+    expect(wrongDob).not.toHaveProperty("entry");
     const otherSystem = await body(await call(`/fhir/R4/Patient?identifier=urn:oid:2.16.840|${PATIENT_A.fhir_id}`, { token: NURSE }));
-    expect(otherSystem.entry).toEqual([]);
+    expect(otherSystem).not.toHaveProperty("entry");
   });
 
   it("pages vital signs with a stable cursor and no duplicates", async () => {
@@ -285,7 +303,8 @@ describe("searches", () => {
     while (url && pages < 10) {
       const b = await body(await call(url, { token: NURSE }));
       expect(b.type).toBe("searchset");
-      seen.push(...b.entry.map((e: { resource: { id: string } }) => e.resource.id));
+      // Matches only: a nurse's searchset also carries the note that laboratory results were left out.
+      seen.push(...matchIds(b));
       const next = b.link.find((l: { relation: string }) => l.relation === "next");
       url = next ? next.url.replace("https://mbhr.app", "") : null;
       pages++;
@@ -296,10 +315,7 @@ describe("searches", () => {
 
   it("filters Observations by code, category, status, encounter and date", async () => {
     const { call } = setup();
-    const ids = async (q: string) =>
-      (await body(await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}&${q}`, { token: NURSE }))).entry.map(
-        (e: { resource: { id: string } }) => e.resource.id,
-      );
+    const ids = async (q: string) => matchIds(await body(await call(`/fhir/R4/Observation?patient=Patient/${PATIENT_A.fhir_id}&${q}`, { token: NURSE })));
     expect(await ids("code=http://loinc.org|29463-7")).toEqual([`${VITALS_A.id}-weight`]);
     expect(await ids("code=weight_kg")).toEqual([`${VITALS_A.id}-weight`]);
     expect(await ids("category=laboratory")).toEqual([]);
@@ -312,9 +328,13 @@ describe("searches", () => {
   it("filters Conditions by clinical status and never matches entered-in-error", async () => {
     const { call } = setup();
     const b = await body(await call(`/fhir/R4/Condition?patient=Patient/${PATIENT_A.fhir_id}&clinical-status=active`, { token: DOCTOR }));
-    expect(b.entry.map((e: { resource: { id: string } }) => e.resource.id)).toEqual([CONDITION_A.id]);
+    const matches = b.entry.filter((e: { search: { mode: string } }) => e.search.mode === "match");
+    expect(matches.map((e: { resource: { id: string } }) => e.resource.id)).toEqual([CONDITION_A.id]);
     const all = await body(await call(`/fhir/R4/Condition?patient=Patient/${PATIENT_A.fhir_id}`, { token: DOCTOR }));
-    expect(all.entry).toHaveLength(2);
+    expect(all.entry.filter((e: { search: { mode: string } }) => e.search.mode === "match")).toHaveLength(2);
+    // Every Condition searchset says what the table does not cover.
+    const note = all.entry.find((e: { search: { mode: string } }) => e.search.mode === "outcome");
+    expect(note.resource.issue[0].severity).toBe("information");
   });
 
   it("adds verified terminology mappings to the local code", async () => {
@@ -328,13 +348,13 @@ describe("searches", () => {
     const ok = await body(await call(`/fhir/R4/Encounter?subject=Patient/${PATIENT_A.fhir_id}&status=finished`, { token: NURSE }));
     expect(ok.entry).toHaveLength(1);
     const none = await body(await call(`/fhir/R4/Encounter?patient=Patient/${PATIENT_A.fhir_id}&status=in-progress`, { token: NURSE }));
-    expect(none.entry).toEqual([]);
+    expect(none).not.toHaveProperty("entry");
   });
 
   it("audits searches with parameter names only, never values", async () => {
     const { call, audits } = setup();
     await call("/fhir/R4/Patient?name=oka&birthdate=1984-03-02", { token: NURSE });
-    expect(audits[0]).toMatchObject({ p_action: "search", p_search_params: ["birthdate", "name"], p_patient_ids: [PATIENT_A.id] });
+    expect(audits[0]).toMatchObject({ p_interaction: "search", p_search_params: ["birthdate", "name"], p_patient_ids: [PATIENT_A.id] });
     expect(JSON.stringify(audits)).not.toMatch(/oka|1984/);
   });
 
@@ -359,7 +379,7 @@ describe("errors and request limits", () => {
 
   it("refuses unknown types, history, operations and oversized URLs", async () => {
     const { call } = setup();
-    expect((await call("/fhir/R4/Practitioner/1", { token: DOCTOR })).status).toBe(404);
+    expect((await call("/fhir/R4/Immunization/1", { token: DOCTOR })).status).toBe(404);
     expect((await call(`/fhir/R4/Patient/${PATIENT_A.fhir_id}/_history`, { token: DOCTOR })).status).toBe(400);
     expect((await call("/fhir/R4/Patient/$everything", { token: DOCTOR })).status).toBe(400);
     expect((await call("/fhir/R4/Patient/_search", { token: DOCTOR })).status).toBe(400);

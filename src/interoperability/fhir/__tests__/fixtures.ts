@@ -14,6 +14,7 @@ export const PATIENT_A = {
   lga: "Oshimili South",
   state: "Delta",
   merged_into: null,
+  merged_at: null,
   created_at: "2026-01-02T09:00:00+00:00",
   updated_at: "2026-05-01T10:30:00+00:00",
   // Columns the mapper must never publish, present to prove it:
@@ -56,6 +57,7 @@ export const VITALS_A = {
   bmi: null, // missing: must not become 0
   taken_at: "2026-05-01T08:40:00+00:00",
   updated_at: "2026-05-01T08:41:00+00:00",
+  portal_visible: true,
 };
 
 export const CONDITION_A = {

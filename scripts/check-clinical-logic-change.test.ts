@@ -203,6 +203,10 @@ describe("matchClinicalContent", () => {
       expect(matchClinicalContent(mig, [line])).not.toBeNull();
     }
     expect(matchClinicalContent(mig, ["interpretation text"])?.term).toBe("interpretation");
+    // Deferred migrations (kept out of the CLI's push) are gated the same way.
+    expect(matchClinicalContent("supabase/migrations-deferred/20270101000000_example.sql", ["interpretation text"])?.term).toBe(
+      "interpretation",
+    );
   });
 
   it("does not flag migrations without clinical terms", () => {
