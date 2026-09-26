@@ -1,3 +1,5 @@
+// @vitest-environment node
+// Web Crypto needs Node's own ArrayBuffer; jsdom's globals come from another realm.
 import { describe, it, expect } from "vitest";
 import {
   WEBHOOK_TOLERANCE_SECONDS,
