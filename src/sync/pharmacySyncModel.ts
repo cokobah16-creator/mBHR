@@ -398,6 +398,10 @@ export function rejectReasonText(reason: string | undefined): string {
       return "The medicines or quantities sent do not match the prescription on the server.";
     case "prescriber_not_allowed":
       return "The prescription does not name a doctor or nurse on the staff list, so the server cannot accept it.";
+    case "patient_mismatch":
+      return "This prescription belongs to a different patient on the server.";
+    case "dispenses_exceed_prescription":
+      return "The medicines given are more than, or not on, the prescription.";
     case "unknown_item":
     case "item_not_found":
       return "The medicine is not on the server's stock list.";

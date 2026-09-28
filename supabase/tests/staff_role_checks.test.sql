@@ -6,7 +6,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(53);
+SELECT plan(59);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (as the migration owner: guards and row-level security do not
@@ -56,7 +56,11 @@ UPDATE public.patients SET portal_enabled = true WHERE id = 'pgtap-src-g';
 -- An open prescription already on the server (as a doctor's upload would be).
 INSERT INTO public.prescriptions (id, visit_id, patient_id, prescriber_id, lines, status)
 VALUES ('pgtap-src-rx-open', '', 'pgtap-src-rx', '55550000-0000-4000-8000-000000000001',
-        '[{"itemId":"pgtap-src-item","qty":1}]'::jsonb, 'open');
+        '[{"itemId":"pgtap-src-item","qty":1}]'::jsonb, 'open'),
+       ('pgtap-src-rx-open2', '', 'pgtap-src-rx', '55550000-0000-4000-8000-000000000001',
+        '[{"itemId":"pgtap-src-item","qty":2}]'::jsonb, 'open'),
+       ('pgtap-src-rx-void', '', 'pgtap-src-rx', '55550000-0000-4000-8000-000000000001',
+        '[{"itemId":"pgtap-src-item","qty":2}]'::jsonb, 'void');
 
 -- Queue rows, all urgent at consultation.
 INSERT INTO public.queue (id, patient_id, stage, status, priority, position) VALUES
@@ -256,6 +260,54 @@ SELECT is(
   COALESCE(NULLIF(current_setting('mbhr.stock_write', true), ''), 'off'),
   'off',
   'no stock-write bypass is left on after a refused import');
+
+-- History rows belong to the prescription they name.
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"55550000-0000-4000-8000-000000000003","role":"authenticated"}';
+SELECT is(
+  public.rx_import_history(
+    '5555c0de-0000-4000-8000-000000000041', 'pgtap-src-rx-void',
+    jsonb_build_object('patient_id', 'pgtap-src-rx', 'visit_id', '', 'status', 'dispensed'),
+    '[{"id":"pgtap-src-h1","item_id":"pgtap-src-item","qty":2}]'::jsonb,
+    '55550000-0000-4000-8000-000000000003') ->> 'reason',
+  'prescription_void',
+  'history cannot be added to a cancelled prescription');
+SELECT is(
+  public.rx_import_history(
+    '5555c0de-0000-4000-8000-000000000042', 'pgtap-src-rx-open2',
+    jsonb_build_object('patient_id', 'pgtap-src-q', 'visit_id', '', 'status', 'dispensed'),
+    '[{"id":"pgtap-src-h2","item_id":"pgtap-src-item","qty":2}]'::jsonb,
+    '55550000-0000-4000-8000-000000000003') ->> 'reason',
+  'patient_mismatch',
+  'history cannot be put on another patient''s record');
+SELECT is(
+  public.rx_import_history(
+    '5555c0de-0000-4000-8000-000000000043', 'pgtap-src-rx-open2',
+    jsonb_build_object('patient_id', 'pgtap-src-rx', 'visit_id', '', 'status', 'dispensed'),
+    '[{"id":"pgtap-src-h3","item_id":"pgtap-src-item","qty":5}]'::jsonb,
+    '55550000-0000-4000-8000-000000000003') ->> 'reason',
+  'dispenses_exceed_prescription',
+  'history cannot give more than was prescribed');
+SELECT is(
+  public.rx_import_history(
+    '5555c0de-0000-4000-8000-000000000044', 'pgtap-src-rx-open2',
+    jsonb_build_object('patient_id', 'pgtap-src-rx', 'visit_id', '', 'status', 'dispensed'),
+    '[{"id":"pgtap-src-h4","item_id":"pgtap-src-item","qty":1},{"id":"pgtap-src-h5","item_id":"pgtap-src-item","qty":1}]'::jsonb,
+    '55550000-0000-4000-8000-000000000003') ->> 'outcome',
+  'applied',
+  'history within the prescription (split across lots) is imported');
+SELECT is(
+  public.rx_import_history(
+    '5555c0de-0000-4000-8000-000000000045', 'pgtap-src-rx-open2',
+    jsonb_build_object('patient_id', 'pgtap-src-rx', 'visit_id', '', 'status', 'dispensed'),
+    '[{"id":"pgtap-src-h6","item_id":"pgtap-src-item","qty":2}]'::jsonb,
+    '55550000-0000-4000-8000-000000000003') ->> 'already_dispensed',
+  'true',
+  'a prescription already dispensed on the server keeps its own history');
+RESET ROLE;
+SELECT is((SELECT jsonb_agg(id ORDER BY id) FROM public.dispenses WHERE id LIKE 'pgtap-src-h%'),
+  '["pgtap-src-h4", "pgtap-src-h5"]'::jsonb,
+  'only the accepted history rows were written');
 
 -- ---------------------------------------------------------------------------
 -- 4. merge_patients: details and portal access need their own permissions

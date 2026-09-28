@@ -292,6 +292,8 @@ describe("server answers", () => {
     expect(rejectReasonText("insufficient_stock")).toMatch(/not have enough/);
     expect(rejectReasonText("lines_mismatch")).toMatch(/do not match the prescription/);
     expect(rejectReasonText("prescriber_not_allowed")).toMatch(/doctor or nurse on the staff list/);
+    expect(rejectReasonText("patient_mismatch")).toMatch(/different patient/);
+    expect(rejectReasonText("dispenses_exceed_prescription")).toMatch(/more than, or not on/);
     expect(rejectReasonText("prescription_not_found")).toMatch(/no record/);
     expect(rejectReasonText("something_new")).toBe("The server refused this change.");
   });

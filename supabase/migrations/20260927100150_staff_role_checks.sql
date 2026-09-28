@@ -3,7 +3,7 @@
 
   From the signed-in functions check of 28 Sept 2026
   (/mnt/project-files/hris-transform/secdef-audit-2026-09-28.md, G2-1,
-  G2-4, G3-2 and G6-1). Each let a staff role do something its permission
+  G2-4, G2-5, G3-2 and G6-1). Each let a staff role do something its permission
   does not allow, by naming someone else or by going through a function
   that skipped the check. None is reachable on production today (one staff
   account; no prescriptions, dispenses, merges or priority changes), but
@@ -23,7 +23,10 @@
   - rx_import_history: a 'dispense' or 'inventory' holder could create
     prescriptions in any status (open ones could then be dispensed from
     stock) for any prescriber, and cancel an open prescription without the
-    record rx_void_prescription keeps (who, when, why).
+    record rx_void_prescription keeps (who, when, why). Its history rows
+    took the patient from the payload, not the prescription, and were
+    added to void or already-dispensed prescriptions in any quantity
+    (G2-5).
   - merge_patients: the auditor role holds merge_patients but not
     'register' or 'portal_manage'. A merge let it write any value into a
     patient's name, date of birth, phone, email or address (a 'custom'
@@ -54,7 +57,12 @@
      ('status_not_allowed' otherwise; the app never sends 'open' or
      'void' here). A new prescription must name a prescriber as in 2
      ('prescriber_not_allowed'). An open prescription on the server still
-     becomes dispensed or partial.
+     becomes dispensed or partial. The history rows go on the
+     prescription's own patient ('patient_mismatch' if the device names
+     another), never on a void prescription ('prescription_void'), and not
+     beyond the prescribed quantity of each medicine
+     ('dispenses_exceed_prescription'); a prescription the server already
+     has as dispensed keeps its own history (the rows sent are not added).
   4. merge_patients: choosing field values needs 'register'. A merge in
      which either record has a portal login (patients.auth_uid or a
      patient_portal_users row), or which would switch portal access on,
@@ -458,8 +466,12 @@ DECLARE
   v_prior jsonb;
   v_status text := COALESCE(p_prescription ->> 'status', 'dispensed');
   v_existing text;
+  v_existing_patient text;
+  v_existing_lines jsonb;
   v_patient text;
   v_was_dispensed boolean := false;
+  v_given jsonb;
+  v_prescribed jsonb;
 BEGIN
   IF NOT public.app_has_any_permission(ARRAY['dispense', 'inventory']) THEN
     RAISE EXCEPTION 'permission_denied' USING ERRCODE = '42501';
@@ -479,7 +491,8 @@ BEGIN
 
   PERFORM set_config('mbhr.stock_write', 'on', true);
 
-  SELECT status INTO v_existing FROM public.prescriptions WHERE id = p_prescription_id FOR UPDATE;
+  SELECT status, patient_id, lines INTO v_existing, v_existing_patient, v_existing_lines
+    FROM public.prescriptions WHERE id = p_prescription_id FOR UPDATE;
 
   -- History is imported as dispensed or partial only (20260927100150): an
   -- open prescription is uploaded by a prescriber (or carried by
@@ -495,6 +508,45 @@ BEGIN
     PERFORM set_config('mbhr.stock_write', 'off', true);
     RETURN public.app_command_record(p_command_id, 'rx_import_history', 'rejected',
       jsonb_build_object('reason', 'prescriber_not_allowed'), p_requested_by, now());
+  END IF;
+  -- History belongs to the prescription it names (20260927100150): the
+  -- dispense rows go on the prescription's own patient, never on a void
+  -- prescription, and not beyond what it prescribes. A prescription the
+  -- server already has as dispensed keeps its own history.
+  IF v_existing = 'void' THEN
+    PERFORM set_config('mbhr.stock_write', 'off', true);
+    RETURN public.app_command_record(p_command_id, 'rx_import_history', 'rejected',
+      jsonb_build_object('reason', 'prescription_void'), p_requested_by, now());
+  END IF;
+  IF v_existing IS NOT NULL
+     AND public.canonical_patient_id(v_existing_patient) IS DISTINCT FROM v_patient THEN
+    PERFORM set_config('mbhr.stock_write', 'off', true);
+    RETURN public.app_command_record(p_command_id, 'rx_import_history', 'rejected',
+      jsonb_build_object('reason', 'patient_mismatch'), p_requested_by, now());
+  END IF;
+  IF v_existing IS NULL OR v_existing = 'open' THEN
+    SELECT COALESCE(jsonb_object_agg(item_id, qty), '{}'::jsonb) INTO v_given
+      FROM (SELECT COALESCE(public.app_rx_item_id(d ->> 'item_id'), '') AS item_id,
+                   SUM(GREATEST(COALESCE((d ->> 'qty')::integer, 0), 0)) AS qty
+              FROM jsonb_array_elements(COALESCE(p_dispenses, '[]'::jsonb)) AS d
+             WHERE NULLIF(d ->> 'id', '') IS NOT NULL
+             GROUP BY 1) AS s;
+    SELECT COALESCE(jsonb_object_agg(item_id, qty), '{}'::jsonb) INTO v_prescribed
+      FROM (SELECT COALESCE(public.app_rx_item_id(e ->> 'itemId'), '') AS item_id,
+                   SUM(COALESCE((e ->> 'qty')::integer, 0)) AS qty
+              FROM jsonb_array_elements(
+                     CASE WHEN v_existing IS NOT NULL AND jsonb_typeof(v_existing_lines) = 'array' THEN v_existing_lines
+                          WHEN v_existing IS NULL AND jsonb_typeof(p_prescription -> 'lines') = 'array' THEN p_prescription -> 'lines'
+                          ELSE '[]'::jsonb END) AS e
+             GROUP BY 1) AS s;
+    IF EXISTS (SELECT 1 FROM jsonb_each_text(v_given) AS g
+                WHERE g.key = ''
+                   OR (v_prescribed ->> g.key) IS NULL
+                   OR g.value::integer > (v_prescribed ->> g.key)::integer) THEN
+      PERFORM set_config('mbhr.stock_write', 'off', true);
+      RETURN public.app_command_record(p_command_id, 'rx_import_history', 'rejected',
+        jsonb_build_object('reason', 'dispenses_exceed_prescription'), p_requested_by, now());
+    END IF;
   END IF;
 
   IF v_existing IS NULL THEN
@@ -523,6 +575,7 @@ BEGIN
 
   -- History only: no stock movement (the site's opening count already
   -- reflects what was given from stock that was only on a device).
+  IF NOT v_was_dispensed THEN
   INSERT INTO public.dispenses (
     id, patient_id, visit_id, item_name, qty, dispensed_by, dispensed_at, updated_at,
     prescription_id, item_id, batch_id)
@@ -543,6 +596,7 @@ BEGIN
   FROM jsonb_array_elements(COALESCE(p_dispenses, '[]'::jsonb)) AS d
   WHERE NULLIF(d ->> 'id', '') IS NOT NULL
   ON CONFLICT (id) DO NOTHING;
+  END IF;
 
   PERFORM set_config('mbhr.stock_write', 'off', true);
   RETURN public.app_command_record(p_command_id, 'rx_import_history', 'applied',
