@@ -9,6 +9,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { isOnlineSyncEnabled } from "@/sync/adapter";
 import * as logger from "@/lib/logger";
+import { UpdateCheck } from "@/components/UpdateCheck";
 import { LegalLinks } from "@/pages/legal/LegalLinks";
 
 /**
@@ -229,10 +230,15 @@ export default function FirstRunSetup() {
             </button>
 
             <div className="border-t border-line pt-4 space-y-2">
-              <p className="text-caption text-ink-muted">
-                Already have a staff account? Sign in online with your email and
-                password to add yourself to this device.
+              <p className="font-medium text-ink">
+                Already have a staff account?
               </p>
+              <UpdateCheck>
+                This copy of the app has no online sign-in, so an account made
+                on another device can't be added here. It may be an old copy:
+                check for updates, and once online sign-in is available, sign
+                in with your email and password to add yourself to this device.
+              </UpdateCheck>
               <Link
                 to="/login"
                 className="btn-secondary w-full h-12 inline-flex items-center justify-center"
