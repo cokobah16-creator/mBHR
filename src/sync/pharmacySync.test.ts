@@ -322,6 +322,7 @@ describe("server answers", () => {
     expect(rejectReasonText("item_disputed")).toMatch(/on hold on the server/);
     expect(rejectReasonText("dispenses_exceed_prescription")).toMatch(/more than, or not on/);
     expect(rejectReasonText("item_id_conflict")).toMatch(/different medicine/);
+    expect(rejectReasonText("site_mismatch")).toMatch(/another site's stock list/);
     expect(rejectReasonText("prescription_not_found")).toMatch(/no record/);
     expect(rejectReasonText("something_new")).toBe("The server refused this change.");
   });
