@@ -133,6 +133,16 @@ export function refusedDispenseAction(reason: string, handedOver: boolean): Refu
   return reason === "insufficient_stock" ? "resend_offline" : "keep_handed_over";
 }
 
+/**
+ * Whether a refused dispense left the prescription it carried unsaved on the
+ * server: the server raised an error (no stored result), or it refused the
+ * prescriber the prescription names, which it checks before writing anything.
+ * Any other refusal saves the carried prescription as open.
+ */
+export function carriedPrescriptionNotSaved(hasStoredResult: boolean, reason: string): boolean {
+  return !hasStoredResult || reason === "prescriber_not_allowed";
+}
+
 /** Prescription status after a refused dispense whose medicine was handed over. */
 export function handedOverRefusalStatus(reason: string): PrescriptionStatus {
   return reason === "prescription_void" ? "void" : "dispensed";
@@ -386,6 +396,8 @@ export function rejectReasonText(reason: string | undefined): string {
       return "The server has no record of this prescription yet.";
     case "lines_mismatch":
       return "The medicines or quantities sent do not match the prescription on the server.";
+    case "prescriber_not_allowed":
+      return "The prescription does not name a doctor or nurse on the staff list, so the server cannot accept it.";
     case "unknown_item":
     case "item_not_found":
       return "The medicine is not on the server's stock list.";

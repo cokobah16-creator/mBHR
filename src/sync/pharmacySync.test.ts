@@ -3,6 +3,7 @@
 import { describe, it, expect } from "vitest";
 import {
   batchFromServer,
+  carriedPrescriptionNotSaved,
   dispenseLinesArg,
   isStaleBalance,
   itemFromServer,
@@ -277,9 +278,20 @@ describe("server answers", () => {
     ).toEqual([{ itemId: "amx", requested: 15, available: 8 }]);
   });
 
+  it("uploads a carried prescription again only when the server did not save it", () => {
+    // No stored result: the server raised an error before saving anything.
+    expect(carriedPrescriptionNotSaved(false, "invalid_request")).toBe(true);
+    // A refused prescriber is checked before the prescription is written.
+    expect(carriedPrescriptionNotSaved(true, "prescriber_not_allowed")).toBe(true);
+    // Any other refusal saved the carried prescription as open.
+    expect(carriedPrescriptionNotSaved(true, "insufficient_stock")).toBe(false);
+    expect(carriedPrescriptionNotSaved(true, "lines_mismatch")).toBe(false);
+  });
+
   it("explains refusals in plain words, without codes", () => {
     expect(rejectReasonText("insufficient_stock")).toMatch(/not have enough/);
     expect(rejectReasonText("lines_mismatch")).toMatch(/do not match the prescription/);
+    expect(rejectReasonText("prescriber_not_allowed")).toMatch(/doctor or nurse on the staff list/);
     expect(rejectReasonText("prescription_not_found")).toMatch(/no record/);
     expect(rejectReasonText("something_new")).toBe("The server refused this change.");
   });
