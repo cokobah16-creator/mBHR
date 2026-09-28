@@ -10,25 +10,46 @@ const SIGN_OUT_EVERYWHERE_TIMEOUT_MS = 10000;
 
 type AuthClient = Pick<SupabaseClient, "auth">;
 
+function clearThisDevice(): void {
+  clearPortalSession();
+  clearMessageQueue();
+  clearStoredSupabaseAuth();
+  void clearApiCaches();
+}
+
 /**
  * Ends every sign-in to this account, on every phone and computer, then
  * clears this device. Returns false, and leaves this device signed in, when
- * the server did not confirm: the other devices are then still signed in,
- * and the page must say so rather than look finished.
+ * the server did not confirm in time: the page must then say the logout is
+ * not confirmed rather than look finished. A request that times out keeps
+ * running, so if the server confirms it later this device is cleared then.
  */
 export async function signOutEverywhere(
   client: AuthClient,
   timeoutMs = SIGN_OUT_EVERYWHERE_TIMEOUT_MS,
 ): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  let request: ReturnType<AuthClient["auth"]["signOut"]>;
+  try {
+    request = client.auth.signOut({ scope: "global" });
+  } catch {
+    return false;
+  }
+  // If the answer comes after the timeout, finish the job here.
+  void Promise.resolve(request)
+    .then((late) => {
+      if (timedOut && !late?.error) clearThisDevice();
+    })
+    .catch(() => {});
   try {
     const result = await Promise.race([
-      client.auth.signOut({ scope: "global" }),
+      request,
       new Promise<{ error: Error }>((resolve) => {
-        timer = setTimeout(
-          () => resolve({ error: new Error("timeout") }),
-          timeoutMs,
-        );
+        timer = setTimeout(() => {
+          timedOut = true;
+          resolve({ error: new Error("timeout") });
+        }, timeoutMs);
       }),
     ]);
     if (result?.error) return false;
@@ -37,9 +58,6 @@ export async function signOutEverywhere(
   } finally {
     if (timer) clearTimeout(timer);
   }
-  clearPortalSession();
-  clearMessageQueue();
-  clearStoredSupabaseAuth();
-  void clearApiCaches();
+  clearThisDevice();
   return true;
 }

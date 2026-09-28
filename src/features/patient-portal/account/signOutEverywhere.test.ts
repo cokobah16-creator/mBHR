@@ -43,4 +43,18 @@ describe("signOutEverywhere", () => {
     await expect(signOutEverywhere(c)).resolves.toBe(false);
     expect(localStorage.getItem(PORTAL_USER_KEY)).not.toBeNull();
   });
+
+  it("clears this device if the server confirms after the timeout", async () => {
+    let answer: (v: { error: null }) => void = () => {};
+    const { c } = client(
+      () => new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    await expect(signOutEverywhere(c, 10)).resolves.toBe(false);
+    expect(localStorage.getItem(PORTAL_USER_KEY)).not.toBeNull();
+    answer({ error: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(localStorage.getItem(PORTAL_USER_KEY)).toBeNull();
+  });
 });

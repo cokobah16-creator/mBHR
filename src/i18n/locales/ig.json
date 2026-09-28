@@ -793,7 +793,7 @@
   "portal.account.signOutAllConfirm": "[EN] Log out everywhere",
   "portal.account.signOutAllCancel": "[EN] Stay logged in",
   "portal.account.signOutAllBusy": "[EN] Logging out…",
-  "portal.account.signOutAllFailed": "[EN] We could not log you out on your other devices. You are still logged in everywhere. Check your internet connection and try again.",
+  "portal.account.signOutAllFailed": "[EN] We could not confirm that you were logged out on your other devices. Check your internet connection and try again.",
   "portal.forms.title": "[EN] Forms before your visit",
   "portal.forms.description": "[EN] Answer questions about your health before an appointment.",
   "portal.forms.emptyTitle": "[EN] No forms to fill in",
