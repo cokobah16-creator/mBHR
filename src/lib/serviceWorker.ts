@@ -55,6 +55,42 @@ export function activateWaitingVersion(
   waiting.postMessage({ type: "SKIP_WAITING" });
 }
 
+/** How long checkForNewVersion waits for a new version to download. */
+const UPDATE_DOWNLOAD_WAIT_MS = 20_000;
+
+/**
+ * Asks the server for a newer version now, for screens with no other way
+ * forward (an empty device stuck on an old copy of the app). If one
+ * arrives, switches to it and reloads. Resolves false when this is already
+ * the newest version, or no check could be made (offline, no worker).
+ */
+export async function checkForNewVersion(): Promise<boolean> {
+  if (!("serviceWorker" in navigator)) return false;
+  const container = navigator.serviceWorker;
+  const registration = await container.getRegistration().catch(() => undefined);
+  if (!registration) return false;
+  try {
+    await registration.update();
+  } catch {
+    return false;
+  }
+  const installing = registration.installing;
+  if (installing && !registration.waiting) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, UPDATE_DOWNLOAD_WAIT_MS);
+      installing.addEventListener("statechange", () => {
+        if (installing.state === "installed" || installing.state === "redundant") {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+  }
+  if (!registration.waiting) return false;
+  activateWaitingVersion(registration, container, () => window.location.reload());
+  return true;
+}
+
 /** Registers the service worker in production builds. Never throws. */
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;

@@ -26,6 +26,7 @@ import { useIdleTimeout } from "@/hooks/useIdleTimeout";
 import { CANONICAL_ORIGIN, isOffCanonicalOrigin } from "@/config/canonicalOrigin";
 import type { User } from "@/db";
 import { LegalLinks } from "@/pages/legal/LegalLinks";
+import { UpdateCheck } from "@/components/UpdateCheck";
 
 /** Mirrors MAX_FAILED_ATTEMPTS in stores/auth.ts; used for display only. */
 const MAX_ATTEMPTS = 5;
@@ -721,6 +722,13 @@ export default function Login() {
                 Creates the first administrator, who then adds the rest of the
                 staff under Users.
               </p>
+              <div className="border-t border-line pt-4">
+                <UpdateCheck>
+                  Already have a staff account? It can only be added to this
+                  device by signing in online, which this copy of the app
+                  can't do. It may be an old copy: check for updates.
+                </UpdateCheck>
+              </div>
             </div>
           )}
         </div>
