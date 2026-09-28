@@ -92,7 +92,7 @@ export async function getPatientProfile(
     .maybeSingle();
 
   if (error) {
-    logger.error("[patientService] getPatientProfile:", error.message);
+    logger.error("[patientService] getPatientProfile:", error.code);
     return { data: null, error: error.message };
   }
 
@@ -126,7 +126,7 @@ export async function getPatientProfileByEmail(
     .maybeSingle();
 
   if (error) {
-    logger.error("[patientService] getPatientProfileByEmail:", error.message);
+    logger.error("[patientService] getPatientProfileByEmail:", error.code);
     return { data: null, error: error.message };
   }
   if (!data)
@@ -144,7 +144,7 @@ export async function getPatientProfileByEmail(
       .eq("id", data.id)
       .then(({ error: updateError }) => {
         if (updateError) {
-          logger.error("[patientService] linkAuthUid:", updateError.message);
+          logger.error("[patientService] linkAuthUid:", updateError.code);
         }
       });
   }
@@ -179,7 +179,7 @@ export async function updatePatientProfile(
     .single();
 
   if (error) {
-    logger.error("[patientService] updatePatientProfile:", error.message);
+    logger.error("[patientService] updatePatientProfile:", error.code);
     return { data: null, error: error.message };
   }
 
@@ -200,7 +200,7 @@ export async function getVitals(
     .order("taken_at", { ascending: false });
 
   if (error) {
-    logger.error("[patientService] getVitals:", error.message);
+    logger.error("[patientService] getVitals:", error.code);
     return { data: null, error: error.message };
   }
 
@@ -260,7 +260,7 @@ export async function addVital(
     .single();
 
   if (error) {
-    logger.error("[patientService] addVital:", error.message);
+    logger.error("[patientService] addVital:", error.code);
     return { data: null, error: error.message };
   }
 
@@ -297,7 +297,7 @@ export async function getMedications(
     .order("dispensed_at", { ascending: false });
 
   if (error) {
-    logger.error("[patientService] getMedications:", error.message);
+    logger.error("[patientService] getMedications:", error.code);
     return { data: null, error: error.message };
   }
 
@@ -341,7 +341,7 @@ export async function addMedication(
     .single();
 
   if (error) {
-    logger.error("[patientService] addMedication:", error.message);
+    logger.error("[patientService] addMedication:", error.code);
     return { data: null, error: error.message };
   }
 
@@ -380,7 +380,7 @@ export async function getVisits(
     });
 
   if (error) {
-    logger.error("[patientService] getVisits:", error.message);
+    logger.error("[patientService] getVisits:", error.code);
     return { data: null, error: error.message };
   }
 
@@ -426,7 +426,7 @@ export async function addVisit(
   });
 
   if (visitError) {
-    logger.error("[patientService] addVisit (visit):", visitError.message);
+    logger.error("[patientService] addVisit (visit):", visitError.code);
     return { data: null, error: visitError.message };
   }
 
@@ -450,7 +450,7 @@ export async function addVisit(
       const consultationFailureMessage = consultError.message;
       logger.error(
         "[patientService] addVisit (consultation):",
-        consultationFailureMessage,
+        consultError.code,
       );
 
       const { error: rollbackError } = await supabase
@@ -461,7 +461,7 @@ export async function addVisit(
       if (rollbackError) {
         logger.error(
           "[patientService] addVisit (rollback visit):",
-          rollbackError.message,
+          rollbackError.code,
         );
         return {
           data: null,
@@ -515,7 +515,7 @@ export async function getAllPatients(): Promise<
       .range(from, from + ALL_PATIENTS_PAGE_SIZE - 1);
 
     if (error) {
-      logger.error("[patientService] getAllPatients:", error.message);
+      logger.error("[patientService] getAllPatients:", error.code);
       return { data: null, error: error.message };
     }
     rows.push(...(data || []));

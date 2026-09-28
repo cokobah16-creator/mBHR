@@ -25,7 +25,7 @@ describe("patientService.addVisit", () => {
   it("returns an error and rolls back the visit when consultation insert fails", async () => {
     const visitsInsertMock = vi.fn().mockResolvedValue({ error: null });
     const consultInsertMock = vi.fn().mockResolvedValue({
-      error: { message: "consultation insert denied" },
+      error: { code: "42501", message: "consultation insert denied" },
     });
     const rollbackEqMock = vi.fn().mockResolvedValue({ error: null });
     const visitsDeleteMock = vi.fn(() => ({ eq: rollbackEqMock }));
@@ -69,17 +69,17 @@ describe("patientService.addVisit", () => {
     );
     expect(loggerErrorMock).toHaveBeenCalledWith(
       "[patientService] addVisit (consultation):",
-      "consultation insert denied",
+      "42501",
     );
   });
 
   it("returns a combined error when consultation insert fails and rollback also fails", async () => {
     const visitsInsertMock = vi.fn().mockResolvedValue({ error: null });
     const consultInsertMock = vi.fn().mockResolvedValue({
-      error: { message: "consultation insert denied" },
+      error: { code: "42501", message: "consultation insert denied" },
     });
     const rollbackEqMock = vi.fn().mockResolvedValue({
-      error: { message: "rollback denied" },
+      error: { code: "42501", message: "rollback denied" },
     });
     const visitsDeleteMock = vi.fn(() => ({ eq: rollbackEqMock }));
 
@@ -121,7 +121,7 @@ describe("patientService.addVisit", () => {
     );
     expect(loggerErrorMock).toHaveBeenCalledWith(
       "[patientService] addVisit (rollback visit):",
-      "rollback denied",
+      "42501",
     );
   });
 });

@@ -23,6 +23,9 @@ import {
   type PortalSessionUser,
 } from "./account/portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { ConfirmDialog } from "./account/ConfirmDialog";
+import { signOutEverywhere } from "./account/signOutEverywhere";
+import { queuedForPatient, readMessageQueue } from "./messageQueue";
 import { useT } from "@/hooks/useT";
 
 type AccountTab = "profile" | "notifications" | "security";
@@ -69,6 +72,9 @@ export function ManageAccount() {
     tone: "success" | "danger";
     text: string;
   } | null>(null);
+  const [confirmSignOutAll, setConfirmSignOutAll] = useState(false);
+  const [signingOutAll, setSigningOutAll] = useState(false);
+  const [signOutAllFailed, setSignOutAllFailed] = useState(false);
   const [notifications, setNotifications] = useState<NotificationPrefs>({
     emailReminders: true,
     smsReminders: true,
@@ -189,6 +195,25 @@ export function ManageAccount() {
       setSendingReset(false);
     }
   };
+
+  const handleSignOutEverywhere = async () => {
+    if (!supabase || signingOutAll) return;
+    setSigningOutAll(true);
+    setSignOutAllFailed(false);
+    const done = await signOutEverywhere(supabase);
+    setSigningOutAll(false);
+    if (!done) {
+      setSignOutAllFailed(true);
+      return;
+    }
+    setConfirmSignOutAll(false);
+    navigate("/patient");
+  };
+
+  const unsentMessages = queuedForPatient(
+    readMessageQueue(),
+    portalUser?.patientId ?? "",
+  ).length;
 
   if (loading) {
     return (
@@ -431,7 +456,47 @@ export function ManageAccount() {
                     </p>
                   </div>
                 </div>
+                {isSupabaseEnabled && (
+                  <div className="space-y-2">
+                    <p className="text-body text-ink-secondary">
+                      {t("portal.account.signOutAllIntro")}
+                    </p>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={!isOnline}
+                      onClick={() => {
+                        setSignOutAllFailed(false);
+                        setConfirmSignOutAll(true);
+                      }}
+                    >
+                      {t("portal.account.signOutAll")}
+                    </button>
+                    {!isOnline && (
+                      <p className="field-hint">{t("portal.account.signOutAllOffline")}</p>
+                    )}
+                  </div>
+                )}
               </section>
+              <ConfirmDialog
+                open={confirmSignOutAll}
+                title={t("portal.account.signOutAllTitle")}
+                confirmLabel={t("portal.account.signOutAllConfirm")}
+                cancelLabel={t("portal.account.signOutAllCancel")}
+                busyLabel={t("portal.account.signOutAllBusy")}
+                busy={signingOutAll}
+                destructive
+                error={signOutAllFailed ? t("portal.account.signOutAllFailed") : null}
+                onConfirm={handleSignOutEverywhere}
+                onCancel={() => setConfirmSignOutAll(false)}
+              >
+                <p>{t("portal.account.signOutAllBody")}</p>
+                {unsentMessages > 0 && (
+                  <p className="mt-2">
+                    {t("portal.account.signOutAllUnsent", { count: unsentMessages })}
+                  </p>
+                )}
+              </ConfirmDialog>
             </div>
           )}
         </div>
