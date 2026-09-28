@@ -6,7 +6,8 @@ import { VisualNumberInput } from "@/components/VisualNumberInput";
 import { usePatientsStore } from "@/stores/patients";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
-import { NIGERIAN_STATES, LGAS_BY_STATE, formatPhoneNG } from "@/utils/nigeria";
+import { NIGERIAN_STATES, LGAS_BY_STATE } from "@/utils/nigeria";
+import { INVALID_PHONE_MESSAGE, isValidPhone, normalizePhone } from "@/utils/phone";
 import { AGE_LIMITS, estimateDobFromAge, type AgeUnit } from "@/utils/ageEstimate";
 import {
   UserIcon,
@@ -111,6 +112,9 @@ export function SimplePatientForm({
     }
   };
 
+  // Shown once something is typed; the contact step can't move on until then.
+  const phoneInvalid = !!formData.phone.trim() && !isValidPhone(formData.phone);
+
   const handleComplete = async () => {
     if (!mayRegister) {
       refuseRegistration();
@@ -121,7 +125,8 @@ export function SimplePatientForm({
     if (!beginSave()) return;
     let registered = false;
     try {
-      const formattedPhone = formatPhoneNG(formData.phone);
+      // The contact step only moves on with a number isValidPhone accepts.
+      const formattedPhone = normalizePhone(formData.phone) ?? undefined;
 
       const patientId = await addPatient({
         givenName: formData.givenName,
@@ -339,7 +344,7 @@ export function SimplePatientForm({
       id: "contact",
       title: t("patient.contact"),
       audioKey: "patient.contact",
-      isValid: !!formData.phone.trim(),
+      isValid: isValidPhone(formData.phone),
       component: (
         <div className="space-y-6">
           <div>
@@ -356,8 +361,14 @@ export function SimplePatientForm({
               }
               className="input-field text-xl"
               placeholder="08012345678"
-              aria-describedby="simple-phone-hint"
+              aria-describedby={phoneInvalid ? "simple-phone-error simple-phone-hint" : "simple-phone-hint"}
+              aria-invalid={phoneInvalid ? "true" : "false"}
             />
+            {phoneInvalid && (
+              <p id="simple-phone-error" role="alert" className="field-error">
+                {INVALID_PHONE_MESSAGE}
+              </p>
+            )}
             <p id="simple-phone-hint" className="field-hint">
               {t("simple.phoneExample")}
             </p>

@@ -45,8 +45,9 @@ export function normalizePhone(input?: string | null): string | null {
     if (digits.startsWith("234")) {
       return digits.length === 13 ? "+" + digits : null;
     }
-    // E.164 numbers are at most 15 digits; shorter than 8 is not a full number.
-    return /^\d{8,15}$/.test(digits) ? "+" + digits : null;
+    // E.164 numbers are at most 15 digits and no country code starts with 0;
+    // shorter than 8 is not a full number.
+    return /^[1-9]\d{7,14}$/.test(digits) ? "+" + digits : null;
   }
 
   if (!/^\d+$/.test(cleaned)) return null;

@@ -71,6 +71,9 @@ describe("Phone Normalization Utils", () => {
       expect(normalizePhone("+234803")).toBe(null);
       expect(normalizePhone("+1234567")).toBe(null);
       expect(normalizePhone("+1234567890123456")).toBe(null);
+      // No country code starts with 0.
+      expect(normalizePhone("+012345678")).toBe(null);
+      expect(normalizePhone("00012345678")).toBe(null);
       expect(normalizePhone("abcdefghij")).toBe(null);
       expect(normalizePhone("0803 123 4567 ext 2")).toBe(null);
     });
@@ -119,6 +122,11 @@ describe("Phone Normalization Utils", () => {
     it("accepts other countries' numbers typed with their country code", () => {
       expect(isValidPhone("+1 555 123 4567")).toBe(true);
       expect(isValidPhone("+44 7911 123456")).toBe(true);
+    });
+
+    it("keeps a short foreign number instead of reading it as Nigerian", () => {
+      expect(normalizePhone("+354 611 1234")).toBe("+3546111234");
+      expect(isValidPhone("+354 611 1234")).toBe(true);
     });
 
     it("asks for the country code rather than guessing Nigeria", () => {
