@@ -93,6 +93,38 @@ describe("Patient Schema Validation", () => {
     expect(() => patientSchema.parse(invalidPatient)).toThrow();
   });
 
+  it("accepts a foreign number typed with its country code", () => {
+    const patient = {
+      givenName: "John",
+      familyName: "Doe",
+      sex: "male" as const,
+      dob: "1990-01-01",
+      phone: "+1 555 123 4567",
+      address: "123 Main Street",
+      state: "Lagos",
+      lga: "Ikeja",
+    };
+
+    expect(() => patientSchema.parse(patient)).not.toThrow();
+  });
+
+  it("asks for the country code of a number that isn't Nigerian", () => {
+    const patient = {
+      givenName: "John",
+      familyName: "Doe",
+      sex: "male" as const,
+      dob: "1990-01-01",
+      phone: "555 123 4567",
+      address: "123 Main Street",
+      state: "Lagos",
+      lga: "Ikeja",
+    };
+
+    const result = patientSchema.safeParse(patient);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toMatch(/country code/);
+  });
+
   it("should reject invalid email", () => {
     const invalidPatient = {
       givenName: "John",

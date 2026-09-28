@@ -1,6 +1,5 @@
 // Patient search matching shared by the patient picker and the /patients list.
 
-import { normalizePhone } from "./phone";
 import { formatPatientId } from "./patient";
 
 export interface SearchablePatient {
@@ -24,10 +23,22 @@ export function isPhoneQuery(query: string): boolean {
 }
 
 /**
+ * Digits of a whole or partial number with a Nigerian trunk "0" turned into
+ * "234", so "0803" and "+234803" compare alike. Unlike normalizePhone this
+ * works on part of a number.
+ */
+function searchDigits(value: string): string {
+  const digits = digitsOf(value);
+  if (digits.startsWith("00")) return digits.slice(2);
+  return digits.startsWith("0") ? "234" + digits.slice(1) : digits;
+}
+
+/**
  * Whether a phone query matches a stored phone. Numbers are compared both as
- * typed and in the E.164 form registration stores (normalizePhone), so a
- * local "0803 123 4567" finds a stored "+2348031234567" and the other way
- * round. Part of a number (3+ digits) matches too.
+ * typed and with a Nigerian local "0" read as +234 (the form registration
+ * stores, see normalizePhone), so a local "0803 123 4567" finds a stored
+ * "+2348031234567" and the other way round. Part of a number (3+ digits)
+ * matches too.
  */
 export function phoneMatchesQuery(
   stored: string | null | undefined,
@@ -36,8 +47,8 @@ export function phoneMatchesQuery(
   if (!stored || !isPhoneQuery(query)) return false;
   const q = digitsOf(query);
   if (digitsOf(stored).includes(q)) return true;
-  const storedE164 = digitsOf(normalizePhone(stored) ?? "");
-  const queryE164 = digitsOf(normalizePhone(query) ?? "");
+  const storedE164 = searchDigits(stored);
+  const queryE164 = searchDigits(query);
   // A query that is only "234" (or shorter) would match every number.
   return queryE164.length > 3 && storedE164.includes(queryE164);
 }

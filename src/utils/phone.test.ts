@@ -41,6 +41,39 @@ describe("Phone Normalization Utils", () => {
       expect(normalizePhone("+234 803 123 4567")).toBe("+2348031234567");
       expect(normalizePhone("+234-803-123-4567")).toBe("+2348031234567");
     });
+
+    it("keeps a number typed with + and another country code", () => {
+      expect(normalizePhone("+1 555 123 4567")).toBe("+15551234567");
+      expect(normalizePhone("+44 7911 123456")).toBe("+447911123456");
+      expect(normalizePhone("0044 7911 123456")).toBe("+447911123456");
+      expect(normalizePhone("+233 24 123 4567")).toBe("+233241234567");
+    });
+
+    it("reads a 10-digit Nigerian mobile typed without its leading 0", () => {
+      expect(normalizePhone("8031234567")).toBe("+2348031234567");
+      expect(normalizePhone("701 234 5678")).toBe("+2347012345678");
+    });
+
+    it("drops the trunk 0 typed after the Nigerian country code", () => {
+      expect(normalizePhone("+234 0803 123 4567")).toBe("+2348031234567");
+      expect(normalizePhone("23408031234567")).toBe("+2348031234567");
+    });
+
+    it("never adds 234 to a number whose country it can't tell", () => {
+      // A US number typed without +1 is not a Nigerian number.
+      expect(normalizePhone("555 123 4567")).toBe(null);
+      expect(normalizePhone("15551234567")).toBe(null);
+      expect(normalizePhone("123")).toBe(null);
+      expect(normalizePhone("0803123")).toBe(null);
+    });
+
+    it("rejects input that can't be a full number", () => {
+      expect(normalizePhone("+234803")).toBe(null);
+      expect(normalizePhone("+1234567")).toBe(null);
+      expect(normalizePhone("+1234567890123456")).toBe(null);
+      expect(normalizePhone("abcdefghij")).toBe(null);
+      expect(normalizePhone("0803 123 4567 ext 2")).toBe(null);
+    });
   });
 
   describe("formatPhoneForDisplay", () => {
@@ -81,6 +114,23 @@ describe("Phone Normalization Utils", () => {
 
     it("should reject phone numbers that are too long", () => {
       expect(isValidPhone("080312345678901234")).toBe(false);
+    });
+
+    it("accepts other countries' numbers typed with their country code", () => {
+      expect(isValidPhone("+1 555 123 4567")).toBe(true);
+      expect(isValidPhone("+44 7911 123456")).toBe(true);
+    });
+
+    it("asks for the country code rather than guessing Nigeria", () => {
+      expect(isValidPhone("555 123 4567")).toBe(false);
+      expect(isValidPhone("15551234567")).toBe(false);
+    });
+
+    it("accepts only Nigerian mobile numbers under +234", () => {
+      expect(isValidPhone("8031234567")).toBe(true);
+      // 01 is a Lagos landline, not a mobile.
+      expect(isValidPhone("+234 1 234 5678")).toBe(false);
+      expect(isValidPhone("01 234 5678 90")).toBe(false);
     });
   });
 

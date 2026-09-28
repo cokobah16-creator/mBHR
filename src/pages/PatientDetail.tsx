@@ -617,7 +617,7 @@ export function PatientDetail() {
                   {...register("phone")}
                   type="tel"
                   className="input-field"
-                  placeholder="08012345678 or +2348012345678"
+                  placeholder="08012345678, or +44 7911 123456 for other countries"
                 />
                 {errors.phone && (
                   <p className="field-error" role="alert">
