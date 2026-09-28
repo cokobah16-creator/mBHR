@@ -20,6 +20,7 @@ import {
 } from "./account/outreachCache";
 import { errorName } from "./account/portalSession";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 
 interface OutreachEvent {
   id: string;
@@ -42,12 +43,19 @@ type ListSource = "live" | "saved" | "none";
 
 export function OutreachFinder() {
   const isOnline = useOnlineStatus();
+  const { t } = useT();
   const [events, setEvents] = useState<OutreachEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [source, setSource] = useState<ListSource>("none");
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [fetchFailed, setFetchFailed] = useState(false);
   const isOffline = !supabase;
+  const savedNoteFn = () =>
+    savedAt
+      ? t("portal.outreach.savedOn", {
+          date: formatNigerianDateTime(savedAt),
+        })
+      : t("portal.outreach.savedEarlier");
 
   const loadEvents = useCallback(async () => {
     const showSaved = () => {
@@ -100,8 +108,8 @@ export function OutreachFinder() {
   return (
     <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
       <PageHeader
-        title="Find an outreach near you"
-        description="Upcoming community health outreaches and where they will be held."
+        title={t("portal.outreach.title")}
+        description={t("portal.outreach.description")}
         actions={
           <button
             type="button"
@@ -113,7 +121,7 @@ export function OutreachFinder() {
               className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
               aria-hidden
             />
-            {loading ? "Checking…" : "Check for updates"}
+            {loading ? t("portal.outreach.checking") : t("portal.outreach.check")}
           </button>
         }
       />
@@ -123,10 +131,10 @@ export function OutreachFinder() {
           <div className="banner banner-info">
             <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <p>
-              This device is not connected to the online outreach calendar.
+              {t("portal.outreach.notConnected")}{" "}
               {source === "saved"
-                ? ` Showing a list saved on this device${savedAt ? ` on ${formatNigerianDateTime(savedAt)}` : " earlier"}. Dates may have changed.`
-                : " Ask clinic staff about upcoming outreaches."}
+                ? savedNoteFn()
+                : t("portal.outreach.askStaff")}
             </p>
           </div>
         )}
@@ -136,18 +144,18 @@ export function OutreachFinder() {
             <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <p>
               {isOnline
-                ? "We could not reach the outreach calendar."
-                : "You are offline."}
+                ? t("portal.outreach.unreachable")
+                : t("portal.outreach.offline")}{" "}
               {source === "saved"
-                ? ` Showing a list saved on this device${savedAt ? ` on ${formatNigerianDateTime(savedAt)}` : " earlier"}. Dates may have changed.`
-                : " Try again when you have a connection."}
+                ? savedNoteFn()
+                : t("portal.outreach.tryLater")}
             </p>
           </div>
         )}
 
         {!isOffline && source === "live" && savedAt && !loading && (
           <p className="text-caption text-ink-muted">
-            Up to date as of {formatNigerianDateTime(savedAt)}.
+            {t("portal.outreach.upToDate", { date: formatNigerianDateTime(savedAt) })}
           </p>
         )}
       </div>
@@ -155,7 +163,7 @@ export function OutreachFinder() {
       {loading ? (
         <div className="space-y-3">
           <span role="status" className="sr-only">
-            Loading outreach events
+            {t("portal.outreach.loading")}
           </span>
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="panel space-y-2 p-4" aria-hidden>
@@ -168,11 +176,11 @@ export function OutreachFinder() {
         <div className="panel">
           <EmptyState
             icon={MapPinIcon}
-            title="No upcoming outreaches listed"
+            title={t("portal.outreach.emptyTitle")}
             description={
               isOffline || fetchFailed
-                ? "Upcoming outreaches will appear here once this device can reach the outreach calendar."
-                : "No outreaches are planned at the moment. Check again later."
+                ? t("portal.outreach.emptyOffline")
+                : t("portal.outreach.emptyNone")
             }
           />
         </div>
@@ -186,18 +194,18 @@ export function OutreachFinder() {
                 <h2 className="text-h3 text-ink">{event.event_name}</h2>
                 <dl className="mt-2 space-y-1 text-body text-ink-secondary">
                   <div>
-                    <dt className="sr-only">Place</dt>
+                    <dt className="sr-only">{t("portal.outreach.place")}</dt>
                     <dd className="flex items-start gap-2">
                       <MapPinIcon className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
                       <span>
                         {event.sites
                           ? `${event.sites.name}, ${event.sites.lga}, ${event.sites.state}`
-                          : "Place to be announced"}
+                          : t("portal.outreach.placeTba")}
                       </span>
                     </dd>
                   </div>
                   <div>
-                    <dt className="sr-only">Date and time</dt>
+                    <dt className="sr-only">{t("portal.outreach.dateTime")}</dt>
                     <dd className="flex items-start gap-2 tabular-nums">
                       <CalendarIcon className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
                       <span>
