@@ -21,13 +21,19 @@
 
   ## Changes
   1. public.app_phone_e164_digits(text): a phone number as its E.164 digits
-     (no plus). Digits only; 234... kept; 0 + 10 digits and a bare 10 digits
-     read as Nigerian (234 added, as src/db/outbox.ts formatPhone does); a
-     00 prefix dropped; 2340 + 10 digits read as 234 + 10 digits; anything
-     else keeps all its digits. A foreign number the staff app saved through
-     src/utils/phone.ts normalizePhone (234 put in front, e.g.
-     +23418031234567) does not match its owner's verified phone: safe, the
-     owner asks staff. Internal: no grant to anon or authenticated.
+     (no plus). Digits only; 234... kept; 0 + 10 digits read as Nigerian
+     (234 added); a 00 prefix dropped; 2340 + 10 digits read as 234 + 10
+     digits; a bare 10 digits is NULL (it could be a Nigerian number without
+     its 0 or a US or Indian one without its country code, so it matches
+     nothing); anything else keeps all its digits. Internal: no grant to
+     anon or authenticated.
+     The staff app already saves numbers as +234 (src/utils/phone.ts
+     normalizePhone, src/utils/nigeria.ts formatPhoneNG): a foreign number
+     saved with its country code becomes e.g. +23418031234567 and matches
+     nobody (safe, the owner asks staff); a foreign number typed without
+     one is saved as a Nigerian number and matches whoever holds those
+     digits in Nigeria. That is the registration data, not a guess made
+     here, and the date of birth and the limit below still apply.
   2. public.portal_link_patient_record(date, text, text, text), same
      signature and grants:
      - phones match on the whole number (app_phone_e164_digits on both
@@ -40,10 +46,10 @@
      - a wrong date of birth, when the contact matches a record, is counted
        in public.rate_limits: bucket 'portal_link_uid' per login (limit 5)
        and bucket 'portal_link_record' per matching record (limit 10, across
-       logins). A count starts at the first wrong date and runs 24 hours;
-       the wrong date that reaches the limit restarts the 24 hours, so every
-       date, right or wrong, is refused ('needs_staff_verification') for 24
-       hours after the fifth wrong one (tenth for a record). The counter rows
+       logins). Every wrong date restarts the 24 hours, so a count clears
+       only after 24 hours with no wrong date, and every date, right or
+       wrong, is refused ('needs_staff_verification') for 24 hours after the
+       fifth wrong one (tenth for a record). The counter rows
        are locked for the call, so parallel calls from one login wait for
        each other instead of all passing the check;
      - anon and authenticated lose their table grants on public.rate_limits
@@ -69,6 +75,14 @@
   - A household member who knows the date of birth can still link a record
     that shares their verified phone or email: that is what the date of
     birth is for. Staff linking stays the path for anything else.
+  - 'no_clinic_record' still differs from 'needs_staff_verification': it
+    tells a caller only whether a record holds their own verified phone or
+    email, and a caller with no match costs nothing to count.
+  - One login can add at most 5 to a record's count, and a phone or email
+    belongs to one login at a time, so the record lock (10) is reached only
+    by someone holding both of a record's contacts or moving one phone
+    across logins. It then refuses the owner too for 24 hours: staff can
+    still link.
 
   ## Rollback
     Re-run the portal_link_patient_record body from
@@ -97,14 +111,14 @@ AS $$
            WHEN d LIKE '2340%' AND length(d) = 14 THEN '234' || substr(d, 5)
            WHEN d LIKE '234%' THEN d
            WHEN d LIKE '0%' AND length(d) = 11 THEN '234' || substr(d, 2)
-           WHEN length(d) = 10 THEN '234' || d
+           WHEN length(d) = 10 THEN NULL
            ELSE d
          END
     FROM (SELECT regexp_replace(COALESCE(p_phone, ''), '\D', '', 'g') AS d) AS x;
 $$;
 
 COMMENT ON FUNCTION public.app_phone_e164_digits(text) IS
-  'A phone number as its E.164 digits (no plus): Nigerian local and bare 10-digit numbers get 234, a 00 prefix and a trunk 0 after 234 are dropped. Used to match a verified login phone to a clinic record (20260927100140).';
+  'A phone number as its E.164 digits (no plus): a Nigerian local number (0 + 10 digits) gets 234, a 00 prefix and a trunk 0 after 234 are dropped, a bare 10 digits (no country code) is NULL. Used to match a verified login phone to a clinic record (20260927100140).';
 
 REVOKE ALL ON FUNCTION public.app_phone_e164_digits(text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.app_phone_e164_digits(text) TO service_role;
@@ -236,17 +250,15 @@ BEGIN
 
   IF v_free + v_taken = 0 THEN
     -- A wrong date of birth: count it for this login and every record the
-    -- contact matched. A count starts at the first wrong date (count 0 or an
-    -- ended window) and the wrong date that reaches the limit restarts the
-    -- window, so the refusal lasts 24 hours from that date.
+    -- contact matched. window_start is the latest wrong date, so a count
+    -- clears only after 24 hours with no wrong date, and the refusal after
+    -- the limit lasts 24 hours from the last one. (Keeping the first date
+    -- instead let wrong dates saved up at the end of one window join a
+    -- fresh count: 8 a day, not 5.)
     UPDATE public.rate_limits AS rl
        SET count = CASE WHEN rl.count = 0 OR rl.window_start < now() - c_window
                         THEN 1 ELSE rl.count + 1 END,
-           window_start = CASE
-             WHEN rl.count = 0 OR rl.window_start < now() - c_window THEN now()
-             WHEN rl.count + 1 >= CASE WHEN rl.bucket = 'portal_link_uid'
-                                       THEN c_uid_limit ELSE c_record_limit END THEN now()
-             ELSE rl.window_start END,
+           window_start = now(),
            updated_at = now()
      WHERE (rl.bucket = 'portal_link_uid' AND rl.key = v_uid::text)
         OR (rl.bucket = 'portal_link_record' AND rl.key = ANY (v_candidates));

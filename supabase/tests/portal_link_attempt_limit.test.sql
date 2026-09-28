@@ -5,7 +5,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(40);
+SELECT plan(41);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (migration owner; guards and RLS do not apply)
@@ -62,7 +62,7 @@ UPDATE public.patients SET auth_uid = '7777cccc-0000-4000-8000-00000000000b' WHE
 SELECT is(public.app_phone_e164_digits('08031234567'), '2348031234567', 'local Nigerian number gets 234');
 SELECT is(public.app_phone_e164_digits('+234 803 123 4567'), '2348031234567', 'formatted +234 number');
 SELECT is(public.app_phone_e164_digits('+234 0803 123 4567'), '2348031234567', 'a trunk 0 after 234 is dropped');
-SELECT is(public.app_phone_e164_digits('8031234567'), '2348031234567', 'bare 10 digits read as Nigerian, like the app');
+SELECT is(public.app_phone_e164_digits('5551234567'), NULL, 'bare 10 digits (no country code) match nothing');
 SELECT is(public.app_phone_e164_digits('+1 803 123 4567'), '18031234567', 'a US number keeps its country code');
 SELECT is(public.app_phone_e164_digits('00447911123456'), '447911123456', 'a 00 prefix is dropped');
 SELECT is(public.app_phone_e164_digits(''), NULL, 'empty is NULL');
@@ -149,6 +149,18 @@ SELECT is((SELECT (count, window_start = now())::text FROM public.rate_limits
 SELECT is((SELECT (count, window_start = now())::text FROM public.rate_limits
             WHERE bucket = 'portal_link_uid' AND key = '7777cccc-0000-4000-8000-00000000000d'), '(1,t)',
   'a count starts at the first wrong date, not at an earlier call');
+
+-- Every wrong date restarts the 24 hours, so wrong dates saved up at the end
+-- of one window never join a fresh count.
+UPDATE public.rate_limits SET window_start = now() - interval '23 hours'
+ WHERE bucket = 'portal_link_uid' AND key = '7777cccc-0000-4000-8000-00000000000d';
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"7777cccc-0000-4000-8000-00000000000d","role":"authenticated"}';
+SELECT public.portal_link_patient_record('1945-01-02') ->> 'status' AS wrong_2;
+RESET ROLE;
+SELECT is((SELECT (count, window_start = now())::text FROM public.rate_limits
+            WHERE bucket = 'portal_link_uid' AND key = '7777cccc-0000-4000-8000-00000000000d'), '(2,t)',
+  'every wrong date restarts the 24 hours');
 
 -- ---------------------------------------------------------------------------
 -- 4. Ten wrong dates on one record, from any logins, lock the record
