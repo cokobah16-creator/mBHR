@@ -1,4 +1,5 @@
 import { useRef, KeyboardEvent, ChangeEvent, ClipboardEvent } from "react";
+import { useT } from "@/hooks/useT";
 
 /** Lets phones offer a code received by SMS in the first box. */
 const ONE_TIME_CODE = "one-time-code";
@@ -25,9 +26,11 @@ export function OTPInput({
   onChange,
   disabled = false,
   error = false,
-  label = "Verification code",
+  label,
   errorId,
 }: OTPInputProps) {
+  const { t } = useT();
+  const groupLabel = label ?? t("portal.code.groupLabel", "Verification code");
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const handleChange = (index: number, e: ChangeEvent<HTMLInputElement>) => {
@@ -76,7 +79,7 @@ export function OTPInput({
   return (
     <div
       role="group"
-      aria-label={label}
+      aria-label={groupLabel}
       aria-describedby={error && errorId ? errorId : undefined}
       className="flex justify-center gap-2"
     >
@@ -97,7 +100,11 @@ export function OTPInput({
           className={`h-14 w-11 rounded-md border bg-surface text-center text-h1 tabular-nums text-ink transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:text-ink-disabled sm:w-12 ${
             error ? "border-danger" : "border-line-strong"
           }`}
-          aria-label={`Digit ${index + 1} of ${length}`}
+          aria-label={t("portal.code.digit", {
+            defaultValue: "Digit {{n}} of {{total}}",
+            n: index + 1,
+            total: length,
+          })}
         />
       ))}
     </div>
