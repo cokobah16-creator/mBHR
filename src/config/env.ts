@@ -42,6 +42,12 @@ const envSchema = z.object({
   // (email: SMTP; sms: phone sign-in plus the SMS hook).
   VITE_PORTAL_CODE_CHANNELS: z.string().default(""),
 
+  // Patient portal self sign-up links ("Create an account"). Anything but
+  // "true" (the default) hides them and tells patients to ask clinic staff.
+  // Set "true" only when Supabase Auth allows new sign-ups. Devices in
+  // offline mode always show them: offline accounts are made on the device.
+  VITE_PORTAL_SIGNUP_OPEN: z.string().default(""),
+
   // Televisits (video-room base URL; rooms are appended as /mbhr-<uuid>).
   // A present-but-blank value is treated as unset so the default applies.
   VITE_TELEVISIT_BASE_URL: z.preprocess(
@@ -66,6 +72,7 @@ function readRaw(): Record<string, unknown> {
     VITE_INVITE_RATE_MS: e.VITE_INVITE_RATE_MS,
     VITE_TELEVISIT_BASE_URL: e.VITE_TELEVISIT_BASE_URL,
     VITE_PORTAL_CODE_CHANNELS: e.VITE_PORTAL_CODE_CHANNELS,
+    VITE_PORTAL_SIGNUP_OPEN: e.VITE_PORTAL_SIGNUP_OPEN,
   };
 }
 
