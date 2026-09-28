@@ -116,6 +116,32 @@ describe("downloads", () => {
     expect(itemFromServer({ med_name: "x" }, undefined)).toBeNull();
   });
 
+  it("keeps this device's waiting or refused medicine when the server has another under its id", () => {
+    const local = {
+      id: "dev-para",
+      medName: "Paracetamol ",
+      form: "Tablet",
+      strength: "500 mg",
+      unit: "tablets",
+      reorderThreshold: 0,
+      isControlled: false,
+      isActive: true,
+      onHandQty: 40,
+      updatedAt: "2026-09-28T09:00:00Z",
+      siteKey: "site-a",
+      localOnly: 0 as const,
+      pendingRegister: 1 as const,
+    };
+    const other = { id: "dev-para", med_name: "Morphine", form: "tablet", strength: "10 mg", site_key: "site-x", is_controlled: true };
+    expect(itemFromServer(other, local)).toBeNull();
+    expect(itemFromServer(other, { ...local, pendingRegister: 0, registerRejected: "item_id_conflict" })).toBeNull();
+    // Its own registration, as the server stored it, is taken.
+    const own = { id: "dev-para", med_name: "Paracetamol", form: "tablet", strength: "500 mg", site_key: "site-a", on_hand_qty: 0 };
+    expect(itemFromServer(own, local)).toMatchObject({ id: "dev-para", medName: "Paracetamol", pendingRegister: 0 });
+    // A medicine the server already accepted follows the server.
+    expect(itemFromServer(other, { ...local, pendingRegister: 0 })).toMatchObject({ medName: "Morphine" });
+  });
+
   it("maps a lot", () => {
     expect(
       batchFromServer({ id: "b1", item_id: "amx", lot_number: "L1", expiry_date: "2027-01-01", qty_on_hand: "12" }),
@@ -293,7 +319,9 @@ describe("server answers", () => {
     expect(rejectReasonText("lines_mismatch")).toMatch(/do not match the prescription/);
     expect(rejectReasonText("prescriber_not_allowed")).toMatch(/doctor or nurse on the staff list/);
     expect(rejectReasonText("patient_mismatch")).toMatch(/different patient/);
+    expect(rejectReasonText("item_disputed")).toMatch(/on hold on the server/);
     expect(rejectReasonText("dispenses_exceed_prescription")).toMatch(/more than, or not on/);
+    expect(rejectReasonText("item_id_conflict")).toMatch(/different medicine/);
     expect(rejectReasonText("prescription_not_found")).toMatch(/no record/);
     expect(rejectReasonText("something_new")).toBe("The server refused this change.");
   });
