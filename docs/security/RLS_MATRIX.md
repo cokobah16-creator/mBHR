@@ -115,7 +115,7 @@ Confirmed role policy:
 | --- | --- | --- |
 | Staff | `app_users.id = auth.uid()`. The role is `app_users.role`. A row flagged inactive (`is_active` false or 0, `active` false, `disabled`, `deactivated`, `deactivated_at`, `disabled_at`) counts as no role | `app_current_role()`, `app_has_permission(p)`, `app_has_any_permission(ps)`, `app_is_staff()`. `app_is_staff()` lists the staff roles by name; since `20260925100600` the list includes `registration_lead`. |
 | "Station staff" | Any of register, vitals, consult, dispense | `app_is_station_staff()` |
-| Portal patient | `patients.auth_uid = auth.uid()`, or `patient_portal_users.id` = `auth.uid()`, the `app_metadata.portal_user_id`, or the verified phone claim. **In every case the portal account must be active and staff must have enabled portal access for the patient (`patients.portal_enabled`).** Since `20260925100000`, a record merged into another one (`merged_into` set) is never a portal patient | `app_portal_patient_ids()`, `app_portal_user_ids()` |
+| Portal patient | `patients.auth_uid = auth.uid()`, or `patient_portal_users.id` = `auth.uid()`, the `app_metadata.portal_user_id`, or the verified phone claim. **In every case the portal account must be active and staff must have enabled portal access for the patient (`patients.portal_enabled`).** Since `20260925100000`, a record merged into another one (`merged_into` set) is never a portal patient; since `20260927100190`, nor is a record whose date of birth is under 18 years ago, by the date in Nigeria (`app_patient_is_minor`) | `app_portal_patient_ids()`; `app_portal_user_ids()` is not callable by signed-in accounts and no policy uses it (20260927100190) |
 | Organisation member | `user_org_sites.user_id = auth.uid()` | `app_org_ids()` |
 | Anon key, no user | Nothing. Every helper returns false or an empty set. Every PHI table has had all anon privileges revoked | none |
 | Device-only PIN session | No Supabase user, so the same as anon. The device works offline and syncs only after an online sign-in (owner decision #3) | none |
@@ -258,7 +258,8 @@ imply. Reminders and patient messages need a role in `SMS_SENDER_ROLES`
 
 `public.portal_invitation_begin()` checks three things: the sender's active
 `app_users` role, the patient (on the server, not merged away, portal access
-on) and the stored phone (or, for email, the stored email). It records the
+on, and since `20260927100190` not a child's record, which is answered
+`portal_not_enabled`) and the stored phone (or, for email, the stored email). It records the
 request before anything is sent. If the check cannot run, nothing is sent.
 `portal_invitation_finish()` records `sent` or `not_sent` with a code:
 demo_mode, provider_rejected, sms_not_configured, invalid_recipient,
@@ -338,10 +339,10 @@ doctor.
 
 | Table | SELECT | INSERT | UPDATE | DELETE |
 | --- | --- | --- | --- | --- |
-| patient_portal_users | staff; own account (also while suspended) | P(register) | P(register); own account (settings only) | P(users) |
-| patient_portal_sessions | own sessions; P(users) | own | own; P(users) | own; P(users) |
-| patient_portal_access_logs | P(audit_access); own | own | none | none |
-| patient_portal_preferences | staff; own | own | own | own |
+| patient_portal_users | staff; own account (also while suspended), not the patient's other logins (20260927100190) | P(register) | P(register); own account (settings only) | P(users) |
+| patient_portal_sessions | own sessions (not the patient's other logins', 20260927100190); P(users) | none (only `portal_session_*()`, 20260927100190) | P(users) | own; P(users) |
+| patient_portal_access_logs | P(audit_access); own login's (20260927100190) | own login, for its own records; the server sets `created_at` (20260927100190) | none | none |
+| patient_portal_preferences | staff; own login's (20260927100190) | own | own | own |
 | patient_secure_messages | staff; own (live updates: inserts and updates reach only readers of the row; deletes send only the id, and only to unfiltered subscribers: 20260927100130) | P(consult) with `from_patient` false; own with `from_patient` true (the server sets `from_name`, `staff_id`, `read`, `is_archived` and timestamps: 20260927100120) | P(consult); own: `read` only, false to true, on clinic messages (20260927100120) | P(consult) |
 | patient_messages (legacy) | staff; own | P(consult) as 'staff'; own as 'patient' | P(consult); own (flags only) | P(consult) |
 | patient_notifications | staff; own | P(register) | P(register); own (read flags only) | none |
@@ -350,7 +351,7 @@ doctor.
 | patient_consent_records | staff; own | P(register); own | P(register) (revocation) | none |
 | patient_data_sharing_preferences | staff; own | P(register); own | P(register); own | none |
 | tefca_access_logs | P(audit_access); own | staff | none | none |
-| patient_submitted_data | staff; own | P(consult); own, pending and unreviewed | P(consult); own while pending | none |
+| patient_submitted_data | staff; own | P(consult); own, pending and unreviewed, in the login's own name (`portal_user_id`, 20260927100190) | P(consult); own while pending, only the login's own submissions (20260927100190) | none |
 | record_visibility_log | staff | P(vitals \| consult \| dispense) | none | none |
 | portal_enrollment_settings | staff | P(users) | P(users) | none |
 | patient_portal_access_events (portal access history) | P(portal_manage \| audit_access) | none (only `set_patient_portal_access()`, the auto-enrolment trigger, `merge_patients()` and migrations) | none (trigger refuses, even for the owner) | none (trigger refuses, even for the owner) |
@@ -393,7 +394,7 @@ soft-delete their own uploads; never delete staff-uploaded clinical records."
 | Bucket | SELECT | INSERT | UPDATE | DELETE |
 | --- | --- | --- | --- | --- |
 | photos | staff | P(register \| vitals \| consult) | P(register \| vitals \| consult) | P(register \| users) |
-| patient-documents (`<patient_id>/...`) | staff; own folder, except files of removed documents | P(register \| vitals \| consult); own folder | none | only files **that no document row points to**: P(consult \| users); a patient may delete only a file they uploaded to their own folder (clean-up after a failed save). The files of documents, active or removed, are never deleted through the API |
+| patient-documents (`<patient_id>/...`) | staff; a file every document naming it belongs to the patient's records (or one merged into them) and none is removed, whichever folder it is in; a file no document names only to the login that uploaded it, in their own folder or one merged into theirs. A document names a file however its `file_path` writes it (`app_storage_object_key`, indexed) (20260927100190) | P(register \| vitals \| consult); own folder | none | only files **that no document row points to**: P(consult \| users); a patient may delete only a file they uploaded to their own folder (clean-up after a failed save). The files of documents, active or removed, are never deleted through the API |
 
 ### Locked columns (trigger `app_guard_immutable_columns`)
 
@@ -468,7 +469,7 @@ privilege but no trigger.
 
 | Function | Callable by | Purpose |
 | --- | --- | --- |
-| `portal_session_check(token, extend_until?)` | anon, authenticated | Validates or refreshes one portal session by its token. Returns no row for an unknown token. Deactivates a session more than 5 minutes past expiry. Caps extensions at 24 hours |
+| `portal_session_check(token, extend_until?)` | anon, authenticated | Validates or refreshes one portal session by its token. Returns no row for an unknown token. Deactivates a session more than 5 minutes past expiry, or whose login no longer has portal access (suspended or locked, access off, record merged away; 20260927100190). Caps extensions at 24 hours |
 | `portal_session_end(token)` | anon, authenticated | Portal logout |
 | `app_portal_access_backfill()` | Table owner only. EXECUTE is revoked from PUBLIC, anon, authenticated and service_role | Runs the one-off portal access backfill (see section 4) and returns the number of records turned on. It exists so `supabase/tests/portal_access_backfill.test.sql` runs the same code. Drop it once the release is verified |
 | `portal_remove_document(p_document_id)` | authenticated (own records only) | A portal patient removes (soft-deletes) a document they uploaded to their own record (`20260925100700`, see ⁶). Returns `{outcome: "applied", already_removed, ...}` or `{outcome: "rejected", reason: "clinic_document" \| "not_found"}` |
@@ -497,8 +498,8 @@ below is callable by anon.
 
 | Function | Callable by | Purpose |
 | --- | --- | --- |
-| `set_patient_portal_access(p_command_id, p_patient_id, p_enabled, p_reason?, p_client_at?, p_requested_by?, p_source?)` | P(portal_manage) | The only way a client changes `patients.portal_enabled` (inside the database, the insert-time auto-enrolment trigger, `merge_patients()` and `portal_link_patient_record()` also set it). Idempotent, recorded in `patient_portal_access_events`. A disable always applies. A staff enable made before a newer disable on the server is refused (`newer_decision_on_server`). An automatic enable (`backfill`, `auto_enrollment`) applies only when the server holds no decision, the patient has not opted out and access was never turned off (`server_decision_kept` otherwise). A merged-away record is refused (`patient_merged`). Every applied decision also sets `portal_opt_out = NOT p_enabled` |
-| `portal_access_status()` | authenticated (own records only) | The signed-in portal user's linked records and whether access is on (off for a merged-away record or a suspended portal account). Used by the portal sign-in check (`fetchPortalAccessStatus` in `src/services/portalSignIn.ts`) |
+| `set_patient_portal_access(p_command_id, p_patient_id, p_enabled, p_reason?, p_client_at?, p_requested_by?, p_source?)` | P(portal_manage) | The only way a client changes `patients.portal_enabled` (inside the database, the insert-time auto-enrolment trigger, `merge_patients()` and `portal_link_patient_record()` also set it). Idempotent, recorded in `patient_portal_access_events`. A disable always applies. A staff enable made before a newer disable on the server is refused (`newer_decision_on_server`). An automatic enable (`backfill`, `auto_enrollment`) applies only when the server holds no decision, the patient has not opted out and access was never turned off (`server_decision_kept` otherwise). A merged-away record is refused (`patient_merged`), and so is turning access on for a record whose date of birth is under 18 years ago (`minor`, 20260927100190; turning it off still applies). Every applied decision also sets `portal_opt_out = NOT p_enabled` |
+| `portal_access_status()` | authenticated (own records only) | The signed-in portal user's linked records and whether access is on (off for a merged-away record, a suspended portal account, or since 20260927100190 a child's record). Used by the portal sign-in check (`fetchPortalAccessStatus` in `src/services/portalSignIn.ts`) |
 | `canonical_patient_id(text)` | authenticated | The record an id now lives on (follows `merged_into`, at most 10 steps). A signed-in caller who is not staff gets the id back unchanged unless it now lives on one of their own portal records (20260927100180) |
 | `lease_ticket_block(p_site_key, p_service_date, p_device_id, p_size?)` | P(queue) | Gives a device the next block of 1 to 100 ticket numbers (default 20) for a site and Africa/Lagos day (yesterday to tomorrow only), so it can issue real numbers offline |
 | `issue_queue_ticket(p_ticket_id, p_site_key, p_service_date, p_patient_id, p_leased_seq?, p_provisional_label?, p_device_id?)` | P(queue) | Confirms a ticket issued on a device. Idempotent on the ticket id; one ticket per patient, site and day (two desks converge on one); keeps a leased number or a free temporary label, otherwise gives the next number (the device relabels and tells staff). Refusals: `invalid_input`, `patient_not_found` |

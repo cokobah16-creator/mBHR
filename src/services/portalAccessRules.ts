@@ -3,7 +3,7 @@
 // (set_patient_portal_access, supabase/migrations/20260925100100_*); these
 // helpers read its answers and describe the device's copy honestly.
 
-import { MINOR_RECORD_LINK_MESSAGE } from "@/pages/legal/policyMeta";
+import { MINOR_PORTAL_ACCESS_MESSAGE, MINOR_RECORD_LINK_MESSAGE } from "@/pages/legal/policyMeta";
 
 /** Why a portal access change was made (the RPC's p_source). */
 export type PortalAccessSource = "staff" | "auto_enrollment" | "merge";
@@ -48,6 +48,8 @@ export function portalRejectionMessage(reason: string | undefined): string {
       return "The server already holds a portal access decision for this patient, so the automatic change was not applied.";
     case "patient_merged":
       return "This record was merged into another record. Change portal access on the record it was merged into.";
+    case "minor":
+      return MINOR_PORTAL_ACCESS_MESSAGE;
     case "permission_denied":
       return "The person who made this change is not allowed to manage portal access, so the server's setting was kept.";
     case "invalid_request":
