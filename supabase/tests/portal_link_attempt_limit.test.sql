@@ -5,7 +5,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(36);
+SELECT plan(40);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (migration owner; guards and RLS do not apply)
@@ -32,7 +32,10 @@ INSERT INTO auth.users (id, email, phone, email_confirmed_at, phone_confirmed_at
   -- a child's record's number
   ('7777cccc-0000-4000-8000-00000000000a', NULL, '2348077710007', NULL, now()),
   -- record 6's existing owner
-  ('7777cccc-0000-4000-8000-00000000000b', 'pgtap-pla-six-owner@example.invalid', NULL, now(), NULL);
+  ('7777cccc-0000-4000-8000-00000000000b', 'pgtap-pla-six-owner@example.invalid', NULL, now(), NULL),
+  -- window rules: records 8 and 9
+  ('7777cccc-0000-4000-8000-00000000000c', NULL, '2348077710008', NULL, now()),
+  ('7777cccc-0000-4000-8000-00000000000d', NULL, '2348077710009', NULL, now());
 
 INSERT INTO public.patients (id, given_name, family_name, email, phone, dob) VALUES
   ('pgtap-pla-1',      'Ada',    'One',    NULL, '08077710001', '1980-01-01'),
@@ -42,12 +45,14 @@ INSERT INTO public.patients (id, given_name, family_name, email, phone, dob) VAL
   ('pgtap-pla-4',      'Efe',    'Four',   NULL, '+234 807 771 0004', '1985-05-05'),
   ('pgtap-pla-5',      'Funmi',  'Five',   NULL, '08077710005', '1960-06-06'),
   ('pgtap-pla-6',      'Gozie',  'Six',    NULL, '08077710006', '1955-05-05'),
-  ('pgtap-pla-child',  'Hauwa',  'Child',  NULL, '08077710007', (current_date - interval '10 years')::date);
+  ('pgtap-pla-child',  'Hauwa',  'Child',  NULL, '08077710007', (current_date - interval '10 years')::date),
+  ('pgtap-pla-8',      'Ike',    'Eight',  NULL, '08077710008', '1950-08-08'),
+  ('pgtap-pla-9',      'Jumoke', 'Nine',   NULL, '08077710009', '1945-09-09');
 
 UPDATE public.patients
    SET portal_enabled = true, portal_enabled_changed_at = now()
  WHERE id IN ('pgtap-pla-1', 'pgtap-pla-2', 'pgtap-pla-3', 'pgtap-pla-copier',
-              'pgtap-pla-4', 'pgtap-pla-6', 'pgtap-pla-child');
+              'pgtap-pla-4', 'pgtap-pla-6', 'pgtap-pla-child', 'pgtap-pla-8', 'pgtap-pla-9');
 UPDATE public.patients SET auth_uid = '7777cccc-0000-4000-8000-000000000006' WHERE id = 'pgtap-pla-copier';
 UPDATE public.patients SET auth_uid = '7777cccc-0000-4000-8000-00000000000b' WHERE id = 'pgtap-pla-6';
 
@@ -65,6 +70,13 @@ SELECT ok(NOT has_function_privilege('authenticated', 'public.app_phone_e164_dig
   'signed-in users cannot call the phone helper');
 SELECT ok(NOT has_function_privilege('anon', 'public.portal_link_patient_record(date, text, text, text)', 'EXECUTE'),
   'anon cannot call portal_link_patient_record');
+SELECT ok(NOT has_table_privilege('authenticated', 'public.rate_limits', 'TRUNCATE')
+          AND NOT has_table_privilege('authenticated', 'public.rate_limits', 'SELECT')
+          AND NOT has_table_privilege('authenticated', 'public.rate_limits', 'DELETE'),
+  'signed-in users hold no grant on the attempt counters (TRUNCATE ignores row-level security)');
+SELECT ok(NOT has_table_privilege('anon', 'public.rate_limits', 'TRUNCATE')
+          AND NOT has_table_privilege('anon', 'public.rate_limits', 'SELECT'),
+  'anon holds no grant on the attempt counters');
 
 -- ---------------------------------------------------------------------------
 -- 2. A phone matches on the whole number, not its last 10 digits
@@ -92,7 +104,7 @@ SELECT is(public.portal_link_patient_record('1970-01-04') ->> 'status', 'needs_s
 SELECT is(public.portal_link_patient_record('1970-01-05') ->> 'status', 'needs_staff_verification', 'wrong date 5');
 SELECT is(public.portal_link_patient_record('1970-07-07') ->> 'status', 'needs_staff_verification',
   'after five wrong dates the right one is refused too');
-SELECT is_empty($$SELECT * FROM public.rate_limits$$,
+SELECT throws_ok($$SELECT * FROM public.rate_limits$$, '42501', NULL,
   'a signed-in user cannot read the attempt counters');
 RESET ROLE;
 
@@ -118,6 +130,25 @@ SET LOCAL request.jwt.claims = '{"sub":"7777cccc-0000-4000-8000-000000000003","r
 SELECT is(public.portal_link_patient_record('1970-07-07') ->> 'status', 'linked',
   'after 24 hours the right date of birth links');
 RESET ROLE;
+
+-- The count starts at the first wrong date, not at an earlier call, and the
+-- wrong date that reaches the limit restarts the 24 hours.
+INSERT INTO public.rate_limits (bucket, key, window_start, count, updated_at) VALUES
+  ('portal_link_uid', '7777cccc-0000-4000-8000-00000000000c', now() - interval '23 hours', 3, now() - interval '23 hours'),
+  ('portal_link_uid', '7777cccc-0000-4000-8000-00000000000d', now() - interval '23 hours 59 minutes', 0, now() - interval '23 hours 59 minutes');
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"7777cccc-0000-4000-8000-00000000000c","role":"authenticated"}';
+SELECT public.portal_link_patient_record('1950-01-01') ->> 'status' AS wrong_4;
+SELECT public.portal_link_patient_record('1950-01-02') ->> 'status' AS wrong_5;
+SET LOCAL request.jwt.claims = '{"sub":"7777cccc-0000-4000-8000-00000000000d","role":"authenticated"}';
+SELECT public.portal_link_patient_record('1945-01-01') ->> 'status' AS wrong_1;
+RESET ROLE;
+SELECT is((SELECT (count, window_start = now())::text FROM public.rate_limits
+            WHERE bucket = 'portal_link_uid' AND key = '7777cccc-0000-4000-8000-00000000000c'), '(5,t)',
+  'the fifth wrong date restarts the 24 hours');
+SELECT is((SELECT (count, window_start = now())::text FROM public.rate_limits
+            WHERE bucket = 'portal_link_uid' AND key = '7777cccc-0000-4000-8000-00000000000d'), '(1,t)',
+  'a count starts at the first wrong date, not at an earlier call');
 
 -- ---------------------------------------------------------------------------
 -- 4. Ten wrong dates on one record, from any logins, lock the record

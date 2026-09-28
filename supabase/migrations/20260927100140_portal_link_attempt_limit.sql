@@ -20,12 +20,14 @@
     exists for the contact and what state it is in.
 
   ## Changes
-  1. public.app_phone_e164_digits(text): a phone number as its E.164 digits,
-     the way the app formats numbers (src/db/outbox.ts formatPhone):
-     234... kept, 0 + 10 digits and bare 10 digits read as Nigerian (234),
-     a 00 prefix dropped, 2340 + 10 digits read as 234 + 10 digits. Other
-     numbers keep all their digits. Internal: no grant to anon or
-     authenticated.
+  1. public.app_phone_e164_digits(text): a phone number as its E.164 digits
+     (no plus). Digits only; 234... kept; 0 + 10 digits and a bare 10 digits
+     read as Nigerian (234 added, as src/db/outbox.ts formatPhone does); a
+     00 prefix dropped; 2340 + 10 digits read as 234 + 10 digits; anything
+     else keeps all its digits. A foreign number the staff app saved through
+     src/utils/phone.ts normalizePhone (234 put in front, e.g.
+     +23418031234567) does not match its owner's verified phone: safe, the
+     owner asks staff. Internal: no grant to anon or authenticated.
   2. public.portal_link_patient_record(date, text, text, text), same
      signature and grants:
      - phones match on the whole number (app_phone_e164_digits on both
@@ -36,12 +38,18 @@
        itself. So a copied phone or email no longer blocks anyone, and no
        record state is told to a caller who does not know the date of birth;
      - a wrong date of birth, when the contact matches a record, is counted
-       in public.rate_limits: bucket 'portal_link_uid' per login (5 in 24
-       hours) and bucket 'portal_link_record' per matching record (10 in 24
-       hours, across logins). Past either limit the answer is
-       'needs_staff_verification' whatever date is given, until the window
-       ends. The counter rows are locked for the call, so parallel calls
-       from one login wait for each other instead of all passing the check.
+       in public.rate_limits: bucket 'portal_link_uid' per login (limit 5)
+       and bucket 'portal_link_record' per matching record (limit 10, across
+       logins). A count starts at the first wrong date and runs 24 hours;
+       the wrong date that reaches the limit restarts the 24 hours, so every
+       date, right or wrong, is refused ('needs_staff_verification') for 24
+       hours after the fifth wrong one (tenth for a record). The counter rows
+       are locked for the call, so parallel calls from one login wait for
+       each other instead of all passing the check;
+     - anon and authenticated lose their table grants on public.rate_limits
+       (row-level security already gave them no rows, but TRUNCATE ignores
+       it and would clear the counters). The service role and the owner keep
+       theirs.
        Each wrong date writes one audit_logs row ('portal_link_dob_mismatch',
        entity 'portal_login', the login id, never the record id);
      - no new status: 'needs_staff_verification' already tells the patient
@@ -68,9 +76,11 @@
     DROP FUNCTION public.app_phone_e164_digits(text);
     DELETE FROM public.rate_limits
      WHERE bucket IN ('portal_link_uid', 'portal_link_record');
+    The rate_limits grants to anon and authenticated need not come back
+    (row-level security gave them no rows).
 */
 
-SET lock_timeout = '5s';
+SET LOCAL lock_timeout = '5s';
 
 -- ---------------------------------------------------------------------------
 -- 1. A phone number as E.164 digits (no plus)
@@ -94,10 +104,14 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION public.app_phone_e164_digits(text) IS
-  'A phone number as its E.164 digits, formatted like the app (src/db/outbox.ts formatPhone): Nigerian local numbers get 234. Used to match a verified login phone to a clinic record (20260927100140).';
+  'A phone number as its E.164 digits (no plus): Nigerian local and bare 10-digit numbers get 234, a 00 prefix and a trunk 0 after 234 are dropped. Used to match a verified login phone to a clinic record (20260927100140).';
 
 REVOKE ALL ON FUNCTION public.app_phone_e164_digits(text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.app_phone_e164_digits(text) TO service_role;
+
+-- The counters below live in rate_limits. Row-level security gives anon and
+-- authenticated no rows, but TRUNCATE ignores it.
+REVOKE ALL ON public.rate_limits FROM anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 2. Linking with a limit on wrong dates of birth
@@ -222,10 +236,17 @@ BEGIN
 
   IF v_free + v_taken = 0 THEN
     -- A wrong date of birth: count it for this login and every record the
-    -- contact matched (same window rule as check_and_increment_rate_limit).
+    -- contact matched. A count starts at the first wrong date (count 0 or an
+    -- ended window) and the wrong date that reaches the limit restarts the
+    -- window, so the refusal lasts 24 hours from that date.
     UPDATE public.rate_limits AS rl
-       SET count = CASE WHEN rl.window_start < now() - c_window THEN 1 ELSE rl.count + 1 END,
-           window_start = CASE WHEN rl.window_start < now() - c_window THEN now() ELSE rl.window_start END,
+       SET count = CASE WHEN rl.count = 0 OR rl.window_start < now() - c_window
+                        THEN 1 ELSE rl.count + 1 END,
+           window_start = CASE
+             WHEN rl.count = 0 OR rl.window_start < now() - c_window THEN now()
+             WHEN rl.count + 1 >= CASE WHEN rl.bucket = 'portal_link_uid'
+                                       THEN c_uid_limit ELSE c_record_limit END THEN now()
+             ELSE rl.window_start END,
            updated_at = now()
      WHERE (rl.bucket = 'portal_link_uid' AND rl.key = v_uid::text)
         OR (rl.bucket = 'portal_link_record' AND rl.key = ANY (v_candidates));

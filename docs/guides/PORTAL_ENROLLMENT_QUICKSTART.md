@@ -96,9 +96,9 @@ Linking to the clinic record (online):
   phone number and date of birth; the patient still needs that email.
 - If no clinic record matches, the server does not make one: the patient
   is told to ask clinic staff, who register them first.
-- After five wrong dates of birth in a day (or ten on one record, from any
-  accounts), the server stops trying for 24 hours and the patient is told
-  to ask clinic staff.
+- After five wrong dates of birth (or ten on one record, from any
+  accounts), the server refuses every date for 24 hours and the patient is
+  told to ask clinic staff. Staff can link the record sooner.
 - A child's record is never linked, and no record is made for an under-18
   date of birth. The patient is told to ask clinic staff.
 - The patient can use the online portal only while portal access is on for
