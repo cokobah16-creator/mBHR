@@ -817,6 +817,7 @@
   "portal.account.signOutAllTitle": "Log out on all devices?",
   "portal.account.signOutAllBody": "You will be logged out here and on every other phone or computer that uses your account. A device that is open right now may take a little while to log out. To come back, log in again.",
   "portal.account.signOutAllUnsent": "You have {{count}} message(s) that were not sent. Logging out deletes them from this phone.",
+  "portal.account.signOutAllStaff": "If you also work for the clinic and use this email for the staff app, you will be logged out of the staff app too.",
   "portal.account.signOutAllConfirm": "Log out everywhere",
   "portal.account.signOutAllCancel": "Stay logged in",
   "portal.account.signOutAllBusy": "Logging out…",

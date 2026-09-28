@@ -491,6 +491,7 @@ export function ManageAccount() {
                 onCancel={() => setConfirmSignOutAll(false)}
               >
                 <p>{t("portal.account.signOutAllBody")}</p>
+                <p className="mt-2">{t("portal.account.signOutAllStaff")}</p>
                 {unsentMessages > 0 && (
                   <p className="mt-2">
                     {t("portal.account.signOutAllUnsent", { count: unsentMessages })}
