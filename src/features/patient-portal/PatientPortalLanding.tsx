@@ -15,6 +15,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { isSupabaseEnabled } from "@/lib/supabaseClient";
 import { useT } from "@/hooks/useT";
+import { portalSignupOpen } from "./signupOpen";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -75,6 +76,15 @@ const linkClass =
 
 export function PatientPortalLanding() {
   const { t } = useT();
+  const signupOpen = portalSignupOpen();
+  // While sign-ups are closed, clinic staff set accounts up.
+  const steps = signupOpen
+    ? STEPS
+    : STEPS.map((s) =>
+        s.id === "account"
+          ? { id: "staffAccount", body: "portal.landing.step.staffAccount.body" }
+          : s,
+      );
   return (
     <div className="min-h-screen bg-canvas">
       <header className="sticky top-0 z-40 border-b border-line bg-surface">
@@ -120,14 +130,28 @@ export function PatientPortalLanding() {
               : t("portal.landing.introOffline")}
           </p>
           <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
-            <Link to="/patient/register" className="btn-primary">
-              {t("portal.landing.create")}
-              <ArrowRightIcon className="h-5 w-5" aria-hidden />
-            </Link>
-            <Link to="/patient/login" className="btn-secondary">
-              {t("portal.landing.haveAccount")}
-            </Link>
+            {signupOpen ? (
+              <>
+                <Link to="/patient/register" className="btn-primary">
+                  {t("portal.landing.create")}
+                  <ArrowRightIcon className="h-5 w-5" aria-hidden />
+                </Link>
+                <Link to="/patient/login" className="btn-secondary">
+                  {t("portal.landing.haveAccount")}
+                </Link>
+              </>
+            ) : (
+              <Link to="/patient/login" className="btn-primary">
+                {t("portal.landing.login")}
+                <ArrowRightIcon className="h-5 w-5" aria-hidden />
+              </Link>
+            )}
           </div>
+          {!signupOpen && (
+            <p className="mx-auto mt-3 max-w-xl text-body text-ink-secondary">
+              {t("portal.landing.askStaff")}
+            </p>
+          )}
           <p className="mx-auto mt-5 flex max-w-xl items-start justify-center gap-2 text-left text-caption text-ink-muted">
             <InformationCircleIcon className="h-4 w-4 shrink-0" aria-hidden />
             {isSupabaseEnabled ? (
@@ -173,7 +197,7 @@ export function PatientPortalLanding() {
             </h2>
           </div>
           <ol className="panel-body grid gap-5 md:grid-cols-3">
-            {STEPS.map((step, i) => (
+            {steps.map((step, i) => (
               <li key={step.id} className="flex items-start gap-3">
                 <span
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line-strong text-label text-ink"
@@ -279,13 +303,18 @@ export function PatientPortalLanding() {
             {t("portal.landing.readyTitle")}
           </h2>
           <p className="mx-auto mt-2 max-w-xl text-body text-ink-secondary">
-            {t("portal.landing.free")}
+            {signupOpen ? t("portal.landing.free") : t("portal.landing.askStaff")}
           </p>
           <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
-            <Link to="/patient/register" className="btn-primary">
-              {t("portal.landing.create")}
-            </Link>
-            <Link to="/patient/login" className="btn-secondary">
+            {signupOpen && (
+              <Link to="/patient/register" className="btn-primary">
+                {t("portal.landing.create")}
+              </Link>
+            )}
+            <Link
+              to="/patient/login"
+              className={signupOpen ? "btn-secondary" : "btn-primary"}
+            >
               {t("portal.landing.login")}
             </Link>
           </div>

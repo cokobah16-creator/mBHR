@@ -16,6 +16,7 @@ import { completePortalSignIn } from "@/services/portalCompleteSignIn";
 import { env } from "@/config/env";
 import { parseCodeChannels } from "@/services/portalCodeSignIn";
 import { useT } from "@/hooks/useT";
+import { portalSignupOpen } from "./signupOpen";
 
 const SIGN_IN_FAILED_MESSAGE = "portal.login.err.failed";
 
@@ -261,15 +262,21 @@ export function PatientLogin() {
           </Link>
         )}
 
-        <p className="text-center text-body text-ink-secondary">
-          {t("portal.login.noAccount")}{" "}
-          <Link
-            to="/patient/register"
-            className="font-medium text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            {t("portal.login.register")}
-          </Link>
-        </p>
+        {portalSignupOpen() ? (
+          <p className="text-center text-body text-ink-secondary">
+            {t("portal.login.noAccount")}{" "}
+            <Link
+              to="/patient/register"
+              className="font-medium text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              {t("portal.login.register")}
+            </Link>
+          </p>
+        ) : (
+          <p className="text-center text-body text-ink-secondary">
+            {t("portal.login.askStaff")}
+          </p>
+        )}
       </form>
     </AuthShell>
   );
