@@ -41,8 +41,10 @@
        only);
      - a record counts only when its date of birth equals the one given, for
        'linked_elsewhere', 'ambiguous', 'portal_not_enabled' and the link
-       itself. So a copied phone or email no longer blocks anyone, and no
-       record state is told to a caller who does not know the date of birth;
+       itself, and one free record links even when a linked one also
+       matches ('linked_elsewhere' only when every match is taken). So a
+       copied phone or email no longer blocks anyone, and no record state
+       is told to a caller who does not know the date of birth;
      - a wrong date of birth, when the contact matches a record, is counted
        in public.rate_limits: bucket 'portal_link_uid' per login (limit 5)
        and bucket 'portal_link_record' per matching record (limit 10, across
@@ -274,11 +276,14 @@ BEGIN
     RETURN jsonb_build_object('status', 'needs_staff_verification');
   END IF;
 
-  IF v_taken > 0 THEN
-    RETURN jsonb_build_object('status', 'linked_elsewhere');
-  END IF;
+  -- One free record links even when a linked record also matches (a twin
+  -- on the same phone, or a copied contact): 'linked_elsewhere' only when
+  -- every match is taken.
   IF v_free > 1 THEN
     RETURN jsonb_build_object('status', 'ambiguous');
+  END IF;
+  IF v_free = 0 THEN
+    RETURN jsonb_build_object('status', 'linked_elsewhere');
   END IF;
 
   SELECT c.id::text, COALESCE(c.portal_enabled, false), c.dob

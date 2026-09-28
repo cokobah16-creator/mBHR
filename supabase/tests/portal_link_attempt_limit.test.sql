@@ -5,7 +5,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(41);
+SELECT plan(42);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (migration owner; guards and RLS do not apply)
@@ -35,7 +35,11 @@ INSERT INTO auth.users (id, email, phone, email_confirmed_at, phone_confirmed_at
   ('7777cccc-0000-4000-8000-00000000000b', 'pgtap-pla-six-owner@example.invalid', NULL, now(), NULL),
   -- window rules: records 8 and 9
   ('7777cccc-0000-4000-8000-00000000000c', NULL, '2348077710008', NULL, now()),
-  ('7777cccc-0000-4000-8000-00000000000d', NULL, '2348077710009', NULL, now());
+  ('7777cccc-0000-4000-8000-00000000000d', NULL, '2348077710009', NULL, now()),
+  -- twins on one phone with one date of birth: B signs in by phone, A is
+  -- already linked (by email)
+  ('7777cccc-0000-4000-8000-00000000000e', NULL, '2348077710010', NULL, now()),
+  ('7777cccc-0000-4000-8000-00000000000f', 'pgtap-pla-twin-a@example.invalid', NULL, now(), NULL);
 
 INSERT INTO public.patients (id, given_name, family_name, email, phone, dob) VALUES
   ('pgtap-pla-1',      'Ada',    'One',    NULL, '08077710001', '1980-01-01'),
@@ -47,14 +51,18 @@ INSERT INTO public.patients (id, given_name, family_name, email, phone, dob) VAL
   ('pgtap-pla-6',      'Gozie',  'Six',    NULL, '08077710006', '1955-05-05'),
   ('pgtap-pla-child',  'Hauwa',  'Child',  NULL, '08077710007', (current_date - interval '10 years')::date),
   ('pgtap-pla-8',      'Ike',    'Eight',  NULL, '08077710008', '1950-08-08'),
-  ('pgtap-pla-9',      'Jumoke', 'Nine',   NULL, '08077710009', '1945-09-09');
+  ('pgtap-pla-9',      'Jumoke', 'Nine',   NULL, '08077710009', '1945-09-09'),
+  ('pgtap-pla-twin-a', 'Kehinde', 'Twin',  NULL, '08077710010', '1992-02-02'),
+  ('pgtap-pla-twin-b', 'Taiwo',  'Twin',   NULL, '08077710010', '1992-02-02');
 
 UPDATE public.patients
    SET portal_enabled = true, portal_enabled_changed_at = now()
  WHERE id IN ('pgtap-pla-1', 'pgtap-pla-2', 'pgtap-pla-3', 'pgtap-pla-copier',
-              'pgtap-pla-4', 'pgtap-pla-6', 'pgtap-pla-child', 'pgtap-pla-8', 'pgtap-pla-9');
+              'pgtap-pla-4', 'pgtap-pla-6', 'pgtap-pla-child', 'pgtap-pla-8', 'pgtap-pla-9',
+              'pgtap-pla-twin-a', 'pgtap-pla-twin-b');
 UPDATE public.patients SET auth_uid = '7777cccc-0000-4000-8000-000000000006' WHERE id = 'pgtap-pla-copier';
 UPDATE public.patients SET auth_uid = '7777cccc-0000-4000-8000-00000000000b' WHERE id = 'pgtap-pla-6';
+UPDATE public.patients SET auth_uid = '7777cccc-0000-4000-8000-00000000000f' WHERE id = 'pgtap-pla-twin-a';
 
 -- ---------------------------------------------------------------------------
 -- 1. Phone numbers as E.164 digits
@@ -198,6 +206,15 @@ SELECT is(public.portal_link_patient_record('1985-05-05') ->> 'status', 'linked'
 RESET ROLE;
 SELECT is((SELECT phone FROM public.patients WHERE id = 'pgtap-pla-copier'), '08077710004',
   'the copy was made (the portal lets patients edit their phone)');
+
+-- A linked record with the same phone and date of birth (a twin, or a
+-- duplicate) does not block the one free record.
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"7777cccc-0000-4000-8000-00000000000e","role":"authenticated"}';
+SELECT is(public.portal_link_patient_record('1992-02-02'),
+  '{"status":"linked","patient_id":"pgtap-pla-twin-b"}'::jsonb,
+  'a linked twin on the same phone does not block the free record');
+RESET ROLE;
 
 -- ---------------------------------------------------------------------------
 -- 6. No record state is told without the right date of birth
