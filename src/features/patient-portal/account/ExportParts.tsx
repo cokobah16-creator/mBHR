@@ -8,6 +8,7 @@ import {
   LockClosedIcon,
 } from "@heroicons/react/24/outline";
 import { formatNigerianDateTime } from "@/utils/dateFormat";
+import { useT } from "@/hooks/useT";
 import {
   describeValidation,
   EXPORT_SECTIONS,
@@ -19,18 +20,24 @@ import {
 
 /** The file holds private health information: say so before it is made. */
 export function ExportPrivacyNotice() {
+  const { t } = useT();
   return (
     <div className="banner banner-warning" role="note">
       <LockClosedIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
       <div className="space-y-1">
-        <p className="font-medium">This file contains your private health information.</p>
+        <p className="font-medium">
+          {t(
+            "portal.export.privacy.title",
+            "This file contains your private health information.",
+          )}
+        </p>
         <p>
-          Anyone who opens it can read your name, date of birth and the health
-          details you choose below. Save it where only you can open it, and
-          only send it to people you want to see your records, such as another
-          doctor. See our{" "}
+          {t(
+            "portal.export.privacy.body",
+            "Anyone who opens it can read your name, date of birth and the health details you choose below. Save it where only you can open it, and only send it to people you want to see your records, such as another doctor. See our",
+          )}{" "}
           <Link to="/privacy" className="font-medium underline underline-offset-2">
-            Privacy notice
+            {t("portal.export.privacy.link", "Privacy notice")}
           </Link>
           .
         </p>
@@ -56,9 +63,12 @@ export function ExportContentOptions({
   disabled,
   idPrefix,
 }: ExportContentOptionsProps) {
+  const { t } = useT();
   return (
     <fieldset>
-      <legend className="field-label">What to include</legend>
+      <legend className="field-label">
+        {t("portal.export.content.legend", "What to include")}
+      </legend>
       <div className="grid gap-2 sm:grid-cols-2">
         {EXPORT_SECTIONS.map((s) => {
           const id = `${idPrefix}-${s.key}`;
@@ -78,12 +88,23 @@ export function ExportContentOptions({
                 className="mt-0.5 h-5 w-5 shrink-0 rounded border-line-strong text-primary focus:ring-primary"
               />
               <span className="min-w-0">
-                <span className="block text-body font-medium text-ink">{s.title}</span>
-                <span className="block text-caption text-ink-muted">{s.description}</span>
+                <span className="block text-body font-medium text-ink">
+                  {t(`portal.export.section.${s.key}.title`, s.title)}
+                </span>
+                <span className="block text-caption text-ink-muted">
+                  {t(`portal.export.section.${s.key}.description`, s.description)}
+                </span>
                 {typeof count === "number" && (
                   <span className="mt-0.5 block text-caption text-ink-secondary tabular-nums">
-                    {s.estimated ? "About " : ""}
-                    {count} saved on this device
+                    {s.estimated
+                      ? t("portal.export.content.countEstimated", {
+                          count,
+                          defaultValue: `About ${count} saved on this device`,
+                        })
+                      : t("portal.export.content.count", {
+                          count,
+                          defaultValue: `${count} saved on this device`,
+                        })}
                   </span>
                 )}
               </span>
@@ -103,10 +124,11 @@ export function ExportResultPanel({
   outcome: ExportOutcome;
   usCoreVersion: string;
 }) {
+  const { t } = useT();
   const rows = summariseCounts(outcome.counts, { dropZero: true });
   const total = totalCount(outcome.counts);
   const validation = outcome.validation
-    ? describeValidation(outcome.validation)
+    ? describeValidation(outcome.validation, t)
     : null;
 
   return (
@@ -114,15 +136,25 @@ export function ExportResultPanel({
       <div className="banner banner-success">
         <CheckCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
         <div className="space-y-1">
-          <p className="font-medium">Your file is ready: {outcome.fileName}</p>
+          <p className="font-medium">
+            {t("portal.export.result.ready", {
+              fileName: outcome.fileName,
+              defaultValue: `Your file is ready: ${outcome.fileName}`,
+            })}
+          </p>
           <p>
-            Your browser should save it to your Downloads folder. If nothing
-            appeared, check your browser&apos;s downloads list.
+            {t(
+              "portal.export.result.downloads",
+              "Your browser should save it to your Downloads folder. If nothing appeared, check your browser's downloads list.",
+            )}
           </p>
           <p>
             {outcome.source === "online"
-              ? "It was made from your online record."
-              : "It was made from records saved on this device."}
+              ? t("portal.export.result.fromOnline", "It was made from your online record.")
+              : t(
+                  "portal.export.result.fromDevice",
+                  "It was made from records saved on this device.",
+                )}
           </p>
         </div>
       </div>
@@ -131,9 +163,10 @@ export function ExportResultPanel({
         <div className="banner banner-warning">
           <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <p>
-            The online service could not be reached, so this file was made from
-            records saved on this device. It may not include your most recent
-            visits.
+            {t(
+              "portal.export.result.fellBack",
+              "The online service could not be reached, so this file was made from records saved on this device. It may not include your most recent visits.",
+            )}
           </p>
         </div>
       )}
@@ -142,9 +175,10 @@ export function ExportResultPanel({
         <div className="banner banner-info">
           <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <p>
-            This file only includes records that changed since your last file
-            on {formatNigerianDateTime(outcome.since)}, and it may leave some
-            records out. Keep your earlier file as well.
+            {t("portal.export.result.since", {
+              date: formatNigerianDateTime(outcome.since),
+              defaultValue: `This file only includes records that changed since your last file on ${formatNigerianDateTime(outcome.since)}, and it may leave some records out. Keep your earlier file as well.`,
+            })}
           </p>
         </div>
       )}
@@ -152,15 +186,21 @@ export function ExportResultPanel({
       {outcome.counts && total === 0 ? (
         <div className="banner banner-warning">
           <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-          <p>The file has no health records in it.</p>
+          <p>
+            {t("portal.export.result.empty", "The file has no health records in it.")}
+          </p>
         </div>
       ) : rows.length > 0 ? (
         <div className="rounded-md border border-line p-3">
-          <p className="section-label">In this file</p>
+          <p className="section-label">
+            {t("portal.export.result.inFile", "In this file")}
+          </p>
           <ul className="mt-2 grid gap-1 text-body text-ink sm:grid-cols-2">
             {rows.map((r) => (
               <li key={r.type} className="flex justify-between gap-3">
-                <span>{r.label}</span>
+                <span>
+                  {t(`portal.export.resource.${r.type}`, r.label)}
+                </span>
                 <span className="tabular-nums text-ink-secondary">{r.count}</span>
               </li>
             ))}
@@ -179,7 +219,11 @@ export function ExportResultPanel({
           )}
           <div className="space-y-1">
             <p className="font-medium">
-              Format check (US Core {usCoreVersion}): {validation.headline}
+              {t("portal.export.result.formatCheck", {
+                version: usCoreVersion,
+                headline: validation.headline,
+                defaultValue: `Format check (US Core ${usCoreVersion}): ${validation.headline}`,
+              })}
             </p>
             {validation.detail && <p>{validation.detail}</p>}
           </div>
@@ -191,10 +235,11 @@ export function ExportResultPanel({
 
 /** Background on the file format, kept out of the way of the main task. */
 export function ExportAboutDetails({ children }: { children?: ReactNode }) {
+  const { t } = useT();
   return (
     <details className="panel group">
       <summary className="flex min-h-touch-target cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-h3 text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
-        <span>About this file format</span>
+        <span>{t("portal.export.about.title", "About this file format")}</span>
         <ChevronDownIcon
           className="h-5 w-5 shrink-0 text-ink-muted group-open:rotate-180"
           aria-hidden
@@ -202,19 +247,36 @@ export function ExportAboutDetails({ children }: { children?: ReactNode }) {
       </summary>
       <div className="space-y-3 border-t border-line px-4 py-4 text-body text-ink-secondary">
         <p>
-          The file uses FHIR, an international standard for health records.
-          Hospitals, clinics and health apps that support FHIR can read it. You
-          can use it to:
+          {t(
+            "portal.export.about.intro",
+            "The file uses FHIR, an international standard for health records. Hospitals, clinics and health apps that support FHIR can read it. You can use it to:",
+          )}
         </p>
         <ul className="list-disc space-y-1 pl-5">
-          <li>give your records to another doctor or hospital</li>
-          <li>add your records to a health app you trust</li>
-          <li>support an insurance or benefits application</li>
-          <li>keep your own copy of your records</li>
+          <li>
+            {t(
+              "portal.export.about.useDoctor",
+              "give your records to another doctor or hospital",
+            )}
+          </li>
+          <li>
+            {t("portal.export.about.useApp", "add your records to a health app you trust")}
+          </li>
+          <li>
+            {t(
+              "portal.export.about.useInsurance",
+              "support an insurance or benefits application",
+            )}
+          </li>
+          <li>
+            {t("portal.export.about.useCopy", "keep your own copy of your records")}
+          </li>
         </ul>
         <p>
-          The file is plain text. It is not locked with a password, so keep it
-          somewhere private.
+          {t(
+            "portal.export.about.plainText",
+            "The file is plain text. It is not locked with a password, so keep it somewhere private.",
+          )}
         </p>
         {children}
       </div>
