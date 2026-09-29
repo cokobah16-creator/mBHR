@@ -124,6 +124,28 @@ export function countBundleResources(bundle: unknown): Record<string, number> {
   return counts;
 }
 
+/**
+ * Optional translator (the portal's `t` from useT). Without one, the English
+ * text in this file is returned unchanged; the English here is the source
+ * for the `portal.export.*` keys in en.json.
+ */
+export type Translate = (
+  key: string,
+  fallbackOrVars?: string | Record<string, unknown>,
+) => string;
+
+function say(
+  translate: Translate | undefined,
+  key: string,
+  english: string,
+  vars?: Record<string, unknown>,
+): string {
+  if (!translate) return english;
+  return vars
+    ? translate(key, { ...vars, defaultValue: english })
+    : translate(key, english);
+}
+
 /** What the page tells the patient after a file has been made. */
 export interface ExportOutcome {
   fileName: string;
@@ -144,16 +166,35 @@ export interface ExportOutcome {
  */
 export function exportErrorMessage(
   serviceError: string | undefined,
-  { fellBack = false }: { fellBack?: boolean } = {},
+  {
+    fellBack = false,
+    translate,
+  }: { fellBack?: boolean; translate?: Translate } = {},
 ): string {
   if (serviceError && /not found in local database/i.test(serviceError)) {
     return fellBack
-      ? "The online service could not be reached, and your record is not saved on this device, so no file was made. Nothing was downloaded. Please try again later, or ask clinic staff for help."
-      : "Your record is not saved on this device, so the file could not be made here. Connect to the internet and try again, or ask clinic staff for help.";
+      ? say(
+          translate,
+          "portal.export.error.notOnDeviceFellBack",
+          "The online service could not be reached, and your record is not saved on this device, so no file was made. Nothing was downloaded. Please try again later, or ask clinic staff for help.",
+        )
+      : say(
+          translate,
+          "portal.export.error.notOnDevice",
+          "Your record is not saved on this device, so the file could not be made here. Connect to the internet and try again, or ask clinic staff for help.",
+        );
   }
   return fellBack
-    ? "The online service could not be reached, and the file could not be made from this device either. Nothing was downloaded. Please try again later."
-    : "We could not make your file. Nothing was downloaded. Please try again.";
+    ? say(
+        translate,
+        "portal.export.error.fellBack",
+        "The online service could not be reached, and the file could not be made from this device either. Nothing was downloaded. Please try again later.",
+      )
+    : say(
+        translate,
+        "portal.export.error.generic",
+        "We could not make your file. Nothing was downloaded. Please try again.",
+      );
 }
 
 /** "health-data-<patientId>-YYYY-MM-DD" — the name the exporter has always used. */
@@ -175,22 +216,43 @@ export interface ValidationSummary {
 }
 
 /** Honest wording for the format check: never green when items failed. */
-export function describeValidation(v: ValidationSummaryInput): ValidationSummary {
+export function describeValidation(
+  v: ValidationSummaryInput,
+  translate?: Translate,
+): ValidationSummary {
   const failed = Math.max(0, v.invalidResources);
   if (failed > 0) {
     return {
       tone: "warning",
-      headline: `${v.validResources} of ${v.totalResources} items passed the format check. ${failed} did not.`,
-      detail:
+      headline: say(
+        translate,
+        "portal.export.validation.failedHeadline",
+        `${v.validResources} of ${v.totalResources} items passed the format check. ${failed} did not.`,
+        { valid: v.validResources, total: v.totalResources, failed },
+      ),
+      detail: say(
+        translate,
+        "portal.export.validation.failedDetail",
         "The file was still created. Some health systems may not accept the items that did not pass.",
+      ),
     };
   }
   return {
     tone: "success",
-    headline: `All ${v.totalResources} items passed the format check.`,
+    headline: say(
+      translate,
+      "portal.export.validation.passedHeadline",
+      `All ${v.totalResources} items passed the format check.`,
+      { total: v.totalResources },
+    ),
     detail:
       v.summary.warnings > 0
-        ? `${v.summary.warnings} minor notes were found. They do not stop the file being used.`
+        ? say(
+            translate,
+            "portal.export.validation.warningsDetail",
+            `${v.summary.warnings} minor notes were found. They do not stop the file being used.`,
+            { count: v.summary.warnings },
+          )
         : undefined,
   };
 }
