@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  directionsUrl,
   localIsoDate,
   parseCachedList,
   parseSavedAt,
@@ -58,5 +59,25 @@ describe("upcomingOnly", () => {
       "later",
       "no-date",
     ]);
+  });
+});
+
+describe("directionsUrl", () => {
+  it("searches a map for the full site address", () => {
+    const url = directionsUrl({
+      name: "Igbodo Health Centre",
+      address: "12 Market Road",
+      lga: "Ika North East",
+      state: "Delta",
+    });
+    expect(url).toBe(
+      "https://www.google.com/maps/search/?api=1&query=" +
+        encodeURIComponent("Igbodo Health Centre, 12 Market Road, Ika North East, Delta, Nigeria"),
+    );
+  });
+
+  it("offers no directions without an address", () => {
+    expect(directionsUrl(null)).toBeNull();
+    expect(directionsUrl({ name: "Site", address: " ", lga: "A", state: "B" })).toBeNull();
   });
 });
