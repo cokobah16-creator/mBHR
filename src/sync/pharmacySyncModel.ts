@@ -28,10 +28,29 @@ const bool = (v: unknown): boolean | undefined => (typeof v === "boolean" ? v : 
 // Server rows -> this device
 // ---------------------------------------------------------------------------
 
-/** A downloaded medicine. Quantities are recomputed afterwards (recomputeShown). */
+/** Same medicine by the server's rule: site, and name, form and strength ignoring case and outer spaces. */
+function sameMedicine(raw: Raw, local: PharmacyItem): boolean {
+  const norm = (v: unknown) => (str(v) ?? "").trim().toLowerCase();
+  return (
+    (str(raw.site_key) ?? "") === (local.siteKey ?? "") &&
+    norm(raw.med_name) === norm(local.medName) &&
+    norm(raw.form) === norm(local.form) &&
+    norm(raw.strength) === norm(local.strength)
+  );
+}
+
+/**
+ * A downloaded medicine. Quantities are recomputed afterwards (recomputeShown).
+ * null: skip the row. A medicine this device added and the server has not
+ * accepted (waiting, or refused) is kept as this device has it when the
+ * server has a different medicine under the same id: another account
+ * registered the id first, and the server refuses this device's
+ * registration rather than using the wrong medicine.
+ */
 export function itemFromServer(raw: Raw, local?: PharmacyItem): PharmacyItem | null {
   const id = str(raw.id);
   if (!id) return null;
+  if (local && (local.pendingRegister === 1 || local.registerRejected) && !sameMedicine(raw, local)) return null;
   const serverQty = num(raw.on_hand_qty) ?? 0;
   return {
     ...(local ?? {}),
@@ -402,6 +421,10 @@ export function rejectReasonText(reason: string | undefined): string {
       return "This prescription belongs to a different patient on the server.";
     case "dispenses_exceed_prescription":
       return "The medicines given are more than, or not on, the prescription.";
+    case "item_id_conflict":
+      return "The server already uses this medicine's id for a different medicine. Ask an admin to check the medicine list.";
+    case "item_disputed":
+      return "This medicine is on hold on the server because two registrations of it disagree. Ask an admin to check the medicine list.";
     case "unknown_item":
     case "item_not_found":
       return "The medicine is not on the server's stock list.";
