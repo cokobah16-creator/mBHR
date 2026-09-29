@@ -13,8 +13,20 @@ import pcm from "./locales/pcm.json";
 
 type Locale = Record<string, string>;
 
-const OTHERS: Record<string, Locale> = { ha, yo, ig, pcm };
-const EN = en as Locale;
+/** The flat "a.b.c" string entries of a locale file (some older keys are nested). */
+function flatStrings(json: Record<string, unknown>): Locale {
+  const out: Locale = {};
+  for (const [k, v] of Object.entries(json)) if (typeof v === "string") out[k] = v;
+  return out;
+}
+
+const OTHERS: Record<string, Locale> = {
+  ha: flatStrings(ha),
+  yo: flatStrings(yo),
+  ig: flatStrings(ig),
+  pcm: flatStrings(pcm),
+};
+const EN = flatStrings(en);
 const PORTAL_KEYS = Object.keys(EN).filter((k) => k.startsWith("portal."));
 
 // Source text of the portal and the services it uses, keyed "/src/...".
