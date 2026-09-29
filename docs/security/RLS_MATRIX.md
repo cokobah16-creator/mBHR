@@ -184,6 +184,18 @@ set is refused (42501). An update keeps `prescription_id`, `item_id` and
 medicine name and dispensed at / by. Staff can still change portal
 visibility. Visit dispensing (no prescription) is unchanged.
 
+Who is recorded (20260927100160, `app_attributed_performer`): every
+dispense gets `received_by` (the sending account) and `received_at` (server
+clock), which an update cannot change. The dispenser of a prescription
+dispense (and a staff id given as a visit dispense's dispenser), the mover on `stock_movements.requested_by`, a prescription's
+`dispensed_by` and `patient_merges.merged_by` keep the device's claim only
+when it is the sending account or an active staff member holding the
+permission (`dispense`, `inventory` or `merge_patients`); otherwise the
+sending account is recorded and the claim is kept in
+`dispensed_by_claimed` / `requested_by_claimed` (merges: `requested_by`).
+`stock_movements.recorded_at` is always the server's clock. Device times
+are kept as sent beside them.
+
 ### Queue, flow, stock
 
 | Table | SELECT | INSERT | UPDATE | DELETE |
