@@ -29,8 +29,8 @@ export function Patients() {
 
   // Live, so records downloaded by background sync appear without leaving
   // the page (null while loading).
-  const patients =
-    useLiveQuery<Patient[] | null>(
+  const patients: Patient[] | null =
+    useLiveQuery(
       () =>
         db.patients
           .orderBy("createdAt")
@@ -40,10 +40,9 @@ export function Patients() {
           .catch((error) => {
             console.error("Error loading patients:", error);
             setLoadError(true);
-            return [];
+            return [] as Patient[];
           }),
       [],
-      null,
     ) ?? null;
 
   // Reset paging when the search changes.
