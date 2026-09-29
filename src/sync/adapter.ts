@@ -361,6 +361,9 @@ const QUEUE_KEEP_WHEN_EMPTY = [
  * read the recorded time.
  */
 const PULLED_DATE_FIELDS: Partial<Record<Tbl, string[]>> = {
+  // Registration time: "Registered today" and the patient list compare and
+  // sort by it, and IndexedDB orders every text value after every Date.
+  patients: ["createdAt"],
   visits: ["startedAt"],
   vitals: ["takenAt"],
   consultations: ["createdAt"],

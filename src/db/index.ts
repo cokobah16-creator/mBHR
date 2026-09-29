@@ -1675,6 +1675,44 @@ export class MBHRDatabase extends Dexie {
       patientMerges: "id, winnerId, loserId, createdDay, status, commandId",
     });
 
+    // v19 — patients downloaded by earlier versions kept createdAt as ISO
+    // text. IndexedDB sorts all text after all Dates, so each of them counted
+    // as "Registered today" and the patient list order differed between
+    // devices. Store it as a Date, like registrations made on this device.
+    //
+    // Patient portal sign-ups (and the dependants added to them) were saved
+    // without the unsent marker, so they never uploaded and stayed on the
+    // device that made them. A patient that was never uploaded or
+    // downloaded (no _syncedAt, no server version) and is not marked unsent
+    // is one of those: mark it unsent so the next authorised sync sends it.
+    this.version(19)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx
+          .table("patients")
+          .toCollection()
+          .modify(
+            (row: {
+              createdAt?: unknown;
+              _dirty?: number;
+              _syncedAt?: unknown;
+              _serverVersion?: unknown;
+            }) => {
+              if (typeof row.createdAt === "string" && row.createdAt !== "") {
+                const date = new Date(row.createdAt);
+                if (!Number.isNaN(date.getTime())) row.createdAt = date;
+              }
+              if (
+                row._dirty !== 1 &&
+                !row._syncedAt &&
+                row._serverVersion === undefined
+              ) {
+                row._dirty = 1;
+              }
+            },
+          );
+      });
+
     // Every patient write (registration, edits, downloads, portal linking)
     // keeps the duplicate-check keys in step with name, phone and dates.
     this.patients.hook("creating", (_primKey, obj) => {

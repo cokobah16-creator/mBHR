@@ -382,6 +382,38 @@ describe("Sync Adapter - Operations Queue Integration", () => {
       expect(stored.takenAt).toBeInstanceOf(Date);
       expect((stored.takenAt as Date).toISOString()).toBe("2026-03-14T09:30:00.000Z");
     });
+
+    it("stores a downloaded patient's registration time as a Date", async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      const { db } = await import("@/db");
+      const patients = db.patients as unknown as { get: MockFn; put: MockFn };
+      patients.get.mockResolvedValue(undefined);
+      patients.put.mockClear();
+      mockFrom.mockImplementation((table: string) =>
+        selectChain(
+          table === "patients"
+            ? [
+                {
+                  id: "p1",
+                  given_name: "Ada",
+                  family_name: "Okafor",
+                  created_at: "2026-03-14T09:30:00+00:00",
+                  updated_at: "2026-03-14T09:31:00+00:00",
+                },
+              ]
+            : [],
+        ),
+      );
+
+      const { pullChanges } = await import("./adapter");
+      await pullChanges();
+
+      expect(patients.put).toHaveBeenCalledTimes(1);
+      const stored = patients.put.mock.calls[0][0] as { createdAt: unknown };
+      expect(stored.createdAt).toBeInstanceOf(Date);
+      expect((stored.createdAt as Date).toISOString()).toBe("2026-03-14T09:30:00.000Z");
+    });
   });
 
   // ── Server-authoritative foundation ───────────────────────────────────────
