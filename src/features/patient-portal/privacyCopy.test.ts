@@ -119,7 +119,7 @@ describe("privacy section wording", () => {
     expect(consentTitle(sharing)).toBe(
       "You asked us not to share your records outside mBHR (for research)",
     );
-    for (const s of [refusal, permit, sharing].map(consentTitle)) {
+    for (const s of [refusal, permit, sharing].map((i) => consentTitle(i))) {
       expect(s).not.toMatch(/for research \(for research\)/);
     }
   });
