@@ -68,3 +68,18 @@ export function upcomingOnly<T extends { event_date?: string }>(
 export function shortTime(value: string | undefined): string {
   return value ? value.slice(0, 5) : "";
 }
+
+/**
+ * A map search for an outreach site's address, or null without an address.
+ * The address is public information, so it may go to the map service.
+ */
+export function directionsUrl(
+  site: { name?: string; address?: string; lga?: string; state?: string } | null | undefined,
+): string | null {
+  if (!site?.address?.trim()) return null;
+  const query = [site.name, site.address, site.lga, site.state, "Nigeria"]
+    .map((part) => (part ?? "").trim())
+    .filter(Boolean)
+    .join(", ");
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}

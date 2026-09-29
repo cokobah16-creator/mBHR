@@ -13,6 +13,8 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import * as logger from "@/lib/logger";
 import { formatNigerianDate, formatNigerianDateTime } from "@/utils/dateFormat";
 import {
+  localIsoDate,
+  directionsUrl,
   readOutreachCache,
   shortTime,
   upcomingOnly,
@@ -50,6 +52,7 @@ export function OutreachFinder() {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [fetchFailed, setFetchFailed] = useState(false);
   const isOffline = !supabase;
+  const today = localIsoDate();
   const savedNoteFn = () =>
     savedAt
       ? t("portal.outreach.savedOn", {
@@ -80,7 +83,9 @@ export function OutreachFinder() {
         .select(
           "id, event_name, event_date, start_time, end_time, status, notes, sites(name, address, lga, state)",
         )
-        .gte("event_date", new Date().toISOString().split("T")[0])
+        // The device's own date: an outreach today still shows after
+        // midnight UTC.
+        .gte("event_date", localIsoDate())
         .in("status", ["planned", "active"])
         .order("event_date", { ascending: true })
         .limit(20);
@@ -189,18 +194,34 @@ export function OutreachFinder() {
           {events.map((event) => {
             const start = shortTime(event.start_time);
             const end = shortTime(event.end_time);
+            const isToday = event.event_date?.slice(0, 10) === today;
+            const directions = directionsUrl(event.sites);
             return (
               <li key={event.id} className="panel p-4">
-                <h2 className="text-h3 text-ink">{event.event_name}</h2>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <h2 className="text-h3 text-ink">{event.event_name}</h2>
+                  {isToday && (
+                    <span className="badge badge-info">{t("portal.outreach.today")}</span>
+                  )}
+                </div>
                 <dl className="mt-2 space-y-1 text-body text-ink-secondary">
                   <div>
                     <dt className="sr-only">{t("portal.outreach.place")}</dt>
                     <dd className="flex items-start gap-2">
                       <MapPinIcon className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
                       <span>
-                        {event.sites
-                          ? `${event.sites.name}, ${event.sites.lga}, ${event.sites.state}`
-                          : t("portal.outreach.placeTba")}
+                        {event.sites ? (
+                          <>
+                            <span className="block">{event.sites.name}</span>
+                            <span className="block">
+                              {[event.sites.address, event.sites.lga, event.sites.state]
+                                .filter(Boolean)
+                                .join(", ")}
+                            </span>
+                          </>
+                        ) : (
+                          t("portal.outreach.placeTba")
+                        )}
                       </span>
                     </dd>
                   </div>
@@ -218,11 +239,27 @@ export function OutreachFinder() {
                 {event.notes && (
                   <p className="mt-3 text-body text-ink-secondary">{event.notes}</p>
                 )}
+                {directions && (
+                  <a
+                    href={directions}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-secondary mt-3"
+                  >
+                    {t("portal.outreach.directions")}
+                    <span className="sr-only"> {t("portal.outreach.opensMap")}</span>
+                  </a>
+                )}
               </li>
             );
           })}
         </ul>
       )}
+
+      {!loading && events.length > 0 && (
+        <p className="text-caption text-ink-muted">{t("portal.outreach.plansChange")}</p>
+      )}
     </div>
   );
 }
+
