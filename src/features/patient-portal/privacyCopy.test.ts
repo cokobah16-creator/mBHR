@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseMyConsents } from "@/services/interopConsent";
+import en from "@/i18n/locales/en.json";
 import {
   allPrivacyStrings,
   BANNED_WORDS,
@@ -7,7 +8,10 @@ import {
   consentTitle,
   containsBannedWord,
   PRIVACY_COPY,
+  privacyCopy,
+  privacyLabels,
   REFUSAL_LABEL,
+  type Translate,
 } from "./privacyCopy";
 
 const NOW = new Date("2026-09-25T12:00:00Z");
@@ -180,5 +184,46 @@ describe("a permission for one named recipient", () => {
     expect(open.permitNamesRecipient).toBe(false);
     expect(consentTitle(open)).not.toBe("A choice about how your records are shared");
     expect(consentNote(open)).toBeNull();
+  });
+});
+
+describe("the wording in the translation files", () => {
+  const EN = en as Record<string, unknown>;
+  /** Records every key asked for and answers with the English file's value. */
+  function fromEnglishFile() {
+    const asked: string[] = [];
+    const tr: Translate = (key, english) => {
+      asked.push(key);
+      return typeof EN[key] === "string" ? (EN[key] as string) : `MISSING ${key} (${english})`;
+    };
+    return { asked, tr };
+  }
+
+  it("has the same English in en.json as in this file", () => {
+    const { tr } = fromEnglishFile();
+    expect(privacyCopy(tr)).toStrictEqual(privacyCopy());
+    expect(privacyLabels(tr)).toStrictEqual(privacyLabels());
+  });
+
+  it("looks every sentence up under portal.privacy", () => {
+    const { asked, tr } = fromEnglishFile();
+    privacyCopy(tr);
+    privacyLabels(tr);
+    expect(asked.length).toBe(allPrivacyStrings().length);
+    for (const key of asked) expect(key).toMatch(/^portal\.privacy\.[A-Za-z]+\.[A-Za-z_.0-9]+$/);
+    expect(asked).toContain("portal.privacy.copy.intro.3");
+    expect(asked).toContain("portal.privacy.otherChoice.sharing");
+  });
+
+  it("uses the translated wording for titles and notes", () => {
+    const tr: Translate = (key) => `<${key}>`;
+    const named = item([{ provision_type: "permit", actor_type: "organization", purpose: "TREAT", names_recipient: true }]);
+    expect(consentTitle(named, tr)).toBe("<portal.privacy.otherChoice.sharing>");
+    expect(consentNote(named, tr)).toBe("<portal.privacy.copy.askStaffAbout>");
+    const refusal = item([{ provision_type: "deny", actor_type: "organization", purpose: "HRESCH" }]);
+    expect(consentTitle(refusal, tr)).toBe(
+      "<portal.privacy.refusal.sharing> (<portal.privacy.purpose.research>)",
+    );
+    expect(consentNote(refusal, tr)).toBe("<portal.privacy.copy.askStaff>");
   });
 });

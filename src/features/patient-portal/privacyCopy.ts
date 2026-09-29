@@ -3,8 +3,10 @@
  * section. Short sentences, no technical words: the test next to this file
  * fails if any of them appears here (see BANNED_WORDS).
  *
- * The portal's sharing page (DataSharingPreferences.tsx) is written in
- * English without translation keys, so this section follows it.
+ * The English here is the source wording, and the tests check it word for
+ * word. The screen shows it through the portal's translation files
+ * (portal.privacy.* keys, see privacyCopy() and privacyLabels()); en.json
+ * must carry the same English, and a test fails if it drifts.
  */
 import type {
   ConsentPurpose,
@@ -123,6 +125,61 @@ export const STATE_LABEL: Record<ConsentState, string> = {
   in_error: "Recorded by mistake",
 };
 
+/** Looks a sentence up by its key, falling back to the English here. */
+export type Translate = (key: string, english: string) => string;
+
+const inEnglish: Translate = (_key, english) => english;
+
+/** PRIVACY_COPY's shape, holding any language's wording. */
+export type PrivacyCopy = {
+  readonly [K in keyof typeof PRIVACY_COPY]: (typeof PRIVACY_COPY)[K] extends readonly string[]
+    ? readonly string[]
+    : string;
+};
+
+/** The same tree of strings, each looked up by its dotted path under `key`. */
+function translateTree(value: unknown, key: string, tr: Translate): unknown {
+  if (typeof value === "string") return tr(key, value);
+  if (Array.isArray(value)) return value.map((v, i) => translateTree(v, `${key}.${i}`, tr));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+      k,
+      translateTree(v, `${key}.${k}`, tr),
+    ]),
+  );
+}
+
+/** The translation-file key prefix of each group of wording. */
+export const PRIVACY_KEYS = {
+  copy: "portal.privacy.copy",
+  topic: "portal.privacy.topic",
+  refusal: "portal.privacy.refusal",
+  otherChoice: "portal.privacy.otherChoice",
+  unclear: "portal.privacy.unclear",
+  purpose: "portal.privacy.purpose",
+  state: "portal.privacy.state",
+} as const;
+
+/** PRIVACY_COPY in the patient's language (English by default). */
+export function privacyCopy(tr: Translate = inEnglish): PrivacyCopy {
+  return translateTree(PRIVACY_COPY, PRIVACY_KEYS.copy, tr) as PrivacyCopy;
+}
+
+/** The label records in the patient's language (English by default). */
+export function privacyLabels(tr: Translate = inEnglish) {
+  return {
+    topic: translateTree(TOPIC_LABEL, PRIVACY_KEYS.topic, tr) as Record<ConsentTopic, string>,
+    refusal: translateTree(REFUSAL_LABEL, PRIVACY_KEYS.refusal, tr) as Record<ConsentTopic, string>,
+    otherChoice: translateTree(OTHER_CHOICE_LABEL, PRIVACY_KEYS.otherChoice, tr) as Record<
+      ConsentTopic,
+      string
+    >,
+    unclear: translateTree(UNCLEAR_LABEL, PRIVACY_KEYS.unclear, tr) as Record<ConsentTopic, string>,
+    purpose: translateTree(PURPOSE_LABEL, PRIVACY_KEYS.purpose, tr) as Record<ConsentPurpose, string>,
+    state: translateTree(STATE_LABEL, PRIVACY_KEYS.state, tr) as Record<ConsentState, string>,
+  };
+}
+
 /** Every patient-facing string in this section, for the wording test. */
 export function allPrivacyStrings(): string[] {
   const out: string[] = [];
@@ -151,29 +208,31 @@ export function isNamedRefusal(item: PatientConsentItem): boolean {
 }
 
 /** The row's title: what the record says, with the purposes it names. */
-export function consentTitle(item: PatientConsentItem): string {
-  if (item.kind === "unclear") return UNCLEAR_LABEL[item.topic];
-  if (item.kind === "refusal" && !isNamedRefusal(item)) return OTHER_CHOICE_LABEL[item.topic];
+export function consentTitle(item: PatientConsentItem, tr: Translate = inEnglish): string {
+  const labels = privacyLabels(tr);
+  if (item.kind === "unclear") return labels.unclear[item.topic];
+  if (item.kind === "refusal" && !isNamedRefusal(item)) return labels.otherChoice[item.topic];
   // A permission for one recipient the list cannot name would read as a
   // permission for everyone outside mBHR.
-  if (item.kind === "permission" && item.permitNamesRecipient) return OTHER_CHOICE_LABEL[item.topic];
-  const label = item.kind === "refusal" ? REFUSAL_LABEL[item.topic] : TOPIC_LABEL[item.topic];
+  if (item.kind === "permission" && item.permitNamesRecipient) return labels.otherChoice[item.topic];
+  const label = item.kind === "refusal" ? labels.refusal[item.topic] : labels.topic[item.topic];
   const named = item.kind === "refusal" ? item.refuses : item.permits;
   // No suffix that repeats the topic ("for research (for research)").
   const purposes = named
     .filter((p) => !(item.topic === "research" && p === "research"))
-    .map((p) => PURPOSE_LABEL[p])
+    .map((p) => labels.purpose[p])
     .join(", ");
   return purposes ? `${label} (${purposes})` : label;
 }
 
 /** The line under the title, or null (a plain permission has none). */
-export function consentNote(item: PatientConsentItem): string | null {
-  if (item.kind === "unclear") return PRIVACY_COPY.unclear;
-  if (item.kind === "permission" && item.permitNamesRecipient) return PRIVACY_COPY.askStaffAbout;
+export function consentNote(item: PatientConsentItem, tr: Translate = inEnglish): string | null {
+  const copy = privacyCopy(tr);
+  if (item.kind === "unclear") return copy.unclear;
+  if (item.kind === "permission" && item.permitNamesRecipient) return copy.askStaffAbout;
   if (item.kind !== "refusal") return null;
-  const ask = isNamedRefusal(item) ? PRIVACY_COPY.askStaff : PRIVACY_COPY.askStaffAbout;
-  return item.alsoPermits ? `${PRIVACY_COPY.alsoAllows} ${ask}` : ask;
+  const ask = isNamedRefusal(item) ? copy.askStaff : copy.askStaffAbout;
+  return item.alsoPermits ? `${copy.alsoAllows} ${ask}` : ask;
 }
 
 /** True when a string contains one of the banned words (whole word, any case). */

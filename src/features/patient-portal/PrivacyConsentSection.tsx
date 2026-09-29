@@ -17,11 +17,14 @@ import {
   type PatientConsentItem,
 } from "@/services/interopConsent";
 import { ConfirmDialog } from "./account/ConfirmDialog";
+import { useT } from "@/hooks/useT";
 import {
-  PRIVACY_COPY as COPY,
-  STATE_LABEL,
   consentNote,
   consentTitle,
+  privacyCopy,
+  privacyLabels,
+  type PrivacyCopy,
+  type Translate,
 } from "./privacyCopy";
 
 type ListState =
@@ -36,11 +39,11 @@ interface Props {
   client?: InteropRpcClient | null;
 }
 
-function unavailableMessage(reason: RpcFailure | "invalid"): string {
-  if (reason === "offline") return COPY.offline;
-  if (reason === "missing") return COPY.missing;
-  if (reason === "signed_out" || reason === "denied" || reason === "invalid") return COPY.signedOut;
-  return COPY.failed;
+function unavailableMessage(copy: PrivacyCopy, reason: RpcFailure | "invalid"): string {
+  if (reason === "offline") return copy.offline;
+  if (reason === "missing") return copy.missing;
+  if (reason === "signed_out" || reason === "denied" || reason === "invalid") return copy.signedOut;
+  return copy.failed;
 }
 
 /**
@@ -64,6 +67,10 @@ export function PrivacyConsentSection({ patientId, client }: Props) {
   const rpcClient: InteropRpcClient | null =
     client !== undefined ? client : (supabase as unknown as InteropRpcClient | null);
   const isOnline = useOnlineStatus();
+  const { t } = useT();
+  const tr: Translate = (key, english) => t(key, english);
+  const COPY = privacyCopy(tr);
+  const STATE_LABEL = privacyLabels(tr).state;
   const [list, setList] = useState<ListState>({ kind: "loading" });
   const [pending, setPending] = useState<PatientConsentItem | null>(null);
   const [reason, setReason] = useState("");
@@ -149,7 +156,7 @@ export function PrivacyConsentSection({ patientId, client }: Props) {
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <p className="flex items-start gap-2 text-body text-ink-secondary">
                 <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-                <span>{unavailableMessage(list.reason)}</span>
+                <span>{unavailableMessage(COPY, list.reason)}</span>
               </p>
               {list.reason !== "missing" && list.reason !== "invalid" && (
                 <button type="button" onClick={() => void load()} className="btn-secondary">
@@ -167,8 +174,8 @@ export function PrivacyConsentSection({ patientId, client }: Props) {
           {list.kind === "ready" && list.items.length > 0 && (
             <ul className="mt-2 divide-y divide-line rounded-md border border-line">
               {list.items.map((item) => {
-                const title = consentTitle(item);
-                const note = consentNote(item);
+                const title = consentTitle(item, tr);
+                const note = consentNote(item, tr);
                 return (
                   <li
                     key={item.id}
@@ -226,7 +233,7 @@ export function PrivacyConsentSection({ patientId, client }: Props) {
           if (!busy) setPending(null);
         }}
       >
-        {pending && <p className="font-medium text-ink">{consentTitle(pending)}</p>}
+        {pending && <p className="font-medium text-ink">{consentTitle(pending, tr)}</p>}
         {COPY.withdrawBody.map((line) => (
           <p key={line}>{line}</p>
         ))}

@@ -28,6 +28,7 @@ import { ConfirmDialog } from "./account/ConfirmDialog";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { errorName } from "./account/portalSession";
 import { PrivacyConsentSection } from "./PrivacyConsentSection";
+import { useT } from "@/hooks/useT";
 
 interface DataSharingPreferences {
   id?: string;
@@ -78,6 +79,20 @@ function flagsOf(p: DataSharingPreferences): SharingFlags {
 
 export function DataSharingPreferences({ patientId }: Props) {
   const isOnline = useOnlineStatus();
+  const { t } = useT();
+  // The English in sharingChanges.ts is the source; these look it up in the
+  // patient's language.
+  const optionTitle = (o: { key: SharingFlag; title: string }) =>
+    t(`portal.sharing.option.${o.key}.title`, o.title);
+  const optionDescription = (o: { key: SharingFlag; description: string }) =>
+    t(`portal.sharing.option.${o.key}.description`, o.description);
+  const choice = (key: SharingFlag, value: boolean) => {
+    const english = choiceLabel(key, value);
+    const name =
+      key === "require_notification" ? (value ? "on" : "off") : value ? "allowed" : "notAllowed";
+    return t(`portal.sharing.choice.${name}`, english);
+  };
+  const purpose = (code: string) => t(`portal.sharing.purpose.${code}`, purposeLabel(code));
   /** What is stored in the account (or the defaults if nothing is stored yet). */
   const [saved, setSaved] = useState<DataSharingPreferences>(() =>
     defaultsFor(patientId),
@@ -206,7 +221,7 @@ export function DataSharingPreferences({ patientId }: Props) {
     } catch (err) {
       logger.error("[DataSharing] save failed:", errorName(err));
       setError(
-        "Your changes were not saved. Check your internet connection and try again. If it keeps happening, ask clinic staff for help.",
+        t("portal.sharing.saveFailed"),
       );
     } finally {
       setSaving(false);
@@ -220,8 +235,8 @@ export function DataSharingPreferences({ patientId }: Props) {
 
   const header = (
     <PageHeader
-      title="Sharing your health records"
-      description="Choose which other organisations may ask for a copy of your health records."
+      title={t("portal.sharing.title")}
+      description={t("portal.sharing.description")}
     />
   );
 
@@ -229,37 +244,32 @@ export function DataSharingPreferences({ patientId }: Props) {
     <section className="panel" aria-labelledby="sharing-explainer-title">
       <div className="panel-header">
         <h2 id="sharing-explainer-title" className="panel-title">
-          How sharing works
+          {t("portal.sharing.howTitle")}
         </h2>
       </div>
       <dl className="panel-body grid gap-4 text-body sm:grid-cols-2">
         <div>
-          <dt className="font-medium text-ink">Who can always see your record</dt>
+          <dt className="font-medium text-ink">{t("portal.sharing.whoTitle")}</dt>
           <dd className="mt-1 text-ink-secondary">
-            The mBHR clinic team that treats you. These choices do not change
-            that, and they do not change the care you receive.
+            {t("portal.sharing.whoBody")}
           </dd>
         </div>
         <div>
-          <dt className="font-medium text-ink">What these choices cover</dt>
+          <dt className="font-medium text-ink">{t("portal.sharing.coverTitle")}</dt>
           <dd className="mt-1 text-ink-secondary">
-            Requests from other organisations for a copy of your records, such
-            as another hospital, an insurer or a health app you use.
+            {t("portal.sharing.coverBody")}
           </dd>
         </div>
         <div>
-          <dt className="font-medium text-ink">For how long</dt>
+          <dt className="font-medium text-ink">{t("portal.sharing.howLongTitle")}</dt>
           <dd className="mt-1 text-ink-secondary">
-            Each choice stays as you set it until you change it here.
+            {t("portal.sharing.howLongBody")}
           </dd>
         </div>
         <div>
-          <dt className="font-medium text-ink">How to stop sharing</dt>
+          <dt className="font-medium text-ink">{t("portal.sharing.stopTitle")}</dt>
           <dd className="mt-1 text-ink-secondary">
-            Untick the choice and save, and tell clinic staff at your next
-            visit. Your choices are saved as a record of your wishes: requests
-            are not yet checked against them automatically. Copies already
-            sent to an organisation cannot be taken back from here.
+            {t("portal.sharing.stopBody")}
           </dd>
         </div>
       </dl>
@@ -273,9 +283,7 @@ export function DataSharingPreferences({ patientId }: Props) {
         <div className="banner banner-info">
           <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <p>
-            Sharing choices are kept in your online account. This device is not
-            connected to an online account, so they cannot be shown or changed
-            here.
+            {t("portal.sharing.noAccount")}
           </p>
         </div>
         {explainer}
@@ -290,8 +298,7 @@ export function DataSharingPreferences({ patientId }: Props) {
         <div className="banner banner-danger" role="alert">
           <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <p>
-            We could not find your patient record. Log out, log in again, then
-            try once more.
+            {t("portal.sharing.noRecord")}
           </p>
         </div>
       </div>
@@ -303,7 +310,7 @@ export function DataSharingPreferences({ patientId }: Props) {
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
         {header}
         <span role="status" className="sr-only">
-          Loading your sharing choices
+          {t("portal.sharing.loading")}
         </span>
         <div className="panel p-5" aria-hidden>
           <Skeleton className="mb-4 h-5 w-48" />
@@ -322,12 +329,12 @@ export function DataSharingPreferences({ patientId }: Props) {
           <div className="space-y-3">
             <p>
               {isOnline
-                ? "We could not load your sharing choices. Nothing has been changed."
-                : "You are offline. Connect to the internet to see or change your sharing choices."}
+                ? t("portal.sharing.loadFailed")
+                : t("portal.sharing.loadOffline")}
             </p>
             <button type="button" onClick={() => void loadAll()} className="btn-secondary">
               <ArrowPathIcon className="h-5 w-5" aria-hidden />
-              Try again
+              {t("portal.sharing.retry")}
             </button>
           </div>
         </div>
@@ -349,31 +356,30 @@ export function DataSharingPreferences({ patientId }: Props) {
       {!isOnline && (
         <div className="banner banner-warning" role="status">
           <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-          <p>You are offline. You can look at your choices, but saving needs an internet connection.</p>
+          <p>{t("portal.sharing.offline")}</p>
         </div>
       )}
 
       <section className="panel" aria-labelledby="sharing-choices-title">
         <div className="panel-header">
           <h2 id="sharing-choices-title" className="panel-title">
-            Your sharing choices
+            {t("portal.sharing.choicesTitle")}
           </h2>
           {!hasStoredRow && (
             <StatusBadge tone="neutral" icon>
-              Not saved yet
+              {t("portal.sharing.notSavedYet")}
             </StatusBadge>
           )}
         </div>
         <div className="panel-body space-y-5">
           {!hasStoredRow && (
             <p className="text-body text-ink-secondary">
-              You have not saved any choices yet. The ticks below are the
-              starting settings. Press Save changes to keep them as your own.
+              {t("portal.sharing.startingSettings")}
             </p>
           )}
 
           <fieldset>
-            <legend className="field-label">Who may ask for a copy of your records</legend>
+            <legend className="field-label">{t("portal.sharing.whoMayAsk")}</legend>
             <div className="space-y-2">
               {SHARING_OPTIONS.map((o) => {
                 const id = `sharing-${o.key}`;
@@ -394,13 +400,13 @@ export function DataSharingPreferences({ patientId }: Props) {
                     />
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2">
-                        <span className="text-body font-medium text-ink">{o.title}</span>
+                        <span className="text-body font-medium text-ink">{optionTitle(o)}</span>
                         <StatusBadge tone={on ? "info" : "neutral"} icon>
-                          {choiceLabel(o.key, on)}
+                          {choice(o.key, on)}
                         </StatusBadge>
                       </span>
                       <span className="mt-0.5 block text-caption text-ink-muted">
-                        {o.description}
+                        {optionDescription(o)}
                       </span>
                     </span>
                   </label>
@@ -424,10 +430,10 @@ export function DataSharingPreferences({ patientId }: Props) {
             <span className="min-w-0">
               <span className="flex items-center gap-2 text-body font-medium text-ink">
                 <BellIcon className="h-5 w-5 text-ink-muted" aria-hidden />
-                {NOTIFY_OPTION.title}
+                {optionTitle(NOTIFY_OPTION)}
               </span>
               <span className="mt-0.5 block text-caption text-ink-muted">
-                {NOTIFY_OPTION.description}
+                {optionDescription(NOTIFY_OPTION)}
               </span>
             </span>
           </label>
@@ -437,15 +443,19 @@ export function DataSharingPreferences({ patientId }: Props) {
               <div className="banner banner-success">
                 <CheckCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
                 <p>
-                  Saved to your online account at{" "}
-                  {formatNigerianDateTime(savedAt)}.
+                  {t("portal.sharing.savedAt", {
+                    date: formatNigerianDateTime(savedAt),
+                  })}
                 </p>
               </div>
             )}
             {changes.length > 0 && (
               <p className="text-body text-ink-secondary">
-                You have {changes.length} unsaved{" "}
-                {changes.length === 1 ? "change" : "changes"}.
+                {changes.length === 1
+                  ? t("portal.sharing.unsavedOne")
+                  : t("portal.sharing.unsavedMany", {
+                      count: changes.length,
+                    })}
               </p>
             )}
           </div>
@@ -458,7 +468,7 @@ export function DataSharingPreferences({ patientId }: Props) {
                 disabled={saving}
                 className="btn-secondary"
               >
-                Undo my changes
+                {t("portal.sharing.undo")}
               </button>
             )}
             <button
@@ -473,7 +483,7 @@ export function DataSharingPreferences({ patientId }: Props) {
               className="btn-primary"
             >
               <ShieldCheckIcon className="h-5 w-5" aria-hidden />
-              Save changes
+              {t("portal.sharing.save")}
             </button>
           </div>
         </div>
@@ -482,20 +492,20 @@ export function DataSharingPreferences({ patientId }: Props) {
       <section className="panel" aria-labelledby="sharing-history-title">
         <div className="panel-header">
           <h2 id="sharing-history-title" className="panel-title">
-            Recent requests for your records
+            {t("portal.sharing.historyTitle")}
           </h2>
         </div>
         {logsFailed ? (
           <div className="panel-body">
             <p className="text-body text-ink-secondary">
-              We could not load the list of requests. Try again later.
+              {t("portal.sharing.historyFailed")}
             </p>
           </div>
         ) : accessLogs.length === 0 ? (
           <EmptyState
             icon={ShieldCheckIcon}
-            title="No requests recorded"
-            description="No other organisation has requested your records through this service."
+            title={t("portal.sharing.historyEmptyTitle")}
+            description={t("portal.sharing.historyEmpty")}
           />
         ) : (
           <ul className="divide-y divide-line">
@@ -506,18 +516,21 @@ export function DataSharingPreferences({ patientId }: Props) {
                     {log.requesting_organization}
                   </p>
                   <p className="text-caption text-ink-muted">
-                    Reason: {purposeLabel(log.exchange_purpose)} ·{" "}
+                    {t("portal.sharing.reason", { reason: purpose(log.exchange_purpose) })} ·{" "}
                     {formatNigerianDateTime(log.created_at)}
                   </p>
                   {log.success && (
                     <p className="text-caption text-ink-secondary tabular-nums">
-                      {log.resources_returned}{" "}
-                      {log.resources_returned === 1 ? "record" : "records"} shared
+                      {log.resources_returned === 1
+                        ? t("portal.sharing.sharedOne")
+                        : t("portal.sharing.sharedMany", {
+                            count: log.resources_returned,
+                          })}
                     </p>
                   )}
                 </div>
                 <StatusBadge tone={log.success ? "info" : "neutral"} icon>
-                  {log.success ? "Shared" : "Not shared"}
+                  {log.success ? t("portal.sharing.shared") : t("portal.sharing.notShared")}
                 </StatusBadge>
               </li>
             ))}
@@ -527,10 +540,10 @@ export function DataSharingPreferences({ patientId }: Props) {
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Save these sharing choices?"
-        confirmLabel="Save changes"
-        cancelLabel="Go back"
-        busyLabel="Saving…"
+        title={t("portal.sharing.confirmTitle")}
+        confirmLabel={t("portal.sharing.save", "Save changes")}
+        cancelLabel={t("portal.sharing.goBack")}
+        busyLabel={t("portal.sharing.saving")}
         busy={saving}
         error={error}
         onConfirm={() => void savePreferences()}
@@ -538,26 +551,23 @@ export function DataSharingPreferences({ patientId }: Props) {
       >
         {changes.length > 0 ? (
           <>
-            <p>After you save:</p>
+            <p>{t("portal.sharing.afterSave")}</p>
             <ul className="space-y-1.5">
               {changes.map((c) => (
                 <li key={c.key} className="rounded-md border border-line px-3 py-2">
-                  <span className="block font-medium text-ink">{c.title}</span>
+                  <span className="block font-medium text-ink">{optionTitle(c)}</span>
                   <span className="block">
-                    {choiceLabel(c.key, c.from)} → <strong>{choiceLabel(c.key, c.to)}</strong>
+                    {choice(c.key, c.from)} → <strong>{choice(c.key, c.to)}</strong>
                   </span>
                 </li>
               ))}
             </ul>
           </>
         ) : (
-          <p>Your current choices will be saved to your online account as shown.</p>
+          <p>{t("portal.sharing.saveAsShown")}</p>
         )}
         <p>
-          Your choices are saved as a record of your wishes. Requests are not
-          yet checked against them automatically, so tell clinic staff too if
-          you want sharing stopped. You can change your choices again at any
-          time. Copies already sent to an organisation cannot be taken back.
+          {t("portal.sharing.confirmNote")}
         </p>
       </ConfirmDialog>
     </div>
