@@ -434,6 +434,8 @@ export function rejectReasonText(reason: string | undefined): string {
       return "That lot belongs to a different medicine on the server.";
     case "opening_stock_already_uploaded":
       return "Opening stock for this site was already uploaded from another device.";
+    case "site_mismatch":
+      return "This medicine is on another site's stock list, so this site's opening stock cannot go onto it.";
     case "invalid_quantity":
       return "The quantity was not valid.";
     case "permission_denied":
