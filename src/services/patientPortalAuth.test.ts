@@ -244,6 +244,25 @@ describe("patientPortalAuth", () => {
       expect(saved[0].pin).not.toBe("112233");
     });
 
+    it("marks a self-registered patient record for upload", async () => {
+      const r = await registerPatientPortalAccount(
+        undefined,
+        "new@test.com",
+        "1995-05-10",
+        "Chidi",
+        "Eze",
+        "112233",
+        ACCEPTED,
+      );
+      expect(r.success).toBe(true);
+      expect(mockPatients.add).toHaveBeenCalledTimes(1);
+      expect(mockPatients.add.mock.calls[0][0]).toMatchObject({
+        givenName: "Chidi",
+        familyName: "Eze",
+        _dirty: 1,
+      });
+    });
+
     it("stores the accepted versions and time with the account", async () => {
       const r = await registerPatientPortalAccount(
         undefined,

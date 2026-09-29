@@ -262,8 +262,10 @@ export async function registerPatientPortalAccount(
     const now = new Date();
 
     // No existing record found — create a new self-registered patient on
-    // this device (it is not a clinic record and is not portal-managed by
-    // staff).
+    // this device. It is marked unsent, like a staff registration, so the
+    // next sync on this device by someone allowed to register patients
+    // uploads it and the other devices see the same record (the server
+    // refuses it for anyone else; it then waits for an authorised sync).
     if (!patientId) {
       patientId = crypto.randomUUID();
       await db.patients.add({
@@ -278,6 +280,7 @@ export async function registerPatientPortalAccount(
         lga: "",
         createdAt: now,
         updatedAt: now,
+        _dirty: 1,
       });
     }
 
@@ -618,6 +621,8 @@ export async function addManagedPatient(
       lga: "",
       createdAt: now,
       updatedAt: now,
+      // Uploaded on the next authorised sync, like a self-registration.
+      _dirty: 1,
     });
 
     if (!user.managedPatients) user.managedPatients = [];
