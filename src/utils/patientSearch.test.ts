@@ -60,6 +60,13 @@ describe("phone query helpers", () => {
     expect(isPhoneQuery("Eze 0803")).toBe(false);
   });
 
+  it("finds a foreign number without turning it into a Nigerian one", () => {
+    expect(phoneMatchesQuery("+15551234567", "+1 555 123 4567")).toBe(true);
+    expect(phoneMatchesQuery("+15551234567", "555 123")).toBe(true);
+    expect(phoneMatchesQuery("+447911123456", "0044 7911")).toBe(true);
+    expect(phoneMatchesQuery("+15551234567", "0555")).toBe(false);
+  });
+
   it("does not match a patient with no phone", () => {
     expect(phoneMatchesQuery(null, "0803")).toBe(false);
     expect(phoneMatchesQuery("", "0803")).toBe(false);

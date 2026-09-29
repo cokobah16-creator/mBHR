@@ -1,41 +1,64 @@
 /**
  * Phone Number Normalization Utilities
  *
- * Provides utilities for normalizing phone numbers to E.164 format,
- * with specific handling for Nigerian phone numbers.
+ * Provides utilities for normalizing phone numbers to E.164 format.
+ * Nigerian local formats become +234 numbers; other countries' numbers
+ * must be typed with their country code.
  */
+
+/** A Nigerian mobile number in E.164 form: +234 then 7, 8 or 9 and 9 digits. */
+const NIGERIAN_MOBILE_E164 = /^\+234[789]\d{9}$/;
 
 /**
  * Normalize phone number to E.164 format
  *
- * Handles Nigerian phone numbers by default, converting:
+ * Nigerian local formats become +234 numbers:
  * - 0803 123 4567 → +2348031234567
- * - 08031234567 → +2348031234567
  * - 2348031234567 → +2348031234567
- * - +2348031234567 → +2348031234567 (already normalized)
+ * - 8031234567 (10-digit mobile, leading 0 dropped) → +2348031234567
+ * - +234 0803 123 4567 (country code plus the trunk 0) → +2348031234567
+ *
+ * A number typed with "+" (or "00") and its country code keeps that country:
+ * - +1 555 123 4567 → +15551234567
+ * - 0044 7911 123456 → +447911123456
+ *
+ * Anything else returns null, because the country can't be told: "234" is
+ * never added to a number that isn't Nigerian ("555 123 4567" is not saved
+ * as +2345551234567). Forms reject such input with isValidPhone and ask for
+ * the country code.
  *
  * @param input - Phone number in various formats
- * @returns Normalized phone number in E.164 format (+234...) or null if input is empty
+ * @returns Normalized phone number in E.164 format, or null if the input is
+ * empty or can't be read as a full number
  */
 export function normalizePhone(input?: string | null): string | null {
   if (!input) return null;
 
-  // Remove all non-digit characters
-  let digits = String(input).replace(/\D+/g, "");
+  let cleaned = String(input).trim().replace(/[\s\-().]/g, "");
+  if (!cleaned) return null;
+  if (cleaned.startsWith("00")) cleaned = "+" + cleaned.slice(2);
 
-  if (!digits) return null;
-
-  // Handle Nigerian numbers
-  // If starts with 0, replace with 234
-  if (digits.startsWith("0")) {
-    digits = "234" + digits.slice(1);
+  // Typed with its country code.
+  if (/^\+\d+$/.test(cleaned)) {
+    let digits = cleaned.slice(1);
+    if (/^2340\d{10}$/.test(digits)) digits = "234" + digits.slice(4);
+    if (digits.startsWith("234")) {
+      return digits.length === 13 ? "+" + digits : null;
+    }
+    // E.164 numbers are at most 15 digits and no country code starts with 0;
+    // shorter than 8 is not a full number.
+    return /^[1-9]\d{7,14}$/.test(digits) ? "+" + digits : null;
   }
-  // If doesn't start with 234, assume it's a Nigerian number and prepend 234
-  else if (!digits.startsWith("234")) {
-    digits = "234" + digits;
-  }
 
-  return "+" + digits;
+  if (!/^\d+$/.test(cleaned)) return null;
+
+  // Nigerian local formats.
+  if (/^0\d{10}$/.test(cleaned)) return "+234" + cleaned.slice(1);
+  if (/^234\d{10}$/.test(cleaned)) return "+" + cleaned;
+  if (/^2340\d{10}$/.test(cleaned)) return "+234" + cleaned.slice(4);
+  if (/^[789][01]\d{8}$/.test(cleaned)) return "+234" + cleaned;
+
+  return null;
 }
 
 /**
@@ -65,21 +88,25 @@ export function formatPhoneForDisplay(phone?: string | null): string {
 }
 
 /**
- * Validate phone number format
+ * Validate a phone number typed into a patient form
+ *
+ * Accepts a Nigerian mobile number in any local format, or a number from
+ * another country typed with "+" and its country code. A Nigerian number
+ * must be a mobile number (+234 then 7, 8 or 9 and 9 digits).
  *
  * @param phone - Phone number to validate
  * @returns true if phone number is valid
  */
 export function isValidPhone(phone?: string | null): boolean {
-  if (!phone) return false;
-
   const normalized = normalizePhone(phone);
   if (!normalized) return false;
-
-  // Nigerian phone numbers should be +234 followed by 10 digits
-  const nigerianPattern = /^\+234\d{10}$/;
-  return nigerianPattern.test(normalized);
+  if (normalized.startsWith("+234")) return NIGERIAN_MOBILE_E164.test(normalized);
+  return true;
 }
+
+/** Shown when a patient form's phone number fails isValidPhone. */
+export const INVALID_PHONE_MESSAGE =
+  "Enter a Nigerian mobile number (08012345678), or for another country the full number with + and the country code (+44 7911 123456).";
 
 /**
  * Strip phone number to digits only (for database indexing)

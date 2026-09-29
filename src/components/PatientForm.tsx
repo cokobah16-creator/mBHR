@@ -436,7 +436,7 @@ export function PatientForm({ onSuccess, onCancel }: PatientFormProps) {
                   id="phone"
                   type="tel"
                   className="input-field"
-                  placeholder="08012345678 or +2348012345678"
+                  placeholder="08012345678, or +44 7911 123456 for other countries"
                   aria-invalid={errors.phone ? "true" : "false"}
                   aria-describedby={errors.phone ? "phone-error" : undefined}
                 />

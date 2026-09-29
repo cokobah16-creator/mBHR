@@ -3,6 +3,7 @@ import Dexie, { Table } from "dexie";
 import { ulid } from "ulid";
 import type { MsgKey } from "@/i18n/types";
 import * as logger from "@/lib/logger";
+import { normalizePhone } from "@/utils/phone";
 
 export interface OutboundMessage {
   id: string;
@@ -140,19 +141,11 @@ export class MessageQueue {
     return status;
   }
 
-  // Format phone number to E.164
+  // Format phone number to E.164. A number that can't be read as a full
+  // number (see normalizePhone) is passed on as it is; "234" is never added
+  // to a number that isn't Nigerian.
   static formatPhone(phone: string): string {
-    const digits = phone.replace(/\D/g, "");
-
-    if (digits.startsWith("234")) {
-      return `+${digits}`;
-    } else if (digits.startsWith("0") && digits.length === 11) {
-      return `+234${digits.slice(1)}`;
-    } else if (digits.length === 10) {
-      return `+234${digits}`;
-    }
-
-    return phone;
+    return normalizePhone(phone) ?? phone;
   }
 
   // Render template with payload

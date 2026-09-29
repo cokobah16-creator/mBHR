@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { validatePhoneNG } from "@/utils/nigeria";
+import { INVALID_PHONE_MESSAGE, isValidPhone } from "@/utils/phone";
 
 export const patientPortalEnrollmentSchema = z.object({
   portalEnabled: z.boolean().optional().default(false),
@@ -34,12 +34,9 @@ export const patientSchema = z
           if (val === "") return true;
           if (val.trim() === "") return true;
           // Otherwise validate it
-          return validatePhoneNG(val);
+          return isValidPhone(val);
         },
-        {
-          message:
-            "Invalid Nigerian phone number. Use format: 08012345678 or +2348012345678",
-        },
+        { message: INVALID_PHONE_MESSAGE },
       )
       .optional(),
     email: z
