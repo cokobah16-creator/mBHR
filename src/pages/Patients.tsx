@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useLiveQuery } from "dexie-react-hooks";
 import { db, Patient } from "@/db";
 import { useAuthStore } from "@/stores/auth";
 import { can } from "@/auth/roles";
@@ -22,23 +23,28 @@ const SEX_SHORT: Record<string, string> = { male: "M", female: "F", other: "O" }
 
 export function Patients() {
   const role = useAuthStore((s) => s.currentUser?.role);
-  const [patients, setPatients] = useState<Patient[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [limit, setLimit] = useState(PAGE_SIZE);
 
-  useEffect(() => {
-    db.patients
-      .orderBy("createdAt")
-      .reverse()
-      .toArray()
-      .then((rows) => setPatients(rows.filter((p) => !p.mergeInto)))
-      .catch((error) => {
-        console.error("Error loading patients:", error);
-        setLoadError(true);
-        setPatients([]);
-      });
-  }, []);
+  // Live, so records downloaded by background sync appear without leaving
+  // the page (null while loading).
+  const patients =
+    useLiveQuery<Patient[] | null>(
+      () =>
+        db.patients
+          .orderBy("createdAt")
+          .reverse()
+          .toArray()
+          .then((rows) => rows.filter((p) => !p.mergeInto))
+          .catch((error) => {
+            console.error("Error loading patients:", error);
+            setLoadError(true);
+            return [];
+          }),
+      [],
+      null,
+    ) ?? null;
 
   // Reset paging when the search changes.
   useEffect(() => setLimit(PAGE_SIZE), [searchQuery]);
