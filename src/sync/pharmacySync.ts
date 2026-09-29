@@ -40,6 +40,7 @@ import { syncErrorCode } from "./errorCode";
 import { advanceCursor, isCursorAhead } from "./cursorGuard";
 import {
   batchFromServer,
+  carriedPrescriptionNotSaved,
   discrepancyFromServer,
   dispenseFromServer,
   handedOverRefusalStatus,
@@ -235,11 +236,11 @@ registerCommandHandler("rx_dispense", {
 
       await mbhrDb.dispenses.where("commandId").equals(command.id).delete();
       if (rx && carried) {
-        // The command carried the prescription. When the server raised an
-        // error (no stored result) nothing was saved there, so a
-        // prescription it never had is uploaded again at the next sync.
+        // The command carried the prescription. When nothing was saved
+        // there, a prescription the server never had is uploaded again at
+        // the next sync.
         const neverOnServer =
-          command.result === undefined &&
+          carriedPrescriptionNotSaved(command.result !== undefined, reason) &&
           !rx._syncedAt &&
           rx.rowVersion === undefined &&
           rx.localOnly !== 1;

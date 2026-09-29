@@ -316,12 +316,20 @@ behaviours that need a clinician's decision or confirmation. Tick an item
 only when a clinician has decided it, and write the decision next to it.
 
 - [ ] **Who may lower a patient's queue priority.** The server applies a
-      priority downgrade only when the role recorded on the device holds
-      `consult` (doctor, lead clinician, admin), and the uploading account
-      also holds `consult` or the recorded user is a clinician on the
-      server. Raising priority is open to every queue role. Confirm that
-      downgrading urgent status is clinician-only. (`services/queuePriority.ts`;
-      server: `tg_queue_transition_apply` in `20260925100200`)
+      priority downgrade only when the recorded user is a clinician on the
+      server's staff list (`consult`: doctor, lead clinician, admin; the
+      role is read from the staff list, not from what the device sent) AND
+      the account uploading it is a clinician too. Since `20260927100150`, a
+      clinician's downgrade made offline and synced later by a non-clinician
+      (for example a volunteer signing in on the same tablet) is kept in the
+      record but not applied: the patient stays at the higher priority until
+      a clinician lowers it again. Before, a volunteer could lower any
+      patient's priority by naming a doctor. Raising priority is open to
+      every queue role. Confirm that downgrading urgent status is
+      clinician-only, and that a downgrade synced by a non-clinician should
+      not take effect. (`services/queuePriority.ts`; server:
+      `tg_queue_transition_apply` in `20260925100200`, changed in
+      `20260927100150`)
       *The owner has decided that only a clinician may lower it (section
       3.3); the clinician confirms that `consult` holders are the right
       people.*
@@ -371,7 +379,14 @@ only when a clinician has decided it, and write the decision next to it.
       (`/rx/new`, `canPrescribe` in `services/pharmacyCommands.ts`), but the
       server accepts a new prescription only from `consult` holders. A
       nurse's prescription reaches the server only when a prescriber syncs
-      on the same device, or with the dispense that carries it. Decide
+      on the same device, or with the dispense that carries it. Since
+      `20260927100150` a carried or imported prescription must name a
+      staff member who holds `consult` or is a nurse (before, any name or
+      none was accepted), so nurses' prescriptions still go through. A
+      prescription naming someone no longer on the active staff list (left,
+      deactivated or demoted since writing it) is refused the same way; if
+      the medicine was already handed over offline, the device lists it for
+      reconciliation. Decide
       whether nurses may prescribe (then the server rule changes) or not
       (then the app should stop offering it).
 - [ ] **Offline dispensing that stock does not cover.** When medicine was
@@ -834,6 +849,7 @@ clinician must sign off, or write "None" and say why.
 
 | Date | Pull request | What changed | Files | Checklist item (section 2) | Clinician sign-off |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-28 | Staff role checks (migration `20260927100150`) | Lowering a patient's queue priority now takes effect only when a clinician's own account uploads it. A downgrade a clinician made offline and a non-clinician synced later is recorded but not applied, so the patient stays at the higher priority until a clinician lowers it again; before, a volunteer could lower any patient's priority by naming a doctor, or by deleting the queue row and adding it again lower (signed-in staff can no longer delete queue rows; the app never did). Pharmacy: a prescription that reaches the server with a dispense, or as dispensing history, must name a doctor, lead clinician, admin or nurse who is on the active staff list when it reaches the server; otherwise the dispense is refused ("The prescription does not name a doctor or nurse on the staff list") and kept on the device for reconciliation, as other refusals are (row 19). History import can no longer create open or cancelled prescriptions or cancel an open one. No threshold, range, dose, allergy-matching or triage rule for who is urgent changed. | `supabase/migrations/20260927100150_staff_role_checks.sql`, `src/sync/pharmacySyncModel.ts`, this file | 2.4 "Who may lower a patient's queue priority"; 2.4 "Nurse prescribing" (unchanged: nurses still go through) | Pending |
 | 2026-09-26 | FHIR sign-off follow-up: no provenance for document uploads (#160) | None for staff or patients: the `/fhir/R4` gateway stays off and nothing is applied to any database. Records the owner's decision (Emeke Okobah, 2026-09-26) on the question left open under 2.7 "Staff get no documents through the connection": document uploads get no provenance. The connection no longer publishes a provenance record for a document stored for a patient (`docup-<id>`), to anyone: provenance is for staff only and patients are refused it, so staff with audit access no longer see through provenance that a document was uploaded, its id, when, or whether through the portal. A request for such a record gets "not found", and a provenance search by document, patient or date returns none. Provenance of laboratory result review, release and withhold, and of merges, is unchanged. The access log (AuditEvent, still an open owner decision) is unchanged too: it still names a document's id when a patient opens their own document or file (see 2.7). No threshold, range, dose, allergy-matching or decision-support rule changed. | `src/interoperability/fhir/mappers/{provenance,document}.ts`, `src/interoperability/fhir/resources/provenance.ts`, this file | 2.7 "Staff get no documents through the connection" | Emeke Okobah, Director, 2026-09-26 (no professional registration; accepted by owner decision) |
 | 2026-09-26 | FHIR sign-off: approved changes (#156) | None for staff or patients: the `/fhir/R4` gateway stays off and nothing is applied to any database. Records the owner's sign-off of 2.5 and 2.7 (decisions 1 to 13 as recommended, confirms 14 to 31 accepted) and builds what it asked for. Diagnoses: the held-back diagnosis table no longer fills in "active", "confirmed" or "problem list", so only statuses staff chose are sent, "confirmed" included. Date of birth: a date on 1 January is sent as the year only and one on the 1st of any other month as the year and month; the saved date is unchanged, and a name and date-of-birth search still matches it. Allergies: an allergy marked inactive is never sent (a request for it gets "not found"); severe is sent as high risk like life-threatening, with or without a typed reaction; a search by type is refused with a message to ask for all allergies, and the search note says an empty result means no active allergy matched. Staff get no documents, files or consent records over FHIR (patients unchanged; the staff badge unchanged). Consents: an active consent past its end date is sent as no longer in force, and a consent can no longer be recorded without a policy link. No threshold, range, dose, allergy-matching or decision-support rule changed. | `src/interoperability/fhir/mappers/{condition,patient,allergy,consent,common}.ts`, `src/interoperability/fhir/resources/{condition,patient,allergyIntolerance,documentReference,binary,consent,provenance,module}.ts`, `src/interoperability/fhir/terminology/statusMaps.ts`, `src/interoperability/fhir/terminology/status/{allergy,consent}.ts`, `src/interoperability/fhir/authorization/{permissions,authorize}.ts`, `src/interoperability/fhir/consent/evaluateConsent.ts`, `src/interoperability/fhir/search/params.ts`, `src/interoperability/fhir/gateway/handler.ts`, `supabase/migrations-deferred/20260125091822_add_immunizations_conditions_sdoh.sql`, `supabase/migrations-deferred/20260926130000_interop_phase2.sql`, this file | 2.5 (all items); 2.7 (all items, including the new "Staff get no consent records through the connection") | Emeke Okobah, Director, 2026-09-26 (no professional registration; accepted by owner decision) |
 | 2026-09-26 | FHIR sign-off follow-up: consent for one named recipient | None for staff or patients: the `/fhir/R4` gateway stays off and the consent register is not on production yet. A consent with a rule for one specific recipient (for example one hospital) is no longer published as a rule for every recipient of that kind: the whole consent is withheld, and a search says how many were left out. Such a permit never grants access in the consent check, and the staff "External sharing" badge shows it as limited, not allowed; a refusal that names one recipient still refuses, and the badge gives it as "refused in part" rather than "refused". In the patient portal's Privacy section, such a permission reads "A choice about how your records are shared" with "Ask clinic staff about it", instead of a general permission to share outside mBHR. Six items in 2.5 and 2.7 were reworded to match the code (oxygen codes, diagnosis end date history, allergy reaction severity, dispense hand-over, who reviews a lab result, consents). No threshold, range, dose or matching rule changed. | `src/interoperability/fhir/mappers/consent.ts`, `src/interoperability/fhir/resources/consent.ts`, `src/interoperability/fhir/consent/evaluateConsent.ts`, `supabase/migrations-deferred/20260926130000_interop_phase2.sql`, `src/services/interopConsent.ts`, `src/features/patient-portal/privacyCopy.ts`, this file | 2.5 "Pulse is published as LOINC…"; 2.7 "A diagnosis end date is sent only beside an ended status", "Severity", "A dispense is never published as `completed`…", "A result is `preliminary` until…", "Consents are published exactly as recorded" | Pending |

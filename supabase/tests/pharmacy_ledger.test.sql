@@ -22,7 +22,10 @@ SELECT plan(33);
 INSERT INTO public.app_users (id, full_name, role) VALUES
   ('44440000-0000-4000-8000-000000000001', 'pgTAP pharmacist', 'pharmacist'),
   ('44440000-0000-4000-8000-000000000002', 'pgTAP nurse', 'nurse'),
-  ('44440000-0000-4000-8000-000000000003', 'pgTAP volunteer', 'volunteer');
+  ('44440000-0000-4000-8000-000000000003', 'pgTAP volunteer', 'volunteer'),
+  -- the prescriber named on carried prescriptions (20260927100150: it must
+  -- be a staff member who may prescribe)
+  ('44440000-0000-4000-8000-000000000004', 'pgTAP doctor', 'doctor');
 
 INSERT INTO public.patients (id, given_name, family_name, phone)
 VALUES ('pgtap-rx-patient', 'Ngozi', 'Ledger', '08000000021');
@@ -96,7 +99,7 @@ SELECT is(
   public.rx_dispense(
     '4444c0de-0000-4000-8000-000000000003', 'pgtap-rx-1',
     '[{"item_id":"pgtap-rx-item-1","qty":8}]'::jsonb, now(), false, false, 'device-pharmacist',
-    jsonb_build_object('patient_id', 'pgtap-rx-patient', 'visit_id', '', 'prescriber_id', 'device-doctor',
+    jsonb_build_object('patient_id', 'pgtap-rx-patient', 'visit_id', '', 'prescriber_id', '44440000-0000-4000-8000-000000000004',
                        'lines', '[{"itemId":"pgtap-rx-item-1","qty":8}]'::jsonb)) ->> 'outcome',
   'applied',
   'the first dispense of 8 applies');
@@ -113,7 +116,7 @@ SELECT is(
   public.rx_dispense(
     '4444c0de-0000-4000-8000-000000000004', 'pgtap-rx-2',
     '[{"item_id":"pgtap-rx-item-1","qty":8}]'::jsonb, now(), false, false, 'device-pharmacist',
-    jsonb_build_object('patient_id', 'pgtap-rx-patient', 'visit_id', '', 'prescriber_id', 'device-doctor',
+    jsonb_build_object('patient_id', 'pgtap-rx-patient', 'visit_id', '', 'prescriber_id', '44440000-0000-4000-8000-000000000004',
                        'lines', '[{"itemId":"pgtap-rx-item-1","qty":8}]'::jsonb)) ->> 'reason',
   'insufficient_stock',
   'the second dispense of 8 (online) is refused as insufficient_stock');
@@ -159,7 +162,7 @@ SELECT is(
   public.rx_dispense(
     '4444c0de-0000-4000-8000-000000000005', 'pgtap-rx-3',
     '[{"item_id":"pgtap-rx-item-1","qty":5}]'::jsonb, now(), true, false, 'device-pharmacist',
-    jsonb_build_object('patient_id', 'pgtap-rx-patient', 'visit_id', '', 'prescriber_id', 'device-doctor',
+    jsonb_build_object('patient_id', 'pgtap-rx-patient', 'visit_id', '', 'prescriber_id', '44440000-0000-4000-8000-000000000004',
                        'lines', '[{"itemId":"pgtap-rx-item-1","qty":5}]'::jsonb)) ->> 'outcome',
   'applied',
   'an offline handover of 5 with only 2 in stock is recorded');
@@ -248,7 +251,7 @@ BEGIN
         jsonb_build_array(jsonb_build_object('item_id', 'pgtap-rx-item-2', 'qty', v_qty)),
         now(), random() < 0.25, false, 'device-pharmacist',
         jsonb_build_object(
-          'patient_id', 'pgtap-rx-patient', 'visit_id', '', 'prescriber_id', 'device-doctor',
+          'patient_id', 'pgtap-rx-patient', 'visit_id', '', 'prescriber_id', '44440000-0000-4000-8000-000000000004',
           'lines', jsonb_build_array(jsonb_build_object('itemId', 'pgtap-rx-item-2', 'qty', v_qty))));
     END IF;
   END LOOP;
