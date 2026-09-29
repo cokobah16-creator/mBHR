@@ -265,11 +265,11 @@ export function portalLinkOutcome(status: unknown): PortalLinkOutcome {
           "Your account is created, but your clinic has not turned on portal access for you yet. Ask clinic staff to turn it on, then sign in.",
       };
     case "needs_staff_verification":
-      // Returned when the date of birth does not match the clinic record,
-      // when the matching record belongs to someone under 18, and when no
-      // record matches and the date of birth is under 18
-      // (20260926120100_portal_link_adults_only.sql). One message that is
-      // true for all three: ask clinic staff.
+      // Returned when the date of birth is missing or does not match the
+      // clinic record, when the matching record belongs to someone under 18
+      // (20260926120100_portal_link_adults_only.sql), and for 24 hours after
+      // too many wrong dates of birth (20260927100140). One message that is
+      // true for all of them: ask clinic staff.
       return { linked: false, message: MINOR_RECORD_LINK_MESSAGE };
     case "no_clinic_record":
       // The server never creates a clinic record for a sign-up: the clinic

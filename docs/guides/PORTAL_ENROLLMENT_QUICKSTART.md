@@ -94,8 +94,12 @@ Linking to the clinic record (online):
   for a patient the clinic has only a phone number for, add their email to
   their record before they register. The SMS invitation says to use the
   phone number and date of birth; the patient still needs that email.
-- If no clinic record matches, the server makes a new record for the
-  account. It is not the clinic's record.
+- If no clinic record matches, the server does not make one: the patient
+  is told to ask clinic staff, who register them first.
+- After five wrong dates of birth (or ten on one record, from any
+  accounts), the server refuses every date for 24 hours from the last wrong
+  one and the patient is told to ask clinic staff. Staff can link the
+  record sooner.
 - A child's record is never linked, and no record is made for an under-18
   date of birth. The patient is told to ask clinic staff.
 - The patient can use the online portal only while portal access is on for
