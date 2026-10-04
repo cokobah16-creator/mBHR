@@ -14,7 +14,7 @@ import {
   LOCAL_PORTAL_CACHE_MAX_AGE_MS,
   type PortalCommandLike,
 } from "./portalAccessRules";
-import { MINOR_RECORD_LINK_MESSAGE } from "@/pages/legal/policyMeta";
+import { MINOR_PORTAL_ACCESS_MESSAGE, MINOR_RECORD_LINK_MESSAGE } from "@/pages/legal/policyMeta";
 
 const NOW = Date.parse("2026-09-23T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -61,6 +61,7 @@ describe("portalRejectionMessage", () => {
     expect(portalRejectionMessage("newer_decision_on_server")).toMatch(/server's setting was kept/);
     expect(portalRejectionMessage("server_decision_kept")).toMatch(/automatic change was not applied/);
     expect(portalRejectionMessage("patient_merged")).toMatch(/merged/);
+    expect(portalRejectionMessage("minor")).toBe(MINOR_PORTAL_ACCESS_MESSAGE);
     expect(portalRejectionMessage("permission_denied")).toMatch(/not allowed/);
     expect(portalRejectionMessage(undefined)).toMatch(/refused/);
     expect(portalRejectionMessage("something_else")).toMatch(/refused/);

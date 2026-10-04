@@ -18,9 +18,10 @@
  * (isMinor), turning access on, sending an invitation and listing them for
  * bulk enrolment are refused here, on this device. Turning access off still
  * works. A record with no date of birth, or one that cannot be read, is not
- * refused. The server does not check age for these yet:
- * set_patient_portal_access and portal_invitation_begin accept a child's
- * record; only portal_link_patient_record refuses one.
+ * refused. The server refuses to turn access on for a child's record
+ * (set_patient_portal_access answers 'minor', 20260927100190),
+ * portal_invitation_begin answers 'portal_not_enabled' for one, and
+ * portal_link_patient_record never links one.
  */
 
 import { db, type Patient, type PortalInvitation } from "@/db";
