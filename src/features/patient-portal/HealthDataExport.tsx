@@ -35,6 +35,7 @@ import {
   ExportResultPanel,
 } from "./account/ExportParts";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useT } from "@/hooks/useT";
 import { errorName } from "./account/portalSession";
 
 interface ExportOptions {
@@ -84,6 +85,7 @@ function isDateRange(v: string): v is ExportOptions["dateRange"] {
 }
 
 export function HealthDataExport({ patientId }: Props) {
+  const { t } = useT();
   const isOnline = useOnlineStatus();
   const cloudAvailable = isSupabaseEnabled && isOnline;
   const [dataSource, setDataSource] = useState<"cloud" | "local">("cloud");
@@ -142,7 +144,7 @@ export function HealthDataExport({ patientId }: Props) {
       });
 
       if (!result.success || !result.bundle) {
-        setError(exportErrorMessage(result.error, { fellBack }));
+        setError(exportErrorMessage(result.error, { fellBack, translate: t }));
         return;
       }
 
@@ -160,7 +162,7 @@ export function HealthDataExport({ patientId }: Props) {
       void loadPreview();
     } catch (err) {
       logger.error("[HealthDataExport] device export failed:", errorName(err));
-      setError(exportErrorMessage(undefined, { fellBack }));
+      setError(exportErrorMessage(undefined, { fellBack, translate: t }));
     }
   };
 
@@ -245,8 +247,11 @@ export function HealthDataExport({ patientId }: Props) {
   return (
     <div className="mx-auto max-w-3xl space-y-5 px-4 py-6">
       <PageHeader
-        title="Download your health record"
-        description="Save a copy of your health record as a file you can keep or give to another doctor."
+        title={t("portal.export.title", "Download your health record")}
+        description={t(
+          "portal.export.description",
+          "Save a copy of your health record as a file you can keep or give to another doctor.",
+        )}
       />
 
       <ExportPrivacyNotice />
@@ -255,8 +260,10 @@ export function HealthDataExport({ patientId }: Props) {
         <div className="banner banner-danger" role="alert">
           <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
           <p>
-            We could not find your patient record. Log out, log in again, then
-            try once more.
+            {t(
+              "portal.export.noPatient",
+              "We could not find your patient record. Log out, log in again, then try once more.",
+            )}
           </p>
         </div>
       )}
@@ -264,16 +271,20 @@ export function HealthDataExport({ patientId }: Props) {
       <section className="panel" aria-labelledby="export-source-title">
         <div className="panel-header">
           <h2 id="export-source-title" className="panel-title">
-            Where the file comes from
+            {t("portal.export.source.title", "Where the file comes from")}
           </h2>
           <StatusBadge tone={isOnline ? "success" : "neutral"} icon>
-            {isOnline ? "Online" : "Offline"}
+            {isOnline
+              ? t("portal.export.source.online", "Online")
+              : t("portal.export.source.offline", "Offline")}
           </StatusBadge>
         </div>
         <div className="panel-body">
           {cloudAvailable ? (
             <fieldset>
-              <legend className="sr-only">Choose where the file comes from</legend>
+              <legend className="sr-only">
+                {t("portal.export.source.legend", "Choose where the file comes from")}
+              </legend>
               <div className="grid gap-2 sm:grid-cols-2">
                 <label
                   htmlFor="export-source-cloud"
@@ -290,10 +301,13 @@ export function HealthDataExport({ patientId }: Props) {
                   />
                   <span>
                     <span className="block text-body font-medium text-ink">
-                      Your online record
+                      {t("portal.export.source.cloudTitle", "Your online record")}
                     </span>
                     <span className="block text-caption text-ink-muted">
-                      The most up to date. Needs an internet connection.
+                      {t(
+                        "portal.export.source.cloudHint",
+                        "The most up to date. Needs an internet connection.",
+                      )}
                     </span>
                   </span>
                 </label>
@@ -312,10 +326,16 @@ export function HealthDataExport({ patientId }: Props) {
                   />
                   <span>
                     <span className="block text-body font-medium text-ink">
-                      Records saved on this device
+                      {t(
+                        "portal.export.source.localTitle",
+                        "Records saved on this device",
+                      )}
                     </span>
                     <span className="block text-caption text-ink-muted">
-                      Works without internet. May miss recent visits.
+                      {t(
+                        "portal.export.source.localHint",
+                        "Works without internet. May miss recent visits.",
+                      )}
                     </span>
                   </span>
                 </label>
@@ -326,18 +346,28 @@ export function HealthDataExport({ patientId }: Props) {
               <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
               <span>
                 {isSupabaseEnabled
-                  ? "You are offline, so the file will be made from records saved on this device. It may not include your most recent visits."
-                  : "The file will be made from records saved on this device."}
+                  ? t(
+                      "portal.export.source.offlineNote",
+                      "You are offline, so the file will be made from records saved on this device. It may not include your most recent visits.",
+                    )
+                  : t(
+                      "portal.export.source.deviceOnlyNote",
+                      "The file will be made from records saved on this device.",
+                    )}
               </span>
             </p>
           )}
           {preview?.lastExport && (
             <p className="mt-3 text-caption text-ink-muted">
-              Last file made on this device:{" "}
-              {formatNigerianDateTime(preview.lastExport)}.
               {source === "local"
-                ? " A new file made on this device will only include records that changed since then, so keep your earlier file."
-                : ""}
+                ? t("portal.export.source.lastExportLocal", {
+                    date: formatNigerianDateTime(preview.lastExport),
+                    defaultValue: `Last file made on this device: ${formatNigerianDateTime(preview.lastExport)}. A new file made on this device will only include records that changed since then, so keep your earlier file.`,
+                  })
+                : t("portal.export.source.lastExport", {
+                    date: formatNigerianDateTime(preview.lastExport),
+                    defaultValue: `Last file made on this device: ${formatNigerianDateTime(preview.lastExport)}.`,
+                  })}
             </p>
           )}
         </div>
@@ -346,7 +376,7 @@ export function HealthDataExport({ patientId }: Props) {
       <section className="panel" aria-labelledby="export-content-title">
         <div className="panel-header">
           <h2 id="export-content-title" className="panel-title">
-            Choose what goes in the file
+            {t("portal.export.content.title", "Choose what goes in the file")}
           </h2>
         </div>
         <div className="panel-body space-y-5">
@@ -359,20 +389,25 @@ export function HealthDataExport({ patientId }: Props) {
           />
           {previewFailed && (
             <p className="text-caption text-ink-muted">
-              We could not count the records saved on this device. You can still
-              make the file.
+              {t(
+                "portal.export.content.previewFailed",
+                "We could not count the records saved on this device. You can still make the file.",
+              )}
             </p>
           )}
           {nothingSelected && (
             <p className="field-error" role="alert">
-              Choose at least one kind of record to include.
+              {t(
+                "portal.export.content.nothingSelected",
+                "Choose at least one kind of record to include.",
+              )}
             </p>
           )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="hde-range" className="field-label">
-                Time period
+                {t("portal.export.range.label", "Time period")}
               </label>
               <select
                 id="hde-range"
@@ -386,20 +421,29 @@ export function HealthDataExport({ patientId }: Props) {
               >
                 {DATE_RANGES.map((r) => (
                   <option key={r.value} value={r.value}>
-                    {r.label}
+                    {t(`portal.export.range.${r.value}`, r.label)}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <p className="field-label">File format</p>
-              <p className="text-body text-ink">FHIR R4, saved as a .json file</p>
+              <p className="field-label">
+                {t("portal.export.format.label", "File format")}
+              </p>
+              <p className="text-body text-ink">
+                {t("portal.export.format.value", "FHIR R4, saved as a .json file")}
+              </p>
               <p className="field-hint">
-                A standard format for health records.
                 {preview?.estimatedSize
-                  ? ` Expected size about ${preview.estimatedSize}.`
-                  : ""}
+                  ? t("portal.export.format.hintWithSize", {
+                      size: preview.estimatedSize,
+                      defaultValue: `A standard format for health records. Expected size about ${preview.estimatedSize}.`,
+                    })
+                  : t(
+                      "portal.export.format.hint",
+                      "A standard format for health records.",
+                    )}
               </p>
             </div>
           </div>
@@ -420,11 +464,16 @@ export function HealthDataExport({ patientId }: Props) {
             />
             <span>
               <span className="block text-body text-ink">
-                Check the file against the US Core {US_CORE_VERSION} standard
+                {t("portal.export.validate.label", {
+                  version: US_CORE_VERSION,
+                  defaultValue: `Check the file against the US Core ${US_CORE_VERSION} standard`,
+                })}
               </span>
               <span className="block text-caption text-ink-muted">
-                Only for files made on this device. Tells you if any item may
-                not be accepted by other health systems.
+                {t(
+                  "portal.export.validate.hint",
+                  "Only for files made on this device. Tells you if any item may not be accepted by other health systems.",
+                )}
               </span>
             </span>
           </label>
@@ -438,7 +487,7 @@ export function HealthDataExport({ patientId }: Props) {
               className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent"
               aria-hidden
             />
-            {PHASE_TEXT[phase]}
+            {t(`portal.export.phase.${phase}`, PHASE_TEXT[phase])}
           </p>
         )}
         {error && (
@@ -459,12 +508,19 @@ export function HealthDataExport({ patientId }: Props) {
         className="btn-primary w-full"
       >
         <ArrowDownTrayIcon className="h-5 w-5" aria-hidden />
-        {exporting ? "Making your file…" : "Download my health record"}
+        {exporting
+          ? t("portal.export.button.working", "Making your file…")
+          : t("portal.export.button.download", "Download my health record")}
       </button>
 
       <ExportAboutDetails>
         <div className="space-y-3 border-t border-line pt-3">
-          <p className="section-label">Record sharing: what is ready and what is planned</p>
+          <p className="section-label">
+            {t(
+              "portal.export.roadmap.title",
+              "Record sharing: what is ready and what is planned",
+            )}
+          </p>
           {Object.entries(TEFCA_ROADMAP).map(([key, phaseInfo]) => (
             <div key={key}>
               <p className="flex flex-wrap items-center gap-2 text-body font-medium text-ink">
@@ -474,12 +530,12 @@ export function HealthDataExport({ patientId }: Props) {
                   icon
                 >
                   {phaseInfo.status === "complete"
-                    ? "Ready"
+                    ? t("portal.export.roadmap.complete", "Ready")
                     : phaseInfo.status === "planned"
-                      ? "Planned"
+                      ? t("portal.export.roadmap.planned", "Planned")
                       : phaseInfo.status === "in-progress"
-                        ? "In progress"
-                        : "Future"}
+                        ? t("portal.export.roadmap.inProgress", "In progress")
+                        : t("portal.export.roadmap.future", "Future")}
                 </StatusBadge>
               </p>
               <ul className="mt-1 space-y-0.5 text-caption text-ink-muted">

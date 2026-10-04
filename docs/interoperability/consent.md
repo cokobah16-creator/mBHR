@@ -283,8 +283,11 @@ them can block care.
 
 - **Patient portal, "Privacy and data sharing".** A section inside the
   portal's "Sharing your health records" page
-  (`src/features/patient-portal/PrivacyConsentSection.tsx`, wording in
-  `privacyCopy.ts`).
+  (`src/features/patient-portal/PrivacyConsentSection.tsx`). The English
+  source wording is in `privacyCopy.ts`; the screen shows it through the
+  `portal.privacy.*` keys in `src/i18n/locales/`, and
+  `privacyCopy.test.ts` fails if `en.json` differs from `privacyCopy.ts`.
+  Other languages must keep the meaning of every sentence below.
   - The intro says that the care team uses the records to care for the
     patient, that the list shows the choices about sharing that mBHR has
     recorded, that it is separate from the sharing choices further down
