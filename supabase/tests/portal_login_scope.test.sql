@@ -280,8 +280,11 @@ RESET ROLE;
 SET LOCAL request.jwt.claims = '{}';
 
 -- Automatic enrolment on insert skips a child's record.
-UPDATE public.portal_enrollment_settings SET setting_value = 'true'::jsonb WHERE setting_key = 'auto_enrollment_enabled';
-UPDATE public.portal_enrollment_settings SET setting_value = 'false'::jsonb WHERE setting_key = 'require_email';
+-- (The rehearsal's copy of production has no settings rows: write them.)
+INSERT INTO public.portal_enrollment_settings (setting_key, setting_value)
+VALUES ('auto_enrollment_enabled', 'true'::jsonb),
+       ('require_email', 'false'::jsonb)
+ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value;
 INSERT INTO public.patients (id, given_name, family_name, phone, dob) VALUES
   ('pgtap-scope-child2', 'Femi', 'Young', '08000000096', (current_date - interval '5 years')::date),
   ('pgtap-scope-adult2', 'Gbemi', 'Grown', '08000000097', (current_date - interval '40 years')::date);
