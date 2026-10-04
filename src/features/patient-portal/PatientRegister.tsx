@@ -10,6 +10,7 @@ import {
   InformationCircleIcon,
 } from "@heroicons/react/24/outline";
 import { useAuth } from "@/hooks/useAuth";
+import { useT } from "@/hooks/useT";
 import { registerPatientPortalAccount } from "@/services/patientPortalAuth";
 import { supabase, isSupabaseEnabled } from "@/lib/supabaseClient";
 import { getPatientProfile, getPatientProfileByEmail } from "@/services/patientService";
@@ -99,10 +100,42 @@ const offlineSchema = z
 const schema = isSupabaseEnabled ? onlineSchema : offlineSchema;
 type RegistrationForm = z.infer<typeof schema>;
 
+// The English messages above (and the page's own error banners) are kept as
+// they are; each one is translated where it is shown. A message with no key
+// here (for example one returned by a service) is shown as it is.
+const MESSAGE_KEYS: Record<string, string> = {
+  "Tick this box to agree to the terms of use.": "portal.register.error.acceptTerms",
+  "Tick this box to confirm you have read the privacy notice.":
+    "portal.register.error.acceptPrivacy",
+  "Tick this box to consent to seeing your health records in this portal.":
+    "portal.register.error.consentRecordsAccess",
+  [INVALID_DOB_MESSAGE]: "portal.register.error.dobInvalid",
+  "Date of birth is required": "portal.register.error.dobRequired",
+  "Please enter your date of birth as YYYY-MM-DD": "portal.register.error.dobFormat",
+  [UNDER_18_SIGN_UP_MESSAGE]: "portal.register.error.under18",
+  [ACCEPTANCE_REQUIRED_MESSAGE]: "portal.register.error.acceptanceRequired",
+  "Full name is required": "portal.register.error.fullNameRequired",
+  "Please enter a valid email address": "portal.register.error.emailInvalid",
+  "Invalid phone number": "portal.register.error.phoneInvalid",
+  "Password must be at least 8 characters": "portal.register.error.passwordTooShort",
+  "Passwords do not match": "portal.register.error.passwordMismatch",
+  "PIN must be exactly 6 digits": "portal.register.error.pinFormat",
+  "PINs do not match": "portal.register.error.pinMismatch",
+  "An account with this email already exists. Please log in.":
+    "portal.register.error.alreadyExists",
+  "Registration failed. Please try again.": "portal.register.error.failed",
+  "An unexpected error occurred. Please try again.": "portal.register.error.unexpected",
+};
+
 export function PatientRegister() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { signup } = useAuth();
+  const { t } = useT();
+  const translateMessage = (message: string) => {
+    const key = MESSAGE_KEYS[message];
+    return key ? t(key, message) : message;
+  };
   const [step, setStep] = useState<"form" | "check_email" | "success">("form");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -291,7 +324,7 @@ export function PatientRegister() {
     const message = errorText(name);
     return message ? (
       <p id={`${name}-error`} className="field-error">
-        {message}
+        {translateMessage(message)}
       </p>
     ) : null;
   };
@@ -331,9 +364,14 @@ export function PatientRegister() {
       {step === "form" && (
         <>
           <div className="mb-6">
-            <h1 className="text-h1 text-ink">Create your account</h1>
+            <h1 className="text-h1 text-ink">
+              {t("portal.register.title", "Create your account")}
+            </h1>
             <p className="mt-1 text-body text-ink-muted">
-              See your health records from mBHR clinics in one secure place.
+              {t(
+                "portal.register.subtitle",
+                "See your health records from mBHR clinics in one secure place.",
+              )}
             </p>
           </div>
 
@@ -341,11 +379,19 @@ export function PatientRegister() {
             <div className="banner banner-info mb-5">
               <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
               <div className="space-y-1">
-                <p className="font-medium">This device is in offline mode</p>
+                <p className="font-medium">
+                  {t("portal.register.offline.title", "This device is in offline mode")}
+                </p>
                 <p className="text-label font-normal">
-                  Your account will be stored on this device only. You will
-                  create a <strong>6-digit PIN</strong> to log in. Remember it:
-                  only clinic staff can reset it.
+                  {t(
+                    "portal.register.offline.bodyBefore",
+                    "Your account will be stored on this device only. You will create a",
+                  )}{" "}
+                  <strong>{t("portal.register.offline.bodyPin", "6-digit PIN")}</strong>{" "}
+                  {t(
+                    "portal.register.offline.bodyAfter",
+                    "to log in. Remember it: only clinic staff can reset it.",
+                  )}
                 </p>
               </div>
             </div>
@@ -354,7 +400,7 @@ export function PatientRegister() {
           {error && (
             <div className="banner banner-danger mb-5" role="alert">
               <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-              <p>{error}</p>
+              <p>{translateMessage(error)}</p>
             </div>
           )}
 
@@ -364,18 +410,18 @@ export function PatientRegister() {
             noValidate
           >
             <p className="text-caption text-ink-muted">
-              Fields marked * are required.
+              {t("portal.register.requiredNote", "Fields marked * are required.")}
             </p>
 
             <div>
               <label htmlFor="fullName" className="field-label">
-                Full Name *
+                {t("portal.register.fullName.label", "Full Name *")}
               </label>
               <input
                 {...form.register("fullName")}
                 type="text"
                 id="fullName"
-                placeholder="Jane Doe"
+                placeholder={t("portal.register.fullName.placeholder", "Jane Doe")}
                 className="input-field"
                 disabled={loading}
                 autoComplete="name"
@@ -388,7 +434,7 @@ export function PatientRegister() {
 
             <div>
               <label htmlFor="email" className="field-label">
-                Email Address *
+                {t("portal.register.email.label", "Email Address *")}
               </label>
               <input
                 {...form.register("email")}
@@ -406,8 +452,10 @@ export function PatientRegister() {
                 )}
               />
               <p id="email-hint" className="field-hint">
-                Use the address the clinic has for you, so your account can be
-                linked to your clinic record.
+                {t(
+                  "portal.register.email.hint",
+                  "Use the address the clinic has for you, so your account can be linked to your clinic record.",
+                )}
               </p>
               {fieldError("email")}
             </div>
@@ -415,7 +463,7 @@ export function PatientRegister() {
             <div className={isSupabaseEnabled ? "grid gap-4 sm:grid-cols-2" : ""}>
               <div>
                 <label htmlFor="phone" className="field-label">
-                  Phone (optional)
+                  {t("portal.register.phone.label", "Phone (optional)")}
                 </label>
                 <input
                   {...form.register("phone")}
@@ -434,7 +482,7 @@ export function PatientRegister() {
               {isSupabaseEnabled && (
                 <div>
                   <label htmlFor="dateOfBirth" className="field-label">
-                    Date of Birth *
+                    {t("portal.register.dob.label", "Date of Birth *")}
                   </label>
                   <input
                     {...form.register("dateOfBirth")}
@@ -451,7 +499,10 @@ export function PatientRegister() {
                     )}
                   />
                   <p id="dateOfBirth-hint" className="field-hint">
-                    You must be 18 or older to create your own account.
+                    {t(
+                      "portal.register.dob.hintOnline",
+                      "You must be 18 or older to create your own account.",
+                    )}
                   </p>
                   {fieldError("dateOfBirth")}
                 </div>
@@ -463,7 +514,7 @@ export function PatientRegister() {
               <>
                 <div>
                   <label htmlFor="dateOfBirth" className="field-label">
-                    Date of Birth *
+                    {t("portal.register.dob.label", "Date of Birth *")}
                   </label>
                   <input
                     {...form.register("dateOfBirth")}
@@ -480,15 +531,17 @@ export function PatientRegister() {
                     )}
                   />
                   <p id="dateOfBirth-hint" className="field-hint">
-                    Used to match you to your clinic record. You must be 18
-                    or older to create your own account.
+                    {t(
+                      "portal.register.dob.hintOffline",
+                      "Used to match you to your clinic record. You must be 18 or older to create your own account.",
+                    )}
                   </p>
                   {fieldError("dateOfBirth")}
                 </div>
 
                 <div>
                   <label htmlFor="pin" className="field-label">
-                    6-Digit PIN *
+                    {t("portal.register.pin.label", "6-Digit PIN *")}
                   </label>
                   <input
                     {...form.register("pin" as keyof RegistrationForm)}
@@ -508,15 +561,17 @@ export function PatientRegister() {
                     )}
                   />
                   <p id="pin-hint" className="field-hint">
-                    You will use this number to log in. Choose one you can
-                    remember and keep it to yourself.
+                    {t(
+                      "portal.register.pin.hint",
+                      "You will use this number to log in. Choose one you can remember and keep it to yourself.",
+                    )}
                   </p>
                   {fieldError("pin")}
                 </div>
 
                 <div>
                   <label htmlFor="confirmPin" className="field-label">
-                    Confirm PIN *
+                    {t("portal.register.confirmPin.label", "Confirm PIN *")}
                   </label>
                   <input
                     {...form.register("confirmPin" as keyof RegistrationForm)}
@@ -544,13 +599,13 @@ export function PatientRegister() {
               <>
                 <div>
                   <label htmlFor="password" className="field-label">
-                    Password *
+                    {t("portal.register.password.label", "Password *")}
                   </label>
                   <input
                     {...form.register("password" as keyof RegistrationForm)}
                     type="password"
                     id="password"
-                    placeholder="At least 8 characters"
+                    placeholder={t("portal.register.password.placeholder", "At least 8 characters")}
                     className="input-field"
                     disabled={loading}
                     autoComplete="new-password"
@@ -565,13 +620,16 @@ export function PatientRegister() {
 
                 <div>
                   <label htmlFor="confirmPassword" className="field-label">
-                    Confirm Password *
+                    {t("portal.register.confirmPassword.label", "Confirm Password *")}
                   </label>
                   <input
                     {...form.register("confirmPassword" as keyof RegistrationForm)}
                     type="password"
                     id="confirmPassword"
-                    placeholder="Repeat your password"
+                    placeholder={t(
+                      "portal.register.confirmPassword.placeholder",
+                      "Repeat your password",
+                    )}
                     className="input-field"
                     disabled={loading}
                     autoComplete="new-password"
@@ -588,22 +646,44 @@ export function PatientRegister() {
 
             <fieldset className="space-y-3 rounded-md border border-line bg-surface-sunken p-3">
               <legend className="px-1 text-label font-medium text-ink">
-                Tick all three boxes to create your account *
+                {t(
+                  "portal.register.consent.legend",
+                  "Tick all three boxes to create your account *",
+                )}
               </legend>
               {consentBox(
                 "acceptTerms",
                 "consent-terms",
-                <>I agree to the {policyLink("/terms", "Terms of use")}.</>,
+                <>
+                  {t("portal.register.consent.termsBefore", "I agree to the")}{" "}
+                  {policyLink(
+                    "/terms",
+                    t("portal.register.consent.termsLink", "Terms of use"),
+                  )}
+                  {t("portal.register.consent.termsAfter", ".")}
+                </>,
               )}
               {consentBox(
                 "acceptPrivacy",
                 "consent-privacy",
-                <>I have read the {policyLink("/privacy", "Privacy notice")}.</>,
+                <>
+                  {t("portal.register.consent.privacyBefore", "I have read the")}{" "}
+                  {policyLink(
+                    "/privacy",
+                    t("portal.register.consent.privacyLink", "Privacy notice"),
+                  )}
+                  {t("portal.register.consent.privacyAfter", ".")}
+                </>,
               )}
               {consentBox(
                 "consentRecordsAccess",
                 "consent-records",
-                <>I consent to seeing my health records in this portal.</>,
+                <>
+                  {t(
+                    "portal.register.consent.records",
+                    "I consent to seeing my health records in this portal.",
+                  )}
+                </>,
               )}
             </fieldset>
 
@@ -618,23 +698,23 @@ export function PatientRegister() {
                     className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"
                     aria-hidden
                   />
-                  Creating Account...
+                  {t("portal.register.submit.working", "Creating Account...")}
                 </>
               ) : (
                 <>
-                  Create Account
+                  {t("portal.register.submit.idle", "Create Account")}
                   <ArrowRightIcon className="h-5 w-5" aria-hidden />
                 </>
               )}
             </button>
 
             <p className="text-center text-body text-ink-secondary">
-              Already have an account?{" "}
+              {t("portal.register.haveAccount", "Already have an account?")}{" "}
               <Link
                 to="/patient/login"
                 className="font-medium text-primary-fg underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
-                Log in here
+                {t("portal.register.loginLink", "Log in here")}
               </Link>
             </p>
           </form>
@@ -643,13 +723,15 @@ export function PatientRegister() {
 
       {step === "check_email" && (
         <div className="py-2">
-          <h1 className="text-h1 text-ink">Check your email</h1>
+          <h1 className="text-h1 text-ink">
+            {t("portal.register.checkEmail.title", "Check your email")}
+          </h1>
           <div className="banner banner-info mt-4" role="status">
             <InformationCircleIcon className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
             <p>{confirmNotice}</p>
           </div>
           <Link to="/patient/login" className="btn-primary mt-6 w-full">
-            Go to log in
+            {t("portal.register.checkEmail.loginButton", "Go to log in")}
             <ArrowRightIcon className="h-5 w-5" aria-hidden />
           </Link>
         </div>
@@ -658,9 +740,11 @@ export function PatientRegister() {
       {step === "success" && (
         <div className="py-6 text-center" role="status">
           <CheckCircleIcon className="mx-auto mb-4 h-12 w-12 text-success" aria-hidden />
-          <h1 className="text-h1 text-ink">Your account is ready</h1>
+          <h1 className="text-h1 text-ink">
+            {t("portal.register.success.title", "Your account is ready")}
+          </h1>
           <p className="mt-2 text-body text-ink-secondary">
-            Welcome to mBHR. Opening your dashboard…
+            {t("portal.register.success.body", "Welcome to mBHR. Opening your dashboard…")}
           </p>
           <span
             className="mx-auto mt-6 block h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"
