@@ -41,7 +41,10 @@
   2. portal_session_check ends the session and returns no row when its
      login no longer has portal access (the same rule as
      app_portal_patient_ids: an active login on an unmerged adult's record
-     with access on, or the record's own sign-in link).
+     with access on, or the record's own sign-in link). A record's sign-in
+     link no longer gives access to a login whose own portal account for
+     that record is suspended or locked (app_portal_patient_ids,
+     portal_access_status and portal_session_check).
   3. A stored file opens to a portal patient when every document that
      names it belongs to one of their records (or a record merged into
      one) and none is removed, whichever folder the file is in: a file
@@ -59,7 +62,7 @@
      gives no portal access (app_portal_patient_ids, portal_access_status
      and portal_session_check), whatever its stored flag says.
      set_patient_portal_access refuses to turn access on for one
-     ('minor'), as portal_link_patient_record already refuses to link one,
+     ('minor', also when its stored flag is already on), as portal_link_patient_record already refuses to link one,
      automatic enrolment on insert skips one, and portal_invitation_begin
      answers 'portal_not_enabled' for one, so no invitation reaches a
      child. Turning access off is unchanged; a record with no date of
@@ -359,6 +362,17 @@ AS $function$
      AND COALESCE(p.portal_enabled, false)
      AND p.merged_into IS NULL
      AND NOT public.app_patient_is_minor(p.dob)
+     -- The same login's suspended or locked portal account for this record
+     -- also ends its sign-in link (20260927100190).
+     AND NOT EXISTS (
+       SELECT 1
+         FROM public.patient_portal_users AS s
+        WHERE s.patient_id::text = p.id::text
+          AND COALESCE(s.account_status, 'active') <> 'active'
+          AND (
+               s.id::text = (SELECT auth.uid())::text
+            OR s.id::text = (SELECT public.current_portal_user_id())
+          ))
   UNION
   SELECT ppu.patient_id::text
     FROM public.patient_portal_users AS ppu
@@ -382,7 +396,16 @@ CREATE OR REPLACE FUNCTION public.portal_access_status()
 AS $function$
   SELECT p.id::text,
          COALESCE(p.portal_enabled, false) AND p.merged_into IS NULL
-           AND NOT public.app_patient_is_minor(p.dob),
+           AND NOT public.app_patient_is_minor(p.dob)
+           AND NOT EXISTS (
+             SELECT 1
+               FROM public.patient_portal_users AS s
+              WHERE s.patient_id::text = p.id::text
+                AND COALESCE(s.account_status, 'active') <> 'active'
+                AND (
+                     s.id::text = (SELECT auth.uid())::text
+                  OR s.id::text = (SELECT public.current_portal_user_id())
+                )),
          p.portal_enabled_changed_at
     FROM public.patients AS p
    WHERE (SELECT auth.uid()) IS NOT NULL
@@ -476,9 +499,11 @@ BEGIN
 
   IF v_merged_into IS NOT NULL THEN
     v_refusal := 'patient_merged';
-  ELSIF p_enabled AND NOT v_enabled AND public.app_patient_is_minor(v_dob) THEN
+  ELSIF p_enabled AND public.app_patient_is_minor(v_dob) THEN
     -- Portal access is for adults: a child's record is not turned on, as
-    -- portal_link_patient_record never links one (20260927100190).
+    -- portal_link_patient_record never links one (20260927100190). Also
+    -- when its stored flag is already on: the record gives no access, so
+    -- the request is not answered as confirmed.
     v_refusal := 'minor';
   ELSIF p_enabled AND v_source IN ('backfill', 'auto_enrollment') THEN
     -- Automatic enables never override a decision the server holds.
@@ -617,7 +642,13 @@ BEGIN
         WHERE p.auth_uid::text = v_user
           AND COALESCE(p.portal_enabled, false)
           AND p.merged_into IS NULL
-          AND NOT public.app_patient_is_minor(p.dob)) THEN
+          AND NOT public.app_patient_is_minor(p.dob)
+          AND NOT EXISTS (
+            SELECT 1
+              FROM public.patient_portal_users AS s
+             WHERE s.id::text = v_user
+               AND s.patient_id::text = p.id::text
+               AND COALESCE(s.account_status, 'active') <> 'active')) THEN
     UPDATE public.patient_portal_sessions AS s
        SET is_active = false
      WHERE s.id::text = v_id;

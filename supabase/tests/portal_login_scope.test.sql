@@ -6,7 +6,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(49);
+SELECT plan(56);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures (as the migration owner)
@@ -31,6 +31,19 @@ INSERT INTO public.patient_portal_sessions (id, portal_user_id, session_token, e
   ('pgtap-scope-s1', '99990000-0000-4000-8000-0000000000c1', 'pgtap-scope-token-c1-aaaaaaaa', now() + interval '2 hours', true),
   ('pgtap-scope-s2', '99990000-0000-4000-8000-0000000000c2', 'pgtap-scope-token-c2-bbbbbbbb', now() + interval '2 hours', true),
   ('pgtap-scope-s3', '99990000-0000-4000-8000-0000000000c3', 'pgtap-scope-token-c3-cccccccc', now() + interval '2 hours', true);
+-- P4 signs in by its own link (auth_uid), and the same login's portal
+-- account for P4 is suspended. Login c5 opens P5 by its sign-in link only:
+-- its portal account is for P6, whose access is off.
+INSERT INTO public.patients (id, given_name, family_name, phone, dob, auth_uid, portal_enabled) VALUES
+  ('pgtap-scope-p4', 'Jide', 'Linked', '08000000088', '1983-01-01', '99990000-0000-4000-8000-0000000000c4', true),
+  ('pgtap-scope-p5', 'Kunle', 'Linked', '08000000089', '1984-01-01', '99990000-0000-4000-8000-0000000000c5', true),
+  ('pgtap-scope-p6', 'Lola', 'Off', '08000000087', '1985-01-01', NULL, false);
+INSERT INTO public.patient_portal_users (id, patient_id, account_status, otp_secret, email) VALUES
+  ('99990000-0000-4000-8000-0000000000c4', 'pgtap-scope-p4', 'suspended', '444444', 'pgtap-scope-c4@example.test'),
+  ('99990000-0000-4000-8000-0000000000c5', 'pgtap-scope-p6', 'active', '555555', 'pgtap-scope-c5@example.test');
+INSERT INTO public.patient_portal_sessions (id, portal_user_id, session_token, expires_at, is_active) VALUES
+  ('pgtap-scope-s4', '99990000-0000-4000-8000-0000000000c4', 'pgtap-scope-token-c4-dddddddd', now() + interval '2 hours', true),
+  ('pgtap-scope-s5', '99990000-0000-4000-8000-0000000000c5', 'pgtap-scope-token-c5-eeeeeeee', now() + interval '2 hours', true);
 -- A record merged into P1 (its documents moved with it).
 INSERT INTO public.patients (id, given_name, family_name, phone, dob, merged_into) VALUES
   ('pgtap-scope-p1-old', 'Ada', 'Carers', '08000000098', '1980-01-01', 'pgtap-scope-p1');
@@ -115,7 +128,7 @@ SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-0000000000e1","r
 SELECT is((SELECT count(*) FROM public.patient_portal_users WHERE patient_id = 'pgtap-scope-p1'), 2::bigint,
   'staff still read every login');
 SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-0000000000e2","role":"authenticated"}';
-SELECT is((SELECT count(*) FROM public.patient_portal_sessions WHERE id LIKE 'pgtap-scope-s%'), 3::bigint,
+SELECT is((SELECT count(*) FROM public.patient_portal_sessions WHERE id LIKE 'pgtap-scope-s%'), 5::bigint,
   'holders of ''users'' still read every session');
 RESET ROLE;
 SET LOCAL request.jwt.claims = '{}';
@@ -152,6 +165,30 @@ RESET ROLE;
 SELECT is((SELECT is_active FROM public.patient_portal_sessions WHERE id = 'pgtap-scope-s2'), false,
   'and that session is ended');
 UPDATE public.patients SET portal_enabled = true WHERE id = 'pgtap-scope-p1';
+
+-- A record's own sign-in link gives no access to a login whose portal
+-- account for that record is suspended.
+SET LOCAL ROLE anon;
+SELECT is((SELECT count(*) FROM public.portal_session_check('pgtap-scope-token-c4-dddddddd', NULL)),
+  0::bigint,
+  'a suspended login''s session is not kept alive by the record''s sign-in link');
+SELECT is((SELECT count(*) FROM public.portal_session_check('pgtap-scope-token-c5-eeeeeeee', NULL)),
+  1::bigint,
+  'a session of a login that opens a record only by its sign-in link is kept');
+RESET ROLE;
+SELECT is((SELECT is_active FROM public.patient_portal_sessions WHERE id = 'pgtap-scope-s4'), false,
+  'the suspended login''s session is ended');
+SET LOCAL ROLE authenticated;
+SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-0000000000c4","role":"authenticated"}';
+SELECT is((SELECT count(*) FROM public.app_portal_patient_ids()), 0::bigint,
+  'the suspended login opens no record through the sign-in link');
+SELECT is((SELECT array_agg(portal_enabled) FROM public.portal_access_status()), ARRAY[false],
+  'and the portal is told access is off');
+SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-0000000000c5","role":"authenticated"}';
+SELECT is((SELECT array_agg(id) FROM public.app_portal_patient_ids() AS id), ARRAY['pgtap-scope-p5'],
+  'a login with only the sign-in link still opens its record');
+RESET ROLE;
+SET LOCAL request.jwt.claims = '{}';
 
 -- ---------------------------------------------------------------------------
 -- 3. A stored file follows the document that names it
@@ -213,6 +250,11 @@ SET LOCAL request.jwt.claims = '{}';
 UPDATE public.patients SET portal_enabled = true WHERE id = 'pgtap-scope-child';
 SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"99990000-0000-4000-8000-0000000000e1","role":"authenticated"}';
+SELECT is(
+  public.set_patient_portal_access('9999c0de-0000-4000-8000-000000000006', 'pgtap-scope-child', true,
+    NULL, now(), '99990000-0000-4000-8000-0000000000e1', 'staff') ->> 'reason',
+  'minor',
+  'an enable request for a child''s record whose flag is already on is answered ''minor''');
 SELECT is(
   public.set_patient_portal_access('9999c0de-0000-4000-8000-000000000005', 'pgtap-scope-child', false,
     'staff_choice', now(), '99990000-0000-4000-8000-0000000000e1', 'staff') ->> 'outcome',
