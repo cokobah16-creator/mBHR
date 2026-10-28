@@ -21,6 +21,10 @@ name: Nightly DB Backup
 #   SUPABASE_ACCESS_TOKEN      personal access token for `supabase storage cp`
 #   SLACK_BACKUP_WEBHOOK       optional; for success/failure notifications
 #
+# A failed run also opens a GitHub issue titled "Nightly DB Backup failing"
+# (or comments on it if it is already open), so a failure is never silent
+# when Slack is not set up. Close the issue once a backup succeeds.
+#
 # Manual invocation is also supported via workflow_dispatch.
 
 on:
@@ -36,6 +40,9 @@ jobs:
   backup:
     name: pg_dump + upload
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
 
     steps:
       - name: Checkout
@@ -44,7 +51,9 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned, as in db-migrations.yml: "latest" lets a CLI release
+          # break the backup with no change here. Update the pin deliberately.
+          version: 2.118.0
 
       - name: Dump database
         id: dump
@@ -179,3 +188,26 @@ jobs:
           curl -X POST -H 'Content-Type: application/json' --data \
             "{\"text\":\":rotating_light: mBHR backup FAILED — check GitHub Actions log\"}" \
             "${SLACK_WEBHOOK}"
+
+      - name: Open an issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Nightly DB Backup failing"
+          # Only the run link goes into the issue (this repository is public);
+          # the log itself never prints patient data, but stays in Actions.
+          number=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open \
+            --search "\"${title}\" in:title" --json number,title \
+            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")
+          if [ -n "${number}" ]; then
+            gh issue comment "${number}" --repo "${GITHUB_REPOSITORY}" \
+              --body "Failed again: ${RUN_URL}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" \
+              --body "The nightly database backup failed: ${RUN_URL}
+
+          Until a run succeeds there is no fresh backup of production. Close this issue once a backup succeeds."
+          fi
